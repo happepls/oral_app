@@ -57,3 +57,17 @@
     *   Achieved a successful WebSocket connection from an external server to the `comms-service`, confirming the entire communication path (WSS -> Host Nginx -> API Gateway -> Comms Service) is fully functional.
 *   **Project Management:**
     *   Marked the final task of Phase 1 as complete in `docs/TODO.md`. The project is now ready to proceed to Phase 2.
+
+## 2025-10-10
+
+*   **AI Service Implementation:**
+    *   Created the foundational structure for the new `ai-service`, including its Dockerfile, package.json, and basic Express server.
+    *   Added the new service to `docker-compose.yml` and configured the API Gateway to route `/api/ai/` traffic to it.
+*   **Intensive Debugging & Verification:**
+    *   Diagnosed and resolved a complex routing and container update issue. The root cause was identified as `docker compose restart` not rebuilding images, which prevented code changes from being applied.
+    *   The issue was fixed by using `docker compose up -d --build`, which successfully updated the container with the latest code.
+    *   Verified the end-to-end connectivity from `curl` to the `api-gateway` and finally to the `ai-service`'s health check endpoint.
+*   **Architecture & Interface Design:**
+    *   Based on the provided `voice_agent.py` example, designed and created abstract interfaces for the three core AI components: `StreamingAsrService`, `LlmService`, and `StreamingTtsService`. This establishes a clean, extensible architecture for future AI integrations.
+*   **Project Management:**
+    *   Marked Task #6 as complete in `docs/TODO.md`, officially concluding the initial setup of the AI Service Layer.

@@ -1,0 +1,18 @@
+{
+  "name": "ai-service",
+  "version": "1.0.0",
+  "description": "AI Service Layer for Oral AI App",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "nodemon src/index.js"
+  },
+  "dependencies": {
+    "express": "^4.19.2"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.0"
+  },
+  "author": "Gemini",
+  "license": "ISC"
+}

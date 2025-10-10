@@ -60,3 +60,4 @@ out/
 # 特定于项目的忽略
 # 已经在服务目录下的.gitignore处理了node_modules等
 
+node_modules

@@ -73,6 +73,16 @@ services:
     networks:
       - oral_app_net
 
+  ai-service:
+    build: ./services/ai-service
+    container_name: oral_app_ai_service
+    restart: always
+    depends_on:
+      - postgres
+      - redis
+    networks:
+      - oral_app_net
+
 volumes:
   postgres_data:
   mongo_data:
