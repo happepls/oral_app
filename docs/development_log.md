@@ -71,3 +71,17 @@
     *   Based on the provided `voice_agent.py` example, designed and created abstract interfaces for the three core AI components: `StreamingAsrService`, `LlmService`, and `StreamingTtsService`. This establishes a clean, extensible architecture for future AI integrations.
 *   **Project Management:**
     *   Marked Task #6 as complete in `docs/TODO.md`, officially concluding the initial setup of the AI Service Layer.
+
+## 2025-10-13
+
+*   **Prompt Engineering Module:**
+    *   Designed and implemented a sophisticated `PromptManager` within the `ai-service`.
+    *   Based on critical user feedback, the module was refactored to be fully dynamic and multilingual. It now generates a `basePrompt` that establishes the AI's persona as a world-class language expert, tailored to the user's specific `targetLanguage`.
+*   **Mock Service Integration:**
+    *   Created a `MockLlmService` to facilitate offline, cost-free testing of the AI service's internal logic.
+    *   This mock service successfully integrates with the `PromptManager` to build a complete, context-aware prompt.
+*   **Verification & Testing:**
+    *   Conducted a unit test which confirmed that the `PromptManager` correctly constructs a detailed, personalized prompt using the user's profile, goals, and conversation history.
+    *   The test also verified that the `MockLlmService` correctly processes this data and returns a predictable, templated response.
+*   **Project Management:**
+    *   Marked tasks #7 and #8 as complete in `docs/TODO.md`, signifying major progress in the AI Integration phase.

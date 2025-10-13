@@ -45,7 +45,11 @@ oral_app/
 │   │   └── src/
 │   │       ├── index.js
 │   │       ├── asr/interface.js
-│   │       ├── llm/interface.js
+│   │       ├── llm/
+│   │       │   ├── interface.js
+│   │       │   └── mockLlmService.js
+│   │       ├── prompt/
+│   │       │   └── manager.js
 │   │       └── tts/interface.js
 │   ├── conversation-service/
 │   ├── history-analytics-service/
