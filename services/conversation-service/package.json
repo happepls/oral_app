@@ -1,0 +1,21 @@
+
+{
+  "name": "conversation-service",
+  "version": "1.0.0",
+  "description": "Manages conversation state and orchestrates calls between Comms and AI services.",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "nodemon src/index.js"
+  },
+  "dependencies": {
+    "express": "^4.19.2",
+    "ioredis": "^5.4.1",
+    "uuid": "^8.3.2"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.0"
+  },
+  "author": "Gemini",
+  "license": "ISC"
+}

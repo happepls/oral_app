@@ -55,3 +55,27 @@ exports.login = async (req, res) => {
         res.status(500).json({ message: 'Server error' });
     }
 };
+
+exports.verifyToken = (req, res) => {
+    const authHeader = req.headers.authorization;
+
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+        return res.status(401).json({ message: 'No token provided or malformed token' });
+    }
+
+    const token = authHeader.split(' ')[1];
+
+    try {
+        const decoded = jwt.verify(token, process.env.JWT_SECRET);
+        // The token is valid, send back the decoded payload which includes user id and username
+        res.json({
+            message: 'Token is valid',
+            user: decoded,
+        });
+    } catch (error) {
+        // The token is invalid (e.g., expired, wrong signature)
+        res.status(401).json({ message: 'Invalid token', error: error.message });
+    }
+};
+
+

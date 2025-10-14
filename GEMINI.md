@@ -109,11 +109,51 @@ oral_app/
   - 运行 `docker-compose up -d` 来启动项目所需的 PostgreSQL, MongoDB, Redis和 user-service 服务。
 
 ## 关键环境变量与配置
-(待补充)
+## 关键环境变量与配置
+
+### 1. `docker-compose.yml`
+这是本地开发环境的核心编排文件，定义了所有服务及其依赖关系。
+
+- **`api-gateway`**:
+  - **Ports**: `8080:80` - 将主机的 8080 端口映射到 Nginx 容器的 80 端口，作为所有流量的入口。
+- **`postgres`**:
+  - **Ports**: `5432:5432` - 数据库端口。
+  - **Volumes**: 挂载 `init.sql` 用于数据库初始化。
+  - **Environment**:
+    - `POSTGRES_DB`: `oral_app` - 数据库名。
+    - `POSTGRES_USER`: `user` - 数据库用户名。
+    - `POSTGRES_PASSWORD`: `password` - 数据库密码。
+- **`user-service`**:
+  - **`env_file`**: 指向 `./services/user-service/.env` 文件，其中包含以下关键变量：
+    - `DATABASE_URL`: PostgreSQL 连接字符串，格式为 `postgresql://<user>:<password>@<host>:<port>/<db>`。例如: `postgresql://user:password@postgres:5432/oral_app`。
+    - `JWT_SECRET`: 用于签发和验证 JSON Web Tokens 的密钥。
+- **`comms-service`**:
+  - **Ports**: `3001:8080` - 实时通信服务的端口。
+- **`ai-service`**:
+  - 依赖 `postgres` 和 `redis`，表明它需要连接数据库和缓存。
+
+### 2. `api-gateway/nginx.conf`
+Nginx 作为 API 网关，负责请求路由。
+
+- **`upstream`**: 定义了后端服务的地址池 (`user_service`, `comms_service`, `ai_service`)。
+- **`location`**:
+  - `/api/users/`: 所有用户相关的 API 请求被代理到 `user_service`。
+  - `/api/ai/`: 所有 AI 相关的 API 请求被代理到 `ai_service`。
+  - `/ws/`: WebSocket 连接请求被特殊处理（通过 `Upgrade` 和 `Connection` 头）并代理到 `comms-service`。
+
+## 最新进展与当前状态 (2025-10-14)
+- **WebSocket 连接问题解决**:
+    - **根本原因**: 经过深入调试，最终定位了 `comms-service` 中 `ws` 服务器 `connection` 事件不触发的根本原因，是 `ws` 库与 `node:18-alpine` 基础镜像之间存在环境兼容性问题。
+    - **解决方案**: 通过将 `comms-service` 的 `Dockerfile` 基础镜像从 `node:18-alpine` 更换为 `node:18-slim`，问题得到彻底解决。`connection` 事件现在可以被正常触发。
+- **端到端认证流程验证**:
+    - 在解决 WebSocket 问题之前，通过在 `comms-service` 中创建临时 HTTP 端点，成功验证了完整的端到端 JWT 认证和会话创建流程，确认了各服务间的业务逻辑是健全的。
+- **项目状态**:
+    - 核心的 WebSocket 通信障碍已被清除。
+    - 项目已完全恢复到其主要架构，准备好进行客户端与服务端的实时功能开发。
 
 ## Gemini Added Memories
 - 项目已配置专属的今日开发工作收尾命令 `finish_today`，其具体操作如下: "作为AI助手，我的目标是完成今日的收尾工作。我将执行以下4项操作：
-\n1. Update the development plan in @docs/TODO.md using the mcp-tasks tool.
+\n1. Update the development plan in @docs/TODO.md using the 'mcp-tasks' tool,只修改相关的任务项，不会影响文件中的其他内容.
 \n2. Update the GEMINI.md project memory file to reflect the current project state, 注意**不能改变Gemini Added Memories的内容及格式. 
 \n3. Append a summary of the day's work to the development log at @docs/development_log.md if exists.
 \n4. Commit and push all changes to the origin/master branch of the remote repository using the commit message ser {{今日日期}}."

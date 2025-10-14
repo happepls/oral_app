@@ -83,6 +83,18 @@ services:
     networks:
       - oral_app_net
 
+  conversation-service:
+    build: ./services/conversation-service
+    container_name: oral_app_conversation_service
+    restart: always
+    ports:
+      - "3002:8083"
+    depends_on:
+      - comms-service
+      - ai-service
+    networks:
+      - oral_app_net
+
 volumes:
   postgres_data:
   mongo_data:

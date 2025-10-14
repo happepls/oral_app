@@ -85,3 +85,22 @@
     *   The test also verified that the `MockLlmService` correctly processes this data and returns a predictable, templated response.
 *   **Project Management:**
     *   Marked tasks #7 and #8 as complete in `docs/TODO.md`, signifying major progress in the AI Integration phase.
+
+
+## 2025-10-14
+
+*   **JWT End-to-End Test & Verification:**
+    *   **Strategy**: To circumvent a blocking WebSocket issue, a temporary HTTP endpoint (`/verify-and-init-session`) was implemented in the `comms-service`.
+    *   **Execution**: A full end-to-end test was performed, successfully creating a user, logging in to get a JWT, and using the token to create a session via the temporary endpoint.
+    *   **Success**: The test confirmed that the entire authentication and session creation flow (`api-gateway` -> `comms-service` -> `user-service` -> `conversation-service`) was working correctly.
+    *   **Issue Isolation**: The successful test definitively isolated the project's blocker to the WebSocket `connection` event handler not firing within the Docker environment.
+
+*   **WebSocket `connection` Event Failure Resolution:**
+    *   **Goal**: Diagnose and fix the critical issue where the `ws` server in `comms-service` was not firing the `connection` event.
+    *   **Debugging Strategy & Execution:**
+        *   **Code Minimization**: A minimal `debug.js` server confirmed the issue was environmental, not related to business logic.
+        *   **Environment Analysis**: Hypothesized that the `node:18-alpine` base image had a compatibility issue with the `ws` library.
+        *   **Solution**: Changed the `comms-service`'s `Dockerfile` base image from `node:18-alpine` to `node:18-slim`.
+    *   **Success & Verification**: The base image change immediately resolved the issue. The `connection` event now fires correctly for the main application.
+
+*   **Conclusion**: The project's primary technical blocker is resolved. The real-time communication layer is fully functional, and all temporary test code has been reverted.
