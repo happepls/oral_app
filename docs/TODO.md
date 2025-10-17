@@ -2,21 +2,14 @@
 
 ## In Progress
 
-- [ ] 10.[API Gateway] Add routing for WebSocket connections and Conversation Service.
 
 ## To Do
-
+- [ ] 12. [Frontend] Implement user authentication flow (login/register pages).
 
 ## Backlog
 
-- [ ] **Phase 2: AI Integration & Core Logic**
-- [ ] 6. [Backend] Create AI Service Layer (AI Engine): Abstract ASR/LLM/TTS interfaces.
-- [ ] 7. [AI Engine] Design and implement a Prompt Management module to dynamically construct prompts using user profile, conversation history, and learning goals.
-- [ ] 8.[Backend] Integrate a mocked or preliminary AI service for initial testing.
-- [ ] 9.[Backend] Create Conversation Service: Manage conversation state and orchestrate calls between Comms Layer and AI Layer.
 - [ ] **Phase 3: Client-side Development**
-- [ ] 11. [Frontend] Scaffold React/Mobile client application.
-- [ ] 12. [Frontend] Implement user authentication flow (login/register pages).
+
 - [ ] 13. [Frontend] Implement real-time audio capture using AudioWorklet.
 - [ ] 14. [Frontend] Implement WebSocket connection to the backend.
 - [ ] 15. [Frontend] Implement audio streaming to the backend and playback of received audio.
@@ -39,3 +32,10 @@
 - [x] 3. [Backend] Create User Service: Implement user registration, login, JWT auth.
 - [x] [Test] Verify JWT end-to-end authentication and session creation flow via temporary HTTP endpoint.
 - [x] [Debug] Fixed 'ws' server 'connection' event not firing by changing base image to node:18-slim.
+- [x] **Phase 2: AI Integration & Core Logic**
+- [x] 6. [Backend] Create AI Service Layer (AI Engine): Abstract ASR/LLM/TTS interfaces.
+- [x] 7. [AI Engine] Design and implement a Prompt Management module to dynamically construct prompts using user profile, conversation history, and learning goals.
+- [x] 8.[Backend] Integrate a mocked or preliminary AI service for initial testing.
+- [x] 9.[Backend] Create Conversation Service: Manage conversation state and orchestrate calls between Comms Layer and AI Layer.
+- [x] 10.[API Gateway] Add routing for WebSocket connections and Conversation Service.
+- [x] 11. [Frontend] Scaffold React/Mobile client application.

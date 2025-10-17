@@ -104,3 +104,16 @@
     *   **Success & Verification**: The base image change immediately resolved the issue. The `connection` event now fires correctly for the main application.
 
 *   **Conclusion**: The project's primary technical blocker is resolved. The real-time communication layer is fully functional, and all temporary test code has been reverted.
+
+## 2025-10-17
+
+*   **Client-side Development Kick-off (Phase 3):**
+    *   Initiated the first task of the client-side development phase.
+*   **React Application Scaffolding:**
+    *   Successfully created the frontend application structure in the `client/` directory using `npx create-react-app`.
+    *   Updated the root `.gitignore` file to exclude the client's `node_modules` and `build` directories from version control.
+*   **Verification:**
+    *   Launched the development server and confirmed that the default React application runs correctly on `http://localhost:3003`.
+*   **Project Management:**
+    *   Marked task #11, "[Frontend] Scaffold React/Mobile client application," as complete in `docs/TODO.md`.
+
