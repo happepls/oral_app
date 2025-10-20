@@ -51,7 +51,7 @@
     *   Updated `docker-compose.yml` to include the new service and configured the API Gateway to correctly route `/ws/` traffic.
 *   **Intensive Network & Deployment Debugging:**
     *   Resolved a critical Docker build failure (`EAI_AGAIN`) caused by DNS resolution issues within the build environment. The problem was definitively solved by configuring a fixed DNS for the Docker daemon.
-    *   Conducted extensive end-to-end testing of the WebSocket connection, troubleshooting a series of errors including `404 Not Found`, `ETIMEDOUT`, and `Client network socket disconnected`.
+    *   Conducted extensive end-to-end testing of the WebSocket connection, troubleshooting a series of errors including `404 Not Found`, `ETIMOUT`, and `Client network socket disconnected`.
     *   Successfully identified the root causes, which involved correcting a `depends_on` startup dependency in `docker-compose.yml` and fixing a typo in the external port mapping (28843 vs. 28443).
 *   **Success & Verification:**
     *   Achieved a successful WebSocket connection from an external server to the `comms-service`, confirming the entire communication path (WSS -> Host Nginx -> API Gateway -> Comms Service) is fully functional.
@@ -117,3 +117,20 @@
 *   **Project Management:**
     *   Marked task #11, "[Frontend] Scaffold React/Mobile client application," as complete in `docs/TODO.md`.
 
+## 2025-10-20
+
+*   **End-to-End User Authentication & Architecture Hardening:**
+    *   **Unified Ingress Architecture**: Solidified a robust, single-entry-point architecture using a host-level Nginx for SSL termination, which proxies all traffic to a containerized `api-gateway`. This gateway intelligently routes requests to the appropriate backend microservices or the frontend React server, completely eliminating CORS issues.
+    *   **Google SSO Implementation**: Successfully implemented and debugged the entire Google Sign-In flow. The final blocker was a `ReferenceError: pool is not defined` in the database model, which was resolved by aligning the Google sign-in logic with the existing database connection pattern.
+    *   **Traditional Authentication**: Implemented the full backend and frontend logic for traditional email/password registration and login, including API endpoint creation, frontend form handling, state management, and redirection.
+    *   **Verification**: Confirmed via end-to-end testing and direct database queries that both Google and traditional user registration/login flows are fully functional and correctly persist user data.
+*   **HMR WebSocket Debugging & Resolution:**
+    *   **Problem**: Diagnosed a persistent WebSocket connection failure from the React development server's Hot Module Replacement (HMR) client when accessed through the Nginx reverse proxy. The client consistently tried to connect to the wrong port (`3000`) instead of the correct proxy port (e.g., `8443` or `28443`).
+    *   **Investigation & Failed Attempts**:
+        1.  Identified that Nginx's `sub_filter` was the correct tool but was not working.
+        2.  Hypothesized the `nginx:alpine` image was missing the necessary module. Created a `Dockerfile` to install `nginx-mod-http-subs-filter`, but the build failed as the package was not found in Alpine's repositories.
+        3.  Switched the base image to `nginx:1.25-perl`, which includes the module statically. This caused a new error because the configuration tried to `load_module` for a module that was already built-in.
+        4.  Removed the `load_module` directive, but the issue persisted. The `sub_filter` was still not rewriting the content.
+    *   **Root Cause & Solution**: Discovered that the `webpack-dev-server` was sending Gzip-compressed JavaScript files to the proxy. The `sub_filter` module cannot inspect or modify compressed content, so the rewrite rule was being silently ignored.
+    *   **Final Fix**: Added `proxy_set_header Accept-Encoding "";` to the Nginx configuration. This directive tells the upstream server (webpack) to send uncompressed content, allowing `sub_filter` to successfully find and replace the incorrect port number.
+    *   **Verification**: Confirmed that the WebSocket connection error is now fully resolved for both local (`localhost:8443`) and external (`ser74785.ddns.net:28443`) access.

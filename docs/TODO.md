@@ -3,13 +3,13 @@
 ## In Progress
 
 
+
 ## To Do
-- [ ] 12. [Frontend] Implement user authentication flow (login/register pages).
+
 
 ## Backlog
 
 - [ ] **Phase 3: Client-side Development**
-
 - [ ] 13. [Frontend] Implement real-time audio capture using AudioWorklet.
 - [ ] 14. [Frontend] Implement WebSocket connection to the backend.
 - [ ] 15. [Frontend] Implement audio streaming to the backend and playback of received audio.
@@ -39,3 +39,5 @@
 - [x] 9.[Backend] Create Conversation Service: Manage conversation state and orchestrate calls between Comms Layer and AI Layer.
 - [x] 10.[API Gateway] Add routing for WebSocket connections and Conversation Service.
 - [x] 11. [Frontend] Scaffold React/Mobile client application.
+- [x] 12. [Frontend] Implement user authentication flow (login/register pages).
+- [x] [Debug] Resolve persistent HMR WebSocket connection issue in proxy environment.

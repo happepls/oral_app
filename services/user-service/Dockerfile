@@ -1,5 +1,5 @@
 # Use an official Node.js runtime as a parent image
-FROM node:18-alpine
+FROM node:18-slim
 
 # Set the working directory in the container
 WORKDIR /usr/src/app
@@ -7,18 +7,11 @@ WORKDIR /usr/src/app
 # Copy package.json and package-lock.json to the working directory
 COPY package*.json ./
 
-RUN echo "--- Contents before npm install ---" && ls -la
+# Copy the rest of the application's source code from the host to the image's filesystem
+COPY . .
 
-# Install any needed packages with maximum verbosity
-RUN npm install --verbose
-
-RUN echo "--- Contents after npm install ---" && ls -la
-
-# Copy the application source code
-COPY src ./src
-
-# Make port 3000 available to the world outside this container
+# Your app binds to port 3000 so you'll use the EXPOSE instruction to have it mapped by the docker daemon
 EXPOSE 3000
 
 # Define the command to run your app
-CMD ["node", "src/index.js"]
+CMD [ "npm", "start" ]

@@ -141,16 +141,18 @@ Nginx 作为 API 网关，负责请求路由。
   - `/api/ai/`: 所有 AI 相关的 API 请求被代理到 `ai_service`。
   - `/ws/`: WebSocket 连接请求被特殊处理（通过 `Upgrade` 和 `Connection` 头）并代理到 `comms-service`。
 
-## 最新进展与当前状态 (2025-10-17)
-- **前端应用脚手架搭建**:
-    - **任务**: 完成了 Phase 3 的首个任务，使用 `create-react-app` 成功创建了名为 `client` 的前端 React 应用。
-    - **验证**: 通过启动开发服务器并在浏览器中成功访问 `http://localhost:3003`，验证了前端脚手架的完整性和可运行性。
-    - **配置**: 更新了根目录的 `.gitignore` 文件，以确保客户端的依赖和构建产物不会被纳入版本控制。
-    - **项目管理**: 在 `docs/TODO.md` 中将该任务标记为已完成，为下一步的界面功能开发铺平了道路。
+## 最新进展与当前状态 (2025-10-20)
+- **统一入口架构与用户认证**:
+    - **架构**: 成功实施并稳定了基于Nginx的“统一入口”反向代理架构。所有外部流量（HTTPS, WSS）均通过宿主机的Nginx（`ser74785.ddns.net:28443`）进入，再由`api-gateway`容器路由到相应的后端服务或前端开发服务器。此架构彻底解决了所有CORS问题。
+    - **Google SSO**: 实现了完整的前后端Google联合登录功能。通过修复后端数据库模型中的`ReferenceError`，成功打通了从前端弹窗到后端用户创建/验证，再到JWT返回的完整流程。
+    - **传统认证**: 实现了完整的传统邮箱/密码注册和登录功能。通过补全`userController`中缺失的`register`和`login`函数逻辑，并完善前端组件的API调用，确保了端到端流程的正确性。
+    - **HMR WebSocket 调试**: 深入诊断并最终解决了React开发服务器在复杂代理环境下顽固的“Mixed Content”和端口错误问题。最终方案是通过在`api-gateway`层面使用`sub_filter`指令，动态修正由`webpack-dev-server`客户端脚本生成的错误WebSocket连接URL，并通过禁用上游压缩（`proxy_set_header Accept-Encoding ""`)确保了`sub_filter`的有效性，彻底解决了HMR的连接问题。
+    - **项目管理**: 在`docs/TODO.md`中将用户认证和HMR调试相关任务标记为完成。
 
 ## Gemini Added Memories
 - 项目已配置专属的今日开发工作收尾命令 `finish_today`，其具体操作如下: "作为AI助手，我的目标是完成今日的收尾工作。我将执行以下4项操作：
-\n1. Update the development plan in @docs/TODO.md using the 'mcp-tasks' tool,只修改相关的任务项，不会影响文件中的其他内容.
+\n1. Update the development plan in @docs/TODO.md using the 'mcp-tasks' tool,只修改相关的任务项，不会影响文件中的其他内容. 
 \n2. Update the GEMINI.md project memory file to reflect the current project state, 注意**不能改变Gemini Added Memories的内容及格式. 
 \n3. Append a summary of the day's work to the development log at @docs/development_log.md if exists.
 \n4. Commit and push all changes to the origin/master branch of the remote repository using the commit message ser {{今日日期}}."
+  **注意不要使用 write_file 覆盖整个文件，而应追加或更新已有的内容。**
