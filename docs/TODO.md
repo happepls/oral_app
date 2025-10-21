@@ -9,9 +9,9 @@
 
 ## Backlog
 
-- [ ] **Phase 3: Client-side Development**
-- [ ] 13. [Frontend] Implement real-time audio capture using AudioWorklet.
-- [ ] 14. [Frontend] Implement WebSocket connection to the backend.
+- [x] **Phase 3: Client-side Development**
+- [x] 13. [Frontend] Implement real-time audio capture using AudioWorklet.
+- [x] 14. [Frontend] Implement WebSocket connection to the backend.
 - [ ] 15. [Frontend] Implement audio streaming to the backend and playback of received audio.
 - [ ] **Phase 4: Advanced Features & Optimization**
 - [ ] 16. [Backend] Create History & Analytics Service: Implement asynchronous storage of conversations.

@@ -1,74 +1,60 @@
+require('dotenv').config();
 const { WebSocketServer } = require('ws');
-const axios = require('axios');
-
-// Service URLs available through the Docker network
-const USER_SERVICE_URL = 'http://user-service:3000/api/users/verify';
-const CONVERSATION_SERVICE_URL = 'http://conversation-service:8083/start';
+const jwt = require('jsonwebtoken');
+const url = require('url');
 
 const wss = new WebSocketServer({ port: 8080 });
 
-
+const JWT_SECRET = process.env.JWT_SECRET;
+if (!JWT_SECRET) {
+  console.error("FATAL ERROR: JWT_SECRET is not defined in the environment variables.");
+  process.exit(1);
+}
 
 console.log('WebSocket server is running on port 8080');
 
-
-
 wss.on('connection', async function connection(ws, req) {
-
   console.log('A new client is attempting to connect...');
 
-  console.log('Incoming headers:', req.headers);
-
-
-
-  // 1. Extract JWT from the Authorization header
-
-  const authHeader = req.headers.authorization;
-  if (!authHeader || !authHeader.startsWith('Bearer ')) {
-    console.log('Connection rejected: No Bearer token provided.');
-    ws.send('Error: Authorization token is required.');
-    ws.close();
-    return;
-  }
-  const token = authHeader; // Send the full "Bearer <token>" string
-
-  let userId;
-
-  // 2. Verify the token with the User Service
   try {
-    const response = await axios.post(USER_SERVICE_URL, {}, {
-      headers: { 'Authorization': token }
-    });
-    userId = response.data.user.id;
+    // 1. Extract JWT from the query parameter
+    const queryObject = url.parse(req.url, true).query;
+    const token = queryObject.token;
+
+    if (!token) {
+      console.log('Connection rejected: No token provided in query string.');
+      ws.close(1008, 'Authorization token is required.');
+      return;
+    }
+
+    // 2. Verify the token internally
+    let decoded;
+    try {
+      decoded = jwt.verify(token, JWT_SECRET);
+    } catch (err) {
+      console.log(`Connection rejected: Invalid token. ${err.message}`);
+      ws.close(1008, 'Invalid or expired authorization token.');
+      return;
+    }
+
+    const userId = decoded.id; // Assuming the token payload has an 'id' field
     console.log(`Token verified successfully for user ID: ${userId}`);
+    
+    ws.userId = userId; // Attach userId to the ws connection object for later use
+
+    ws.on('error', console.error);
+
+    ws.on('message', function message(data) {
+      console.log(`received from ${this.userId}: %s`, data);
+      // Echo the message back to the client
+      ws.send(`Echo from ${this.userId}: ${data}`);
+    });
+
+    ws.send('Welcome! Your connection is authenticated.');
+    console.log(`Client connected and authenticated with user ID: ${ws.userId}`);
+
   } catch (error) {
-    console.error('Connection rejected: Token verification failed.', error.response ? error.response.data : error.message);
-    ws.send('Error: Invalid or expired authorization token.');
-    ws.close();
-    return;
+    console.error('An unexpected error occurred during connection setup:', error);
+    ws.close(1011, 'Internal server error');
   }
-
-  console.log(`Client connected with user ID: ${userId}`);
-
-  // 3. Notify the Conversation Service to start a new session with the authenticated user ID
-  try {
-    const response = await axios.post(CONVERSATION_SERVICE_URL, { userId });
-    console.log('Successfully started a new conversation session:', response.data);
-    ws.send(`Session started: ${response.data.sessionId}`);
-  } catch (error) {
-    console.error('Failed to start conversation session:', error.message);
-    ws.send('Error: Could not start a new session.');
-    ws.close();
-    return;
-  }
-
-  ws.on('error', console.error);
-
-  ws.on('message', function message(data) {
-    console.log(`received from ${userId}: %s`, data);
-    // Echo the message back to the client
-    ws.send(`Echo from ${userId}: ${data}`);
-  });
-
-  ws.send('Welcome to the WebSocket server!');
 });

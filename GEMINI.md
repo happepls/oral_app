@@ -107,9 +107,11 @@ oral_app/
 ## 开发与运行
 - **本地环境启动**:
   - 运行 `docker-compose up -d` 来启动项目所需的 PostgreSQL, MongoDB, Redis和 user-service 服务。
+- **本地环境Docker构建**:
+    - 由于Docker网络环境不稳定，需移除Dockerfile中的RUN npm install步骤，通过宿主机来安装 node_modules。 
+    - 确保在对应容器的根目录（如 `services/user-service`）下运行 `npm install` 来安装所有依赖项。
+## 关键环境变量与配置
 
-## 关键环境变量与配置
-## 关键环境变量与配置
 
 ### 1. `docker-compose.yml`
 这是本地开发环境的核心编排文件，定义了所有服务及其依赖关系。
@@ -139,7 +141,7 @@ Nginx 作为 API 网关，负责请求路由。
 - **`location`**:
   - `/api/users/`: 所有用户相关的 API 请求被代理到 `user_service`。
   - `/api/ai/`: 所有 AI 相关的 API 请求被代理到 `ai_service`。
-  - `/ws/`: WebSocket 连接请求被特殊处理（通过 `Upgrade` 和 `Connection` 头）并代理到 `comms-service`。
+  - `/api/ws/`: WebSocket 连接请求被特殊处理（通过 `Upgrade` 和 `Connection` 头）并代理到 `comms-service`。
 
 ## 最新进展与当前状态 (2025-10-20)
 - **统一入口架构与用户认证**:
@@ -156,3 +158,5 @@ Nginx 作为 API 网关，负责请求路由。
 \n3. Append a summary of the day's work to the development log at @docs/development_log.md if exists.
 \n4. Commit and push all changes to the origin/master branch of the remote repository using the commit message ser {{今日日期}}."
   **注意不要使用 write_file 覆盖整个文件，而应追加或更新已有的内容。**
+
+cc
