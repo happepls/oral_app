@@ -7,5 +7,8 @@
     "globals": "^16.4.0",
     "prettier": "^3.6.2",
     "typescript-eslint": "^8.46.0"
+  },
+  "dependencies": {
+    "ws": "^8.18.3"
   }
 }

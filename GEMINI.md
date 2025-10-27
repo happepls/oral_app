@@ -108,7 +108,7 @@ oral_app/
 - **本地环境启动**:
   - 运行 `docker-compose up -d` 来启动项目所需的 PostgreSQL, MongoDB, Redis和 user-service 服务。
 - **本地环境Docker构建**:
-    - 由于Docker网络环境不稳定，需移除Dockerfile中的RUN npm install步骤，通过宿主机来安装 node_modules。 
+    - 由于Docker网络环境不稳定，需移除Dockerfile中的RUN npm install步骤，通过宿主机来安装 node_modules 依赖。 
     - 确保在对应容器的根目录（如 `services/user-service`）下运行 `npm install` 来安装所有依赖项。
 ## 关键环境变量与配置
 
@@ -143,13 +143,15 @@ Nginx 作为 API 网关，负责请求路由。
   - `/api/ai/`: 所有 AI 相关的 API 请求被代理到 `ai_service`。
   - `/api/ws/`: WebSocket 连接请求被特殊处理（通过 `Upgrade` 和 `Connection` 头）并代理到 `comms-service`。
 
-## 最新进展与当前状态 (2025-10-20)
-- **统一入口架构与用户认证**:
-    - **架构**: 成功实施并稳定了基于Nginx的“统一入口”反向代理架构。所有外部流量（HTTPS, WSS）均通过宿主机的Nginx（`ser74785.ddns.net:28443`）进入，再由`api-gateway`容器路由到相应的后端服务或前端开发服务器。此架构彻底解决了所有CORS问题。
-    - **Google SSO**: 实现了完整的前后端Google联合登录功能。通过修复后端数据库模型中的`ReferenceError`，成功打通了从前端弹窗到后端用户创建/验证，再到JWT返回的完整流程。
-    - **传统认证**: 实现了完整的传统邮箱/密码注册和登录功能。通过补全`userController`中缺失的`register`和`login`函数逻辑，并完善前端组件的API调用，确保了端到端流程的正确性。
-    - **HMR WebSocket 调试**: 深入诊断并最终解决了React开发服务器在复杂代理环境下顽固的“Mixed Content”和端口错误问题。最终方案是通过在`api-gateway`层面使用`sub_filter`指令，动态修正由`webpack-dev-server`客户端脚本生成的错误WebSocket连接URL，并通过禁用上游压缩（`proxy_set_header Accept-Encoding ""`)确保了`sub_filter`的有效性，彻底解决了HMR的连接问题。
-    - **项目管理**: 在`docs/TODO.md`中将用户认证和HMR调试相关任务标记为完成。
+## 最新进展与当前状态 (2025-10-27)
+- **核心音频管道贯通 (端到端)**:
+    - **目标**: 成功完成并验证了从客户端到AI服务再返回客户端的完整实时音频流管道，这是项目最核心的技术里程碑。
+    - **实现**:
+        1.  **客户端**: 使用 `AudioWorklet` 实现了稳定的实时麦克风音频流采集。
+        2.  **代理与认证**: 调试并固化了 `comms-service` 的功能，使其能够稳定地代理带有JWT认证的WebSocket连接到后端的 `ai-service`。
+        3.  **数据流**: 解决了客户端音频数据未能正确通过WebSocket发送的Bug，并修复了 `comms-service` 中的一个关键竞态条件，确保了消息的可靠转发。
+        4.  **回声测试**: 通过一个临时的 `ai-service` 回声服务器，成功验证了音频数据（Blob格式）可以完成 `浏览器 -> 网关 -> 通信服务 -> AI服务 -> 通信服务 -> 浏览器` 的完整往返。
+    - **状态**: Phase 3 的核心任务已全部完成。项目现在拥有一个经过验证的、可工作的实时音频通信骨架，为下一阶段集成真实的ASR/LLM/TTS服务奠定了坚实的基础。
 
 ## Gemini Added Memories
 - 项目已配置专属的今日开发工作收尾命令 `finish_today`，其具体操作如下: "作为AI助手，我的目标是完成今日的收尾工作。我将执行以下4项操作：

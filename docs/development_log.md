@@ -149,3 +149,16 @@
     *   **Frontend Stability**: Resolved a `Can't close an AudioContext twice` race condition by refactoring the `stopRecording` function to be idempotent, preventing application crashes during rapid start/stop operations.
 *   **Success & Verification:**
     *   Successfully verified that the client can establish a stable, authenticated WebSocket connection to the backend. The primary goals of tasks #13 and #14 are now complete. The project is fully prepared for implementing audio stream transmission.
+
+## 2025-10-27
+
+*   **End-to-End Audio Pipeline Verification (The "Echo Test"):**
+    *   **Goal**: Achieve and verify a complete, round-trip audio data flow from the client's microphone, through the entire backend infrastructure, and back to the client.
+    *   **Implementation & Debugging**:
+        *   **Client-side Playback**: Implemented the `ws.onmessage` handler in the React client to receive binary audio data (`Blob`) from the server.
+        *   **Local Loopback Disabled**: Removed the direct connection from the `AudioWorklet` to the local speakers (`audioContext.destination`) to ensure that any audible sound is a true echo from the server, not a local feedback loop.
+        *   **Final Test**: Conducted a live test where spoken audio was captured, sent to the `ai-service` (acting as an echo server), and the same audio data was successfully received back in the client, confirmed by a `Blob` object appearing in the console logs.
+    *   **Success & Milestone**: This successful test confirms that the core real-time audio streaming pipeline is fully functional. This is a major project milestone and completes the final task of Phase 3. The project is now technically ready for the integration of actual ASR, LLM, and TTS services in the `ai-service`.
+*   **Project Management**:
+    *   Marked the final client-side development task (#15) as complete in `docs/TODO.md`.
+    *   Replaced the generic AI integration task (#18) with a more detailed set of specific sub-tasks for integrating ASR, LLM, and TTS services, providing a clear roadmap for the next development phase.

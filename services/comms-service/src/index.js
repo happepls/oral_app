@@ -1,5 +1,5 @@
 require('dotenv').config();
-const { WebSocketServer } = require('ws');
+const { WebSocketServer, WebSocket } = require('ws');
 const jwt = require('jsonwebtoken');
 const url = require('url');
 
@@ -11,50 +11,86 @@ if (!JWT_SECRET) {
   process.exit(1);
 }
 
+const AI_SERVICE_URL = 'ws://ai-service:8082/stream';
+
 console.log('WebSocket server is running on port 8080');
 
-wss.on('connection', async function connection(ws, req) {
+wss.on('connection', async function connection(clientWs, req) {
   console.log('A new client is attempting to connect...');
 
   try {
-    // 1. Extract JWT from the query parameter
     const queryObject = url.parse(req.url, true).query;
     const token = queryObject.token;
 
     if (!token) {
-      console.log('Connection rejected: No token provided in query string.');
-      ws.close(1008, 'Authorization token is required.');
+      console.log('Connection rejected: No token provided.');
+      clientWs.close(1008, 'Authorization token is required.');
       return;
     }
 
-    // 2. Verify the token internally
     let decoded;
     try {
       decoded = jwt.verify(token, JWT_SECRET);
     } catch (err) {
       console.log(`Connection rejected: Invalid token. ${err.message}`);
-      ws.close(1008, 'Invalid or expired authorization token.');
+      clientWs.close(1008, 'Invalid or expired authorization token.');
       return;
     }
 
-    const userId = decoded.id; // Assuming the token payload has an 'id' field
-    console.log(`Token verified successfully for user ID: ${userId}`);
-    
-    ws.userId = userId; // Attach userId to the ws connection object for later use
+    const userId = decoded.id;
+    console.log(`Token verified for user ID: ${userId}`);
+    clientWs.userId = userId;
 
-    ws.on('error', console.error);
+    const aiServiceWs = new WebSocket(AI_SERVICE_URL);
 
-    ws.on('message', function message(data) {
-      console.log(`received from ${this.userId}: %s`, data);
-      // Echo the message back to the client
-      ws.send(`Echo from ${this.userId}: ${data}`);
+    aiServiceWs.on('open', () => {
+      console.log(`Successfully connected to AI Service for user ${userId}`);
+      clientWs.send('Welcome! Your connection is authenticated and bridged to the AI service.');
+
+      // NOW that the AI service connection is open, start forwarding messages.
+      clientWs.on('message', (message) => {
+        console.log(`Forwarding message from user ${userId} to AI service.`);
+        // No need to check readyState here, as we are in the 'open' handler.
+        aiServiceWs.send(message);
+      });
+
+      // Also, set up the return path.
+      aiServiceWs.on('message', (message) => {
+        console.log(`Forwarding message from AI service to user ${userId}`);
+        if (clientWs.readyState === WebSocket.OPEN) {
+          clientWs.send(message);
+        }
+      });
     });
 
-    ws.send('Welcome! Your connection is authenticated.');
-    console.log(`Client connected and authenticated with user ID: ${ws.userId}`);
+    // --- Keep the lifecycle event handlers outside ---
+
+    clientWs.on('close', () => {
+      console.log(`Client connection closed for user ${userId}. Closing connection to AI service.`);
+      if (aiServiceWs.readyState === WebSocket.OPEN || aiServiceWs.readyState === WebSocket.CONNECTING) {
+        aiServiceWs.close();
+      }
+    });
+
+    aiServiceWs.on('close', () => {
+      console.log(`Connection to AI service closed for user ${userId}.`);
+      if (clientWs.readyState === WebSocket.OPEN || clientWs.readyState === WebSocket.CONNECTING) {
+        clientWs.close(1011, 'AI service connection lost.');
+      }
+    });
+
+    clientWs.on('error', (error) => {
+      console.error(`Error on client connection for user ${userId}:`, error);
+      aiServiceWs.close();
+    });
+
+    aiServiceWs.on('error', (error) => {
+      console.error(`Error on AI service connection for user ${userId}:`, error);
+      clientWs.close(1011, 'Internal AI service connection error.');
+    });
 
   } catch (error) {
     console.error('An unexpected error occurred during connection setup:', error);
-    ws.close(1011, 'Internal server error');
+    clientWs.close(1011, 'Internal server error');
   }
 });

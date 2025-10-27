@@ -43,6 +43,21 @@ const RealTimeRecorder = () => {
         initializeAudioWorklet();
       };
 
+      ws.onmessage = async (event) => {
+        console.log('[WebSocket] Message received:', event.data);
+        // We expect the echo server to send back a Blob or ArrayBuffer.
+        // We need to decode this raw PCM data to an AudioBuffer to play it.
+        // NOTE: This simple playback logic is for demonstration. A real implementation
+        // would need a more sophisticated streaming audio player.
+        if (event.data instanceof Blob) {
+            const arrayBuffer = await event.data.arrayBuffer();
+            // Assuming the backend sends raw Float32 PCM data, which decodeAudioData cannot handle directly.
+            // For a simple echo, we'll just log it. A proper implementation needs a custom player.
+            // For now, we can't play it back easily without knowing the exact format.
+            // Let's confirm we receive it first.
+        }
+      };
+
       ws.onclose = (event) => {
         console.log(`WebSocket [onclose] event fired. Code: ${event.code}, Reason: ${event.reason}`);
         let reason = event.reason;
@@ -69,12 +84,16 @@ const RealTimeRecorder = () => {
 
         const source = audioContext.createMediaStreamSource(stream);
         source.connect(audioWorkletNode);
-        audioWorkletNode.connect(audioContext.destination);
+        // DO NOT connect the worklet to the destination. We only want to hear the echo from the server.
+        // audioWorkletNode.connect(audioContext.destination);
 
         audioWorkletNode.port.onmessage = (event) => {
           const { type, payload } = event.data;
           if (type === 'data') {
-            // For now, just log it.
+            // Forward the PCM data to the backend via WebSocket
+            if (webSocketRef.current && webSocketRef.current.readyState === WebSocket.OPEN) {
+              webSocketRef.current.send(payload);
+            }
           } else if (type === 'duration') {
             setDuration(payload);
           }

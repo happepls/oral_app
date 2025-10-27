@@ -3,20 +3,19 @@
 ## In Progress
 
 
-
 ## To Do
 
+- [ ] [AI Engine] Integrate a streaming ASR service (e.g., Deepgram) into ai-service.
+- [ ] [AI Engine] Integrate a core LLM service (e.g., OpenAI, Claude) into ai-service.
+- [ ] [AI Engine] Integrate a streaming TTS service (e.g., ElevenLabs) into ai-service.
+- [ ] [AI Engine] Orchestrate the ASR->LLM->TTS pipeline within ai-service.
 
 ## Backlog
 
-- [x] **Phase 3: Client-side Development**
-- [x] 13. [Frontend] Implement real-time audio capture using AudioWorklet.
-- [x] 14. [Frontend] Implement WebSocket connection to the backend.
-- [ ] 15. [Frontend] Implement audio streaming to the backend and playback of received audio.
+
 - [ ] **Phase 4: Advanced Features & Optimization**
 - [ ] 16. [Backend] Create History & Analytics Service: Implement asynchronous storage of conversations.
 - [ ] 17. [Backend] Create Media Processing Service: Implement audio stream transcoding and storage to S3/OSS.
-- [ ] 18. [AI Engine] Research and integrate production-ready streaming ASR/LLM/TTS services.
 - [ ] 19. [Optimization] Performance testing and refinement of the end-to-end audio stream latency.
 - [ ] [Backend] Complete API Endpoint Testing for User Service (Login, Update, etc.)
 - [ ] [Docs] Update user_service/docs/schema.md documentation to align with the database table structure.
@@ -41,3 +40,11 @@
 - [x] 11. [Frontend] Scaffold React/Mobile client application.
 - [x] 12. [Frontend] Implement user authentication flow (login/register pages).
 - [x] [Debug] Resolve persistent HMR WebSocket connection issue in proxy environment.
+- [x] **Phase 3: Client-side Development**
+- [x] 13. [Frontend] Implement real-time audio capture using AudioWorklet.
+- [x] 14. [Frontend] Implement WebSocket connection to the backend.
+- [x] 15. [Frontend] Implement audio streaming to the backend and playback of received audio.
+
+## Deleted
+
+- [ ] 18. [AI Engine] Research and integrate production-ready streaming ASR/LLM/TTS services.
