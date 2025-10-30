@@ -1,32 +1,56 @@
+require('dotenv').config();
 const express = require('express');
 const http = require('http');
 const { WebSocketServer } = require('ws');
+const AzureAiService = require('./azure/azureAiService');
 
 const app = express();
 const server = http.createServer(app);
 const wss = new WebSocketServer({ noServer: true });
 
-const PORT = 8082;
+const PORT = process.env.PORT || 8082;
 
 // WebSocket Server Logic
 wss.on('connection', (ws) => {
   console.log('AI-Service: Connection established from comms-service.');
 
+  const azureAiService = new AzureAiService(ws);
+  try {
+    azureAiService.initialize();
+    azureAiService.start();
+  } catch (error) {
+    console.error('Failed to initialize or start Azure AI Service:', error);
+    ws.close(1011, 'Failed to initialize AI service.');
+    return;
+  }
+
+  // Handle incoming audio from the client WebSocket
   ws.on('message', (message) => {
-    // For now, just log the received message.
-    // This is where the ASR -> LLM -> TTS pipeline will be triggered.
-    console.log(`AI-Service: Message received. Type: ${typeof message}`);
-    console.log('AI-Service: Received audio chunk from comms-service:', message.toString());
-    // Echo back for testing
-    ws.send('AI-Service Echo: message received.');
+    // The Azure SDK's PushAudioInputStream expects an ArrayBuffer.
+    // Node.js's WebSocket library provides a Buffer. We need to convert it.
+    if (Buffer.isBuffer(message)) {
+      // Create an ArrayBuffer with the same byte length as the Buffer
+      const arrayBuffer = new ArrayBuffer(message.length);
+      // Create a view of the ArrayBuffer
+      const view = new Uint8Array(arrayBuffer);
+      // Copy the contents of the Buffer into the Uint8Array view
+      for (let i = 0; i < message.length; ++i) {
+        view[i] = message[i];
+      }
+      azureAiService.handleAudio(arrayBuffer);
+    } else {
+      console.log('Received non-buffer message:', message);
+    }
   });
 
   ws.on('close', () => {
-    console.log('AI-Service: Connection from comms-service closed.');
+    console.log('AI-Service: Connection from comms-service closed. Stopping recognition.');
+    azureAiService.stop();
   });
 
   ws.on('error', (error) => {
     console.error('AI-Service: WebSocket error:', error);
+    azureAiService.stop();
   });
 });
 

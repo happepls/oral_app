@@ -21,9 +21,7 @@
     - **API 网关**: Nginx / Kong (作为所有请求的统一入口，负责路由、认证、限流)
     - **对象存储**: AWS S3 / Aliyun OSS (存储录制的音频文件)
 - **第三方服务 (AI引擎)**:
-    - **流式ASR**: Google Speech-to-Text, AWS Transcribe Streaming, Deepgram
-    - **核心LLM**: Coze, OpenAI, Anthropic Claude, Google Gemini
-    - **流式TTS**: ElevenLabs, PlayHT, AWS Polly, Google Text-to-Speech
+    - **核心引擎**: Azure AI Voice Services (提供集成的实时ASR, LLM, TTS服务)
 
 ## 关键文件与目录结构
 ```
@@ -108,8 +106,8 @@ oral_app/
 - **本地环境启动**:
   - 运行 `docker-compose up -d` 来启动项目所需的 PostgreSQL, MongoDB, Redis和 user-service 服务。
 - **本地环境Docker构建**:
-    - 由于Docker网络环境不稳定，需移除Dockerfile中的RUN npm install步骤，通过宿主机来安装 node_modules 依赖。 
-    - 确保在对应容器的根目录（如 `services/user-service`）下运行 `npm install` 来安装所有依赖项。
+    - 由于Docker网络环境不稳定，需移除Dockerfile中的RUN npm install步骤，改为从宿主机复制node_modules。 
+    - 确保在对应业务的根目录（如 `services/ai-service`）下执行npm install。
 ## 关键环境变量与配置
 
 
@@ -143,15 +141,15 @@ Nginx 作为 API 网关，负责请求路由。
   - `/api/ai/`: 所有 AI 相关的 API 请求被代理到 `ai_service`。
   - `/api/ws/`: WebSocket 连接请求被特殊处理（通过 `Upgrade` 和 `Connection` 头）并代理到 `comms-service`。
 
-## 最新进展与当前状态 (2025-10-27)
-- **核心音频管道贯通 (端到端)**:
-    - **目标**: 成功完成并验证了从客户端到AI服务再返回客户端的完整实时音频流管道，这是项目最核心的技术里程碑。
-    - **实现**:
-        1.  **客户端**: 使用 `AudioWorklet` 实现了稳定的实时麦克风音频流采集。
-        2.  **代理与认证**: 调试并固化了 `comms-service` 的功能，使其能够稳定地代理带有JWT认证的WebSocket连接到后端的 `ai-service`。
-        3.  **数据流**: 解决了客户端音频数据未能正确通过WebSocket发送的Bug，并修复了 `comms-service` 中的一个关键竞态条件，确保了消息的可靠转发。
-        4.  **回声测试**: 通过一个临时的 `ai-service` 回声服务器，成功验证了音频数据（Blob格式）可以完成 `浏览器 -> 网关 -> 通信服务 -> AI服务 -> 通信服务 -> 浏览器` 的完整往返。
-    - **状态**: Phase 3 的核心任务已全部完成。项目现在拥有一个经过验证的、可工作的实时音频通信骨架，为下一阶段集成真实的ASR/LLM/TTS服务奠定了坚实的基础。
+## 最新进展与当前状态 (2025-10-30)
+- **架构重大转向：集成 Azure AI 实时语音服务**:
+    - **决策**: 为了简化架构并利用更先进的端到端解决方案，项目决定放弃原有的“三阶段管线式引擎”（独立ASR+LLM+TTS服务），全面转向采用微软 Azure AI 提供的实时语音 API (`Voice Live API`)。
+    - **优势**:
+        1.  **低延迟**: Azure 的 API 设计为实时对话场景优化，能提供更低的端到端延迟。
+        2.  **单一入口**: 只需维护一个到 Azure 的 WebSocket 连接，即可处理 ASR、LLM 和 TTS 的所有流程，极大简化了 `ai-service` 的内部逻辑和网络复杂性。
+        3.  **高级功能**: 可直接利用 Azure 平台提供的噪音抑制、回声消除和高级轮次检测等功能。
+        4.  **统一管理**: 未来的模型调优和 Prompt 管理将统一在 Azure AI Foundry 平台上进行。
+    - **状态**: 项目开发计划 (`docs/TODO.md`) 已根据此新方向进行了全面更新。目前，`ai-service` 已成功与 Azure AI Speech SDK 对接，实现了实时的 ASR 文本识别，并将识别到的文本作为临时“回声”TTS 响应发送回客户端，前端已能正确显示用户语音的实时转录和 AI 的文本回复。下一个开发阶段将专注于实现完整的实时 TTS 音频流传输和会话管理。
 
 ## Gemini Added Memories
 - 项目已配置专属的今日开发工作收尾命令 `finish_today`，其具体操作如下: "作为AI助手，我的目标是完成今日的收尾工作。我将执行以下4项操作：
@@ -161,4 +159,3 @@ Nginx 作为 API 网关，负责请求路由。
 \n4. Commit and push all changes to the origin/master branch of the remote repository using the commit message ser {{今日日期}}."
   **注意不要使用 write_file 覆盖整个文件，而应追加或更新已有的内容。**
 
-cc

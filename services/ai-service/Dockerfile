@@ -8,8 +8,9 @@ WORKDIR /usr/src/app
 COPY package*.json ./
 
 # Install any needed packages
-RUN npm config set registry https://registry.npmmirror.com
-RUN npm install
+# RUN npm config set registry https://registry.npmmirror.com
+# RUN npm install
+COPY node_modules ./
 
 # Copy the rest of the application's source code from the host to the image's filesystem
 COPY . .

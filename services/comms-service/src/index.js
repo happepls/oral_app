@@ -45,20 +45,26 @@ wss.on('connection', async function connection(clientWs, req) {
 
     aiServiceWs.on('open', () => {
       console.log(`Successfully connected to AI Service for user ${userId}`);
-      clientWs.send('Welcome! Your connection is authenticated and bridged to the AI service.');
+      clientWs.send(JSON.stringify({ type: 'info', message: 'Welcome! Your connection is authenticated and bridged to the AI service.' }));
 
       // NOW that the AI service connection is open, start forwarding messages.
       clientWs.on('message', (message) => {
-        console.log(`Forwarding message from user ${userId} to AI service.`);
-        // No need to check readyState here, as we are in the 'open' handler.
-        aiServiceWs.send(message);
+        // The 'ws' library receives binary data from the browser as a Buffer.
+        // We must explicitly tell the 'send' method to forward it as binary.
+        if (aiServiceWs.readyState === WebSocket.OPEN) {
+          console.log(`Forwarding binary message of size ${message.length} from user ${userId} to AI service.`);
+          aiServiceWs.send(message, { binary: true });
+        }
       });
 
       // Also, set up the return path.
       aiServiceWs.on('message', (message) => {
-        console.log(`Forwarding message from AI service to user ${userId}`);
+        // In Node.js 'ws', incoming messages can be Buffers, even if they contain text.
+        // We need to convert it to a string before sending it to the browser client.
+        const messageString = message.toString('utf8');
+        console.log(`Forwarding message from AI service to user ${userId}: ${messageString}`);
         if (clientWs.readyState === WebSocket.OPEN) {
-          clientWs.send(message);
+          clientWs.send(messageString);
         }
       });
     });

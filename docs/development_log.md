@@ -1,3 +1,4 @@
+
 # Development Log
 
 ## 2025-09-22
@@ -162,3 +163,28 @@
 *   **Project Management**:
     *   Marked the final client-side development task (#15) as complete in `docs/TODO.md`.
     *   Replaced the generic AI integration task (#18) with a more detailed set of specific sub-tasks for integrating ASR, LLM, and TTS services, providing a clear roadmap for the next development phase.
+
+## 2025-10-30
+
+*   **Azure AI Voice Live API Integration (Phase 4 Kick-off):**
+    *   **Architectural Pivot**: Initiated a major architectural shift to integrate Microsoft Azure AI's real-time Voice Live API, replacing the previous plan for separate ASR, LLM, and TTS services. This aims for a more streamlined, low-latency, and integrated voice agent solution.
+    *   **Documentation Updates**:
+        *   Updated `docs/TODO.md` to reflect the new Azure integration tasks, outlining the steps for creating a dedicated Azure AI service, managing WebSocket connections, handling data streams, and orchestrating the overall process.
+        *   Updated `GEMINI.md` to document the architectural pivot, highlighting the benefits of the Azure Voice Live API and the new project status.
+    *   **`ai-service` Refactoring**:
+        *   Modified `services/ai-service/package.json` to replace `assemblyai` with `microsoft-cognitiveservices-speech-sdk`.
+        *   Created `services/ai-service/src/azure/azureAiService.js` to encapsulate the Azure AI Voice Live API logic.
+        *   Refactored `services/ai-service/src/index.js` to integrate `AzureAiService`, replacing the mock ASR service and adapting to the asynchronous initialization and start/stop methods.
+        *   Updated `azureAiService.js` to use `ConversationTranslator` for integrated ASR/LLM/TTS, handling `transcribed` and `synthesizing` events to send data back to the client via WebSocket.
+    *   **Environment Configuration**:
+        *   Created `services/ai-service/.env.example` and `services/ai-service/.env` to manage Azure Speech API key and region.
+    *   **Cleanup**: Removed the obsolete `services/ai-service/src/asr` directory.
+    *   **Verification**: Confirmed `ai-service` is running via `docker ps` and logs, awaiting client connection for full Azure AI interaction verification.
+*   **Real-time ASR & Frontend Display Achievement:**
+    *   **Problem Identification**: Diagnosed and resolved a critical `InvalidOperation: Payload must be ArrayBuffer` error in `ai-service` by implementing a `Buffer` to `ArrayBuffer` conversion for incoming audio data, ensuring Azure SDK compatibility.
+    *   **Communication Protocol Refinement**: Fixed `SyntaxError: Unexpected token 'W'` by standardizing `comms-service` welcome messages to JSON format and configuring `RealTimeRecorder.js` to handle `info` type messages gracefully.
+    *   **Robust Frontend Messaging**: Enhanced `RealTimeRecorder.js` to correctly distinguish and parse `Blob` (binary) messages from JSON messages, ensuring stable operation when both types of data are received.
+    *   **Successful ASR Integration & Echo TTS**: Achieved a major milestone: ASR recognition is fully functional, with real-time transcription displayed on the frontend. A temporary "echo" TTS mechanism is in place, where the AI service sends the recognized text back to the client as an AI response, providing immediate conversational feedback.
+    *   **End-to-End Flow Verified**: The complete real-time audio and text message flow from client microphone -> `ai-service` (ASR) -> `comms-service` -> `RealTimeRecorder.js` (display) has been successfully established and verified.
+
+*   **Next Steps Identified:** The current focus will shift to implementing full real-time TTS audio streaming and developing a robust session management system.
