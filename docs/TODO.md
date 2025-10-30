@@ -6,6 +6,7 @@
 
 ## To Do
 
+- [ ] [AI Engine] Integrate and refine the detailed 'Ava' persona and instructional strategies into the LLM prompt via `prompt/manager.js`.
 
 ## Backlog
 
@@ -40,7 +41,6 @@
 - [x] 13. [Frontend] Implement real-time audio capture using AudioWorklet.
 - [x] 14. [Frontend] Implement WebSocket connection to the backend.
 - [x] 15. [Frontend] Implement audio streaming to the backend and playback of received audio.
-
 - [x] [AI Engine] Create a new `azureAiService.js` in `ai-service` to manage the Azure AI Voice Live API connection.
 - [x] [AI Engine] Implement WebSocket connection logic to the Azure AI endpoint within `azureAiService.js`.
 - [x] [AI Engine] Handle the real-time audio stream from `comms-service` and forward it to the Azure AI service.
