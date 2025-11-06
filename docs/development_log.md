@@ -188,3 +188,28 @@
     *   **End-to-End Flow Verified**: The complete real-time audio and text message flow from client microphone -> `ai-service` (ASR) -> `comms-service` -> `RealTimeRecorder.js` (display) has been successfully established and verified.
 
 *   **Next Steps Identified:** The current focus will shift to implementing full real-time TTS audio streaming and developing a robust session management system.
+
+## 2025-11-06
+
+*   **Real-time ASR & TTS Pipeline Debugging and Refinement:**
+    *   **Initial Problem**: Frontend reported `NS_ERROR_WEBSOCKET_CONNECTION_REFUSED` and no conversation history.
+    *   **API Gateway & Network Debugging**: Investigated `api-gateway` and `comms-service` logs. Identified `api-gateway` `Connection refused` errors, indicating a Docker networking issue. Performed a full `docker compose down && docker compose up -d --build` to reset the network.
+    *   **`ai-service` Crash (`TypeError: this.speechConfig.addTargetLanguage is not a function`)**: Diagnosed that `ConversationTranslator` requires `SpeechTranslationConfig`, not `SpeechConfig`. Fixed `azureAiService.js` to use `sdk.SpeechTranslationConfig.fromSubscription`.
+    *   **`ai-service` Crash (`Invalid operation: the conversation is not in a connected state`)**: Identified a race condition where `startTranscribingAsync` was called before `joinConversationAsync` completed. Refactored `azureAiService.js` to use the success callback of `joinConversationAsync` to ensure proper sequencing.
+    *   **`ai-service` Silent Failure (No ASR/TTS output)**: Suspected audio format mismatch. Inspected `client/public/audio-processor.js` to confirm client sends 16kHz, 16-bit, mono PCM. Explicitly configured `PushAudioInputStream` in `azureAiService.js` with `sdk.AudioStreamFormat.getWaveFormatPCM(16000, 16, 1)`.
+    *   **`ai-service` Silent Failure (No SDK logs)**: Attempted to enable verbose SDK logging via `sdk.LogLevel = sdk.LogLevel.Trace;`, which caused `TypeError: Cannot set property LogLevel of #<Object> which has only a getter`. Corrected to `this.speechConfig.setProperty(sdk.PropertyId.Speech_LogFilename, "/tmp/speech_sdk_log.txt");`.
+    *   **`ai-service` Crash (`TypeError: this.speechConfig.getTargetLanguages is not a function`)**: Corrected syntax from `getTargetLanguages()` to `targetLanguages` property.
+    *   **`ai-service` Crash (`SyntaxError: await is only valid in async functions`)**: Made `AzureAiService.initialize` method `async` and updated `index.js` to `await` its call.
+    *   **`ai-service` Crash (`TypeError: tempRecognizer.getAuthorizationTokenAsync is not a function`)**: Replaced incorrect credential verification with a robust method that attempts to recognize a short, silent audio stream to force SDK connection and error reporting.
+    *   **Critical Error (Incorrect SDK Migration)**: Discovered a major error where `azure-ai-voicelive` (Python SDK) was mistakenly used instead of `microsoft-cognitiveservices-speech-sdk` (Node.js SDK). Reverted `package.json` and `azureAiService.js` to use the correct `microsoft-cognitiveservices-speech-sdk`.
+    *   **`ai-service` Crash (`ReferenceError: PORT is not defined`)**: Identified and removed a duplicate `server.listen` call in `ai-service/src/index.js` that was using an undefined `PORT` variable.
+    *   **Successful ASR-TTS Audio Pipeline**: After extensive debugging, the core ASR-TTS audio pipeline is now functional. ASR text is visible in the `ai-service` logs, and TTS audio is audible on the client.
+
+*   **Remaining Frontend Issues**:
+    *   **Audio Decoding Error (`EncodingError`)**: Browser console shows `EncodingError: Unable to decode audio data`. This is because Azure sends raw PCM, but the browser's `decodeAudioData` expects a WAV header.
+    *   **Missing ASR Text on UI**: ASR text is visible in backend logs but not displayed on the frontend page. This indicates a client-side parsing or rendering issue.
+
+*   **Next Steps Identified**:
+    1.  [Frontend] Fix ASR text not displaying in conversation history.
+    2.  [AI Engine] Implement multi-language speech recognition.
+    3.  [AI Engine] Integrate and refine the detailed 'Ava' persona and instructional strategies into the LLM prompt via `prompt/manager.js`.

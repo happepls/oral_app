@@ -1,13 +1,11 @@
 const sdk = require("microsoft-cognitiveservices-speech-sdk");
-const { PassThrough } = require("stream");
 
 class AzureAiService {
     constructor(ws) {
         this.ws = ws;
-        this.speechConfig = null;
-        this.audioConfig = null;
+        this.pushStream = null;
         this.recognizer = null;
-        this.pushStream = sdk.AudioInputStream.createPushStream();
+        this.speechConfig = null;
     }
 
     initialize() {
@@ -19,19 +17,19 @@ class AzureAiService {
         }
 
         this.speechConfig = sdk.SpeechConfig.fromSubscription(subscriptionKey, serviceRegion);
-        // We use the standard speech-to-text endpoint as ConversationTranslator is not suitable.
-        // The endpoint for universal speech recognition is `wss://${serviceRegion}.stt.speech.microsoft.com/speech/universal/v2`.
-        // However, we will let the SDK determine the default endpoint for SpeechRecognizer.
-        // this.speechConfig.setProperty(sdk.PropertyId.SpeechServiceConnection_Endpoint, `wss://${serviceRegion}.convai.speech.azure.com/convai/runtime/v1`);
+        this.speechConfig.speechRecognitionLanguage = "en-US";
+        this.speechConfig.speechSynthesisVoiceName = "en-US-AvaMultilingualNeural";
 
-        this.audioConfig = sdk.AudioConfig.fromStreamInput(this.pushStream);
-        this.recognizer = new sdk.SpeechRecognizer(this.speechConfig, this.audioConfig);
+        const audioFormat = sdk.AudioStreamFormat.getWaveFormatPCM(16000, 16, 1);
+        this.pushStream = sdk.AudioInputStream.createPushStream(audioFormat);
+        const audioConfig = sdk.AudioConfig.fromStreamInput(this.pushStream);
 
+        this.recognizer = new sdk.SpeechRecognizer(this.speechConfig, audioConfig);
         this.setupRecognizerEvents();
     }
 
     setupRecognizerEvents() {
-        const send = (data) => {
+        const sendJson = (data) => {
             if (this.ws.readyState === this.ws.OPEN) {
                 this.ws.send(JSON.stringify(data));
             }
@@ -40,68 +38,84 @@ class AzureAiService {
         this.recognizer.recognizing = (s, e) => {
             console.log(`RECOGNIZING: Text=${e.result.text}`);
             if (e.result.text) {
-                send({ type: 'asr_result', text: e.result.text, isFinal: false });
+                sendJson({ type: 'asr_result', text: e.result.text, isFinal: false });
             }
         };
 
         this.recognizer.recognized = (s, e) => {
             if (e.result.reason === sdk.ResultReason.RecognizedSpeech) {
-                console.log(`RECOGNIZED: Text=${e.result.text}`);
-                if (e.result.text) {
-                    // Send the final recognition result
-                    send({ type: 'asr_result', text: e.result.text, isFinal: true });
-                    // Send the "echo" AI response
-                    send({ type: 'ai_response', text: e.result.text });
+                const recognizedText = e.result.text;
+                console.log(`RECOGNIZED: Text=${recognizedText}`);
+                if (recognizedText) {
+                    sendJson({ type: 'asr_result', text: recognizedText, isFinal: true });
+                    // Now, synthesize this text back to speech.
+                    this.synthesizeText(recognizedText);
                 }
             } else if (e.result.reason === sdk.ResultReason.NoMatch) {
                 console.log("NOMATCH: Speech could not be recognized.");
-                send({ type: 'asr_nomatch' });
+                sendJson({ type: 'asr_nomatch' });
             }
         };
 
         this.recognizer.canceled = (s, e) => {
             console.log(`CANCELED: Reason=${e.reason}`);
-            send({ type: 'asr_canceled', reason: e.reason });
-
             if (e.reason === sdk.CancellationReason.Error) {
-                console.log(`"CANCELED: ErrorCode=${e.errorCode}`);
-                console.log(`"CANCELED: ErrorDetails=${e.errorDetails}`);
+                console.error(`CANCELED: ErrorCode=${e.errorCode}, ErrorDetails=${e.errorDetails}`);
             }
-            this.recognizer.stopContinuousRecognitionAsync();
+            sendJson({ type: 'asr_canceled', reason: e.reason });
         };
 
         this.recognizer.sessionStopped = (s, e) => {
             console.log("Session stopped event.");
-            send({ type: 'asr_session_stopped' });
-            this.recognizer.stopContinuousRecognitionAsync();
+            sendJson({ type: 'asr_session_stopped' });
         };
+    }
+
+    synthesizeText(text) {
+        // For TTS, we don't stream the output to a file or speaker, but directly to a buffer.
+        const synthesizer = new sdk.SpeechSynthesizer(this.speechConfig, null);
+
+        synthesizer.speakTextAsync(
+            text,
+            (result) => {
+                if (result.reason === sdk.ResultReason.SynthesizingAudioCompleted) {
+                    console.log(`SYNTHESIS COMPLETED: Audio duration ${result.audioDuration}, data size ${result.audioData.byteLength}`);
+                    // result.audioData is an ArrayBuffer. Send it to the client.
+                    if (this.ws.readyState === this.ws.OPEN) {
+                        this.ws.send(Buffer.from(result.audioData), { binary: true });
+                    }
+                } else {
+                    console.error("Speech synthesis canceled or failed, reason: " + result.reason);
+                }
+                synthesizer.close();
+            },
+            (err) => {
+                console.error("Speech synthesis error:", err);
+                synthesizer.close();
+            }
+        );
     }
 
     start() {
         this.recognizer.startContinuousRecognitionAsync(
-            () => {
-                console.log("Recognition started.");
-            },
-            (err) => {
-                console.error(`Error starting recognition: ${err}`);
-            }
+            () => console.log("Recognition started."),
+            (err) => console.error(`Error starting recognition: ${err}`)
         );
     }
 
     stop() {
         this.recognizer.stopContinuousRecognitionAsync(
-            () => {
-                console.log("Recognition stopped.");
-            },
-            (err) => {
-                console.error(`Error stopping recognition: ${err}`);
-            }
+            () => console.log("Recognition stopped."),
+            (err) => console.error(`Error stopping recognition: ${err}`)
         );
     }
 
     handleAudio(audioData) {
-        this.pushStream.write(audioData);
+        if (this.pushStream) {
+            this.pushStream.write(audioData);
+        }
     }
 }
 
 module.exports = AzureAiService;
+

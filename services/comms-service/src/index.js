@@ -59,12 +59,20 @@ wss.on('connection', async function connection(clientWs, req) {
 
       // Also, set up the return path.
       aiServiceWs.on('message', (message) => {
-        // In Node.js 'ws', incoming messages can be Buffers, even if they contain text.
-        // We need to convert it to a string before sending it to the browser client.
-        const messageString = message.toString('utf8');
-        console.log(`Forwarding message from AI service to user ${userId}: ${messageString}`);
+        // The message from the AI service could be a JSON string (for ASR results)
+        // or a Buffer (for TTS audio). We need to handle both.
         if (clientWs.readyState === WebSocket.OPEN) {
-          clientWs.send(messageString);
+          if (message instanceof Buffer) {
+            // This is binary audio data. Forward it directly.
+            console.log(`Forwarding binary message of size ${message.length} from AI service to user ${userId}.`);
+            clientWs.send(message, { binary: true });
+          } else {
+            // This is likely a JSON string. The 'ws' library might still give us a Buffer
+            // containing UTF8 text, so we convert it to be safe.
+            const messageString = message.toString('utf8');
+            console.log(`Forwarding text message from AI service to user ${userId}: ${messageString}`);
+            clientWs.send(messageString);
+          }
         }
       });
     });

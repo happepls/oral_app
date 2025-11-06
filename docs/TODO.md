@@ -1,11 +1,10 @@
-# Tasks - TODO
-
 ## In Progress
 
-- [ ] [AI Engine] Implement real-time TTS (Text-to-Speech) audio streaming from Azure AI to the client via comms-service.
+- [ ] [Frontend] Fix ASR text not displaying in conversation history.
 
 ## To Do
 
+- [ ] [AI Engine] Implement multi-language speech recognition.
 - [ ] [AI Engine] Integrate and refine the detailed 'Ava' persona and instructional strategies into the LLM prompt via `prompt/manager.js`.
 
 ## Backlog
@@ -19,6 +18,7 @@
 
 ## Done
 
+- [x] [AI Engine] Implement real-time TTS (Text-to-Speech) audio streaming from Azure AI to the client via comms-service.
 - [x] **Phase 1: Foundation & Core Services**
 - [x] 5. [Backend] Create Real-time Comms Layer: Setup WebSocket server.
 - [x] 4. [Backend] Setup API Gateway: Configure routing for User Service.
@@ -47,6 +47,3 @@
 - [x] [AI Engine] Integrate `azureAiService.js` into the main `ai-service` logic to replace the mock service.
 - [x] [AI Engine] Process real-time responses (audio and text) from Azure AI and forward them back to the client via `comms-service`.
 
-## Deleted
-
-- [ ] 18. [AI Engine] Research and integrate production-ready streaming ASR/LLM/TTS services.

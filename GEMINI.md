@@ -145,7 +145,7 @@ Nginx 作为 API 网关，负责请求路由。
   - `/api/ai/`: 所有 AI 相关的 API 请求被代理到 `ai_service`。
   - `/api/ws/`: WebSocket 连接请求被特殊处理（通过 `Upgrade` 和 `Connection` 头）并代理到 `comms-service`。
 
-## 最新进展与当前状态 (2025-10-30)
+## 最新进展与当前状态 (2025年11月6日)
 - **架构重大转向：集成 Azure AI 实时语音服务**:
     - **决策**: 为了简化架构并利用更先进的端到端解决方案，项目决定放弃原有的“三阶段管线式引擎”（独立ASR+LLM+TTS服务），全面转向采用微软 Azure AI 提供的实时语音 API (`Voice Live API`)。
     - **优势**:
@@ -153,13 +153,17 @@ Nginx 作为 API 网关，负责请求路由。
         2.  **单一入口**: 只需维护一个到 Azure 的 WebSocket 连接，即可处理 ASR、LLM 和 TTS 的所有流程，极大简化了 `ai-service` 的内部逻辑和网络复杂性。
         3.  **高级功能**: 可直接利用 Azure 平台提供的噪音抑制、回声消除和高级轮次检测等功能。
         4.  **统一管理**: 未来的模型调优和 Prompt 管理将统一在 Azure AI Foundry 平台上进行。
-    - **状态**: 项目开发计划 (`docs/TODO.md`) 已根据此新方向进行了全面更新。目前，`ai-service` 已成功与 Azure AI Speech SDK 对接，实现了实时的 ASR 文本识别，并将识别到的文本作为临时“回声”TTS 响应发送回客户端，前端已能正确显示用户语音的实时转录和 AI 的文本回复。下一个开发阶段将专注于实现完整的实时 TTS 音频流传输和会话管理。
-
+    - **状态**: 项目开发计划 (`docs/TODO.md`) 已根据此新方向进行了全面更新。目前，`ai-service` 已成功与 Azure AI Speech SDK 对接，实现了实时的 ASR 文本识别，并能将识别到的文本合成为 TTS 音频流发送回客户端，用户可以听到 AI 的语音回复。**然而，前端页面仍无法显示 ASR 文本，且浏览器控制台报告音频解码错误 (`EncodingError`)。**
 ## Gemini Added Memories
-- 项目已配置专属的今日开发工作收尾命令 `finish_today`，其具体操作如下: "作为AI助手，我的目标是完成今日的收尾工作。我将执行以下4项操作：
-\n1. Update the development plan in @docs/TODO.md using the 'mcp-tasks' tool,只修改相关的任务项，不会影响文件中的其他内容. 
-\n2. Update the GEMINI.md project memory file to reflect the current project state, 注意**不能改变Gemini Added Memories的内容及格式. 
-\n3. Append a summary of the day's work to the development log at @docs/development_log.md if exists.
-\n4. Commit and push all changes to the origin/master branch of the remote repository using the commit message ser {{今日日期}}."
-  **注意不要使用 write_file 覆盖整个文件，而应追加或更新已有的内容。**
 
+- - 项目已配置专属的今日开发工作收尾命令 `finish_today`，其具体操作如下:                         │
+    │        "作为AI助手，我的目标是完成今日的收尾工作。我将执行以下4项操作：                                 │
+    │    159 - \n1. Update the development plan in @docs/TODO.md using the 'mcp-tasks'                        │
+    │        tool,只修改相关的任务项，不会影响文件中的其他内容.                                               │
+    │    160 - \n2. Update the GEMINI.md project memory file to reflect the current project state, 注意       │
+    │        **不能改变Gemini Added Memories的内容及格式.                                                     │
+    │    161 - \n3. Append a summary of the day's work to the development log at @docs/development_log.md if  │
+    │        exists.                                                                                          │
+    │    162 - \n4. Commit and push all changes to the origin/master branch of the remote repository using    │
+    │        the commit message ser {{今日日期}}."                                                            │
+    │    163 -   **注意不要使用 write_file 覆盖整个文件，而应追加或更新已有的内容。** 
