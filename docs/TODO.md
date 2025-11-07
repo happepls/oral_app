@@ -1,10 +1,13 @@
+# Tasks - TODO
+
 ## In Progress
 
-- [ ] [Frontend] Fix ASR text not displaying in conversation history.
+- [ ] [Frontend] Ignore empty messages to prevent empty chat bubbles.
 
 ## To Do
 
-- [ ] [AI Engine] Implement multi-language speech recognition.
+- [ ] [AI Engine] Integrate `PromptManager` and `MockLlmService` to replace the echo response.
+- [ ] [AI Engine] Implement multi-language speech recognition using `AutoDetectSourceLanguageConfig`.
 - [ ] [AI Engine] Integrate and refine the detailed 'Ava' persona and instructional strategies into the LLM prompt via `prompt/manager.js`.
 
 ## Backlog
@@ -18,7 +21,7 @@
 
 ## Done
 
-- [x] [AI Engine] Implement real-time TTS (Text-to-Speech) audio streaming from Azure AI to the client via comms-service.
+
 - [x] **Phase 1: Foundation & Core Services**
 - [x] 5. [Backend] Create Real-time Comms Layer: Setup WebSocket server.
 - [x] 4. [Backend] Setup API Gateway: Configure routing for User Service.
@@ -46,4 +49,5 @@
 - [x] [AI Engine] Handle the real-time audio stream from `comms-service` and forward it to the Azure AI service.
 - [x] [AI Engine] Integrate `azureAiService.js` into the main `ai-service` logic to replace the mock service.
 - [x] [AI Engine] Process real-time responses (audio and text) from Azure AI and forward them back to the client via `comms-service`.
-
+- [x] [AI Engine] Implement real-time TTS (Text-to-Speech) audio streaming from Azure AI to the client via comms-service.
+- [x] [Frontend] Fix ASR text not displaying in conversation history.

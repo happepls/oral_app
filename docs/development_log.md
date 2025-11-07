@@ -1,4 +1,3 @@
-
 # Development Log
 
 ## 2025-09-22
@@ -213,3 +212,37 @@
     1.  [Frontend] Fix ASR text not displaying in conversation history.
     2.  [AI Engine] Implement multi-language speech recognition.
     3.  [AI Engine] Integrate and refine the detailed 'Ava' persona and instructional strategies into the LLM prompt via `prompt/manager.js`.
+## 2025-11-07
+
+*   **Major Breakthrough: `recognized` Event Fixed:**
+    *   **Problem**: The core issue of the Azure SDK's `recognized` event never firing for final speech-to-text results was a major blocker.
+    *   **Investigation**: After multiple failed attempts, including client-side "push-to-talk" and server-side silence timers, the root cause was identified as the persistent nature of the `PushAudioInputStream`. The SDK treated all audio as a single, unending utterance.
+    *   **Solution & Success**: The `ai-service` was refactored to create a new `SpeechRecognizer` instance for each utterance (i.e., each time the user speaks). This session-based approach provided a clear start and end for each recognition task, finally allowing the `recognized` event to fire reliably. This successfully unblocked the main development path.
+
+*   **Architectural Pivot to `ConversationTranslator` & Subsequent Failures:**
+    *   **Goal**: With the `recognized` event fixed, the next step was to implement multi-language support.
+    *   **Decision**: To better support this, a major architectural decision was made to switch from the basic `SpeechRecognizer` to the more advanced `ConversationTranslator`.
+    *   **Intensive & Unsuccessful Debugging**: This transition proved to be extremely challenging. A series of critical, and often misleading, `TypeError` exceptions occurred deep within the SDK's initialization logic. The debugging process involved:
+        *   Incorrectly attempting to use a non-existent `SourceLanguageRecognizer`.
+        *   Diagnosing and fixing configuration conflicts between `SpeechConfig` and `AutoDetectSourceLanguageConfig`.
+        *   Multiple incorrect attempts to manage the `Conversation` and `ConversationTranslator` lifecycle, leading to a persistent `conversation is not in a connected state` error.
+        *   Discovering and fixing incorrect API usage (e.g., calling `.close()` on an object that doesn't have it, calling `leaveConversation` on the wrong object, incorrect async operation order).
+
+*   **Current Status & Next Steps:**
+    *   **Blocker**: The `ai-service` is currently in a **non-functional state**. The final attempt to fix the `ConversationTranslator` lifecycle resulted in a new error: `TypeError: Cannot read properties of undefined (reading 'endConversationImplAsync')`.
+    *   **Conclusion**: Today was a day of significant progress followed by a major setback. While the initial critical bug was solved, the subsequent architectural refactoring has failed. The immediate priority for the next session is to resolve the `ConversationTranslator` implementation issues by strictly adhering to a newly found, verified official code sample.
+## 2025-11-08
+
+*   **Major Breakthrough: ASR Pipeline Stabilized:**
+    *   **Problem**: After the previous day's failed attempts with `ConversationTranslator`, the `ai-service` was left in a non-functional state, plagued by syntax errors and connection hangs.
+    *   **Solution**: A strategic decision was made to pivot away from the complex `ConversationTranslator` and revert to the more fundamental `SpeechRecognizer`. This involved a major refactoring of `azureAiService.js` to focus solely on establishing a basic, reliable ASR (speech-to-text) pipeline.
+    *   **Intensive Debugging & Resolution**:
+        *   Fixed multiple critical syntax errors in `azureAiService.js` that were introduced during the rapid, unsuccessful refactoring attempts.
+        *   Diagnosed and resolved the root cause of the persistent connection hang: the SDK's `fromSubscription` method was failing silently. The issue was definitively solved by implementing a robust, two-step authentication process: manually fetching an auth token via a REST call and then providing it to the SDK's `fromEndpoint` method.
+        *   Identified and fixed a crucial Docker caching issue where code and `.env` changes were not being applied. A strict `docker compose down && docker rmi && docker compose up --build --force-recreate` workflow was enforced to guarantee a clean build.
+*   **End-to-End Success & Verification:**
+    *   **ASR Functional**: The simplified `SpeechRecognizer` approach worked perfectly. The `ai-service` now successfully connects to Azure and performs real-time speech recognition, as confirmed by `RECOGNIZED (final)` logs.
+    *   **Frontend Integration**: Fixed a bug in `RealTimeRecorder.js` where AI responses were not being added to the conversation history.
+    *   **Milestone Achieved**: The project now has a fully functional, end-to-end, real-time ASR pipeline. The user's speech is captured, sent to the backend, transcribed by Azure, and the text is correctly displayed in the frontend chat history.
+*   **Next Steps Defined:**
+    *   With the core pipeline stable, the next tasks are to enhance the frontend by ignoring empty messages, integrate the `MockLlmService` to make the AI conversational, and then re-approach multi-language support using the now-stable `SpeechRecognizer` as a foundation.

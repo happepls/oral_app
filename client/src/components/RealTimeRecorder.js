@@ -72,8 +72,8 @@ const RealTimeRecorder = () => {
         return;
       }
       
-      // Azure TTS for this voice sends 24kHz, 16-bit, mono PCM
-      const header = createWavHeader(pcmData.byteLength, 24000, 1, 16);
+      // Azure TTS for this voice sends 16kHz, 16-bit, mono PCM
+      const header = createWavHeader(pcmData.byteLength, 16000, 1, 16);
       const wavBlob = new Blob([header, pcmData], { type: 'audio/wav' });
       const wavArrayBuffer = await wavBlob.arrayBuffer();
 
@@ -99,199 +99,158 @@ const RealTimeRecorder = () => {
   };
   // --- End of Audio Playback Logic ---
 
+  useEffect(() => {
+    // Initialize AudioContext and WebSocket when the component mounts
+    const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+    audioContextRef.current = audioContext;
+
+    const token = localStorage.getItem('token');
+    if (!token) {
+      setStatus('Authentication error: You must be logged in.');
+      return;
+    }
+
+    const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const wsUrl = `${wsProtocol}//${window.location.host}/api/ws/?token=${token}`;
+    const ws = new WebSocket(wsUrl);
+    webSocketRef.current = ws;
+
+    ws.onopen = () => {
+      console.log('WebSocket connected.');
+      setStatus('Ready. Hold the button to speak.');
+    };
+
+    ws.onmessage = async (event) => {
+      if (event.data instanceof Blob) {
+        audioQueueRef.current.push(event.data);
+        playNextInQueue();
+        return;
+      }
+      try {
+        const message = JSON.parse(event.data);
+        if (message.type === 'info') {
+          console.log(`[INFO] ${message.message}`);
+        } else if (message.type === 'asr_result') {
+          if (message.isFinal) {
+            setConversationHistory(prev => [...prev, { speaker: 'user', text: message.text, lang: message.lang }]);
+            setTranscribedText('');
+          } else {
+            setTranscribedText(message.text);
+          }
+        } else if (message.type === 'tts_result') {
+          // Add AI responses to conversation history
+          setConversationHistory(prev => [...prev, { speaker: 'ai', text: message.text, lang: message.lang }]);
+        }
+      } catch (error) {
+        console.error('Error parsing WebSocket message:', error, event.data);
+      }
+    };
+
+    ws.onclose = (event) => {
+      console.log(`WebSocket disconnected. Code: ${event.code}, Reason: ${event.reason}`);
+      setStatus(`Connection lost: ${event.reason || 'Unknown error'}`);
+    };
+
+    ws.onerror = (error) => {
+      console.error('WebSocket error:', error);
+      setStatus('WebSocket connection error.');
+    };
+
+    // Cleanup on component unmount
+    return () => {
+      if (ws) ws.close(1000, 'Component unmounting');
+      if (audioContext) audioContext.close();
+    };
+  }, []); // Empty dependency array ensures this runs only once on mount
+
 
   const startRecording = async () => {
     console.log('--- startRecording called ---');
     try {
       setDuration(0);
       setTranscribedText('');
-      setConversationHistory([]);
-      audioQueueRef.current = []; // Clear audio queue
-      isPlayingAudioRef.current = false;
+      // Do not clear conversation history or audio queue here to maintain session state
 
+      if (!webSocketRef.current || webSocketRef.current.readyState !== WebSocket.OPEN) {
+        setStatus("Connecting... Please wait.");
+        // Optionally, you could try to reconnect here, but for now, we assume the initial connection is handled by useEffect.
+        console.error("WebSocket is not open. Cannot start recording.");
+        return;
+      }
+      
       setStatus('Requesting microphone permission...');
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       streamRef.current = stream;
       
-      setStatus('Microphone access granted. Initializing AudioContext...');
-      const audioContext = new (window.AudioContext || window.webkitAudioContext)();
-      audioContextRef.current = audioContext;
-
-      setStatus('Connecting to WebSocket...');
-      console.log('Attempting to connect WebSocket...');
-      
-      const token = localStorage.getItem('token');
-      if (!token) {
-        console.error('No token found in localStorage.');
-        setStatus('Authentication error: You must be logged in to start a session.');
-        if (streamRef.current) streamRef.current.getTracks().forEach(track => track.stop());
-        if (audioContextRef.current) audioContextRef.current.close();
-        return; 
+      const audioContext = audioContextRef.current;
+      if (audioContext.state === 'suspended') {
+        await audioContext.resume();
       }
+
+      await audioContext.audioWorklet.addModule('/audio-processor.js');
+      const audioWorkletNode = new AudioWorkletNode(audioContext, 'audio-processor');
+      audioWorkletNodeRef.current = audioWorkletNode;
+
+      const source = audioContext.createMediaStreamSource(stream);
+      sourceNodeRef.current = source;
       
-      const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-      const wsUrl = `${wsProtocol}//${window.location.host}/api/ws/?token=${token}`;
-      console.log(`Connecting to: ${wsUrl}`);
-      
-      const ws = new WebSocket(wsUrl);
-      webSocketRef.current = ws;
+      const gainNode = audioContext.createGain();
+      gainNode.gain.setValueAtTime(0, audioContext.currentTime);
+      source.connect(audioWorkletNode);
+      audioWorkletNode.connect(gainNode);
+      gainNode.connect(audioContext.destination);
 
-      ws.onopen = () => {
-        console.log('WebSocket [onopen] event fired.');
-        setStatus('WebSocket connected. Loading audio processor...');
-        initializeAudioWorklet();
-      };
-
-      ws.onmessage = async (event) => {
-        if (event.data instanceof Blob) {
-          console.log(`Received Blob data of size ${event.data.size}.`);
-          audioQueueRef.current.push(event.data);
-          playNextInQueue();
-          return;
-        }
-
-        // --- ADDED FOR DEBUGGING ---
-        console.log('[WebSocket] Received non-binary message:', event.data);
-        // --- END DEBUGGING ---
-
-        try {
-          const message = JSON.parse(event.data);
-          if (message.type === 'info') {
-            console.log(`[INFO] ${message.message}`);
-          } else if (message.type === 'asr_result') {
-            if (message.isFinal) {
-              setConversationHistory(prev => [...prev, { speaker: 'user', text: message.text }]);
-              setTranscribedText('');
-            } else {
-              setTranscribedText(message.text);
-            }
-          } 
-        } catch (error) {
-          console.error('Error parsing WebSocket message:', error, event.data);
-        }
-      };
-
-      ws.onclose = (event) => {
-        console.log(`WebSocket [onclose] event fired. Code: ${event.code}, Reason: ${event.reason}`);
-        let reason = event.reason || `error code ${event.code}`;
-        setStatus(`WebSocket disconnected: ${reason}`);
-        if (isRecordingRef.current) {
-          stopRecording(false); // Clean up audio resources if connection drops
-        }
-      };
-
-      ws.onerror = (error) => {
-        console.error('WebSocket [onerror] event fired:', error);
-        setStatus('WebSocket error. See console for details.');
-      };
-
-      const initializeAudioWorklet = async () => {
-        console.log('--- initializeAudioWorklet called ---');
-        // Resume AudioContext if it's suspended (required by modern browsers)
-        if (audioContext.state === 'suspended') {
-          await audioContext.resume();
-        }
-        await audioContext.audioWorklet.addModule('/audio-processor.js');
-        setStatus('Audio processor loaded. Creating worklet node...');
-        const audioWorkletNode = new AudioWorkletNode(audioContext, 'audio-processor');
-        audioWorkletNodeRef.current = audioWorkletNode;
-
-        const source = audioContext.createMediaStreamSource(stream);
-        sourceNodeRef.current = source;
-        
-        // We don't connect the recording path to the destination (speakers)
-        // to avoid local feedback.
-        source.connect(audioWorkletNode);
-        audioWorkletNode.connect(audioContext.destination); // This should be a GainNode with 0 gain if we want to be strict
-        
-        // Let's fix the above to prevent any feedback possibility
-        const gainNode = audioContext.createGain();
-        gainNode.gain.setValueAtTime(0, audioContext.currentTime);
-        source.connect(audioWorkletNode);
-        audioWorkletNode.connect(gainNode);
-        gainNode.connect(audioContext.destination);
-
-
-        audioWorkletNode.port.onmessage = (event) => {
-          const { type, payload } = event.data;
-          if (type === 'data') {
-            if (webSocketRef.current && webSocketRef.current.readyState === WebSocket.OPEN) {
-              webSocketRef.current.send(payload);
-            }
-          } else if (type === 'duration') {
-            setDuration(payload);
+      audioWorkletNode.port.onmessage = (event) => {
+        const { type, payload } = event.data;
+        if (type === 'data') {
+          if (webSocketRef.current && webSocketRef.current.readyState === WebSocket.OPEN) {
+            webSocketRef.current.send(payload);
           }
-        };
-
-        audioWorkletNode.port.postMessage('init');
-        console.log('Setting isRecording to true.');
-        setIsRecording(true);
-        setStatus('Recording...');
+        } else if (type === 'duration') {
+          setDuration(payload);
+        }
       };
+
+      audioWorkletNode.port.postMessage('init');
+      setIsRecording(true);
+      setStatus('Recording...');
 
     } catch (error) {
       console.error('Error in startRecording:', error);
       setStatus(`Error: ${error.message}`);
-      stopRecording(true); // Ensure cleanup on error
+      // Don't call stopRecording here as it might create cleanup loops
     }
   };
 
-  const stopRecording = (closeWebSocket = true) => {
-    console.log(`--- stopRecording called (closeWebSocket: ${closeWebSocket}) ---`);
-    if (isRecordingRef.current === false && audioContextRef.current === null) {
-      console.log('stopRecording: Already stopped.');
+  const stopRecording = () => {
+    console.log(`--- stopRecording called ---`);
+    if (!isRecordingRef.current) {
       return;
     }
 
-    setStatus('Stopping...');
+    setStatus('Processing...');
     
-    if (closeWebSocket && webSocketRef.current) {
-      if (webSocketRef.current.readyState === WebSocket.OPEN) {
-        console.log('Closing WebSocket.');
-        webSocketRef.current.close(1000, 'User stopped recording');
-      }
-      webSocketRef.current = null;
-    }
-
-    if (sourceNodeRef.current) {
-      sourceNodeRef.current.disconnect();
-      sourceNodeRef.current = null;
-      console.log('MediaStreamSourceNode disconnected.');
-    }
-
     if (audioWorkletNodeRef.current) {
-      // Send a stop message to the worklet to flush any remaining audio and terminate.
       audioWorkletNodeRef.current.port.postMessage('stop');
-      audioWorkletNodeRef.current.port.onmessage = null; // Clean up the event listener
-      audioWorkletNodeRef.current.disconnect();
-      audioWorkletNodeRef.current = null;
     }
 
     if (streamRef.current) {
       streamRef.current.getTracks().forEach(track => track.stop());
       streamRef.current = null;
-      console.log('Media stream tracks stopped.');
     }
 
-    const audioContext = audioContextRef.current;
-    if (audioContext && audioContext.state !== 'closed') {
-      console.log('Closing AudioContext.');
-      audioContext.close().then(() => {
-        console.log('AudioContext closed.');
-        audioContextRef.current = null;
-      });
+    if (sourceNodeRef.current) {
+      sourceNodeRef.current.disconnect();
+      sourceNodeRef.current = null;
     }
     
-    setIsRecording(false);
-    setStatus('Recording stopped. Click Start to begin again.');
-  };
-
-  const handleToggleRecording = () => {
-    if (isRecording) {
-      stopRecording();
-    } else {
-      startRecording();
+    if (audioWorkletNodeRef.current) {
+        audioWorkletNodeRef.current.disconnect();
+        audioWorkletNodeRef.current = null;
     }
+
+    setIsRecording(false);
+    setStatus('Ready. Hold the button to speak.');
   };
 
   return (
@@ -301,7 +260,8 @@ const RealTimeRecorder = () => {
         <p><strong>Status:</strong> {status}</p>
         <p><strong>Duration:</strong> {duration.toFixed(2)} seconds</p>
         <button 
-          onClick={handleToggleRecording}
+          onMouseDown={startRecording}
+          onMouseUp={stopRecording}
           style={{
             padding: '10px 20px',
             fontSize: '16px',
@@ -313,7 +273,7 @@ const RealTimeRecorder = () => {
             width: '100%'
           }}
         >
-          {isRecording ? 'Stop Recording' : 'Start Recording'}
+          {isRecording ? 'Recording...' : 'Hold to Speak'}
         </button>
       </div>
 
@@ -339,6 +299,11 @@ const RealTimeRecorder = () => {
             }}>
               <p style={{ margin: '0', fontWeight: 'bold', color: msg.speaker === 'user' ? '#1890ff' : '#595959' }}>
                 {msg.speaker === 'user' ? 'You:' : 'AI:'}
+                {msg.speaker === 'user' && msg.lang && (
+                  <span style={{ fontSize: '0.8em', color: '#888', fontStyle: 'italic', marginLeft: '8px' }}>
+                    ({msg.lang})
+                  </span>
+                )}
               </p>
               <p style={{ margin: '0', whiteSpace: 'pre-wrap' }}>{msg.text}</p>
             </div>
