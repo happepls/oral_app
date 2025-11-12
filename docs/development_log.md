@@ -246,3 +246,19 @@
     *   **Milestone Achieved**: The project now has a fully functional, end-to-end, real-time ASR pipeline. The user's speech is captured, sent to the backend, transcribed by Azure, and the text is correctly displayed in the frontend chat history.
 *   **Next Steps Defined:**
     *   With the core pipeline stable, the next tasks are to enhance the frontend by ignoring empty messages, integrate the `MockLlmService` to make the AI conversational, and then re-approach multi-language support using the now-stable `SpeechRecognizer` as a foundation.
+
+## 2025-11-11
+
+*   **Architectural Pivot: Transition from Azure to Qwen3-Omni:**
+    *   **Decision**: Made a strategic decision to replace the Azure AI Voice Services with the Qwen3-Omni multimodal AI engine for better integration and performance.
+    *   **Implementation**:
+        *   Removed all Azure-related dependencies and code from the `ai-service`, including `azureAiService.js` and associated environment variables.
+        *   Updated `index.js` to use `Qwen3OmniService` as the sole AI engine, removing the conditional logic for selecting between Azure and Qwen3-Omni.
+        *   Cleaned up `package.json` by removing the `microsoft-cognitiveservices-speech-sdk` dependency and adding `@xenova/transformers` for Qwen3-Omni integration.
+        *   Updated `.env` and `.env.example` files to reflect the new Qwen3-Omni configuration.
+        *   Created a new `qwen3OmniService.js` to manage the Qwen3-Omni API connection and handle real-time ASR, LLM, and TTS functionalities.
+    *   **Verification**: Confirmed that the project now fully relies on Qwen3-Omni for AI services, with a simplified and more maintainable codebase.
+*   **Documentation Updates**:
+    *   Updated `GEMINI.md` to reflect the architectural changes and new project status.
+    *   Updated `TODO.md` to mark the Azure removal task as complete and add new tasks related to Qwen3-Omni integration.
+    *   Added today's work summary to `development_log.md`.

@@ -2,40 +2,42 @@ require('dotenv').config();
 const express = require('express');
 const http = require('http');
 const { WebSocketServer } = require('ws');
-const AzureAiService = require('./azure/azureAiService');
+const Qwen3OmniService = require('./qwen3omni/qwen3OmniService');
 
 const wss = new WebSocketServer({ port: 8082 });
 
-let azureAiService = null; // To hold the single, active AI service instance
+let aiService = null; // To hold the active AI service instance
 
 wss.on('connection', async (ws) => {
     console.log('AI-Service: Connection established from comms-service.');
 
     // 1. Clean up any existing service instance before creating a new one.
-    if (azureAiService) {
+    if (aiService) {
         console.log('Cleaning up previous AI service instance...');
         try {
-            await azureAiService.stop();
+            await aiService.stop();
         } catch (error) {
             console.error('Error during cleanup of previous AI service instance:', error);
         }
-        azureAiService = null;
+        aiService = null;
     }
 
-    // 2. Create and start the new service instance.
-    azureAiService = new AzureAiService(ws);
+    // 2. Create and start the new service instance (only Qwen3-Omni is supported now)
+    console.log('Using Qwen3-Omni AI engine');
+    aiService = new Qwen3OmniService(ws);
+    
     try {
-        await azureAiService.start();
+        await aiService.start();
     } catch (error) {
-        console.error("Failed to initialize or start Azure AI Service:", error);
-        ws.close(1011, "Internal server error during AI service initialization.");
-        azureAiService = null; // Ensure instance is cleared on startup failure
+        console.error(`Failed to initialize or start Qwen3-Omni AI Service:`, error);
+        ws.close(1011, `Internal server error during AI service initialization.`);
+        aiService = null; // Ensure instance is cleared on startup failure
         return;
     }
 
     ws.on('message', (message) => {
-        if (azureAiService) {
-            azureAiService.handleAudio(message);
+        if (aiService) {
+            aiService.handleAudio(message);
         }
     });
 
@@ -43,9 +45,9 @@ wss.on('connection', async (ws) => {
         console.log('AI-Service: Connection closed from comms-service.');
         // The cleanup is now handled at the start of a new connection,
         // but we can also stop the current service instance here.
-        if (azureAiService) {
-            await azureAiService.stop();
-            azureAiService = null;
+        if (aiService) {
+            await aiService.stop();
+            aiService = null;
         }
     });
 
@@ -68,4 +70,3 @@ server.on('upgrade', (request, socket, head) => {
     socket.destroy();
   }
 });
-

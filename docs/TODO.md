@@ -2,13 +2,16 @@
 
 ## In Progress
 
-- [ ] [Frontend] Ignore empty messages to prevent empty chat bubbles.
+- [ ] [AI Engine] Integrate and refine the detailed 'Ava' persona and instructional strategies into the LLM prompt via `prompt/manager.js`.
+- [ ] [AI Engine] Replace Azure AI Service with Qwen3-Omni multimodal AI engine.
+- [ ] [AI Engine] Implement real-time ASR, LLM, and TTS using Qwen3-Omni.
 
 ## To Do
 
-- [ ] [AI Engine] Integrate `PromptManager` and `MockLlmService` to replace the echo response.
-- [ ] [AI Engine] Implement multi-language speech recognition using `AutoDetectSourceLanguageConfig`.
-- [ ] [AI Engine] Integrate and refine the detailed 'Ava' persona and instructional strategies into the LLM prompt via `prompt/manager.js`.
+- [ ] [AI Engine] Implement multi-language speech recognition with Qwen3-Omni.
+- [ ] [AI Engine] Create a new `qwen3OmniService.js` in `ai-service` to manage the Qwen3-Omni API connection.
+- [ ] [AI Engine] Handle the real-time audio stream from `comms-service` and forward it to the Qwen3-Omni service.
+- [ ] [Frontend] Ignore empty messages in conversation history.
 
 ## Backlog
 
@@ -51,3 +54,4 @@
 - [x] [AI Engine] Process real-time responses (audio and text) from Azure AI and forward them back to the client via `comms-service`.
 - [x] [AI Engine] Implement real-time TTS (Text-to-Speech) audio streaming from Azure AI to the client via comms-service.
 - [x] [Frontend] Fix ASR text not displaying in conversation history.
+- [x] [AI Engine] Replace Azure AI Service with Qwen3-Omni multimodal AI engine.
