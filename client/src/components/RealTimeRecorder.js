@@ -140,6 +140,17 @@ const RealTimeRecorder = () => {
         } else if (message.type === 'tts_result') {
           // Add AI responses to conversation history
           setConversationHistory(prev => [...prev, { speaker: 'ai', text: message.text, lang: message.lang }]);
+        } else if (message.type === 'text_response') {
+          // Handle text responses from omni-service
+          setConversationHistory(prev => [...prev, { speaker: 'ai', text: message.text, lang: message.lang || 'en-US' }]);
+        } else if (message.type === 'service_ready') {
+          console.log('Qwen3-Omni service is ready');
+          setStatus('AI service is ready. Hold the button to speak.');
+        } else if (message.type === 'session_started') {
+          console.log('Session started');
+          setStatus('Session started. Hold the button to speak.');
+        } else if (message.type === 'session_stopped') {
+          console.log('Session stopped');
         }
       } catch (error) {
         console.error('Error parsing WebSocket message:', error, event.data);

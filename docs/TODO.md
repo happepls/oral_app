@@ -3,15 +3,16 @@
 ## In Progress
 
 - [ ] [AI Engine] Integrate and refine the detailed 'Ava' persona and instructional strategies into the LLM prompt via `prompt/manager.js`.
-- [ ] [AI Engine] Replace Azure AI Service with Qwen3-Omni multimodal AI engine.
-- [ ] [AI Engine] Implement real-time ASR, LLM, and TTS using Qwen3-Omni.
 
 ## To Do
 
+- [ ] [AI Engine] Implement real-time ASR, LLM, and TTS using Qwen3-Omni.
 - [ ] [AI Engine] Implement multi-language speech recognition with Qwen3-Omni.
-- [ ] [AI Engine] Create a new `qwen3OmniService.js` in `ai-service` to manage the Qwen3-Omni API connection.
 - [ ] [AI Engine] Handle the real-time audio stream from `comms-service` and forward it to the Qwen3-Omni service.
 - [ ] [Frontend] Ignore empty messages in conversation history.
+- [ ] [AI Engine] Create omni-service Docker container for Qwen3-Omni integration.
+- [ ] [AI Engine] Replace mock mode with real Qwen3-Omni API calls in omni-service.
+- [ ] [Testing] Conduct end-to-end testing with real Qwen3-Omni engine.
 
 ## Backlog
 
@@ -55,3 +56,12 @@
 - [x] [AI Engine] Implement real-time TTS (Text-to-Speech) audio streaming from Azure AI to the client via comms-service.
 - [x] [Frontend] Fix ASR text not displaying in conversation history.
 - [x] [AI Engine] Replace Azure AI Service with Qwen3-Omni multimodal AI engine.
+- [x] **Phase 4: Qwen3-Omni Integration**
+- [x] [AI Engine] Create omni-service microservice with Qwen3-Omni integration.
+- [x] [AI Engine] Implement text processing API endpoint in omni-service.
+- [x] [AI Engine] Implement audio processing API endpoint in omni-service.
+- [x] [AI Engine] Implement user context management in omni-service.
+- [x] [AI Engine] Implement mock mode for Qwen3-Omni engine for development and testing.
+- [x] [Testing] Verify all omni-service API endpoints are functioning correctly.
+- [x] [Debug] Resolve environment variable loading issues in omni-service.
+- [x] [Debug] Fix model initialization problems in containerized environments.

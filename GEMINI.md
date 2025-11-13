@@ -28,15 +28,37 @@
 oral_app/
 ├── docker-compose.yml   # Local development environment services
 ├── client/              # Frontend application (React/Mobile)
+│   ├── src/
+│   │   ├── components/
+│   │   │   ├── Login.js
+│   │   │   ├── RealTimeRecorder.js
+│   │   │   └── Register.js
+│   │   └── ...
+│   ├── package.json
+│   └── ...
 ├── api-gateway/         # API Gateway configuration
+│   ├── nginx.conf
+│   └── Dockerfile
 ├── services/            # Backend microservices
 │   ├── comms-service/
 │   │   ├── Dockerfile
 │   │   ├── package.json
 │   │   └── src/index.js
 │   ├── user-service/
-│   │   └── docs/
-│   │       └── schema.md  # User service database schema
+│   │   ├── src/
+│   │   │   ├── controllers/
+│   │   │   │   └── userController.js
+│   │   │   ├── models/
+│   │   │   │   ├── db.js
+│   │   │   │   └── user.js
+│   │   │   ├── routes/
+│   │   │   │   └── userRoutes.js
+│   │   │   └── index.js
+│   │   ├── docs/
+│   │   │   └── schema.md  # User service database schema
+│   │   ├── .env
+│   │   ├── Dockerfile
+│   │   └── package.json
 │   ├── ai-service/
 │   │   ├── Dockerfile
 │   │   ├── package.json
@@ -49,6 +71,19 @@ oral_app/
 │   │       ├── prompt/
 │   │       │   └── manager.js
 │   │       └── tts/interface.js
+│   ├── omni-service/    # Qwen3-Omni integration service
+│   │   ├── src/
+│   │   │   ├── index.js          # Entry point and HTTP server
+│   │   │   ├── prompt/
+│   │   │   │   └── system.js     # System prompt template for Qwen3-Omni
+│   │   │   └── qwen3omni/
+│   │   │       ├── client.js     # Qwen3-Omni client implementation
+│   │   │       └── service.js    # Service layer for handling client requests
+│   │   ├── .env.example
+│   │   ├── .env
+│   │   ├── Dockerfile
+│   │   ├── README.md
+│   │   └── package.json
 │   ├── conversation-service/
 │   ├── history-analytics-service/
 │   └── media-processing-service/
@@ -145,7 +180,17 @@ Nginx 作为 API 网关，负责请求路由。
   - `/api/ai/`: 所有 AI 相关的 API 请求被代理到 `ai_service`。
   - `/api/ws/`: WebSocket 连接请求被特殊处理（通过 `Upgrade` 和 `Connection` 头）并代理到 `comms-service`。
 
-## 最新进展与当前状态 (2025年11月12日)
+## 最新进展与当前状态 (2025年11月13日)
+
+1. **新增omni-service服务**：已成功集成Qwen3-omni多模态AI引擎，实现了统一的ASR、LLM和TTS处理流程。该服务提供了HTTP API接口，支持文本和音频处理，并能够维护用户上下文和对话历史。
+
+2. **完善项目文档结构**：更新了GEMINI.md文件中的关键文件与目录结构部分，详细记录了omni-service及其他服务的目录结构，使项目结构更加清晰易懂。
+
+3. **优化前端组件**：在client/src/components目录中添加了RealTimeRecorder组件，用于实现实时音频录制功能，为后续的实时语音交互奠定基础。
+
+4. **服务间通信优化**：通过更新comms-service和user-service的结构，为后续服务间的高效通信做好准备。
+
+5. **环境配置标准化**：在omni-service中添加了.env.example文件作为环境变量配置模板，规范了环境配置管理。
 - **重大转变：从集成Azure SDK转向云端部署AI引擎自有栈（增量ASR-LLM-TTS流水线）**
     - **当前状态**: 项目的核心实时语音识别功能现已**完成设计**。从客户端采集音频，到 `ai-service` 进行实时转录，再到前端正确显示对话，整个流程步骤已经设计完毕。
 - **下一步计划**:

@@ -1,5 +1,5 @@
+const request = require('supertest');
 const express = require('express');
-const { Qwen3OmniService } = require('../src/qwen3omni/service');
 
 // Mock the Qwen3OmniClient to avoid actual API calls
 jest.mock('../src/qwen3omni/client', () => {
@@ -23,36 +23,17 @@ jest.mock('../src/qwen3omni/client', () => {
   };
 });
 
+const app = require('../src/index');
+
 describe('Omni Service HTTP API', () => {
-  let app;
-  let server;
-  let port;
-
-  beforeAll((done) => {
-    app = express();
-    require('../src/index'); // This will attach routes to app
-    
-    // Find an available port
-    server = app.listen(0, () => {
-      port = server.address().port;
-      done();
-    });
-  });
-
-  afterAll((done) => {
-    if (server) {
-      server.close(done);
-    }
-  });
-
   describe('GET /health', () => {
     it('should return health status', async () => {
-      const response = await fetch(`http://localhost:${port}/health`);
-      const data = await response.json();
+      const response = await request(app)
+        .get('/health')
+        .expect(200);
       
-      expect(response.status).toBe(200);
-      expect(data.status).toBe('OK');
-      expect(data.service).toBe('omni-service');
+      expect(response.body.status).toBe('OK');
+      expect(response.body.service).toBe('omni-service');
     });
   });
 
@@ -66,19 +47,13 @@ describe('Omni Service HTTP API', () => {
         }
       };
 
-      const response = await fetch(`http://localhost:${port}/api/context`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify(contextData)
-      });
+      const response = await request(app)
+        .post('/api/context')
+        .send(contextData)
+        .expect(200);
       
-      const data = await response.json();
-      
-      expect(response.status).toBe(200);
-      expect(data.code).toBe(200);
-      expect(data.message).toBe('User context updated successfully');
+      expect(response.body.code).toBe(200);
+      expect(response.body.message).toBe('User context updated successfully');
     });
   });
 
@@ -94,20 +69,14 @@ describe('Omni Service HTTP API', () => {
         }
       };
 
-      const response = await fetch(`http://localhost:${port}/api/process/text`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify(textData)
-      });
+      const response = await request(app)
+        .post('/api/process/text')
+        .send(textData)
+        .expect(200);
       
-      const data = await response.json();
-      
-      expect(response.status).toBe(200);
-      expect(data.code).toBe(200);
-      expect(data.data.type).toBe('text_response');
-      expect(typeof data.data.text).toBe('string');
+      expect(response.body.code).toBe(200);
+      expect(response.body.data.type).toBe('text_response');
+      expect(typeof response.body.data.text).toBe('string');
     });
   });
 });

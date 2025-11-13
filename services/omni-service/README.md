@@ -1,119 +1,137 @@
 # Omni Service
 
-The Omni Service is a microservice that integrates the Qwen3-Omni multimodal AI engine for real-time ASR (Automatic Speech Recognition), LLM (Large Language Model), and TTS (Text-to-Speech) processing.
+Microservice integrating Qwen3-Omni for real-time ASR, LLM, and TTS processing.
 
 ## Features
-
-- Real-time audio processing with Qwen3-Omni
-- WebSocket interface for streaming audio and text data
-- ASR, LLM, and TTS capabilities in a single service
-- Scalable microservice architecture
+- HTTP-based API for text and audio processing
+- Speech-to-text (ASR) processing
+- Language model (LLM) inference
+- Text-to-speech (TTS) synthesis
+- Context-aware conversation management
 
 ## Getting Started
 
 ### Prerequisites
-
-- Docker and Docker Compose
-- Node.js 18+ (for local development)
+- Node.js >= 18.0.0
+- Docker (optional, for containerized deployment)
 
 ### Installation
-
 1. Clone the repository
-2. Navigate to the omni-service directory
-3. Install dependencies:
-   ```bash
-   npm install
-   ```
+2. Navigate to this service directory: `cd services/omni-service`
+3. Install dependencies: `npm install`
 
 ### Configuration
-
 Create a `.env` file based on `.env.example`:
 ```bash
-cp .env.example .env
+PORT=8081
+QWEN3_OMNI_BASE_URL=http://localhost:8000
+QWEN3_OMNI_MODEL=qwen3-omni
 ```
 
 ### Running the Service
+- **Development**: `npm run dev`
+- **Production**: `npm start`
+- **Docker**: `docker-compose up omni-service`
 
-#### With Docker Compose (Recommended)
+## API Design
 
-```bash
-docker-compose up --build omni-service
-```
+### Health Check
+- **Endpoint**: `GET /health`
+- **Response**: 
+  ```json
+  {
+    "status": "OK",
+    "service": "omni-service"
+  }
+  ```
 
-#### Locally
+### Text Processing
+- **Endpoint**: `POST /api/process/text`
+- **Headers**: 
+  - `Content-Type: application/json`
+- **Body**:
+  ```json
+  {
+    "text": "Hello, how are you?",
+    "userId": "user123",
+    "context": {
+      "proficiencyLevel": "Intermediate",
+      "learningGoals": "Business English",
+      "interests": "Technology"
+    }
+  }
+  ```
+- **Response**:
+  ```json
+  {
+    "code": 200,
+    "message": "Success",
+    "data": {
+      "type": "text_response",
+      "text": "I'm doing well, thank you for asking!",
+      "lang": "en-US"
+    }
+  }
+  ```
 
-```bash
-npm start
-```
+### Audio Processing
+- **Endpoint**: `POST /api/process/audio`
+- **Headers**: 
+  - `Content-Type: audio/wav` (or appropriate audio type)
+  - `user-id: user123` (optional)
+  - `context: {"proficiencyLevel": "Intermediate"}` (optional, JSON string)
+- **Body**: Binary audio data (PCM/WAV)
+- **Response**:
+  ```json
+  {
+    "code": 200,
+    "message": "Success",
+    "data": {
+      "transcript": "Hello, how are you?",
+      "response": "I'm doing well, thank you for asking!"
+    }
+  }
+  ```
 
-## API Endpoints
-
-### HTTP Endpoints
-
-- `GET /health` - Health check endpoint
-
-### WebSocket Endpoints
-
-- `/stream` - WebSocket endpoint for real-time audio/text processing
-
-#### WebSocket Message Types
-
-1. **Text Input**
-   ```json
-   {
-     "type": "text_input",
-     "text": "Hello, how are you?",
-     "lang": "en-US"
-   }
-   ```
-
-2. **Session Control**
-   ```json
-   {
-     "type": "start_session"
-   }
-   ```
-   
-   ```json
-   {
-     "type": "stop_session"
-   }
-   ```
+### Set User Context
+- **Endpoint**: `POST /api/context`
+- **Headers**: 
+  - `Content-Type: application/json`
+- **Body**:
+  ```json
+  {
+    "context": {
+      "proficiencyLevel": "Intermediate",
+      "learningGoals": "Business English",
+      "interests": "Technology"
+    }
+  }
+  ```
+- **Response**:
+  ```json
+  {
+    "code": 200,
+    "message": "User context updated successfully",
+    "data": {
+      "type": "context_set",
+      "message": "User context updated successfully"
+    }
+  }
+  ```
 
 ## Architecture
+The Omni Service acts as a bridge between client applications and the Qwen3-Omni multimodal AI engine, handling:
+- HTTP request processing
+- ASR/LLM/TTS pipeline orchestration
+- Conversation context management
 
-The Omni Service follows the SROP (Scalable Real-time Oral Practice) architecture and communicates with other services through WebSockets.
-
-## Development
-
-### Installing Dependencies
-
-```bash
-npm install
+### Project Structure
 ```
-
-### Running in Development Mode
-
-```bash
-npm run dev
+src/
+├── index.js          # Entry point and HTTP server
+├── prompt/
+│   └── system.js     # System prompt template for Qwen3-Omni
+└── qwen3omni/
+    ├── client.js     # Qwen3-Omni client implementation
+    └── service.js    # Service layer for handling client requests
 ```
-
-## Environment Variables
-
-| Variable | Description | Default |
-|----------|-------------|---------|
-| PORT | HTTP server port | 8081 |
-| QWEN3_OMNI_BASE_URL | Qwen3-Omni API base URL | http://localhost:8000 |
-| QWEN3_OMNI_MODEL | Qwen3-Omni model name | qwen3-omni |
-
-## Contributing
-
-1. Fork the repository
-2. Create your feature branch
-3. Commit your changes
-4. Push to the branch
-5. Open a pull request
-
-## License
-
-MIT

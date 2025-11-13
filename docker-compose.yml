@@ -89,6 +89,15 @@ services:
     networks:
       - oral_app_net
 
+  omni-service:
+    build: ./services/omni-service
+    container_name: oral_app_omni_service
+    restart: always
+    ports:
+      - "8082:8082"
+    networks:
+      - oral_app_net
+
 volumes:
   postgres_data:
   mongo_data:

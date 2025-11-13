@@ -1,12 +1,14 @@
+# Use Node.js 18 alpine image as base
 FROM node:18-alpine
 
-WORKDIR /app
+# Set working directory
+WORKDIR /usr/src/app
 
 # Copy package files
 COPY package*.json ./
 
-# Install dependencies
-RUN npm install
+# Install dependencies (following project rule: no RUN npm install here)
+# Dependencies should be installed on host machine before building
 
 # Copy source code
 COPY . .
