@@ -1,39 +1,30 @@
 import React from 'react';
-import { BrowserRouter as Router, Route, Routes, Link } from 'react-router-dom';
-import Login from './components/Login';
-import Register from './components/Register';
-import RealTimeRecorder from './components/RealTimeRecorder'; // Import the new component
-import { Navbar, Nav, Container } from 'react-bootstrap';
-import 'bootstrap/dist/css/bootstrap.min.css';
+import { BrowserRouter as Router, Route, Routes, Navigate } from 'react-router-dom';
+import { AuthProvider } from './contexts/AuthContext';
+import Welcome from './pages/Welcome';
+import Login from './pages/Login';
+import Register from './pages/Register';
+import Conversation from './pages/Conversation';
+import Discovery from './pages/Discovery';
+import Profile from './pages/Profile';
 import './App.css';
 
 function App() {
   return (
     <Router>
-      <div className="App">
-        <Navbar bg="dark" variant="dark" expand="lg">
-          <Container>
-            <Navbar.Brand as={Link} to="/">Oral AI</Navbar.Brand>
-            <Navbar.Toggle aria-controls="basic-navbar-nav" />
-            <Navbar.Collapse id="basic-navbar-nav">
-              <Nav className="me-auto">
-                <Nav.Link as={Link} to="/login">Login</Nav.Link>
-                <Nav.Link as={Link} to="/register">Register</Nav.Link>
-                <Nav.Link as={Link} to="/recorder">Recorder</Nav.Link> 
-              </Nav>
-            </Navbar.Collapse>
-          </Container>
-        </Navbar>
-        <Container className="mt-4">
+      <AuthProvider>
+        <div className="App">
           <Routes>
-            <Route path="/register" element={<Register />} />
+            <Route path="/" element={<Welcome />} />
             <Route path="/login" element={<Login />} />
-            <Route path="/recorder" element={<RealTimeRecorder />} />
-            {/* You can add a home/dashboard route here later */}
-            {/* <Route path="/" element={<Home />} /> */}
+            <Route path="/register" element={<Register />} />
+            <Route path="/conversation" element={<Conversation />} />
+            <Route path="/discovery" element={<Discovery />} />
+            <Route path="/profile" element={<Profile />} />
+            <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
-        </Container>
-      </div>
+        </div>
+      </AuthProvider>
     </Router>
   );
 }

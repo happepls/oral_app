@@ -1,0 +1,187 @@
+<!DOCTYPE html>
+<html class="dark" lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>Discover - Language Learning App</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Lexend:wght@400;500;700&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined" rel="stylesheet"/>
+<style>
+        .material-symbols-outlined {
+            font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+        }.no-scrollbar::-webkit-scrollbar {
+            display: none;
+        }
+        .no-scrollbar {
+            -ms-overflow-style: none;scrollbar-width: none;}
+    </style>
+<script id="tailwind-config">
+      tailwind.config = {
+        darkMode: "class",
+        theme: {
+          extend: {
+            colors: {
+              "primary": "#137fec",
+              "background-light": "#f6f7f8",
+              "background-dark": "#101922",
+              "card-light": "#ffffff",
+              "card-dark": "#19232d",
+              "text-light": "#2D3748",
+              "text-dark": "#E2E8F0",
+              "text-muted-light": "#64748b",
+              "text-muted-dark": "#9dabb9"
+            },
+            fontFamily: {
+              "display": ["Lexend", "sans-serif"]
+            },
+            borderRadius: {"DEFAULT": "0.25rem", "lg": "0.5rem", "xl": "0.75rem", "full": "9999px"},
+          },
+        },
+      }
+    </script>
+<style>
+    body {
+      min-height: max(884px, 100dvh);
+    }
+  </style>
+<style>
+    body {
+      min-height: max(884px, 100dvh);
+    }
+  </style>
+  </head>
+<body class="bg-background-light dark:bg-background-dark font-display text-text-light dark:text-text-dark">
+<div class="relative flex h-auto min-h-screen w-full flex-col">
+<main class="flex-grow pb-28">
+<div class="flex flex-col gap-2 p-4 pb-2">
+<div class="flex h-12 items-center justify-between">
+<p class="text-3xl font-bold leading-tight tracking-tight text-text-light dark:text-text-dark">Discover</p>
+<div class="flex w-12 items-center justify-end">
+<button class="flex h-12 max-w-[480px] min-w-0 cursor-pointer items-center justify-center gap-2 overflow-hidden rounded-full p-0 text-text-light dark:text-text-dark">
+<span class="material-symbols-outlined text-2xl">notifications</span>
+</button>
+</div>
+</div>
+</div>
+<div class="px-4 py-3">
+<label class="flex h-12 w-full min-w-40 flex-col">
+<div class="flex h-full w-full flex-1 items-stretch rounded-xl">
+<div class="flex items-center justify-center rounded-l-xl border-none bg-card-light pl-4 text-text-muted-light dark:bg-card-dark dark:text-text-muted-dark">
+<span class="material-symbols-outlined text-2xl">search</span>
+</div>
+<input class="form-input h-full min-w-0 flex-1 resize-none overflow-hidden rounded-r-xl border-none bg-card-light px-2 py-2 text-base font-normal leading-normal text-text-light placeholder:text-text-muted-light focus:outline-0 focus:ring-0 dark:bg-card-dark dark:text-text-dark dark:placeholder:text-text-muted-dark" placeholder="Search topics, partners..." value=""/>
+</div>
+</label>
+</div>
+<div class="flex gap-3 overflow-x-auto p-4 pt-1 no-scrollbar">
+<div class="flex h-9 shrink-0 cursor-pointer items-center justify-center gap-x-2 rounded-full bg-primary px-4 text-white"><p class="text-sm font-medium leading-normal">All</p></div>
+<div class="flex h-9 shrink-0 cursor-pointer items-center justify-center gap-x-2 rounded-full bg-card-light px-4 dark:bg-card-dark"><p class="text-sm font-medium leading-normal text-text-light dark:text-text-dark">Topics</p></div>
+<div class="flex h-9 shrink-0 cursor-pointer items-center justify-center gap-x-2 rounded-full bg-card-light px-4 dark:bg-card-dark"><p class="text-sm font-medium leading-normal text-text-light dark:text-text-dark">Conversations</p></div>
+<div class="flex h-9 shrink-0 cursor-pointer items-center justify-center gap-x-2 rounded-full bg-card-light px-4 dark:bg-card-dark"><p class="text-sm font-medium leading-normal text-text-light dark:text-text-dark">Lessons</p></div>
+</div>
+<h3 class="px-4 pb-2 pt-4 text-xl font-bold leading-tight tracking-tight">Recommended For You</h3>
+<div class="flex overflow-x-auto no-scrollbar">
+<div class="flex items-stretch gap-4 px-4 py-2">
+<div class="flex h-full w-64 flex-1 shrink-0 flex-col gap-3 rounded-xl bg-card-light p-3 dark:bg-card-dark">
+<div class="aspect-video w-full rounded-lg bg-cover bg-center bg-no-repeat" data-alt="vibrant abstract gradient from purple to orange" style='background-image: url("https://lh3.googleusercontent.com/aida-public/AB6AXuBuENH7MCnk3y1ulawQk3s0Fp2JluiI2xfAmc3jwu7LiqKEN6QfL0C2t5guTPvv951X8u7TqqIApgOLnJI6B_ZtHNsToFkGhT59z-Fsta9tHsqbuJo_zdQKdoHPrJ98-bvrXb9C8DxNK9LpS-0hgvKvYEgX25EKUPm7fHuZDY6DGo9pVHCgvF2DUw2wPeZqLQw8Be3anrSfJeLT3db7_byUoZAZp1upSCZ5LU_KJ_6FmnxnTCffbIWN790GqStR4yYTToU0xmBaB1JQ");'></div>
+<div>
+<p class="font-medium leading-normal">Travel &amp; Tourism</p>
+<p class="text-sm font-normal leading-normal text-text-muted-light dark:text-text-muted-dark">Intermediate</p>
+</div>
+</div>
+<div class="flex h-full w-64 flex-1 shrink-0 flex-col gap-3 rounded-xl bg-card-light p-3 dark:bg-card-dark">
+<div class="aspect-video w-full rounded-lg bg-cover bg-center bg-no-repeat" data-alt="blue and green swirling patterns" style='background-image: url("https://lh3.googleusercontent.com/aida-public/AB6AXuBpyzCLidDMf34rhMl50UcxHQoJ05GYBF2YfX20kegwDrgiZHOtDnKNUcPIiqt1coKjRaS29AtV2x8uVoXaa8TIRuHyKMMWTTtmBrph6K3CXaLXVYn8Odu48d0RJYvIrDG1QaF541zZVncdoHqUfNJUlnVZm9oNsFgzfDBSormDQVdkRMiNTNLxd6811dKukK1TFI4J6u_8H0P0hyYflA681hy6ICeh5LmjB4NQG_l2reQpk8_IiurWpDkJi1xsozboLmQrxm_EmM7e");'></div>
+<div>
+<p class="font-medium leading-normal">Business English</p>
+<p class="text-sm font-normal leading-normal text-text-muted-light dark:text-text-muted-dark">Advanced</p>
+</div>
+</div>
+<div class="flex h-full w-64 flex-1 shrink-0 flex-col gap-3 rounded-xl bg-card-light p-3 dark:bg-card-dark">
+<div class="aspect-video w-full rounded-lg bg-cover bg-center bg-no-repeat" data-alt="soft pink and yellow abstract background" style='background-image: url("https://lh3.googleusercontent.com/aida-public/AB6AXuAOMEjCQVum-0XW3v1OxxttDPftMNP_FRJXIAiO45KAixr8YA9UQRgWwxzuWlqSKDwcUHtsWTa8uAH1q-GDRXvq_ihkSx-dPYppeaXMSW9Iac54X45KTAp0tGlP80PoQN4GtTaMRFuj1vEuvW5RtZj1EEYquYtyHZaLNDifVxGkEg1O8De6NQo5rfdYdJ77XlHOXamGgCK8uOgiRRGOA-Xt5ieDthnnzUxXL6j79X-8XbooNquhCwWDBV3merWCsyp20Jut29T4_6Am");'></div>
+<div>
+<p class="font-medium leading-normal">Daily Life</p>
+<p class="text-sm font-normal leading-normal text-text-muted-light dark:text-text-muted-dark">Beginner</p>
+</div>
+</div>
+</div>
+</div>
+<h3 class="px-4 pb-2 pt-6 text-xl font-bold leading-tight tracking-tight">New AI Partners</h3>
+<div class="flex overflow-x-auto no-scrollbar">
+<div class="flex items-stretch gap-4 px-4 py-2">
+<div class="flex w-40 shrink-0 flex-col items-center gap-3 rounded-xl bg-card-light p-4 text-center dark:bg-card-dark">
+<img class="h-24 w-24 rounded-full object-cover" data-alt="Portrait of a friendly looking man with glasses" src="https://lh3.googleusercontent.com/aida-public/AB6AXuDGYJv2hPlxzzMWvxIBs_BvWEUcYYcwJWBNmKczB18y_Jz35xdrq-Fp8Pt7Q-XbDk5lurjZgppLGDyNLzpvjovzRdlEQxbkRmn7UDUwWBBdmsanFwA5z8sXsHpcj3aw-CsUCFVpxc_Ok7IERBwx_vsdblV13Hv4HALHfV3TbVQ3Bz9i-wlchKmxdutUbr9hmdCatAlaC4QnUgqBOGs59USiytXAEkwFvoWwe73pf8t8_essuRk3Ml3CjtmjSWIbmLQMfIlZWcu-mL_R"/>
+<div class="flex flex-col">
+<p class="font-semibold">Tom</p>
+<p class="text-xs text-text-muted-light dark:text-text-muted-dark">Tech Enthusiast</p>
+</div>
+</div>
+<div class="flex w-40 shrink-0 flex-col items-center gap-3 rounded-xl bg-card-light p-4 text-center dark:bg-card-dark">
+<img class="h-24 w-24 rounded-full object-cover" data-alt="Portrait of a smiling woman with curly hair" src="https://lh3.googleusercontent.com/aida-public/AB6AXuDUVn_KzYj3R-K5pXDnX1rhl9Fg3-iGP_PyAzElY805PD6097eadkV_aWA9Y4kT-UmDnSIqi7xUG0hqO-_gZFORC--r9fiW65U3FkI2tQNR55toC4Fi6ZWCYOBu2zuBgw4vstuQRvZhznOVJeAnasj74cmCf2cokmf8FeDDs0fycpKGYMEcAMabQwXiClr2gPkz8Cja0VPrdREWUEhmX4A-mzC2TeNHaydOhW4APAyGteQQWAUa08UYaeu-3j5YxjEKKKg9Xfa2mIjS"/>
+<div class="flex flex-col">
+<p class="font-semibold">Maria</p>
+<p class="text-xs text-text-muted-light dark:text-text-muted-dark">Travel Blogger</p>
+</div>
+</div>
+<div class="flex w-40 shrink-0 flex-col items-center gap-3 rounded-xl bg-card-light p-4 text-center dark:bg-card-dark">
+<img class="h-24 w-24 rounded-full object-cover" data-alt="Portrait of a person wearing headphones" src="https://lh3.googleusercontent.com/aida-public/AB6AXuAwPjTwKK6oKXGySMTLnIMsWvX38CmsmfCrXs2NcYtUfyoIbOMa0vFADOrkeuEIWIxtl3f0FvBbM5ip8eXPCSWGMbGBvo4ZrOmcGCBsnBV_j9GZnPt3NY1AU9tILFdX1b0O6E9ZEcV5-AVa7x5jmOmeH-uVXJ1h_NUrSpSZG2xCR0GXTQcEY3mfAGAeCMH_gKL8NIInSu06NPENpvYfIn_AEcTlGwthyu1IBPs2Ooze4RnU44jrZk40GkPGP0nfCvj1jWArwCr91Win"/>
+<div class="flex flex-col">
+<p class="font-semibold">Leo</p>
+<p class="text-xs text-text-muted-light dark:text-text-muted-dark">Music Critic</p>
+</div>
+</div>
+<div class="flex w-40 shrink-0 flex-col items-center gap-3 rounded-xl bg-card-light p-4 text-center dark:bg-card-dark">
+<img class="h-24 w-24 rounded-full object-cover" data-alt="Portrait of a woman in a business suit" src="https://lh3.googleusercontent.com/aida-public/AB6AXuC9y9zgXhn92wvRrjZgSlK-YHEuU2iR6H3DwAQqWhLWK0WNqa81gLzF6tpuPLa9n3mnh36na-6l8iC5u7p8OU0vozdRCrGF7_PgZnNmhG953YasbKSd5YTJqJUzwi0OZb_IKqZhIqsbM_rL7EnD3E3uPKjjusJ4aiXtjxgVA_GQa75MIevv5VzTJCBB0TQcCp0_etUaRHoFDjBlPZLdXpPjAYeS83jWLw9tohTpqyhVHl3HSupuowBkzHVL1cvXlZ4qbGkRaPljgvKY"/>
+<div class="flex flex-col">
+<p class="font-semibold">Chloe</p>
+<p class="text-xs text-text-muted-light dark:text-text-muted-dark">CEO</p>
+</div>
+</div>
+</div>
+</div>
+<h3 class="px-4 pb-2 pt-6 text-xl font-bold leading-tight tracking-tight">Trending Conversations</h3>
+<div class="flex flex-col gap-3 px-4 py-2">
+<div class="flex items-center gap-4 rounded-xl bg-card-light p-3 dark:bg-card-dark">
+<div class="flex h-12 w-12 shrink-0 items-center justify-center rounded-lg bg-primary/20 text-primary">
+<span class="material-symbols-outlined">restaurant</span>
+</div>
+<div class="flex-grow">
+<p class="font-medium">Ordering at a Restaurant</p>
+<p class="text-sm text-text-muted-light dark:text-text-muted-dark">10 mins</p>
+</div>
+<span class="material-symbols-outlined text-text-muted-light dark:text-text-muted-dark">chevron_right</span>
+</div>
+<div class="flex items-center gap-4 rounded-xl bg-card-light p-3 dark:bg-card-dark">
+<div class="flex h-12 w-12 shrink-0 items-center justify-center rounded-lg bg-primary/20 text-primary">
+<span class="material-symbols-outlined">work</span>
+</div>
+<div class="flex-grow">
+<p class="font-medium">Job Interview Practice</p>
+<p class="text-sm text-text-muted-light dark:text-text-muted-dark">20 mins</p>
+</div>
+<span class="material-symbols-outlined text-text-muted-light dark:text-text-muted-dark">chevron_right</span>
+</div>
+</div>
+</main>
+<div class="fixed bottom-0 left-0 right-0 border-t border-card-light bg-background-light/80 backdrop-blur-sm dark:border-card-dark dark:bg-background-dark/80">
+<div class="grid h-20 grid-cols-4 items-center justify-items-center px-4">
+<div class="flex cursor-pointer flex-col items-center gap-1 text-text-muted-light dark:text-text-muted-dark">
+<span class="material-symbols-outlined">home</span>
+<p class="text-xs font-medium">Home</p>
+</div>
+<div class="flex cursor-pointer flex-col items-center gap-1 text-primary">
+<span class="material-symbols-outlined">explore</span>
+<p class="text-xs font-bold">Discover</p>
+</div>
+<div class="flex cursor-pointer flex-col items-center gap-1 text-text-muted-light dark:text-text-muted-dark">
+<span class="material-symbols-outlined">chat_bubble</span>
+<p class="text-xs font-medium">Practice</p>
+</div>
+<div class="flex cursor-pointer flex-col items-center gap-1 text-text-muted-light dark:text-text-muted-dark">
+<span class="material-symbols-outlined">person</span>
+<p class="text-xs font-medium">Profile</p>
+</div>
+</div>
+</div>
+</div>
+
+</body></html>

@@ -69,13 +69,18 @@ services:
     build: ./services/comms-service
     container_name: oral_app_comms_service
     restart: always
+    env_file:
+      - ./services/comms-service/.env
     networks:
       - oral_app_net
 
-  ai-service:
-    build: ./services/ai-service
-    container_name: oral_app_ai_service
+  ai-omni-service:
+    build: ./services/ai-omni-service
+    container_name: oral_app_ai_omni_service
     restart: always
+    ports:
+      - "8082:8082"
+      - "8081:8081"
     depends_on:
       - postgres
       - redis
@@ -86,15 +91,6 @@ services:
     build: ./services/conversation-service
     container_name: oral_app_conversation_service
     restart: always
-    networks:
-      - oral_app_net
-
-  omni-service:
-    build: ./services/omni-service
-    container_name: oral_app_omni_service
-    restart: always
-    ports:
-      - "8082:8082"
     networks:
       - oral_app_net
 

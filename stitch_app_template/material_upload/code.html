@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+
+<html class="dark" lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>Upload New Material</title>
+<link href="https://fonts.googleapis.com/css2?family=Lexend:wght@400;500;700&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined" rel="stylesheet"/>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<script id="tailwind-config">
+      tailwind.config = {
+        darkMode: "class",
+        theme: {
+          extend: {
+            colors: {
+              "primary": "#137fec",
+              "background-light": "#f6f7f8",
+              "background-dark": "#101922",
+            },
+            fontFamily: {
+              "display": ["Lexend", "sans-serif"]
+            },
+            borderRadius: {"DEFAULT": "0.25rem", "lg": "0.5rem", "xl": "0.75rem", "full": "9999px"},
+          },
+        },
+      }
+    </script>
+<style>
+    body {
+      min-height: max(884px, 100dvh);
+    }
+  </style>
+  </head>
+<body class="bg-background-light dark:bg-background-dark font-display">
+<div class="relative flex min-h-screen w-full flex-col group/design-root overflow-x-hidden">
+<!-- Top App Bar -->
+<div class="flex items-center bg-background-light dark:bg-background-dark p-4 pb-2 justify-between sticky top-0 z-10 border-b border-white/10">
+<div class="text-slate-800 dark:text-white flex size-10 shrink-0 items-center justify-center">
+<span class="material-symbols-outlined text-2xl">arrow_back</span>
+</div>
+<h2 class="text-slate-900 dark:text-white text-lg font-bold leading-tight tracking-[-0.015em] flex-1 text-center pr-10">Upload New Material</h2>
+</div>
+<div class="flex flex-col p-4 space-y-6">
+<!-- Your Material Section -->
+<div>
+<h3 class="text-slate-900 dark:text-white text-lg font-bold leading-tight tracking-[-0.015em] pb-2 pt-2">Your Material</h3>
+<div class="flex flex-col items-center gap-6 rounded-xl border-2 border-dashed border-slate-300 dark:border-slate-700 px-6 py-10">
+<div class="flex max-w-[480px] flex-col items-center gap-2">
+<p class="text-slate-900 dark:text-white text-lg font-bold leading-tight tracking-[-0.015em] max-w-[480px] text-center">Tap to select a file or drag it here</p>
+<p class="text-slate-600 dark:text-slate-400 text-sm font-normal leading-normal max-w-[480px] text-center">Supported formats: PDF, TXT, DOCX. Max size: 25MB.</p>
+</div>
+<button class="flex min-w-[84px] max-w-[480px] cursor-pointer items-center justify-center overflow-hidden rounded-lg h-10 px-4 bg-slate-200 dark:bg-slate-800 text-slate-900 dark:text-white text-sm font-bold leading-normal tracking-[0.015em] hover:bg-slate-300 dark:hover:bg-slate-700 transition-colors">
+<span class="truncate">Select File</span>
+</button>
+</div>
+<!-- Progress Bar Example - uncomment to view -->
+<!-- 
+            <div class="flex flex-col gap-3 pt-4">
+                <div class="flex gap-6 justify-between"><p class="text-slate-900 dark:text-white text-base font-medium leading-normal">Uploading document.pdf</p></div>
+                <div class="rounded-full bg-slate-200 dark:bg-slate-700"><div class="h-2 rounded-full bg-primary" style="width: 65%;"></div></div>
+            </div>
+            -->
+</div>
+<!-- Add Details Section -->
+<div>
+<h3 class="text-slate-900 dark:text-white text-lg font-bold leading-tight tracking-[-0.015em] pb-2 pt-2">Add Details</h3>
+<div class="flex flex-col gap-4">
+<input class="w-full rounded-lg border-slate-300 dark:border-slate-700 bg-background-light dark:bg-background-dark text-slate-900 dark:text-white placeholder:text-slate-500 dark:placeholder:text-slate-400 focus:ring-primary focus:border-primary" placeholder="Title" type="text"/>
+<textarea class="w-full rounded-lg border-slate-300 dark:border-slate-700 bg-background-light dark:bg-background-dark text-slate-900 dark:text-white placeholder:text-slate-500 dark:placeholder:text-slate-400 focus:ring-primary focus:border-primary" placeholder="Description (Optional)" rows="3"></textarea>
+</div>
+</div>
+<!-- Categorize Section -->
+<div>
+<h3 class="text-slate-900 dark:text-white text-lg font-bold leading-tight tracking-[-0.015em] pb-2 pt-2">Categorize</h3>
+<div class="flex flex-col gap-4">
+<div class="flex flex-col gap-2">
+<label class="text-sm font-medium text-slate-700 dark:text-slate-300">Language</label>
+<select class="w-full rounded-lg border-slate-300 dark:border-slate-700 bg-background-light dark:bg-background-dark text-slate-900 dark:text-white focus:ring-primary focus:border-primary">
+<option>English</option>
+<option>Spanish</option>
+<option>French</option>
+<option>German</option>
+</select>
+</div>
+<div class="flex flex-col gap-2">
+<label class="text-sm font-medium text-slate-700 dark:text-slate-300">Topic</label>
+<div class="flex flex-wrap gap-2">
+<button class="px-3 py-1 text-sm font-medium rounded-full bg-primary/20 text-primary">Business</button>
+<button class="px-3 py-1 text-sm font-medium rounded-full bg-slate-200 dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-300 dark:hover:bg-slate-700">Travel</button>
+<button class="px-3 py-1 text-sm font-medium rounded-full bg-slate-200 dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-300 dark:hover:bg-slate-700">Science</button>
+<button class="px-3 py-1 text-sm font-medium rounded-full bg-slate-200 dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-300 dark:hover:bg-slate-700">Technology</button>
+</div>
+</div>
+<div class="flex flex-col gap-2">
+<label class="text-sm font-medium text-slate-700 dark:text-slate-300">Proficiency Level</label>
+<div class="grid grid-cols-3 gap-2">
+<button class="w-full text-center py-2 rounded-lg text-sm font-semibold bg-slate-200 dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-300 dark:hover:bg-slate-700">A1</button>
+<button class="w-full text-center py-2 rounded-lg text-sm font-semibold bg-primary/20 text-primary">B2</button>
+<button class="w-full text-center py-2 rounded-lg text-sm font-semibold bg-slate-200 dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-300 dark:hover:bg-slate-700">C1</button>
+</div>
+</div>
+</div>
+</div>
+<!-- Privacy Section -->
+<div>
+<h3 class="text-slate-900 dark:text-white text-lg font-bold leading-tight tracking-[-0.015em] pb-2 pt-2">Privacy</h3>
+<div class="space-y-3">
+<div class="flex items-start gap-4 p-4 rounded-xl border border-primary bg-primary/10">
+<span class="material-symbols-outlined text-primary mt-1">lock</span>
+<div class="flex-1">
+<p class="font-bold text-slate-900 dark:text-white">Private</p>
+<p class="text-sm text-slate-600 dark:text-slate-400">Only you can see it.</p>
+</div>
+<div class="flex h-6 items-center">
+<input checked="" class="h-4 w-4 border-slate-300 text-primary focus:ring-primary" id="privacy-private" name="privacy" type="radio"/>
+</div>
+</div>
+<div class="flex items-start gap-4 p-4 rounded-xl border border-slate-300 dark:border-slate-700">
+<span class="material-symbols-outlined text-slate-600 dark:text-slate-400 mt-1">public</span>
+<div class="flex-1">
+<p class="font-bold text-slate-900 dark:text-white">Public</p>
+<p class="text-sm text-slate-600 dark:text-slate-400">Share with the Guaji AI community.</p>
+</div>
+<div class="flex h-6 items-center">
+<input class="h-4 w-4 border-slate-300 text-primary focus:ring-primary" id="privacy-public" name="privacy" type="radio"/>
+</div>
+</div>
+</div>
+</div>
+</div>
+<!-- CTA Button -->
+<div class="p-4 mt-auto sticky bottom-0 bg-background-light dark:bg-background-dark border-t border-white/10">
+<button class="w-full flex min-w-[84px] max-w-[480px] cursor-pointer items-center justify-center overflow-hidden rounded-xl h-12 px-4 bg-primary text-white text-base font-bold leading-normal tracking-[0.015em] mx-auto hover:bg-primary/90 transition-colors">
+<span class="truncate">Upload &amp; Analyze</span>
+</button>
+</div>
+</div>
+</body></html>

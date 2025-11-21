@@ -226,3 +226,27 @@
     *   Prepared to integrate with actual Qwen3-Omni Docker image
     *   Planned to disable mock mode for real functionality testing
     *   Ready to conduct full end-to-end validation with real AI engine
+
+## 2025-11-21
+
+*   **AI Service Consolidation & Architecture Optimization**:
+    *   **Service Consolidation**: Successfully merged the separate `ai-service` and `omni-service` into a unified `ai-omni-service` to streamline the AI engine architecture and reduce operational complexity.
+    *   **Docker Compose Configuration**: Updated `docker-compose.yml` to replace the two separate services with the unified `ai-omni-service`, configuring it with appropriate port mappings (8081 for HTTP, 8082 for WebSocket) and dependencies.
+    *   **API Gateway Routing**: Refactored the `api-gateway/nginx.conf` to consolidate routing rules:
+        *   Combined `/api/ai/` and `/api/omni/` routes to point to the unified `ai_omni_service`
+        *   Updated WebSocket routing for both `/api/ai/ws/` and `/api/omni/ws/` endpoints
+        *   Maintained backward compatibility while simplifying the routing configuration
+    *   **Communication Service Update**: Modified `comms-service/src/index.js` to update the AI service WebSocket connection URL from `ws://omni-service:8082/stream` to `ws://ai-omni-service:8082/stream`.
+    *   **Documentation Updates**:
+        *   Updated `GEMINI.md` to reflect the consolidated service architecture
+        *   Removed references to separate AI services and unified the documentation
+        *   Updated directory structure and real-time communication flow descriptions
+    *   **Cleanup**: Removed the legacy `ai-service` and `omni-service` directories from the `services/` folder.
+    *   **Verification**: Confirmed that all configuration changes are consistent and the unified service architecture is ready for deployment.
+
+*   **Architecture Benefits Achieved**:
+    *   **Simplified Deployment**: Single AI service instead of two separate services
+    *   **Reduced Resource Usage**: Consolidated container footprint
+    *   **Improved Maintainability**: Unified codebase and configuration
+    *   **Enhanced Scalability**: Single service can be scaled independently
+    *   **Streamlined Development**: Single codebase for all AI functionality

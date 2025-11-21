@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+
+<html class="dark" lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>AI Language Learning Conversation</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Lexend:wght@400;500;700&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined" rel="stylesheet"/>
+<style>
+      .material-symbols-outlined {
+        font-variation-settings:
+        'FILL' 0,
+        'wght' 400,
+        'GRAD' 0,
+        'opsz' 24
+      }
+    </style>
+<script id="tailwind-config">
+      tailwind.config = {
+        darkMode: "class",
+        theme: {
+          extend: {
+            colors: {
+              "primary": "#137fec",
+              "background-light": "#f6f7f8",
+              "background-dark": "#101922",
+            },
+            fontFamily: {
+              "display": ["Lexend", "sans-serif"]
+            },
+            borderRadius: {"DEFAULT": "0.25rem", "lg": "0.5rem", "xl": "0.75rem", "full": "9999px"},
+          },
+        },
+      }
+    </script>
+<style>
+    body {
+      min-height: max(884px, 100dvh);
+    }
+  </style>
+  </head>
+<body class="bg-background-light dark:bg-background-dark font-display text-gray-800 dark:text-gray-200">
+<div class="flex flex-col h-screen max-w-lg mx-auto">
+<!-- Top App Bar -->
+<header class="flex items-center p-4 border-b border-gray-200 dark:border-gray-800 shrink-0">
+<button class="p-2 -ml-2 text-gray-600 dark:text-gray-400">
+<span class="material-symbols-outlined">close</span>
+</button>
+<div class="flex flex-col items-center flex-1">
+<h1 class="text-lg font-bold leading-tight tracking-tight">Ordering Coffee</h1>
+<p class="text-sm text-gray-500 dark:text-gray-400">with Kai, your AI Tutor</p>
+</div>
+<div class="flex items-center gap-1 px-3 py-1 text-sm font-medium border border-gray-300 rounded-full dark:border-gray-700 dark:text-gray-300">
+<span>Beginner</span>
+<span class="material-symbols-outlined !text-base">expand_more</span>
+</div>
+</header>
+<!-- Chat/Transcript Area -->
+<main class="flex-1 overflow-y-auto p-4 space-y-6">
+<!-- System Message -->
+<div class="flex justify-center">
+<div class="px-3 py-1 text-xs text-gray-500 bg-gray-200 rounded-full dark:bg-gray-800 dark:text-gray-400">
+                    Press the microphone to start speaking
+                </div>
+</div>
+<!-- AI Message -->
+<div class="flex items-end gap-3">
+<div class="w-8 h-8 rounded-full shrink-0 bg-center bg-no-repeat bg-cover" data-alt="Abstract gradient avatar for AI tutor Kai" style='background-image: url("https://lh3.googleusercontent.com/aida-public/AB6AXuBGjDXq8rVir4_TPG53PIyupWA6ni1ztCh6qfuE3FdKvj6k5SN-IcdZjdaNl8sboNE3ZArzgamauGiMpLMkLl5iXGPmEkAfp_pQsk45ysiebbQ5a9QT-Yr0ytLGzv2IQxt0X1MrpQWFk2_S3TfkNEtLKrkz1FkUvbiLfFpalBvTwPPpXtsXhyo7x_gMH-Vcwve03ZfLCBkR6bo6ZeJ-Llov0GPuDKTVNb3Y3NyvbUZLCRwRvtwVDXBCK7hUvkWZ83_6uM4ce6AqBRp1");'></div>
+<div class="flex flex-col items-start flex-1 gap-2">
+<div class="flex items-center gap-2">
+<p class="text-sm text-gray-600 dark:text-gray-400">Kai</p>
+<button class="text-gray-500 dark:text-gray-400">
+<span class="material-symbols-outlined !text-lg">volume_up</span>
+</button>
+</div>
+<div class="flex max-w-xs p-3 text-white rounded-lg rounded-bl-none bg-primary/20 dark:bg-gray-800 dark:text-gray-200">
+<p class="text-base font-normal leading-normal">Hi there! I'd like to practice ordering a coffee. Can you help me start?</p>
+</div>
+</div>
+</div>
+<!-- User Message -->
+<div class="flex items-end justify-end gap-3">
+<div class="flex flex-col items-end flex-1 gap-2">
+<div class="flex items-center gap-2">
+<p class="text-sm text-gray-600 dark:text-gray-400">You</p>
+<button class="text-gray-500 dark:text-gray-400">
+<span class="material-symbols-outlined !text-lg">volume_up</span>
+</button>
+</div>
+<div class="flex max-w-xs p-3 text-white rounded-lg rounded-br-none bg-primary">
+<p class="text-base font-normal leading-normal">Of course! Let's begin. You are the customer. What would you like to order?</p>
+</div>
+</div>
+</div>
+<!-- AI Message with Feedback -->
+<div class="flex items-end gap-3">
+<div class="w-8 h-8 rounded-full shrink-0 bg-center bg-no-repeat bg-cover" data-alt="Abstract gradient avatar for AI tutor Kai" style='background-image: url("https://lh3.googleusercontent.com/aida-public/AB6AXuAA_7hxrK2VIB-F5-vXqP04W46W1qId2HIA3e71TFzQ3IY7ICX12hdE9ZTkJXInMB9No-f8QKX9SvkEdAEcVA5baQzOTXMmOum86Gdp-Lvnm2LKA2tsZi4tyBaMNPC0S2g6ejCjkBofhmyCXve42ffLUqb_k24cR7P-REl1RTcdEuNNkSlDIpbcWJU4RqSCyWLBER4OKHTjze74z95wv7yBuwFYqR2H_Eo7NsCw7H7JQT2sd2QVThnAnFEgtD2Qbp3UcAMAPZ_nHwWg");'></div>
+<div class="flex flex-col items-start flex-1 gap-2">
+<div class="flex items-center gap-2">
+<p class="text-sm text-gray-600 dark:text-gray-400">Kai</p>
+<button class="text-gray-500 dark:text-gray-400">
+<span class="material-symbols-outlined !text-lg">volume_up</span>
+</button>
+</div>
+<div class="flex max-w-xs p-3 text-white rounded-lg rounded-bl-none bg-primary/20 dark:bg-gray-800 dark:text-gray-200">
+<p class="text-base font-normal leading-normal">"I want a coffee." That's a good start! A more natural way to say it would be, "Can I get a coffee, please?"</p>
+</div>
+</div>
+</div>
+</main>
+<!-- Bottom Bar -->
+<footer class="p-4 pt-2 shrink-0">
+<!-- Feedback & Hints Toolbar -->
+<div class="grid grid-cols-3 gap-2 mb-4">
+<button class="flex flex-col items-center gap-1.5 py-2 text-gray-600 rounded-lg dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-800 transition-colors">
+<span class="material-symbols-outlined">help</span>
+<p class="text-xs font-medium">Hint</p>
+</button>
+<button class="flex flex-col items-center gap-1.5 py-2 text-gray-600 rounded-lg dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-800 transition-colors">
+<span class="material-symbols-outlined">task_alt</span>
+<p class="text-xs font-medium">Correct Me</p>
+</button>
+<button class="flex flex-col items-center gap-1.5 py-2 text-gray-600 rounded-lg dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-800 transition-colors">
+<span class="material-symbols-outlined">translate</span>
+<p class="text-xs font-medium">Translate</p>
+</button>
+</div>
+<!-- Microphone Control Button -->
+<div class="flex justify-center items-center">
+<button class="flex items-center justify-center w-16 h-16 text-white rounded-full shadow-lg bg-primary hover:bg-primary/90 transition-colors">
+<span class="material-symbols-outlined !text-3xl">mic</span>
+</button>
+</div>
+</footer>
+</div>
+</body></html>

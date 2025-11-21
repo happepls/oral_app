@@ -11,7 +11,7 @@ if (!JWT_SECRET) {
   process.exit(1);
 }
 
-const AI_SERVICE_URL = 'ws://omni-service:8082/stream';
+const AI_SERVICE_URL = 'ws://ai-omni-service:8082/stream';
 
 console.log('WebSocket server is running on port 8080');
 

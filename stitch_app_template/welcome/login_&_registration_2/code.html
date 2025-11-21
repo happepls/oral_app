@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html class="dark" lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>Guaji AI Welcome</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com" rel="preconnect"/>
+<link crossorigin="" href="https://fonts.gstatic.com" rel="preconnect"/>
+<link href="https://fonts.googleapis.com/css2?family=Lexend:wght@100..900&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined" rel="stylesheet"/>
+<script>
+    tailwind.config = {
+      darkMode: "class",
+      theme: {
+        extend: {
+          colors: {
+            "primary": "#137fec",
+            "background-light": "#f6f7f8",
+            "background-dark": "#101922",
+          },
+          fontFamily: {
+            "display": ["Lexend", "sans-serif"]
+          },
+          borderRadius: {
+            "DEFAULT": "0.25rem",
+            "lg": "0.5rem",
+            "xl": "0.75rem",
+            "full": "9999px"
+          },
+        },
+      },
+    }
+  </script>
+<style>
+    .material-symbols-outlined {
+      font-variation-settings: 'FILL' 0,
+      'wght' 400,
+      'GRAD' 0,
+      'opsz' 24
+    }
+    body {
+      min-height: max(884px, 100dvh);
+    }
+  </style>
+<style>
+    body {
+      min-height: max(884px, 100dvh);
+    }
+  </style>
+  </head>
+<body class="font-display">
+<div class="relative flex min-h-screen w-full flex-col items-center justify-center bg-background-light dark:bg-background-dark group/design-root overflow-x-hidden p-4">
+<header class="absolute top-0 left-0 right-0 p-4 flex justify-end">
+<div class="relative">
+<select class="appearance-none bg-slate-200 dark:bg-slate-800 text-slate-900 dark:text-white rounded-lg pl-4 pr-10 py-2 text-sm font-medium focus:outline-none focus:ring-2 focus:ring-primary">
+<option>English</option>
+<option>Español</option>
+<option>Français</option>
+</select>
+<span class="material-symbols-outlined pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 dark:text-slate-400">language</span>
+</div>
+</header>
+<div class="flex w-full max-w-md flex-col items-center justify-center text-center">
+<div class="flex w-full grow items-center justify-center @container p-4">
+<div class="w-24 gap-1 overflow-hidden bg-transparent @[480px]:gap-2 aspect-square rounded-lg flex">
+<div class="w-full bg-center bg-no-repeat bg-cover aspect-auto rounded-none flex-1" data-alt="Abstract icon representing AI and language, with interconnected lines forming a stylized speech bubble." style='background-image: url("https://lh3.googleusercontent.com/aida-public/AB6AXuBzBlQcw_6BxnIfSWog3v2IF6T3UPgxfiNVraYKW0CCUcWYPHV-A-bqC0C_7udqUgqdzpzBBuPdS_hvs9aYtax7gmLA5BJpVlMcpsQukTiNtZfJjR3u81vSe4zFDqrJzafh859m-ykBSEjnaeHlE0XgIsvW7Y0oOLH_1OEUD_Czq4609QjGAuzaybhjmKpTc7dVz6DgxruZCmY5892PAVLUa3SWI2HfBHIKnBaLBksxEPaUMRIOI8LS6CkpYkPC3Rkcvjk4gAYayRDt");'></div>
+</div>
+</div>
+<h1 class="text-slate-900 dark:text-white tracking-light text-5xl font-bold leading-tight px-4 pt-4 pb-2">Guaji AI</h1>
+<p class="text-slate-600 dark:text-slate-400 text-lg font-normal leading-normal px-4 pb-12">Learn smarter, not harder.</p>
+<div class="flex w-full flex-col items-center">
+<div class="flex w-full flex-col items-stretch gap-3 max-w-[480px] px-4 py-3">
+<button class="flex min-w-[84px] max-w-[480px] cursor-pointer items-center justify-center overflow-hidden rounded-lg h-12 px-5 bg-primary text-white text-base font-bold leading-normal tracking-[0.015em] w-full hover:bg-primary/90 transition-colors">
+<span class="truncate">Continue</span>
+</button>
+</div>
+</div>
+</div>
+</div>
+
+</body></html>
