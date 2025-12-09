@@ -1,7 +1,15 @@
-require('dotenv').config();
 const { WebSocketServer, WebSocket } = require('ws');
 const jwt = require('jsonwebtoken');
 const url = require('url');
+const { createClient } = require('redis');
+
+// --- Redis Client Setup ---
+const redisClient = createClient({
+  url: 'redis://redis:6379' // Assumes 'redis' is the service name in docker-compose
+});
+
+redisClient.on('error', (err) => console.log('Redis Client Error', err));
+redisClient.connect();
 
 const wss = new WebSocketServer({ port: 8080 });
 
@@ -38,58 +46,83 @@ wss.on('connection', async function connection(clientWs, req) {
     }
 
     const userId = decoded.id;
-    console.log(`Token verified for user ID: ${userId}`);
+    const sessionId = queryObject.sessionId;
+
+    if (!sessionId) {
+      console.log('Connection rejected: No sessionId provided.');
+      clientWs.close(1008, 'Session ID is required.');
+      return;
+    }
+    
+    // --- Session Management with Redis ---
+    const sessionKey = `session:${sessionId}`;
+    await redisClient.hSet(sessionKey, {
+        userId: userId,
+        status: 'active',
+        connectedAt: new Date().toISOString()
+    });
+    await redisClient.expire(sessionKey, 3600); // Expire session in 1 hour
+    console.log(`Session ${sessionId} for user ${userId} created in Redis.`);
+
+
+    console.log(`Token verified for user ID: ${userId}, Session ID: ${sessionId}`);
     clientWs.userId = userId;
+    clientWs.sessionId = sessionId;
 
     const aiServiceWs = new WebSocket(AI_SERVICE_URL);
 
     aiServiceWs.on('open', () => {
-      console.log(`Successfully connected to AI Service for user ${userId}`);
+      console.log(`Successfully connected to AI Service for user ${userId} and session ${sessionId}`);
       clientWs.send(JSON.stringify({ type: 'info', message: 'Welcome! Your connection is authenticated and bridged to the AI service.' }));
 
       // NOW that the AI service connection is open, start forwarding messages.
       clientWs.on('message', (message) => {
-        // The 'ws' library receives binary data from the browser as a Buffer.
-        // We must explicitly tell the 'send' method to forward it as binary.
         if (aiServiceWs.readyState === WebSocket.OPEN) {
-          console.log(`Forwarding binary message of size ${message.length} from user ${userId} to AI service.`);
-          aiServiceWs.send(message, { binary: true });
+          if (Buffer.isBuffer(message)) {
+            console.log(`Wrapping binary message of size ${message.length} from user ${userId}, session ${sessionId} into JSON for AI service.`);
+            const messageForAI = JSON.stringify({
+              type: 'audio_stream',
+              userId: userId,
+              sessionId: sessionId,
+              audioBuffer: message.toString('base64'),
+              context: {} 
+            });
+            aiServiceWs.send(messageForAI);
+          } else {
+             console.log(`Received non-binary message from user ${userId}. Ignoring.`);
+          }
         }
       });
 
-      // Also, set up the return path.
       aiServiceWs.on('message', (message) => {
-        // The message from the AI service is always a Buffer, whether it's TTS audio or a JSON string.
-        // We need to differentiate. A simple way is to try parsing it as JSON.
         if (clientWs.readyState === WebSocket.OPEN) {
           let isJson = false;
           let messageString = '';
           try {
-            // We have to convert buffer to string to parse.
             messageString = message.toString('utf8');
             JSON.parse(messageString);
             isJson = true;
           } catch (e) {
-            // This is not a JSON string, so it must be binary audio data.
             isJson = false;
           }
 
           if (isJson) {
             console.log(`Forwarding text message from AI service to user ${userId}: ${messageString}`);
-            clientWs.send(messageString); // Send as text
+            clientWs.send(messageString);
           } else {
-            // This is binary audio data. Forward it directly.
             console.log(`Forwarding binary message of size ${message.length} from AI service to user ${userId}.`);
-            clientWs.send(message, { binary: true }); // Send as binary
+            clientWs.send(message, { binary: true });
           }
         }
       });
     });
 
-    // --- Keep the lifecycle event handlers outside ---
+    clientWs.on('close', async () => {
+      console.log(`Client connection closed for user ${userId}. Closing connection to AI service and cleaning up session.`);
+      // --- Session Cleanup ---
+      await redisClient.del(sessionKey);
+      console.log(`Session ${sessionId} for user ${userId} removed from Redis.`);
 
-    clientWs.on('close', () => {
-      console.log(`Client connection closed for user ${userId}. Closing connection to AI service.`);
       if (aiServiceWs.readyState === WebSocket.OPEN || aiServiceWs.readyState === WebSocket.CONNECTING) {
         aiServiceWs.close();
       }

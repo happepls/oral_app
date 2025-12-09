@@ -1,10 +1,17 @@
 const express = require('express');
 const router = express.Router();
 const userController = require('../controllers/userController');
+const { protect } = require('../middleware/authMiddleware'); // Import protect middleware
 
+// Register and login routes
 router.post('/register', userController.register);
 router.post('/login', userController.login);
-router.post('/auth/google', userController.googleSignIn);
+
+// Google auth route
+router.post('/google', userController.googleSignIn);
 router.post('/verify', userController.verifyToken);
+
+// Protected route to get user profile
+router.get('/profile', protect, userController.getProfile);
 
 module.exports = router;

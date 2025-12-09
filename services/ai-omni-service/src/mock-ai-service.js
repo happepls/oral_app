@@ -1,12 +1,16 @@
+import axios from 'axios'; // Import axios
+
 // Mock AI Service for development and testing
 // This service provides simulated AI responses without external dependencies
+
+const CONVERSATION_SERVICE_URL = process.env.CONVERSATION_SERVICE_URL || 'http://conversation-service:8083';
 
 export class MockAIService {
   constructor() {
     this.isConnected = true;
     this.sessionActive = false;
     this.userContext = {};
-    this.conversationHistory = [];
+    // this.conversationHistory = []; // Removed, now managed externally
     this.isProcessing = false;
     console.log('Mock AI Service initialized');
   }
@@ -18,37 +22,37 @@ export class MockAIService {
     return Promise.resolve();
   }
 
-  async processAudio(audioBuffer, userId, context = {}) {
+  async processAudio(audioBuffer, userId, sessionId, context = {}) {
     try {
       if (!this.isConnected) {
         throw new Error('Mock AI service not initialized');
       }
+
+      // Retrieve existing history for context
+      const currentHistory = await this.getConversationHistory(sessionId);
+      const fullContext = { ...context, conversationHistory: currentHistory };
 
       // Simulate audio processing delay
       await this.delay(500);
       
       // Mock transcription and response
       const transcript = this.generateMockTranscript();
-      const response = this.generateMockResponse(transcript, context);
+      const response = this.generateMockResponse(transcript, fullContext);
       
-      // Update conversation history
-      this.conversationHistory.push({
+      // Persist user message
+      await this.addMessageToHistory(sessionId, { 
         role: 'user',
         content: transcript,
         timestamp: new Date()
       });
-      
-      this.conversationHistory.push({
+
+      // Persist AI response
+      await this.addMessageToHistory(sessionId, {
         role: 'assistant',
         content: response,
         timestamp: new Date()
       });
-      
-      // Keep only the last 10 conversation turns
-      if (this.conversationHistory.length > 10) {
-        this.conversationHistory = this.conversationHistory.slice(-10);
-      }
-      
+
       return {
         transcript: transcript,
         response: response,
@@ -61,36 +65,36 @@ export class MockAIService {
     }
   }
 
-  async processText(text, userId, context = {}) {
+  async processText(text, userId, sessionId, context = {}) {
     try {
       if (!this.isConnected) {
         throw new Error('Mock AI service not initialized');
       }
 
+      // Retrieve existing history for context
+      const currentHistory = await this.getConversationHistory(sessionId);
+      const fullContext = { ...context, conversationHistory: currentHistory };
+
       // Simulate text processing delay
       await this.delay(300);
       
       // Generate mock response
-      const response = this.generateMockResponse(text, context);
+      const response = this.generateMockResponse(text, fullContext);
       
-      // Update conversation history
-      this.conversationHistory.push({
+      // Persist user message
+      await this.addMessageToHistory(sessionId, {
         role: 'user',
         content: text,
         timestamp: new Date()
       });
       
-      this.conversationHistory.push({
+      // Persist AI response
+      await this.addMessageToHistory(sessionId, {
         role: 'assistant',
         content: response,
         timestamp: new Date()
       });
-      
-      // Keep only the last 10 conversation turns
-      if (this.conversationHistory.length > 10) {
-        this.conversationHistory = this.conversationHistory.slice(-10);
-      }
-      
+
       return {
         response: response,
         confidence: Math.random() * 0.5 + 0.5, // 0.5-1.0
@@ -127,14 +131,14 @@ export class MockAIService {
   }
 
   // WebSocket streaming support
-  async handleAudioStream(audioBuffer, userId, context = {}) {
+  async handleAudioStream(audioBuffer, userId, sessionId, context = {}) {
     if (this.isProcessing) {
       throw new Error('Audio processing already in progress');
     }
     
     this.isProcessing = true;
     try {
-      const result = await this.processAudio(audioBuffer, userId, context);
+      const result = await this.processAudio(audioBuffer, userId, sessionId, context);
       return result;
     } finally {
       this.isProcessing = false;
@@ -142,8 +146,8 @@ export class MockAIService {
   }
 
   // Handle streaming text messages
-  async handleTextStream(text, userId, context = {}) {
-    const result = await this.processText(text, userId, context);
+  async handleTextStream(text, userId, sessionId, context = {}) {
+    const result = await this.processText(text, userId, sessionId, context);
     return result;
   }
 
@@ -151,27 +155,31 @@ export class MockAIService {
     this.userContext = { ...this.userContext, ...context };
   }
 
-  buildContext() {
-    return {
-      ...this.userContext,
-      conversationHistory: this.formatConversationHistory()
-    };
+  // buildContext() removed as history is now external
+  // formatConversationHistory() removed as history is now external
+
+  async getConversationHistory(sessionId) {
+    try {
+      const response = await axios.get(`${CONVERSATION_SERVICE_URL}/history/${sessionId}`);
+      return response.data; // Expecting an array of message objects
+    } catch (error) {
+      console.error(`Failed to retrieve conversation history for session ${sessionId}:`, error);
+      return [];
+    }
   }
 
-  formatConversationHistory() {
-    if (this.conversationHistory.length === 0) {
-      return 'No previous conversation';
+  async addMessageToHistory(sessionId, message) {
+    try {
+      await axios.post(`${CONVERSATION_SERVICE_URL}/history/${sessionId}`, message);
+    } catch (error) {
+      console.error(`Failed to add message to history for session ${sessionId}:`, error);
     }
-    
-    return this.conversationHistory.map(entry => 
-      `${entry.role}: ${entry.content}`
-    ).join('\n');
   }
 
   async stop() {
     this.isConnected = false;
     this.sessionActive = false;
-    this.conversationHistory = [];
+    // this.conversationHistory = []; // Removed
     console.log('Mock AI Service stopped successfully');
   }
 
@@ -180,7 +188,7 @@ export class MockAIService {
     return {
       isConnected: this.isConnected,
       sessionActive: this.sessionActive,
-      conversationHistoryLength: this.conversationHistory.length,
+      // conversationHistoryLength: this.conversationHistory.length, // Removed
       isProcessing: this.isProcessing
     };
   }
@@ -221,14 +229,17 @@ export class MockAIService {
       "I think the key to language learning is finding topics you're genuinely interested in."
     ];
     
-    // Add some context awareness
+    // Add some context awareness based on the history
     let baseResponse = responses[Math.floor(Math.random() * responses.length)];
     
-    if (input.toLowerCase().includes('weather')) {
+    const history = context.conversationHistory || [];
+    const lastUserMessage = history.length > 0 ? history[history.length - 1].content : '';
+
+    if (input.toLowerCase().includes('weather') || lastUserMessage.toLowerCase().includes('weather')) {
       baseResponse = "The weather here is simulated, but I imagine it's pleasant for language practice!"
-    } else if (input.toLowerCase().includes('book') || input.toLowerCase().includes('movie')) {
+    } else if (input.toLowerCase().includes('book') || input.toLowerCase().includes('movie') || lastUserMessage.toLowerCase().includes('book') || lastUserMessage.toLowerCase().includes('movie')) {
       baseResponse = "I enjoy stories about language learning journeys and cultural exchanges."
-    } else if (input.toLowerCase().includes('travel')) {
+    } else if (input.toLowerCase().includes('travel') || lastUserMessage.toLowerCase().includes('travel')) {
       baseResponse = "Travel is a wonderful way to practice languages! Have you visited any interesting places?"
     }
     

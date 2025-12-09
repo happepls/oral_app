@@ -1,11 +1,13 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
-import { aiAPI } from '../services/api';
+import { aiAPI, conversationAPI } from '../services/api';
+import RealTimeRecorder from '../components/RealTimeRecorder';
+import { useAuth } from '../contexts/AuthContext'; // Import useAuth to get userId
 
 function Conversation() {
   const navigate = useNavigate();
   const location = useLocation();
-  const [isRecording, setIsRecording] = useState(false);
+  const { user } = useAuth(); // Get user from AuthContext
   const [isLoading, setIsLoading] = useState(false);
   const [inputText, setInputText] = useState('');
   const [scenario, setScenario] = useState(location.state?.scenario || null);
@@ -21,6 +23,10 @@ function Conversation() {
       timestamp: new Date()
     }
   ]);
+  const [liveTranscription, setLiveTranscription] = useState('');
+  const [webSocketError, setWebSocketError] = useState(null);
+  const [sessionId, setSessionId] = useState(null); // New state for sessionId
+
   const messagesEndRef = useRef(null);
   const textInputRef = useRef(null);
 
@@ -30,8 +36,32 @@ function Conversation() {
 
   useEffect(() => {
     scrollToBottom();
-  }, [messages]);
+  }, [messages, liveTranscription]);
 
+  // Effect to start a conversation session on component mount
+  useEffect(() => {
+    const startNewSession = async () => {
+      if (!user || !user.id) {
+        setWebSocketError('用户未登录，无法开始会话');
+        return;
+      }
+      try {
+        const response = await conversationAPI.startSession({ userId: user.id }); // Pass userId
+        if (response.success) {
+          setSessionId(response.data.sessionId);
+          setWebSocketError(null); // Clear any previous errors
+        } else {
+          setWebSocketError(response.message || '无法启动会话');
+        }
+      } catch (error) {
+        console.error('Error starting conversation session:', error);
+        setWebSocketError('会话服务连接失败');
+      }
+    };
+
+    startNewSession();
+
+  }, [user]); // Re-run if user changes
   const sendMessage = async (content) => {
     if (!content.trim()) return;
 
@@ -81,10 +111,35 @@ function Conversation() {
       setIsLoading(false);
     }
   };
+  
+  const handleTranscriptionUpdate = useCallback((text) => {
+    setLiveTranscription(text);
+    // When transcription is final, we can add it to messages
+    // This logic needs to be refined based on how the ASR service sends final results.
+    // For now, we'll just display it live.
+  }, []);
 
-  const toggleRecording = () => {
-    setIsRecording(!isRecording);
-  };
+  const handleAiResponse = useCallback((text) => {
+    // Once we have a final transcription, we can clear the live one
+    // and add the user's message to the chat history.
+    if (liveTranscription) {
+       setMessages(prev => [...prev, {type: 'user', content: liveTranscription, timestamp: new Date()}]);
+       setLiveTranscription('');
+    }
+
+    const aiMessage = {
+      type: 'ai',
+      speaker: 'AI助手',
+      content: text,
+      timestamp: new Date()
+    };
+    setMessages(prev => [...prev, aiMessage]);
+    setIsLoading(false);
+  }, [liveTranscription]);
+  
+  const handleWebSocketError = useCallback((errorMessage) => {
+    setWebSocketError(errorMessage);
+  }, []);
 
   return (
     <div className="flex flex-col h-screen max-w-lg mx-auto bg-background-light dark:bg-background-dark">
@@ -152,6 +207,16 @@ function Conversation() {
 
           return null;
         })}
+        {liveTranscription && (
+          <div className="flex items-end justify-end gap-3">
+            <div className="flex flex-col items-end flex-1 gap-2">
+              <div className="flex max-w-xs p-3 rounded-lg rounded-br-none bg-primary/70 text-white">
+                <p className="text-base font-normal leading-normal italic">{liveTranscription}</p>
+              </div>
+            </div>
+            <div className="w-8 h-8 rounded-full shrink-0 bg-gradient-to-br from-green-400 to-blue-500"></div>
+          </div>
+        )}
         {isLoading && (
           <div className="flex items-end gap-3">
             <div className="w-8 h-8 rounded-full shrink-0 bg-gradient-to-br from-blue-400 to-purple-500"></div>
@@ -221,23 +286,13 @@ function Conversation() {
         </div>
 
         {/* Microphone Control Button */}
-        <div className="flex justify-center items-center">
-          <button 
-            onClick={toggleRecording}
-            disabled={isLoading}
-            className={`flex items-center justify-center w-16 h-16 text-white rounded-full shadow-lg transition-all disabled:opacity-50 ${
-              isRecording 
-                ? 'bg-red-500 hover:bg-red-600 animate-pulse' 
-                : 'bg-primary hover:bg-primary/90'
-            }`}>
-            <span className="material-symbols-outlined text-3xl">
-              {isRecording ? 'stop' : 'mic'}
-            </span>
-          </button>
-        </div>
-        <p className="mt-2 text-xs text-center text-gray-500 dark:text-gray-400">
-          {isRecording ? '录音中...' : '点击麦克风或输入文字开始对话'}
-        </p>
+        <RealTimeRecorder 
+          onTranscriptionUpdate={handleTranscriptionUpdate}
+          onAiResponse={handleAiResponse}
+          onError={handleWebSocketError}
+          sessionId={sessionId}
+        />
+        {webSocketError && <p className="mt-2 text-xs text-center text-red-500">{webSocketError}</p>}
       </footer>
     </div>
   );

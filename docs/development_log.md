@@ -188,6 +188,17 @@
 
 *   **Next Steps Identified:** The current focus will shift to implementing full real-time TTS audio streaming and developing a robust session management system.
 
+## 2025-12-09
+
+*   **Qwen3-Omni Integration Progress:**
+    *   **Service Architecture**: Successfully consolidated ai-service and omni-service into unified ai-omni-service with proper WebSocket and HTTP endpoints
+    *   **Qwen3-Omni Client**: Implemented Qwen3OmniClient with DashScope SDK integration and fallback to local model loading
+    *   **Real-time Communication**: Established WebSocket streaming pipeline with proper audio/text message handling
+    *   **Conversation Management**: Implemented conversation history tracking and user context management
+    *   **Health Monitoring**: Added comprehensive health check endpoints showing service status and conversation history
+    *   **Testing**: Conducted end-to-end conversation tests, identified issues with DashScope SDK availability (package not accessible)
+    *   **Current Status**: Service running on port 8082 with health check on 8081, maintaining 4 conversation history entries but falling back to mock mode due to SDK access issues
+
 ## 2025-11-06
 
 *   **Real-time ASR & TTS Pipeline Debugging and Refinement:**
@@ -250,3 +261,40 @@
     *   **Improved Maintainability**: Unified codebase and configuration
     *   **Enhanced Scalability**: Single service can be scaled independently
     *   **Streamlined Development**: Single codebase for all AI functionality
+
+## 2025-11-25
+
+*   **用户资料API修复与JWT认证优化**:
+    *   **问题诊断**: 发现前端调用`/api/user/profile`返回401错误，经检查确认API路径不匹配问题
+    *   **API路径修正**: 确认前端已使用正确的复数形式`/api/users/profile`，与后端路由配置匹配
+    *   **JWT认证问题定位**: 发现JWT token生成使用`{ id }`字段，而认证中间件和getProfile方法中尝试访问`{ userId }`字段的不一致问题
+    *   **认证中间件修复**: 修改`authMiddleware.js`，将注释和代码中的`userId`改为`id`，确保与JWT token字段一致
+    *   **用户控制器修复**: 修改`userController.js`中的getProfile方法，使用`req.user.id`而非`req.user.userId`
+    *   **服务重启与测试**: 重启user-service后，通过curl测试确认API正常工作，返回用户资料信息
+    *   **前端使用指导**: 确认用户应使用`userAPI.getProfile()`方法而非直接fetch调用，该方法已包含正确的认证头处理
+
+## 2025-11-27
+
+*   **Database Connection Fix & Verification:**
+    *   **Problem**: Diagnosed `getaddrinfo ENOTFOUND postgres` error in `user-service` logs, indicating a DNS resolution issue.
+    *   **Investigation**:
+        *   Confirmed `user-service` environment variables (`DB_HOST`, `DB_USER`, etc.) were correctly set.
+        *   PostgreSQL container logs showed it was ready for connections, but `user-service` reported "Connection terminated unexpectedly".
+        *   Identified that `docker-compose.yml` was attempting to use environment variables (`${POSTGRES_DB}`) that were not explicitly defined in a project-level `.env` file or the shell environment.
+    *   **Solution**: 
+        *   Created a `.env` file at the project root (`./.env`) with `POSTGRES_DB`, `POSTGRES_USER`, and `POSTGRES_PASSWORD` defined.
+        *   Modified `docker-compose.yml` to explicitly load this root `.env` file for both the `postgres` and `user-service` containers.
+        *   Restarted all Docker containers (`docker compose down && docker compose up -d --build`).
+    *   **Verification**: Executed a custom Node.js script (`check_postgres.js`) inside the `user-service` container, which successfully connected to PostgreSQL and logged "Successfully connected to PostgreSQL".
+    *   **Cleanup**: Removed the temporary `check_postgres.js` script.
+    *   **Outcome**: The database connection issue for the `user-service` has been fully resolved, and the application login should now function correctly.
+*   **Session Management & Qwen3-Omni Integration:**
+    *   **Session Management**: 
+        *   Integrated Redis into `comms-service` for centralized session state management.
+        *   Implemented logic to create session records in Redis with expiration times upon user WebSocket connection.
+        *   Added cleanup mechanism to remove session data from Redis upon client disconnection.
+        *   Updated `docker-compose.yml` to ensure `comms-service` depends on `redis`.
+    *   **Qwen3-Omni Integration**:
+        *   Modified `ai-omni-service/src/index.js` to replace `MockAIService` with `Qwen3OmniService`.
+        *   Configured `ai-omni-service` to use the real Qwen3-Omni engine for ASR, LLM, and TTS functionalities, replacing the mock implementation.
+    *   **Verification**: Docker containers restarted to apply new session management logic and Qwen3-Omni integration. End-to-end testing for Qwen3-Omni is the next step.

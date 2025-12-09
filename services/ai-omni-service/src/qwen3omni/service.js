@@ -1,7 +1,7 @@
-const { Qwen3OmniClient } = require('./client');
+import { Qwen3OmniClient } from './client.js';
 
 class Qwen3OmniService {
-  constructor() {
+  constructor(config = {}) {
     this.client = null;
     this.isConnected = false;
     this.sessionActive = false;
@@ -9,14 +9,16 @@ class Qwen3OmniService {
     this.conversationHistory = [];
     this.audioBuffer = null;
     this.isProcessing = false;
+    this.config = config;
   }
 
   async start() {
     try {
-      // Initialize Qwen3-Omni client
+      // Initialize Qwen3-Omni client with all necessary configuration
       this.client = new Qwen3OmniClient({
-        model: process.env.QWEN3_OMNI_MODEL || 'qwen3-omni',
-        baseUrl: process.env.QWEN3_OMNI_BASE_URL || 'http://localhost:8000'
+        model: this.config.model || process.env.QWEN3_OMNI_MODEL || 'qwen3-omni',
+        baseUrl: this.config.baseUrl || process.env.QWEN3_OMNI_BASE_URL || 'http://localhost:8000',
+        apiKey: this.config.apiKey || process.env.QWEN3_OMNI_API_KEY
       });
       
       // Connect to the model service
@@ -187,4 +189,4 @@ class Qwen3OmniService {
   }
 }
 
-module.exports = { Qwen3OmniService };
+export { Qwen3OmniService };

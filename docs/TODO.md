@@ -1,27 +1,26 @@
 # Tasks - TODO
 
 ## In Progress
-
-- [ ] [AI Engine] Integrate and refine the detailed 'Ava' persona and instructional strategies into the LLM prompt via `prompt/manager.js`.
-
 ## Phase 4: Qwen3-Omni 集成与高级功能开发
-
-### 4.1 Qwen3-Omni 实时集成 (当前重点)
-- [ ] [AI Engine] 实现 Qwen3-Omni 的实时 ASR、LLM 和 TTS 功能
+- [ ] [AI Engine] Integrate and refine the detailed 'Ava' persona and instructional strategies into the LLM prompt via `prompt/manager.js`.
 - [ ] [AI Engine] 实现 Qwen3-Omni 的多语言语音识别支持
 - [ ] [AI Engine] 处理来自 `comms-service` 的实时音频流并转发到 Qwen3-Omni 服务
-- [ ] [AI Engine] 在 omni-service 中替换模拟模式为真实的 Qwen3-Omni API 调用
-- [ ] [Testing] 使用真实的 Qwen3-Omni 引擎进行端到端测试（ModelScope 魔搭社区）
+- [ ] [AI Engine] 在 omni-service 中替换模拟模式为真实的 Qwen3-Omni API 调用（model="qwen3-omni-flash-realtime"）
+- [ ] [Testing] 使用真实的 Qwen3-Omni 引擎进行端到端测试
+
+
+
 
 ### 4.2 前端优化与用户体验
+- [x] [Frontend] 实现对话历史管理界面
+- [x] [Frontend] 优化音频录制和播放的用户体验
 - [ ] [Frontend] 忽略对话历史中的空消息
-- [ ] [Frontend] 实现对话历史管理界面
-- [ ] [Frontend] 优化音频录制和播放的用户体验
 - [ ] [Frontend] 添加多语言界面支持
 - [ ] [Frontend] 实现响应式设计适配移动端
 
 ### 4.3 后端服务完善
-- [ ] [Backend] 完成用户服务 API 端点测试（登录、更新等）
+- [x] [Backend] 完成用户服务 API 端点测试（登录、更新等）
+- [x] [Backend] 添加会话管理和权限控制
 - [ ] [Backend] 创建历史与分析服务：实现对话的异步存储
 - [ ] [Backend] 创建媒体处理服务：实现音频流转码和 S3/OSS 存储
 - [ ] [Backend] 实现用户个性化设置管理
@@ -87,3 +86,5 @@
 - [x] [Docker] Update docker-compose.yml with unified ai-omni-service configuration.
 - [x] [API Gateway] Refactor nginx.conf routing for consolidated AI service endpoints.
 - [x] [Comms Service] Update WebSocket connection URL to point to unified ai-omni-service.
+- [x] [Backend] Fix user profile API 401 error by correcting JWT token field inconsistency (id vs userId) in auth middleware and controller.
+- [x] [Docs] Update GEMINI.md with client containerization configuration and directory structure.

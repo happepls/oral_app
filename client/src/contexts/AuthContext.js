@@ -32,15 +32,13 @@ export const AuthProvider = ({ children }) => {
       
       const response = await authAPI.login(credentials);
       
-      if (response.success) {
-        const { user: userData, token } = response.data;
-        localStorage.setItem('authToken', token);
-        localStorage.setItem('user', JSON.stringify(userData));
-        setUser(userData);
-        return { success: true };
-      }
-      
-      throw new Error(response.message || '登录失败');
+      // The API response is now standardized with success/data format
+      // handleResponse in api.js extracts the data part for successful responses
+      const { user: userData, token } = response;
+      localStorage.setItem('authToken', token);
+      localStorage.setItem('user', JSON.stringify(userData));
+      setUser(userData);
+      return { success: true };
     } catch (err) {
       const errorMessage = err.message || '登录失败，请稍后重试';
       setError(errorMessage);
@@ -57,15 +55,13 @@ export const AuthProvider = ({ children }) => {
       
       const response = await authAPI.register(userData);
       
-      if (response.success) {
-        const { user: newUser, token } = response.data;
-        localStorage.setItem('authToken', token);
-        localStorage.setItem('user', JSON.stringify(newUser));
-        setUser(newUser);
-        return { success: true };
-      }
-      
-      throw new Error(response.message || '注册失败');
+      // The API response is now standardized with success/data format
+      // handleResponse in api.js extracts the data part for successful responses
+      const { user: newUser, token } = response;
+      localStorage.setItem('authToken', token);
+      localStorage.setItem('user', JSON.stringify(newUser));
+      setUser(newUser);
+      return { success: true };
     } catch (err) {
       const errorMessage = err.message || '注册失败，请稍后重试';
       setError(errorMessage);
@@ -85,10 +81,11 @@ export const AuthProvider = ({ children }) => {
   const refreshProfile = async () => {
     try {
       const response = await userAPI.getProfile();
-      if (response.success) {
-        localStorage.setItem('user', JSON.stringify(response.data));
-        setUser(response.data);
-      }
+      // The API response is now standardized with success/data format
+      // handleResponse in api.js extracts the data part for successful responses
+      const userData = response.user;
+      localStorage.setItem('user', JSON.stringify(userData));
+      setUser(userData);
     } catch (err) {
       console.error('Failed to refresh profile:', err);
     }

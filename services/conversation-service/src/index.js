@@ -69,6 +69,46 @@ app.post('/start', async (req, res) => {
   }
 });
 
+// Endpoint to retrieve conversation history
+app.get('/history/:sessionId', async (req, res) => {
+  const { sessionId } = req.params;
+  const historyKey = `history:${sessionId}`;
+
+  try {
+    const history = await redis.lrange(historyKey, 0, -1);
+    res.status(200).json(history.map(JSON.parse)); // Parse each message from JSON string
+  } catch (error) {
+    console.error(`Failed to retrieve history for session ${sessionId}:`, error);
+    res.status(500).json({ message: 'Internal server error.' });
+  }
+});
+
+// Endpoint to add a message to the history
+app.post('/history/:sessionId', async (req, res) => {
+  const { sessionId } = req.params;
+  const message = req.body;
+  
+  if (!message || typeof message !== 'object') {
+    return res.status(400).json({ message: 'Invalid message format in request body.' });
+  }
+
+  const historyKey = `history:${sessionId}`;
+  const HISTORY_EXPIRATION_SECONDS = 86400; // 24 hours
+
+  try {
+    // Add the new message to the end of the list
+    await redis.rpush(historyKey, JSON.stringify(message));
+    // Reset the expiration on the history every time a message is added
+    await redis.expire(historyKey, HISTORY_EXPIRATION_SECONDS);
+    
+    res.status(201).json({ message: 'Message added to history.' });
+  } catch (error) {
+    console.error(`Failed to add message to history for session ${sessionId}:`, error);
+    res.status(500).json({ message: 'Internal server error.' });
+  }
+});
+
+
 app.listen(PORT, () => {
   console.log(`Conversation Service listening on port ${PORT}`);
 });

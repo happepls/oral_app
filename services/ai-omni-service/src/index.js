@@ -1,276 +1,351 @@
-import express from 'express';
-import { WebSocketServer } from 'ws';
-import http from 'http';
-import cors from 'cors';
 import dotenv from 'dotenv';
+import express from 'express';
+import cors from 'cors';
+import http from 'http';
+import { WebSocketServer } from 'ws';
+import { Qwen3OmniService } from './qwen3omni/service.js';
 
-import { MockAIService } from './mock-ai-service.js';
-
+// Load environment variables
 dotenv.config();
 
-class UnifiedAIService {
-  constructor() {
-    this.app = express();
-    this.server = http.createServer(this.app);
-    this.wss = new WebSocketServer({ server: this.server });
-    this.aiService = new MockAIService();
-    
-    this.setupMiddleware();
-    this.setupRoutes();
-    this.setupWebSocket();
-    this.setupHealthCheck();
-  }
+const app = express();
+const server = http.createServer(app);
 
-  setupMiddleware() {
-    this.app.use(cors());
-    this.app.use(express.json({ limit: '10mb' }));
-    this.app.use(express.urlencoded({ extended: true }));
-  }
+// Middleware
+app.use(cors());
+app.use(express.json({ limit: '50mb' }));
 
-  setupRoutes() {
-    // Health check endpoint
-    this.app.get('/health', (req, res) => {
-      res.json({ 
-        code: 200, 
-        message: 'AI Omni Service is running', 
-        data: { 
-          service: 'ai-omni-service',
-          status: 'healthy',
-          timestamp: new Date().toISOString()
-        }
+// Health check endpoint
+app.get('/health', (req, res) => {
+  res.status(200).json({
+    status: 'OK',
+    timestamp: new Date().toISOString(),
+    service: 'ai-omni-service'
+  });
+});
+
+// Create AI service instance
+const aiService = new Qwen3OmniService({
+  model: process.env.QWEN3_OMNI_MODEL || 'qwen3-omni-flash-realtime',
+  baseUrl: process.env.QWEN3_OMNI_BASE_URL || 'wss://dashscope.aliyuncs.com/api-ws/v1/realtime',
+  apiKey: process.env.QWEN3_OMNI_API_KEY
+});
+
+// Initialize the AI service
+await aiService.start();
+
+// Text processing endpoint
+app.post('/api/process/text', async (req, res) => {
+  try {
+    const { text, userId, context } = req.body;
+
+    if (!text) {
+      return res.status(400).json({
+        error: 'Text is required'
       });
+    }
+
+    const result = await aiService.processText(text, userId, context);
+
+    res.status(200).json({
+      code: 200,
+      message: 'Success',
+      data: result
     });
-
-    // Text processing API
-    this.app.post('/api/process/text', async (req, res) => {
-      try {
-        const { text, userId, context = {} } = req.body;
-        
-        if (!text || !userId) {
-          return res.status(400).json({
-            code: 400,
-            message: 'Missing required fields: text and userId',
-            data: null
-          });
-        }
-
-        const result = await this.aiService.processText(text, userId, context);
-        
-        res.json({
-          code: 200,
-          message: 'Text processed successfully',
-          data: result
-        });
-      } catch (error) {
-        console.error('Error processing text:', error);
-        res.status(500).json({
-          code: 500,
-          message: 'Internal server error',
-          data: null
-        });
-      }
+  } catch (error) {
+    console.error('Error processing text:', error);
+    res.status(500).json({
+      error: 'Failed to process text',
+      details: error.message
     });
+  }
+});
 
-    // Audio processing API
-    this.app.post('/api/process/audio', async (req, res) => {
-      try {
-        const { audioBuffer, userId, context = {} } = req.body;
-        
-        if (!audioBuffer || !userId) {
-          return res.status(400).json({
-            code: 400,
-            message: 'Missing required fields: audioBuffer and userId',
-            data: null
-          });
-        }
+// Chat endpoint for compatibility with user requirements
+app.post('/api/ai/chat', async (req, res) => {
+  try {
+    const { messages, userId } = req.body;
 
-        // Convert base64 to buffer if needed
-        const buffer = Buffer.isBuffer(audioBuffer) 
-          ? audioBuffer 
-          : Buffer.from(audioBuffer, 'base64');
+    if (!messages || !Array.isArray(messages)) {
+      return res.status(400).json({
+        code: 400,
+        message: 'Invalid request: messages array is required'
+      });
+    }
 
-        const result = await this.aiService.processAudio(buffer, userId, context);
-        
-        res.json({
-          code: 200,
-          message: 'Audio processed successfully',
-          data: result
-        });
-      } catch (error) {
-        console.error('Error processing audio:', error);
-        res.status(500).json({
-          code: 500,
-          message: 'Internal server error',
-          data: null
-        });
-      }
-    });
+    // Extract the latest user message
+    const lastUserMessage = messages.findLast(msg => msg.role === 'user');
+    if (!lastUserMessage || !lastUserMessage.content) {
+      return res.status(400).json({
+        code: 400,
+        message: 'Invalid request: no user message found'
+      });
+    }
 
-    // Speech synthesis API
-    this.app.post('/api/synthesize/speech', async (req, res) => {
-      try {
-        const { text, voiceConfig = {} } = req.body;
-        
-        if (!text) {
-          return res.status(400).json({
-            code: 400,
-            message: 'Missing required field: text',
-            data: null
-          });
-        }
+    // Handle text content
+    const text = Array.isArray(lastUserMessage.content) 
+      ? lastUserMessage.content.find(item => item.text)?.text || ''
+      : lastUserMessage.content;
 
-        const audioBuffer = await this.aiService.synthesizeSpeech(text, voiceConfig);
-        
-        res.json({
-          code: 200,
-          message: 'Speech synthesized successfully',
-          data: {
-            audioBuffer: audioBuffer.toString('base64'),
-            bufferSize: audioBuffer.length
+    if (!text) {
+      return res.status(400).json({
+        code: 400,
+        message: 'Invalid request: no text content found'
+      });
+    }
+
+    // Process the text - let the service manage its own conversation history
+    const result = await aiService.processText(text, userId);
+
+    res.status(200).json({
+      code: 200,
+      message: 'Chat processed successfully',
+      data: {
+        messages: [
+          ...messages,
+          {
+            role: 'assistant',
+            content: [
+              { text: result.response }
+            ]
           }
-        });
-      } catch (error) {
-        console.error('Error synthesizing speech:', error);
-        res.status(500).json({
-          code: 500,
-          message: 'Internal server error',
-          data: null
-        });
+        ],
+        response: result.response,
+        audioBuffer: result.audioBuffer,
+        timestamp: result.timestamp
       }
     });
-  }
-
-  setupWebSocket() {
-    this.wss.on('connection', (ws, req) => {
-      console.log('WebSocket client connected');
-      
-      ws.on('message', async (data) => {
-        try {
-          const message = JSON.parse(data.toString());
-          
-          switch (message.type) {
-            case 'audio_stream':
-              await this.handleAudioStream(ws, message);
-              break;
-            case 'text_message':
-              await this.handleTextMessage(ws, message);
-              break;
-            case 'ping':
-              ws.send(JSON.stringify({ type: 'pong', timestamp: Date.now() }));
-              break;
-            default:
-              ws.send(JSON.stringify({
-                type: 'error',
-                message: 'Unknown message type'
-              }));
-          }
-        } catch (error) {
-          console.error('WebSocket message handling error:', error);
-          ws.send(JSON.stringify({
-            type: 'error',
-            message: 'Failed to process message'
-          }));
-        }
-      });
-
-      ws.on('close', () => {
-        console.log('WebSocket client disconnected');
-      });
-
-      ws.on('error', (error) => {
-        console.error('WebSocket error:', error);
-      });
-
-      // Send connection confirmation
-      ws.send(JSON.stringify({
-        type: 'connected',
-        message: 'WebSocket connection established',
-        timestamp: Date.now()
-      }));
+  } catch (error) {
+    console.error('Error processing chat:', error);
+    res.status(500).json({
+      code: 500,
+      message: 'Failed to process chat',
+      error: error.message
     });
   }
+});
 
-  async handleAudioStream(ws, message) {
-    const { audioBuffer, userId, context = {} } = message;
-    
-    try {
-      const buffer = Buffer.isBuffer(audioBuffer) 
-        ? audioBuffer 
-        : Buffer.from(audioBuffer, 'base64');
 
-      const result = await this.aiService.processAudio(buffer, userId, context);
-      
+// Audio processing endpoint
+app.post('/api/process/audio', async (req, res) => {
+  try {
+    const { audioBuffer, userId, context } = req.body;
+
+    if (!audioBuffer) {
+      return res.status(400).json({
+        error: 'Audio buffer is required'
+      });
+    }
+
+    // Convert base64 audio to buffer if needed
+    let audioData = audioBuffer;
+    if (typeof audioBuffer === 'string') {
+      audioData = Buffer.from(audioBuffer, 'base64');
+    }
+
+    const result = await aiService.processAudio(audioData, userId, context);
+
+    res.status(200).json({
+      code: 200,
+      message: 'Success',
+      data: result
+    });
+  } catch (error) {
+    console.error('Error processing audio:', error);
+    res.status(500).json({
+      error: 'Failed to process audio',
+      details: error.message
+    });
+  }
+});
+
+// Speech synthesis endpoint
+app.post('/api/synthesize/speech', async (req, res) => {
+  try {
+    const { text, voiceConfig } = req.body;
+
+    if (!text) {
+      return res.status(400).json({
+        error: 'Text is required'
+      });
+    }
+
+    const audioBuffer = await aiService.synthesizeSpeech(text, voiceConfig);
+
+    // Convert buffer to base64 for transmission
+    const base64Audio = audioBuffer.toString('base64');
+
+    res.status(200).json({
+      code: 200,
+      message: 'Success',
+      data: {
+        audioBuffer: base64Audio,
+        format: 'base64'
+      }
+    });
+  } catch (error) {
+    console.error('Error synthesizing speech:', error);
+    res.status(500).json({
+      error: 'Failed to synthesize speech',
+      details: error.message
+    });
+  }
+});
+
+// WebSocket server for real-time communication
+function setupWebSocket() {
+  const wss = new WebSocketServer({ server, path: '/stream' });
+
+  wss.on('connection', async (ws, req) => {
+    console.log('New WebSocket connection');
+
+    // Assign a unique ID to the connection
+    const connectionId = Date.now().toString();
+
+    ws.on('message', async (message) => {
+      try {
+        const data = JSON.parse(message);
+        const { type, payload } = data;
+
+        switch (type) {
+          case 'audio_stream':
+            // Handle real-time audio stream
+            await handleAudioStream(ws, payload, connectionId);
+            break;
+
+          case 'text_message':
+            // Handle text message
+            await handleTextMessage(ws, payload, connectionId);
+            break;
+
+          case 'ping':
+            // Handle ping/pong for connection health
+            ws.send(JSON.stringify({ type: 'pong' }));
+            break;
+
+          default:
+            ws.send(JSON.stringify({
+              type: 'error',
+              payload: { message: 'Unknown message type' }
+            }));
+        }
+      } catch (error) {
+        console.error('Error handling WebSocket message:', error);
+        ws.send(JSON.stringify({
+          type: 'error',
+          payload: { message: 'Failed to process message', details: error.message }
+        }));
+      }
+    });
+
+    ws.on('close', () => {
+      console.log('WebSocket connection closed');
+      // Clean up any resources associated with this connection
+    });
+
+    // Send connection confirmation
+    ws.send(JSON.stringify({
+      type: 'connection_established',
+      payload: {
+        connectionId,
+        message: 'Connected to AI Omni Service',
+        usingRealAPI: aiService.getStatus().usingRealAPI
+      }
+    }));
+  });
+}
+
+// Handle real-time audio stream
+async function handleAudioStream(ws, payload, connectionId) {
+  try {
+    const { audioBuffer, userId, context } = payload;
+
+    // Convert base64 audio to buffer
+    const audioData = Buffer.from(audioBuffer, 'base64');
+
+    // Process audio in streaming fashion
+    const stream = await aiService.handleAudioStream(audioData, userId, context);
+
+    // Send back the response in chunks
+    for await (const chunk of stream) {
       ws.send(JSON.stringify({
         type: 'audio_response',
-        data: result
-      }));
-    } catch (error) {
-      console.error('Audio stream processing error:', error);
-      ws.send(JSON.stringify({
-        type: 'error',
-        message: 'Failed to process audio stream'
+        payload: chunk
       }));
     }
+  } catch (error) {
+    console.error('Error handling audio stream:', error);
+    ws.send(JSON.stringify({
+      type: 'error',
+      payload: { message: 'Failed to process audio stream', details: error.message }
+    }));
   }
+}
 
-  async handleTextMessage(ws, message) {
-    const { text, userId, context = {} } = message;
-    
-    try {
-      const result = await this.aiService.processText(text, userId, context);
-      
+// Handle text message
+async function handleTextMessage(ws, payload, connectionId) {
+  try {
+    const { text, userId, context } = payload;
+
+    // Process text message
+    const stream = await aiService.handleTextStream(text, userId, context);
+
+    // Send back the response in chunks
+    for await (const chunk of stream) {
       ws.send(JSON.stringify({
         type: 'text_response',
-        data: result
-      }));
-    } catch (error) {
-      console.error('Text message processing error:', error);
-      ws.send(JSON.stringify({
-        type: 'error',
-        message: 'Failed to process text message'
+        payload: chunk
       }));
     }
-  }
-
-  setupHealthCheck() {
-    // Start health check server on separate port
-    const healthServer = http.createServer((req, res) => {
-      if (req.url === '/health') {
-        res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({
-          code: 200,
-          message: 'Service is healthy',
-          data: { status: 'ok', timestamp: new Date().toISOString() }
-        }));
-      } else {
-        res.writeHead(404);
-        res.end();
-      }
-    });
-
-    const healthPort = process.env.HEALTH_CHECK_PORT || 8081;
-    healthServer.listen(healthPort, () => {
-      console.log(`Health check server running on port ${healthPort}`);
-    });
-  }
-
-  async start() {
-    // Initialize AI service
-    await this.aiService.start();
-    
-    const port = process.env.AI_SERVICE_PORT || 8082;
-    this.server.listen(port, () => {
-      console.log(`Unified AI Omni Service running on port ${port}`);
-      console.log(`WebSocket server available at ws://localhost:${port}`);
-      console.log(`HTTP API available at http://localhost:${port}`);
-    });
+  } catch (error) {
+    console.error('Error handling text message:', error);
+    ws.send(JSON.stringify({
+      type: 'error',
+      payload: { message: 'Failed to process text message', details: error.message }
+    }));
   }
 }
 
-// Start the service if this file is run directly
-if (import.meta.url === `file://${process.argv[1]}`) {
-  const service = new UnifiedAIService();
-  service.start().catch(console.error);
-}
+// Setup WebSocket server
+setupWebSocket();
 
-export { UnifiedAIService };
+// Health check server (separate port)
+const healthCheckServer = express();
+healthCheckServer.get('/health', (req, res) => {
+  const status = aiService.getStatus();
+  res.status(200).json({
+    status: 'OK',
+    timestamp: new Date().toISOString(),
+    service: 'ai-omni-service',
+    aiService: status
+  });
+});
+
+const HEALTH_CHECK_PORT = process.env.HEALTH_CHECK_PORT || 8081;
+const healthServer = healthCheckServer.listen(HEALTH_CHECK_PORT, () => {
+  console.log(`Health check server running on port ${HEALTH_CHECK_PORT}`);
+});
+
+// Start the main server
+const PORT = process.env.AI_SERVICE_PORT || 8082;
+server.listen(PORT, () => {
+  console.log(`AI Omni Service running on port ${PORT}`);
+  console.log(`Using ${process.env.ENABLE_MOCK_MODE === 'true' ? 'mock mode' : 'real Qwen3-Omni API'}`);
+  console.log(`API Key configured: ${!!process.env.QWEN3_OMNI_API_KEY}`);
+});
+
+// Graceful shutdown
+process.on('SIGTERM', async () => {
+  console.log('SIGTERM received, shutting down gracefully');
+  await aiService.stop();
+  server.close(() => {
+    console.log('AI Omni Service closed');
+    healthServer.close(() => {
+      console.log('Health check server closed');
+      process.exit(0);
+    });
+  });
+});
+
+// Export for testing
+export { app, server, aiService };

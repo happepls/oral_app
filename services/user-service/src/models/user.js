@@ -23,6 +23,26 @@ User.create = async (username, email, password) => {
     return { id: userId, username, email };
 };
 
+User.findById = async (id) => {
+    const { rows } = await db.query('SELECT * FROM users WHERE id = $1', [id]);
+    if (rows.length === 0) {
+        return null;
+    }
+    const user = rows[0];
+
+    // Get password hash from user_identities
+    const identityResult = await db.query(
+        'SELECT provider_uid FROM user_identities WHERE user_id = $1 AND provider = $2',
+        [user.id, 'local']
+    );
+
+    if (identityResult.rows.length > 0) {
+        user.password = identityResult.rows[0].provider_uid;
+    }
+
+    return user;
+};
+
 User.findByEmail = async (email) => {
     const { rows } = await db.query('SELECT * FROM users WHERE email = $1', [email]);
     if (rows.length === 0) {
@@ -42,8 +62,6 @@ User.findByEmail = async (email) => {
 
     return user;
 };
-
-// ... (existing User model code)
 
 User.findOrCreateFromGoogle = async ({ googleId, email, name }) => {
   try {

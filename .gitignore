@@ -64,3 +64,28 @@ node_modules
 /client/node_modules
 /client/build
 
+# AI模型文件
+services/ai-omni-service/models/
+
+# 环境变量文件（已存在但强化）
+.env.remote
+.env.local
+.env.*.local
+
+# SSH配置（敏感）
+.ssh/
+
+# 临时脚本和配置文件
+scripts/sync_remote_to_local.sh
+.env.remote.example
+
+# Python缓存文件
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# IDE配置文件
+.trae/
+.vscode/
+.idea/

@@ -7,7 +7,8 @@ const handleResponse = async (response) => {
     throw new Error(data.message || '请求失败');
   }
   
-  return data;
+  // Extract data from the new response format
+  return data.data || data;
 };
 
 const getAuthHeaders = () => {
@@ -20,18 +21,22 @@ const getAuthHeaders = () => {
 
 export const authAPI = {
   async register(userData) {
-    const response = await fetch(`${API_BASE_URL}/auth/register`, {
+    const response = await fetch(`${API_BASE_URL}/users/register`, {
       method: 'POST',
-      headers: getAuthHeaders(),
+      headers: {
+        'Content-Type': 'application/json'
+      },
       body: JSON.stringify(userData)
     });
     return handleResponse(response);
   },
 
   async login(credentials) {
-    const response = await fetch(`${API_BASE_URL}/auth/login`, {
+    const response = await fetch(`${API_BASE_URL}/users/login`, {
       method: 'POST',
-      headers: getAuthHeaders(),
+      headers: {
+        'Content-Type': 'application/json'
+      },
       body: JSON.stringify(credentials)
     });
     return handleResponse(response);
@@ -40,14 +45,14 @@ export const authAPI = {
 
 export const userAPI = {
   async getProfile() {
-    const response = await fetch(`${API_BASE_URL}/user/profile`, {
+    const response = await fetch(`${API_BASE_URL}/users/profile`, {
       headers: getAuthHeaders()
     });
     return handleResponse(response);
   },
 
   async updateProfile(updates) {
-    const response = await fetch(`${API_BASE_URL}/user/profile`, {
+    const response = await fetch(`${API_BASE_URL}/users/profile`, {
       method: 'PUT',
       headers: getAuthHeaders(),
       body: JSON.stringify(updates)
@@ -119,8 +124,20 @@ export const aiAPI = {
   }
 };
 
+export const conversationAPI = {
+  async startSession({ userId }) {
+    const response = await fetch(`${API_BASE_URL}/conversation/start`, {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      body: JSON.stringify({ userId })
+    });
+    return handleResponse(response);
+  }
+};
+
 export default {
   auth: authAPI,
   user: userAPI,
-  ai: aiAPI
+  ai: aiAPI,
+  conversation: conversationAPI
 };

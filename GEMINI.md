@@ -62,6 +62,8 @@ oral_app/
 │   ├── public/
 │   │   ├── index.html
 │   │   └── manifest.json
+│   ├── Dockerfile            # Docker容器化配置
+│   ├── .env                  # 环境变量配置
 │   ├── config-overrides.js    # webpack配置覆盖
 │   ├── tailwind.config.js     # Tailwind配置
 │   ├── postcss.config.js      # PostCSS配置
@@ -169,7 +171,7 @@ oral_app/
 
 ## 开发与运行
 - **本地环境启动**:
-  - 运行 `docker-compose up -d --build` 来构建启动项目所需的 PostgreSQL, MongoDB, Redis和 user-service 服务。
+  - 运行 `docker compose up -d --build` 来构建启动项目所需的 PostgreSQL, MongoDB, Redis和 user-service 服务。
 - **本地环境Docker构建**:
     - 由于Docker网络环境不稳定，需移除Dockerfile中的RUN npm install步骤，改为从宿主机复制node_modules。 
     - 确保在对应业务的根目录（如 `services/ai-service`）下执行npm install。
@@ -180,6 +182,10 @@ oral_app/
 
 - **`api-gateway`**:
   - **Ports**: `8080:80` - 将主机的 8080 端口映射到 Nginx 容器的 80 端口，作为所有流量的入口。
+- **`client-app`**:
+  - **Ports**: `5000:5000` - React开发服务器端口。
+  - **Volumes**: 挂载源代码和node_modules目录，支持热重载。
+  - **Environment**: `REACT_APP_API_URL=/api` - 设置API基础路径。
 - **`postgres`**:
   - **Ports**: `5432:5432` - 数据库端口。
   - **Volumes**: 挂载 `init.sql` 用于数据库初始化。
@@ -193,7 +199,8 @@ oral_app/
     - `JWT_SECRET`: 用于签发和验证 JSON Web Tokens 的密钥。
 - **`comms-service`**:
   - **Ports**: `3001:8080` - 实时通信服务的端口。
-- **`ai-service`**:
+- **`ai-omni-service`**:
+  - **Ports**: `8082:8082` 和 `8081:8081` - AI服务API和WebSocket端口。
   - 依赖 `postgres` 和 `redis`，表明它需要连接数据库和缓存。
 
 ### 2. `api-gateway/nginx.conf`
@@ -205,90 +212,25 @@ Nginx 作为 API 网关，负责请求路由。
   - `/api/ai/`: 所有 AI 相关的 API 请求被代理到 `ai_service`。
   - `/api/ws/`: WebSocket 连接请求被特殊处理（通过 `Upgrade` 和 `Connection` 头）并代理到 `comms-service`。
 
-## 最新进展与当前状态 (2025年11月15日)
+### 3. `client/.env`
+React前端应用的环境变量配置文件。
 
-### 当前开发阶段
-- ✅ **Phase 1: Foundation & Core Services** (已完成)
-- ✅ **Phase 2: AI Integration** (已完成)
-- ✅ **Phase 3: Client-side Development** (已完成)
-- 🔄 **Phase 4: 前端页面优化与后端集成** (进行中)
+- **`DANGEROUSLY_DISABLE_HOST_CHECK=true`**: 允许React开发服务器接受来自任何主机的请求（对于代理设置是必要的）。
 
-### 已完成功能
-#### 前端开发
-- ✅ **基于设计模版实现全新的React前端页面**
-  - 欢迎页 (Welcome): 品牌展示、登录/注册入口、语言切换
-  - 登录页 (Login): 邮箱密码登录、API集成、错误处理
-  - 注册页 (Register): 用户注册表单、密码验证、API集成
-  - 口语会话页 (Conversation): 实时对话界面、语音录制控制、AI反馈展示
-  - 发现页 (Discovery): 主题推荐、AI伙伴、热门会话、搜索功能
-  - 个人中心 (Profile): 学习统计、每周进度图表、成就系统、账户设置
-- ✅ **底部导航栏组件 (BottomNav)**: 页面切换、当前页高亮
-- ✅ **AuthContext状态管理**: 用户认证、JWT token管理、自动登录
-- ✅ **API服务层 (api.js)**: RESTful API调用、错误处理、token管理
-- ✅ **Tailwind CSS 3.4.17优化**: CDN改为PostCSS插件
-- ✅ **webpack配置优化**: react-app-rewired解决'Invalid Host header'问题
-- ✅ **支持暗色模式**（默认启用）
-- ✅ **响应式设计**，适配移动端
-- ✅ **Material Symbols图标集成**
-- ✅ **React Router路由配置**
+### 4. `client/Dockerfile`
+React前端应用的Docker容器化配置。
 
-#### 后端开发
-- ✅ **API Gateway (api-gateway)**: 
-  - Express网关服务，端口8080
-  - 代理路由配置 (/api/auth, /api/user, /api/ai, /api/conversation)
-  - CORS支持
-- ✅ **用户服务 (user-service)**:
-  - 用户注册API (/api/auth/register)
-  - 用户登录API (/api/auth/login)
-  - 用户信息获取 (/api/user/profile)
-  - JWT token认证（强制JWT_SECRET环境变量）
-  - bcrypt密码加密
-  - 服务器端密码策略验证（8位+大小写+数字）
-  - 内存存储 (Map，生产环境需替换为PostgreSQL)
-- ✅ **AI服务 (ai-service)**:
-  - AI对话API (/api/ai/chat)
-  - 流式对话API (/api/ai/chat/stream)
-  - 场景列表API (/api/ai/scenarios)
-  - OpenRouter集成（Qwen3-Max模型）
-  - 使用Replit AI Integrations（无需自有API key）
-  - 并发控制（p-limit: 2并发请求）
-  - 自动重试机制（p-retry: 最多3次）
-  - 专业口语练习系统提示词
+- **基础镜像**: `node:18-alpine` - 使用轻量级的Node.js 18 Alpine镜像。
+- **工作目录**: `/app` - 设置容器内的工作目录。
+- **端口暴露**: `5000` - 暴露React开发服务器的默认端口。
+- **启动命令**: `npm start` - 启动React开发服务器。
 
-### 技术细节
-- **字体**: Lexend (Google Fonts)
-- **主题色**: #137fec (primary blue)
-- **背景色**: 
-  - Light: #f6f7f8
-  - Dark: #101922
-- **圆角**: 统一使用Tailwind配置
-- **端口**: 5000 (前端开发服务器)
 
-### 待优化功能 (TODO)
-1. ✅ **Tailwind CSS优化**: 将CDN改为PostCSS插件（已完成）
-2. ✅ **后端API集成**: 连接用户认证API（已完成）
-3. ✅ **AI服务集成**: 实现AI文本对话功能（已完成基础功能）
-4. **对话历史管理**: 保存和加载对话记录（数据库存储）
-5. **流式响应优化**: 在前端实现AI流式回复显示
-6. **数据库集成**: 将user-service从内存存储迁移到PostgreSQL
-7. **实时语音功能**: 实现AudioWorklet录制和WebSocket流式传输
-8. **WebSocket通信**: 建立与comms-service的实时连接
-9. **语音识别（ASR）**: 集成语音转文字功能
-10. **语音合成（TTS）**: 集成文字转语音功能
-11. **用户画像系统**: 学习进度追踪、个性化推荐
-12. **Profile页面集成**: 使用真实用户数据和学习统计
-
-### 运行项目
-```bash
-cd client
-npm install
-npm start  # 在 http://localhost:5000 启动开发服务器
-```
 ## Gemini Added Memories
  │
 - - 当用户提出对今天的开发工作进行收尾时，请以 AI 助手的身份完成今日收尾工作，将执行以下4项任务：
-    1）更新开发计划到 @docs/TODO.md，使用 mcp-tasks 工具修改相关任务项，不会改动其他内容。
-    2）更新 GEMINI.md 项目记忆文件，反映当前项目状态；注意不得改变 Gemini Added Memories 的内容及格式。
+    1）使用 mcp-tasks 工具，更新开发计划到 @docs/TODO.md，不改动已完成计划内容。
+    2）若项目结构有变动则更新 GEMINI.md ，以准确反映当前项目状态；注意不得改变 Gemini Added Memories 的内容及格式。
     3）在 @docs/development_log.md 追加当日工作摘要，更新日志仅追加，不覆盖。
     4）将所有变更提交并推送到远程仓库 origin/master，提交信息格式为 mac {{今日日期}}。
     **重要约束**：
