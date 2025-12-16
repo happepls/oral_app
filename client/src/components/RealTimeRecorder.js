@@ -1,131 +1,67 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { useAuth } from '../contexts/AuthContext';
+import React, { useState, useRef, useEffect } from 'react';
 
-const RealTimeRecorder = ({ onTranscriptionUpdate, onAiResponse, onError, sessionId }) => {
-  const { token } = useAuth();
+const RealTimeRecorder = ({ onAudioData, isConnected }) => {
   const [isRecording, setIsRecording] = useState(false);
-  const [isConnected, setIsConnected] = useState(false);
-
-  const socketRef = useRef(null);
   const audioContextRef = useRef(null);
   const audioWorkletNodeRef = useRef(null);
   const audioStreamRef = useRef(null);
 
-  const connectWebSocket = useCallback(() => {
-    if (!token) {
-      console.log('Authentication token not available. WebSocket connection aborted.');
-      onError('用户未认证，无法连接');
-      return;
-    }
-
-    if (!sessionId) {
-      console.log('Session ID not available yet. WebSocket connection deferred.');
-      return;
-    }
-
-    // Close existing connection if any before establishing a new one
-    if (socketRef.current && socketRef.current.readyState === WebSocket.OPEN) {
-      socketRef.current.close();
-    }
-
-    // Use wss for secure connection in production, ws for local dev
-    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const host = window.location.host; // This will handle remote/local host automatically
-    const wsUrl = `${protocol}//${host}/api/ws/?token=${token}&sessionId=${sessionId}`;
-    
-    console.log(`Attempting to connect to WebSocket at: ${wsUrl}`);
-    
-    socketRef.current = new WebSocket(wsUrl);
-
-    socketRef.current.onopen = () => {
-      console.log('WebSocket connection established.');
-      setIsConnected(true);
-      onError(null); // Clear previous errors
-    };
-
-    socketRef.current.onmessage = (event) => {
-      // The message from the AI service can be either a JSON string (for ASR/AI text)
-      // or a Blob (for TTS audio).
-      if (event.data instanceof Blob) {
-        // TODO: Handle incoming TTS audio stream
-        console.log('Received binary audio data from server.');
-        const audioUrl = URL.createObjectURL(event.data);
-        const audio = new Audio(audioUrl);
-        audio.play();
-      } else {
-        try {
-          const data = JSON.parse(event.data);
-          if (data.type === 'info') {
-             console.log('Info from server:', data.message);
-          } else if (data.type === 'transcription') {
-            onTranscriptionUpdate(data.text);
-          } else if (data.type === 'ai_response') {
-            onAiResponse(data.text);
-          }
-        } catch (error) {
-          console.error('Failed to parse incoming message:', event.data, error);
-        }
-      }
-    };
-
-    socketRef.current.onerror = (error) => {
-      console.error('WebSocket error:', error);
-      onError('WebSocket连接出错');
-      setIsConnected(false);
-    };
-
-    socketRef.current.onclose = (event) => {
-      console.log(`WebSocket connection closed: ${event.code} ${event.reason}`);
-      setIsConnected(false);
-      // Optional: implement reconnection logic here
-    };
-
-  }, [token, sessionId, onTranscriptionUpdate, onAiResponse, onError]);
-  
-  // Effect to establish WebSocket connection when sessionId becomes available
+  // Cleanup on unmount
   useEffect(() => {
-    if (sessionId) {
-      connectWebSocket();
-    }
     return () => {
-      if (socketRef.current) {
-        socketRef.current.close();
-      }
       if (isRecording) {
         stopRecording();
       }
     };
-  }, [sessionId, connectWebSocket, isRecording]);
+  }, [isRecording]);
 
   const startRecording = async () => {
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true,
+          channelCount: 1,
+          sampleRate: 16000
+        }
+      });
       audioStreamRef.current = stream;
       
       const audioContext = new (window.AudioContext || window.webkitAudioContext)();
       audioContextRef.current = audioContext;
       
-      const source = audioContext.createMediaStreamSource(stream);
+      // Load the audio processor worklet
+      await audioContext.audioWorklet.addModule('/recorder-processor.js');
       
-      // Create audio worklet for real-time audio processing
-      await audioContext.audioWorklet.addModule('/audio-processor.js');
-      const audioWorkletNode = new AudioWorkletNode(audioContext, 'audio-processor');
+      const source = audioContext.createMediaStreamSource(stream);
+      const audioWorkletNode = new AudioWorkletNode(audioContext, 'recorder-processor');
       audioWorkletNodeRef.current = audioWorkletNode;
       
       audioWorkletNode.port.onmessage = (event) => {
-        if (socketRef.current && socketRef.current.readyState === WebSocket.OPEN) {
-          // Send audio data to WebSocket
-          socketRef.current.send(event.data);
+        // Send audio data to parent component
+        if (onAudioData && isRecording) {
+            onAudioData(event.data);
         }
       };
       
       source.connect(audioWorkletNode);
-      audioWorkletNode.connect(audioContext.destination);
+      // Connect to destination to prevent garbage collection, 
+      // but if we don't want self-monitoring, we might not need to connect to destination 
+      // OR we connect to a mute gain node. 
+      // However, usually AudioWorklet needs to be connected to graph output or be referenced to run.
+      // Connecting to destination might cause feedback loop if not careful.
+      // Let's NOT connect to destination (speakers) to avoid echo.
+      // But we need to keep the node alive. Connecting it to a GainNode with 0 gain is safer.
+      const gainNode = audioContext.createGain();
+      gainNode.gain.value = 0;
+      audioWorkletNode.connect(gainNode);
+      gainNode.connect(audioContext.destination);
       
       setIsRecording(true);
     } catch (error) {
       console.error('Error starting recording:', error);
-      onError('无法启动录音，请检查麦克风权限');
+      alert('无法启动录音，请检查麦克风权限');
     }
   };
 

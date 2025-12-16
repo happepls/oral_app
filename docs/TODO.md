@@ -1,48 +1,33 @@
 # Tasks - TODO
 
 ## In Progress
-## Phase 4: Qwen3-Omni 集成与高级功能开发
-- [ ] [AI Engine] Integrate and refine the detailed 'Ava' persona and instructional strategies into the LLM prompt via `prompt/manager.js`.
-- [ ] [AI Engine] 实现 Qwen3-Omni 的多语言语音识别支持
-- [ ] [AI Engine] 处理来自 `comms-service` 的实时音频流并转发到 Qwen3-Omni 服务
-- [ ] [AI Engine] 在 omni-service 中替换模拟模式为真实的 Qwen3-Omni API 调用（model="qwen3-omni-flash-realtime"）
-- [ ] [Testing] 使用真实的 Qwen3-Omni 引擎进行端到端测试
 
-
-
-
-### 4.2 前端优化与用户体验
-- [x] [Frontend] 实现对话历史管理界面
-- [x] [Frontend] 优化音频录制和播放的用户体验
-- [ ] [Frontend] 忽略对话历史中的空消息
-- [ ] [Frontend] 添加多语言界面支持
-- [ ] [Frontend] 实现响应式设计适配移动端
-
-### 4.3 后端服务完善
-- [x] [Backend] 完成用户服务 API 端点测试（登录、更新等）
-- [x] [Backend] 添加会话管理和权限控制
-- [ ] [Backend] 创建历史与分析服务：实现对话的异步存储
 - [ ] [Backend] 创建媒体处理服务：实现音频流转码和 S3/OSS 存储
+
+## To Do
+
 - [ ] [Backend] 实现用户个性化设置管理
 - [ ] [Backend] 添加对话质量评估和反馈机制
-
-### 4.4 性能优化与监控
 - [ ] [Optimization] 端到端音频流延迟的性能测试和优化
 - [ ] [Optimization] 实现音频流缓冲和网络自适应机制
 - [ ] [Monitoring] 添加服务健康监控和告警
 - [ ] [Monitoring] 实现用户行为分析和性能指标收集
 - [ ] [Security] 增强 API 安全性和用户数据保护
-
-### 4.5 文档与部署
 - [ ] [Docs] 更新 user_service/docs/schema.md 文档以对齐数据库表结构
 - [ ] [Docs] 编写 API 文档和使用指南
 - [ ] [Deployment] 完善 Docker Compose 部署配置
 - [ ] [Deployment] 实现 CI/CD 流水线自动化
 - [ ] [Testing] 编写完整的集成测试套件
 
+## Backlog
+
+- [ ] [Frontend] 添加多语言界面支持
+
 ## Done
 
-
+- [x] [Frontend] Refactor Conversation.js to use WebSocket for text messages instead of HTTP API.
+- [x] [Frontend] Move WebSocket management from RealTimeRecorder to Conversation.js.
+- [x] [Infrastructure] Fix Nginx configuration for comms-service upstream port (8080) and WS path (/api/ws/).
 - [x] **Phase 1: Foundation & Core Services**
 - [x] 5. [Backend] Create Real-time Comms Layer: Setup WebSocket server.
 - [x] 4. [Backend] Setup API Gateway: Configure routing for User Service.
@@ -88,3 +73,26 @@
 - [x] [Comms Service] Update WebSocket connection URL to point to unified ai-omni-service.
 - [x] [Backend] Fix user profile API 401 error by correcting JWT token field inconsistency (id vs userId) in auth middleware and controller.
 - [x] [Docs] Update GEMINI.md with client containerization configuration and directory structure.
+- [x] **Phase 4: Qwen3-Omni Integration & Python Migration**
+- [x] [Architecture] Migrate `ai-omni-service` from Node.js to Python (FastAPI + Uvicorn).
+- [x] [AI Engine] Integrate `dashscope` Python SDK (`OmniRealtimeConversation`).
+- [x] [AI Engine] Implement `PromptManager` for dynamic System Prompt generation.
+- [x] [Debug] Fix `QWEN3_OMNI_API_KEY` environment variable issue in Docker.
+- [x] [Debug] Fix Nginx WebSocket proxy configuration (path stripping and CORS).
+- [x] [Debug] Fix DashScope SDK `send_text` and `update_session` errors.
+- [x] [Debug] Fix "off-topic response" by passing user text as instructions.
+- [x] [Debug] Correctly map DashScope response events to client protocol.
+- [x] [Stability] Implement automatic reconnection logic for DashScope.
+- [x] [Testing] Create `test_client.py` for multi-turn testing.
+- [x] [Frontend] 将前端 React 应用对接新的 Python ai-omni-service WebSocket 协议。
+- [x] [AI Engine] 优化音频流处理，处理来自前端的实时 PCM 流并转发给 DashScope。
+- [x] [Frontend] 优化音频录制和播放的用户体验
+- [x] [Backend] Investigate and implement User Transcription event handling in Python AI Service (DashScope)
+- [x] [Frontend] 实现对话历史管理界面
+- [x] [Frontend] 忽略对话历史中的空消息
+- [x] [Frontend] 实现响应式设计适配移动端
+- [x] [Backend] 完成用户服务 API 端点测试（登录、更新等）
+- [x] [Backend] 添加会话管理和权限控制
+- [x] [Backend] 创建历史与分析服务：实现对话的异步存储
+- [x] [Testing] 在 test_client.py 调试脚本中集成 PCM 音频输入和实时 TTS 输出功能，实现真实的音频输入输出模拟。
+- [x] [AI Engine] Prompt Engineering: Optimize System Prompt for 'AI Oral Tutor' persona (correct grammar/expression over pronunciation, intelligent turn-taking).

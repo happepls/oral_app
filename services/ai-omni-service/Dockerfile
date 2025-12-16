@@ -1,35 +1,27 @@
-FROM node:18-alpine
+FROM python:3.10-slim
 
-WORKDIR /usr/src/app
+WORKDIR /app
 
-# Install curl for health checks
-RUN apk add --no-cache curl
+# Install curl for health check
+RUN apt-get update && apt-get install -y curl && rm -rf /var/lib/apt/lists/*
 
-# Create a non-root user for security
-RUN addgroup -g 1001 -S appuser && adduser -S -u 1001 -G appuser appuser
+# Install python dependencies
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy package files
-COPY package*.json ./
-
-# Install dependencies fresh in container
-# This ensures compatibility with Alpine Linux
-RUN npm install --production --silent && npm cache clean --force
-
-# Copy source code
+# Copy application code
 COPY . .
 
-# Set proper ownership for models directory
-RUN chown -R appuser:appuser /usr/src/app/models
+# Create a non-root user
+RUN groupadd -r appuser && useradd -r -g appuser appuser
+RUN chown -R appuser:appuser /app
+USER appuser
 
-# Expose ports
 EXPOSE 8082
 EXPOSE 8081
-
-# Switch to non-root user
-USER appuser
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
   CMD curl -f http://localhost:8081/health || exit 1
 
-CMD ["node", "src/index.js"]
+CMD ["python", "app/main.py"]

@@ -2,7 +2,7 @@
   "name": "client",
   "version": "0.1.0",
   "private": true,
-  "proxy": "http://api-gateway:80",
+  "proxy": "http://localhost:8080",
   "dependencies": {
     "@react-oauth/google": "^0.12.2",
     "@testing-library/dom": "^10.4.1",

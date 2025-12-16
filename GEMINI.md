@@ -22,6 +22,7 @@
   - comms-service: WebSocket实时通信 (待实现)
   - ai-omni-service: 统一的AI服务编排与Qwen3-Omni多模态AI引擎集成
   - conversation-service: 对话状态管理 (待实现)
+  - history-analytics-service: 对话历史存储与分析
 - **通信协议**: 
     - **WebSocket**: 用于实时音视频流传输
     - **HTTPS**: 用于处理用户注册、登录、查询历史记录等业务逻辑的 RESTful API
@@ -46,7 +47,8 @@ oral_app/
 │   │   │   ├── Register.js   # 集成API调用
 │   │   │   ├── Conversation.js
 │   │   │   ├── Discovery.js
-│   │   │   └── Profile.js
+│   │   │   ├── Profile.js
+│   │   │   └── History.js    # 对话历史页面
 │   │   ├── components/        # 可复用组件
 │   │   │   ├── Login.js
 │   │   │   ├── RealTimeRecorder.js
@@ -112,7 +114,17 @@ oral_app/
 │   │   ├── package.json
 │   │   └── src/index.js
 │   ├── conversation-service/
-│   ├── history-analytics-service/
+│   ├── history-analytics-service/ # 对话历史存储与分析服务
+│   │   ├── Dockerfile
+│   │   ├── package.json
+│   │   └── src/
+│   │       ├── controllers/
+│   │       │   └── historyController.js
+│   │       ├── models/
+│   │       │   └── Conversation.js
+│   │       ├── routes/
+│   │       │   └── historyRoutes.js
+│   │       └── index.js
 │   └── media-processing-service/
 └── docs/                     # 项目文档
 ```
@@ -183,12 +195,12 @@ oral_app/
 - **`api-gateway`**:
   - **Ports**: `8080:80` - 将主机的 8080 端口映射到 Nginx 容器的 80 端口，作为所有流量的入口。
 - **`client-app`**:
-  - **Ports**: `5000:5000` - React开发服务器端口。
+  - **Ports**: `5001:5000` - React开发服务器端口。
   - **Volumes**: 挂载源代码和node_modules目录，支持热重载。
   - **Environment**: `REACT_APP_API_URL=/api` - 设置API基础路径。
 - **`postgres`**:
   - **Ports**: `5432:5432` - 数据库端口。
-  - **Volumes**: 挂载 `init.sql` 用于数据库初始化。
+  - **Volumes**: `挂载 init.sql 用于数据库初始化。
   - **Environment**:
     - `POSTGRES_DB`: `oral_app` - 数据库名。
     - `POSTGRES_USER`: `user` - 数据库用户名。
@@ -199,18 +211,23 @@ oral_app/
     - `JWT_SECRET`: 用于签发和验证 JSON Web Tokens 的密钥。
 - **`comms-service`**:
   - **Ports**: `3001:8080` - 实时通信服务的端口。
+    **Protocol Bridge Update**: `comms-service` now actively bridges the protocol between Frontend (expects Binary Audio/JSON Text) and Python AI Service (exchanges JSON+Base64 Audio). Frontend Audio Worklet now correctly sends Int16 PCM.
 - **`ai-omni-service`**:
   - **Ports**: `8082:8082` 和 `8081:8081` - AI服务API和WebSocket端口。
   - 依赖 `postgres` 和 `redis`，表明它需要连接数据库和缓存。
+- **`history-analytics-service`**:
+  - **Ports**: `3004:3004` - 对话历史存储与分析服务的端口。
+  - 依赖 `mongo`，表明它需要连接MongoDB数据库。
 
 ### 2. `api-gateway/nginx.conf`
 Nginx 作为 API 网关，负责请求路由。
 
-- **`upstream`**: 定义了后端服务的地址池 (`user_service`, `comms_service`, `ai_service`)。
+- **`upstream`**: 定义了后端服务的地址池 (`user_service`, `comms_service`, `ai_service`, `history_analytics_service`)。
 - **`location`**:
   - `/api/users/`: 所有用户相关的 API 请求被代理到 `user_service`。
   - `/api/ai/`: 所有 AI 相关的 API 请求被代理到 `ai_service`。
   - `/api/ws/`: WebSocket 连接请求被特殊处理（通过 `Upgrade` 和 `Connection` 头）并代理到 `comms-service`。
+  - `/api/history/`: 所有历史相关的 API 请求被代理到 `history_analytics_service`。
 
 ### 3. `client/.env`
 React前端应用的环境变量配置文件。
@@ -227,11 +244,20 @@ React前端应用的Docker容器化配置。
 
 
 ## Gemini Added Memories
- │
-- - 当用户提出对今天的开发工作进行收尾时，请以 AI 助手的身份完成今日收尾工作，将执行以下4项任务：
-    1）使用 mcp-tasks 工具，更新开发计划到 @docs/TODO.md，不改动已完成计划内容。
+- 项目已配置专属的今日开发工作收尾命令 `finish_today`，该命令为特殊设置的'aliases'别名工具(**请勿**直接在shell模式下运行)。
+- The user prefers using `docker compose` instead of the legacy `docker-compose`.
+- When encountering Docker network issues, prefer letting Docker automatically use the host's DNS settings.
+- Only after a WebSocket connection is successfully established (the 'open' event is triggered) should you start listening to the client's 'message' event. This ensures that we don't try to send data before the other end of the pipeline is ready.
+- **Protocol Bridge Update**: `comms-service` now actively bridges the protocol between Frontend (expects Binary Audio/JSON Text) and Python AI Service (exchanges JSON+Base64 Audio). Frontend Audio Worklet now correctly sends Int16 PCM.
+- **WebSocket Only for Chat**: The frontend `Conversation.js` has been refactored to use WebSocket for both text messages and audio streaming, abandoning the deprecated HTTP chat API. Nginx routing for `/api/ws/` has been corrected to point to `comms-service` on port 8080.
+- **Audio Optimization**:
+    - **Client-Side AEC**: Enabled `echoCancellation`, `noiseSuppression`, and `autoGainControl` in `RealTimeRecorder.js` to prevent audio feedback loops during speaker playback.
+    - **Test Client**: Updated `test_client.py` with 24kHz sample rate for better TTS quality and basic software-based echo cancellation.
+    - **Backend**: `ai-omni-service` now logs full event payloads for deeper debugging of DashScope interactions.
+- 当用户提出对今天的开发工作进行收尾时，请以 AI 助手的身份完成今日收尾工作，将执行以下4项任务：
+    1）使用 mcp-tasks 工具，更新开发计划到 `docs/TODO.md`，不改动已完成计划内容。
     2）若项目结构有变动则更新 GEMINI.md ，以准确反映当前项目状态；注意不得改变 Gemini Added Memories 的内容及格式。
-    3）在 @docs/development_log.md 追加当日工作摘要，更新日志仅追加，不覆盖。
+    3）在 `docs/development_log.md` 追加当日工作摘要，更新日志仅追加，不覆盖。
     4）将所有变更提交并推送到远程仓库 origin/master，提交信息格式为 mac {{今日日期}}。
     **重要约束**：
     不要 覆盖整份文件，应仅追加或更新已有的内容。

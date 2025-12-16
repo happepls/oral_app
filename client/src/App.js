@@ -7,6 +7,7 @@ import Register from './pages/Register';
 import Conversation from './pages/Conversation';
 import Discovery from './pages/Discovery';
 import Profile from './pages/Profile';
+import History from './pages/History';
 import './App.css';
 
 function App() {
@@ -21,6 +22,7 @@ function App() {
             <Route path="/conversation" element={<Conversation />} />
             <Route path="/discovery" element={<Discovery />} />
             <Route path="/profile" element={<Profile />} />
+            <Route path="/history" element={<History />} />
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
         </div>

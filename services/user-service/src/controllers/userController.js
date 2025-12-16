@@ -14,6 +14,7 @@ const generateToken = (id) => {
 };
 
 exports.register = async (req, res) => {
+  console.log('Register endpoint hit');
   const { username, name, email, password } = req.body;
 
   try {
@@ -202,6 +203,41 @@ exports.getProfile = async (req, res) => {
     res.status(500).json({ 
       success: false,
       message: '获取用户资料时服务器错误' 
+    });
+  }
+};
+
+// Update user profile
+exports.updateProfile = async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const updates = req.body;
+    
+    // Prevent updating sensitive fields via this endpoint if necessary
+    // (Model already filters, but good to be explicit or careful)
+
+    const updatedUser = await User.update(userId, updates);
+
+    if (!updatedUser) {
+      return res.status(400).json({
+        success: false,
+        message: '没有可更新的字段或用户不存在'
+      });
+    }
+
+    res.json({
+      success: true,
+      message: '用户资料更新成功',
+      data: {
+        user: updatedUser
+      }
+    });
+
+  } catch (error) {
+    console.error('Update Profile Error:', error);
+    res.status(500).json({
+      success: false,
+      message: '更新用户资料时服务器错误'
     });
   }
 };

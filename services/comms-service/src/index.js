@@ -79,7 +79,7 @@ wss.on('connection', async function connection(clientWs, req) {
       clientWs.on('message', (message) => {
         if (aiServiceWs.readyState === WebSocket.OPEN) {
           if (Buffer.isBuffer(message)) {
-            console.log(`Wrapping binary message of size ${message.length} from user ${userId}, session ${sessionId} into JSON for AI service.`);
+            // console.log(`Wrapping binary message of size ${message.length} from user ${userId}, session ${sessionId} into JSON for AI service.`);
             const messageForAI = JSON.stringify({
               type: 'audio_stream',
               userId: userId,
@@ -89,7 +89,21 @@ wss.on('connection', async function connection(clientWs, req) {
             });
             aiServiceWs.send(messageForAI);
           } else {
-             console.log(`Received non-binary message from user ${userId}. Ignoring.`);
+             // Forward JSON messages (e.g. text chat) directly
+             try {
+                const msgStr = message.toString();
+                const parsed = JSON.parse(msgStr);
+                // Ensure userId/sessionId are attached if missing? 
+                // For now, just forward what the client sends, trusting it matches the protocol or wrapping it.
+                // The Python service expects { type: 'text_message', payload: { text: ... } }
+                // Let's assume the client sends the correct format or we map it here.
+                // If the client sends { type: 'chat', text: '...' }, we might need to transform.
+                // For now, let's just forward.
+                console.log(`Forwarding JSON message from user ${userId}: ${msgStr}`);
+                aiServiceWs.send(msgStr);
+             } catch (e) {
+                 console.log(`Received invalid non-binary message from user ${userId}. Ignoring.`);
+             }
           }
         }
       });
@@ -98,17 +112,41 @@ wss.on('connection', async function connection(clientWs, req) {
         if (clientWs.readyState === WebSocket.OPEN) {
           let isJson = false;
           let messageString = '';
+          let data = null;
+          
           try {
             messageString = message.toString('utf8');
-            JSON.parse(messageString);
+            data = JSON.parse(messageString);
             isJson = true;
           } catch (e) {
             isJson = false;
           }
 
           if (isJson) {
-            console.log(`Forwarding text message from AI service to user ${userId}: ${messageString}`);
-            clientWs.send(messageString);
+            if (data.type === 'audio_response' && data.payload) {
+                // Decode base64 and send as binary
+                try {
+                    const audioBuffer = Buffer.from(data.payload, 'base64');
+                    // console.log(`Forwarding audio response as binary (${audioBuffer.length} bytes) to user ${userId}`);
+                    clientWs.send(audioBuffer, { binary: true });
+                } catch (err) {
+                    console.error('Failed to decode audio payload:', err);
+                }
+            } else if (data.type === 'text_response') {
+                // Map to 'ai_response' for frontend compatibility if needed, 
+                // OR just forward and update frontend.
+                // Let's forward as 'ai_response' to match existing frontend logic
+                const responseToClient = JSON.stringify({
+                    type: 'ai_response',
+                    text: data.payload // Python sends text in payload
+                });
+                console.log(`Forwarding AI text response to user ${userId}: ${data.payload}`);
+                clientWs.send(responseToClient);
+            } else {
+                // Forward other JSON messages (system_message, connection_established, etc.)
+                console.log(`Forwarding ${data.type} from AI service to user ${userId}`);
+                clientWs.send(messageString);
+            }
           } else {
             console.log(`Forwarding binary message of size ${message.length} from AI service to user ${userId}.`);
             clientWs.send(message, { binary: true });

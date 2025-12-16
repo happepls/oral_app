@@ -13,5 +13,6 @@ router.post('/verify', userController.verifyToken);
 
 // Protected route to get user profile
 router.get('/profile', protect, userController.getProfile);
+router.put('/profile', protect, userController.updateProfile);
 
 module.exports = router;

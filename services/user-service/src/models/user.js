@@ -43,6 +43,36 @@ User.findById = async (id) => {
     return user;
 };
 
+User.update = async (id, updates) => {
+  const allowedUpdates = ['username', 'avatar_url', 'native_language', 'learning_goal'];
+  const updateFields = [];
+  const values = [];
+  let index = 1;
+
+  for (const [key, value] of Object.entries(updates)) {
+    if (allowedUpdates.includes(key)) {
+      updateFields.push(`${key} = $${index}`);
+      values.push(value);
+      index++;
+    }
+  }
+
+  if (updateFields.length === 0) {
+    return null; // No valid fields to update
+  }
+
+  values.push(id);
+  const query = `
+    UPDATE users 
+    SET ${updateFields.join(', ')}, updated_at = NOW() 
+    WHERE id = $${index} 
+    RETURNING *
+  `;
+
+  const { rows } = await db.query(query, values);
+  return rows[0];
+};
+
 User.findByEmail = async (email) => {
     const { rows } = await db.query('SELECT * FROM users WHERE email = $1', [email]);
     if (rows.length === 0) {

@@ -135,9 +135,26 @@ export const conversationAPI = {
   }
 };
 
+export const historyAPI = {
+  async getUserHistory(userId) {
+    const response = await fetch(`${API_BASE_URL}/history/user/${userId}`, {
+      headers: getAuthHeaders()
+    });
+    return handleResponse(response);
+  },
+
+  async getConversationDetail(sessionId) {
+    const response = await fetch(`${API_BASE_URL}/history/session/${sessionId}`, {
+      headers: getAuthHeaders()
+    });
+    return handleResponse(response);
+  }
+};
+
 export default {
   auth: authAPI,
   user: userAPI,
   ai: aiAPI,
-  conversation: conversationAPI
+  conversation: conversationAPI,
+  history: historyAPI
 };

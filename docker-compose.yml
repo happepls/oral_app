@@ -15,6 +15,23 @@ services:
       - comms-service
       - ai-omni-service
       - conversation-service
+      - history-analytics-service
+    networks:
+      - oral_app_net
+
+  history-analytics-service:
+    build: ./services/history-analytics-service
+    container_name: oral_app_history_analytics_service
+    restart: always
+    ports:
+      - "3004:3004"
+    volumes:
+      - ./services/history-analytics-service/src:/app/src
+    environment:
+      - PORT=3004
+      - MONGO_URI=mongodb://root:password@mongo:27017/oral_app_history?authSource=admin
+    depends_on:
+      - mongo
     networks:
       - oral_app_net
 
@@ -37,6 +54,10 @@ services:
     image: postgres:14-alpine
     ports:
       - "5432:5432"
+    environment:
+      - POSTGRES_DB=oral_app
+      - POSTGRES_USER=user
+      - POSTGRES_PASSWORD=password
     env_file:
       - ./.env
     volumes:
@@ -77,6 +98,14 @@ services:
     volumes:
       - ./services/user-service/src:/usr/src/app/src
       - ./services/user-service/node_modules:/usr/src/app/node_modules
+    environment:
+      - PORT=3000
+      - DB_HOST=postgres
+      - DB_USER=user
+      - DB_PASSWORD=password
+      - DB_DATABASE=oral_app
+      - DB_PORT=5432
+      - JWT_SECRET=your_jwt_secret_key_change_in_production
     env_file:
       - ./.env
       - ./services/user-service/.env
@@ -105,7 +134,12 @@ services:
       - "8081:8081"
     volumes:
       - ./services/ai-omni-service/models:/usr/src/app/models
-      - ./services/ai-omni-service/.env:/usr/src/app/.env
+      - ./services/ai-omni-service/.env:/app/.env
+    env_file:
+      - ./services/ai-omni-service/.env
+    dns:
+      - 8.8.8.8
+      - 8.8.4.4
     networks:
       - oral_app_net
 

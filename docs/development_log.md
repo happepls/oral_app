@@ -203,12 +203,12 @@
 
 *   **Omni Service Implementation & Mock Mode Development:**
     *   **New Service Creation**: Created a new `omni-service` microservice to integrate with the Qwen3-Omni multimodal AI engine, following the SROP architecture principles.
-    *   **Core Functionality Implementation**: 
+    *   **Core Functionality Implementation**:
         *   Implemented text processing API endpoint (`/api/process/text`)
         *   Implemented audio processing API endpoint (`/api/process/audio`)
         *   Implemented user context management endpoint (`/api/context`)
         *   Added health check endpoint (`/health`)
-    *   **Mock Mode Development**: 
+    *   **Mock Mode Development**:
         *   Developed a comprehensive mock mode to simulate the Qwen3-Omni engine for development and testing
         *   Implemented simulated ASR results for audio processing
         *   Created mock text responses for text processing
@@ -271,7 +271,7 @@
         *   Confirmed `user-service` environment variables (`DB_HOST`, `DB_USER`, etc.) were correctly set.
         *   PostgreSQL container logs showed it was ready for connections, but `user-service` reported "Connection terminated unexpectedly".
         *   Identified that `docker-compose.yml` was attempting to use environment variables (`${POSTGRES_DB}`) that were not explicitly defined in a project-level `.env` file or the shell environment.
-    *   **Solution**: 
+    *   **Solution**:
         *   Created a `.env` file at the project root (`./.env`) with `POSTGRES_DB`, `POSTGRES_USER`, and `POSTGRES_PASSWORD` defined.
         *   Modified `docker-compose.yml` to explicitly load this root `.env` file for both the `postgres` and `user-service` containers.
         *   Restarted all Docker containers (`docker compose down && docker compose up -d --build`).
@@ -279,7 +279,7 @@
     *   **Cleanup**: Removed the temporary `check_postgres.js` script.
     *   **Outcome**: The database connection issue for the `user-service` has been fully resolved, and the application login should now function correctly.
 *   **Session Management & Qwen3-Omni Integration:**
-    *   **Session Management**: 
+    *   **Session Management**:
         *   Integrated Redis into `comms-service` for centralized session state management.
         *   Implemented logic to create session records in Redis with expiration times upon user WebSocket connection.
         *   Added cleanup mechanism to remove session data from Redis upon client disconnection.
@@ -298,3 +298,63 @@
     *   **Health Monitoring**: Added comprehensive health check endpoints showing service status and conversation history
     *   **Testing**: Conducted end-to-end conversation tests, identified issues with DashScope SDK availability (package not accessible)
     *   **Current Status**: Service running on port 8082 with health check on 8081, maintaining 4 conversation history entries but falling back to mock mode due to SDK access issues
+
+## 2025-12-10
+
+*   **AI Service Python Migration & Functionality Fixes (ai-omni-service):**
+    *   **Architecture Migration**: Successfully refactored `ai-omni-service` from Node.js to Python using FastAPI and Uvicorn.
+    *   **Dockerization & Dependencies**: Updated `Dockerfile` to `python:3.10-slim` base image, addressing `onnxruntime-node` glibc dependency issues. Cleaned up obsolete Node.js files (`package.json`, `src/`). Created `requirements.txt` and `app/` directory structure.
+    *   **DashScope SDK Integration**: Integrated `dashscope` Python SDK (`OmniRealtimeConversation`).
+    *   **Environment Variable Resolution**: Diagnosed and fixed the `TypeError: can only concatenate str (not "NoneType") to str` caused by `QWEN3_OMNI_API_KEY` not being correctly passed to the Docker container. Corrected `docker-compose.yml` to ensure proper environment variable loading.
+    *   **API/WebSocket Protocol Alignment**: Resolved port mismatch between `user-service` and Nginx API Gateway. Fixed WebSocket proxying in `api-gateway/nginx.conf` by correcting `proxy_pass` paths and consolidating CORS headers to the `http` block.
+    *   **SDK API Call Fixes**:
+        *   Resolved `AttributeError: 'OmniRealtimeConversation' object has no attribute 'send_text'` by replacing `send_text` with `update_session` for System Prompt injection.
+        *   Fixed `TypeError: OmniRealtimeConversation.update_session() missing 1 required positional argument: 'output_modalities'` and `NameError: name 'MultiModality' is not defined` by correctly importing `MultiModality` and providing required arguments.
+        *   **Crucially, resolved the "答非所问" (off-topic replies) issue**: Discovered that DashScope's `OmniRealtimeConversation` was not correctly processing `conversation.item.create` for user text input in a way that influenced subsequent responses. Implemented a workaround by passing user input directly as `instructions` to `conversation.create_response()`. This ensures the AI model immediately receives and responds to the user's current input.
+    *   **Real-time Event Mapping**: Corrected `on_event` logic to accurately map DashScope's `response.audio.delta` (audio) and `response.audio_transcript.delta` (text) events to the client's expected `audio_response` and `text_response` formats.
+    *   **Robustness**: Implemented automatic reconnection logic for DashScope connection loss (`websocket.WebSocketConnectionClosedException`, `BrokenPipeError`).
+
+*   **Prompt Engineering Enhancement**:
+    *   Refined `PromptManager` module to generate a dynamic System Prompt, ensuring the AI model adheres to the "Oral Language Tutor" persona and contextually relevant responses. Removed misleading "initialization" directives from the prompt template to prevent repetitive greetings.
+
+*   **Testing Tools & Verification**:
+    *   Created and refined `test_client.py` Python script to simulate multi-turn WebSocket conversations, including sending text messages, receiving streaming text and audio, and saving audio to `.pcm` files. This script was instrumental in diagnosing and verifying fixes throughout the day.
+    *   Conducted end-to-end `wscat` and `test_client.py` tests to validate all fixes, confirming successful connection, message exchange, and context-aware AI responses.
+
+*   **Current Status**: All core `ai-omni-service` functionalities are verified: reliable WebSocket communication, context-aware multi-turn conversations with DashScope Qwen3-Omni, streaming audio, and robust error handling (reconnection). The service is ready for integration with the frontend application.
+
+
+## 2025-12-15
+
+*   **Frontend Optimization & History Interface:**
+    *   **Empty Message Filtering:** Updated `client/src/pages/Conversation.js` to strictly filter out empty or whitespace-only messages from both the user (ASR transcription) and the AI response, ensuring a cleaner conversation history.
+    *   **Conversation History Interface:**
+        *   Enhanced `client/src/pages/Profile.js` by adding a "Conversation History" navigation item, fully utilizing the existing template design.
+        *   Created a new `client/src/pages/History.js` page to display a list of past conversation sessions (currently using mock data), completing the history management UI flow.
+        *   Registered the new `/history` route in `client/src/App.js`.
+    *   **Documentation:** Updated `docs/TODO.md` to reflect the completion of these frontend optimization tasks.
+
+*   **Backend Service Refinement:**
+    *   **User Service API Testing & Update:** Implemented the `updateProfile` functionality in `services/user-service` (model, controller, routes) and successfully tested it via `curl`, ensuring full coverage for user profile management.
+    *   **History & Analytics Service Creation:**
+        *   Created a new `services/history-analytics-service` (Node.js/Express) with MongoDB integration.
+        *   Implemented `Conversation` schema (Mongoose) for storing detailed conversation history (messages, metrics, timestamps).
+        *   Developed API endpoints for `saveConversation`, `getUserHistory`, and `getConversationDetail`.
+
+## 2025-12-16
+
+*   **Audio Quality & Stability Improvements:**
+    *   **Echo Cancellation (Test Script)**: Implemented software-based echo cancellation in `test_client.py` by pausing microphone capture while the AI is speaking, resolving the feedback loop issue where the AI would respond to its own voice.
+    *   **Audio Sample Rate Optimization**: Updated `test_client.py` to use a 24kHz sample rate for audio playback and capture, significantly improving the clarity and naturalness of the TTS output.
+    *   **Client-Side Audio Configuration**: Enhanced `client/src/components/RealTimeRecorder.js` to explicitly enable browser-native `echoCancellation`, `noiseSuppression`, and `autoGainControl` in the `getUserMedia` constraints, ensuring a robust audio experience for web users.
+
+*   **AI Engine & Persona Refinement:**
+    *   **Prompt Engineering**: Redesigned the `PromptManager` in `ai-omni-service` to implement a specialized "Oral Communication Tutor" persona. The new system prompt prioritizes being a supportive "Language Partner," focuses on grammar and expression over pronunciation, and adapts its complexity based on the user's proficiency level.
+    *   **User Transcription Visibility**: Added specific event handling in `ai-omni-service/app/main.py` for `conversation.item.input_audio_transcription.completed`. This ensures that the user's speech-to-text (ASR) results are correctly captured and forwarded to the client, allowing users to see their own transcribed speech (`[me]`) in the interface.
+    *   **Debug Logging**: Enhanced the `ai-omni-service` logging to print full event payloads, facilitating easier debugging of DashScope API interactions.
+
+*   **Frontend & Infrastructure Fixes:**
+    *   **WebSocket Protocol Alignment**: Refactored `client/src/pages/Conversation.js` to manage WebSocket connections directly and send text messages via the WebSocket protocol (`send_message`), replacing the deprecated and failing HTTP chat API.
+    *   **Nginx Routing Fix**: Corrected the `comms-service` upstream port in `api-gateway/nginx.conf` from 3000 to 8080 and standardized the WebSocket path to `/api/ws/`, resolving connection failures.
+    *   **Conversation History**: Implemented the `History.js` page with real API integration to fetch and display user conversation logs, and added logic to filter out empty messages.
+    *   **Responsive Design**: Verified that the application's mobile-first design (using Tailwind CSS `max-w-lg`) effectively supports mobile viewports.

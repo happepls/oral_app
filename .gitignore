@@ -88,4 +88,4 @@ __pycache__/
 # IDE配置文件
 .trae/
 .vscode/
-.idea/
+.idea/.venv/

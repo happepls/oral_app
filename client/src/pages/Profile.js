@@ -30,6 +30,7 @@ function Profile() {
   ];
 
   const menuItems = [
+    { icon: 'history', label: '对话历史', path: '/history' },
     { icon: 'person', label: '账户设置', path: '/settings' },
     { icon: 'notifications', label: '通知', path: '/notifications' },
     { icon: 'workspace_premium', label: '订阅', path: '/subscription' },
@@ -127,6 +128,7 @@ function Profile() {
           {menuItems.map((item, index) => (
             <div 
               key={index}
+              onClick={() => item.path && navigate(item.path)}
               className="flex items-center p-4 rounded-xl bg-white dark:bg-slate-800 shadow-sm w-full cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors">
               <span className="material-symbols-outlined text-primary mr-4">{item.icon}</span>
               <span className="text-slate-900 dark:text-white font-medium flex-1">{item.label}</span>

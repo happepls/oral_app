@@ -25,6 +25,15 @@ app.use('/api/user', createProxyMiddleware({
   logLevel: 'debug'
 }));
 
+app.use('/api/users', createProxyMiddleware({
+  target: USER_SERVICE_URL,
+  changeOrigin: true,
+  logLevel: 'debug',
+  pathRewrite: {
+    '^/api/users': '',
+  },
+}));
+
 app.use('/api/ai', createProxyMiddleware({
   target: AI_SERVICE_URL,
   changeOrigin: true,
