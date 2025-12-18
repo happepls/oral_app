@@ -241,3 +241,76 @@ exports.updateProfile = async (req, res) => {
     });
   }
 };
+
+exports.createGoal = async (req, res) => {
+    try {
+        const userId = req.user.id;
+        const goalData = req.body;
+        
+        const newGoal = await User.createGoal(userId, goalData);
+        
+        res.status(201).json({
+            success: true,
+            message: '目标创建成功',
+            data: {
+                goal: newGoal
+            }
+        });
+    } catch (error) {
+        console.error('Create Goal Error:', error);
+        res.status(500).json({
+            success: false,
+            message: '创建目标时服务器错误'
+        });
+    }
+};
+
+exports.getActiveGoal = async (req, res) => {
+    try {
+        const userId = req.user.id;
+        const goal = await User.getActiveGoal(userId);
+        
+        res.json({
+            success: true,
+            data: {
+                goal: goal
+            }
+        });
+    } catch (error) {
+        console.error('Get Active Goal Error:', error);
+        res.status(500).json({
+            success: false,
+            message: '获取当前目标时服务器错误'
+        });
+    }
+};
+
+exports.completeGoal = async (req, res) => {
+    try {
+        const userId = req.user.id;
+        const goalId = req.params.id;
+        
+        const completedGoal = await User.completeGoal(goalId, userId);
+        
+        if (!completedGoal) {
+             return res.status(404).json({
+                success: false,
+                message: '目标未找到或已完成'
+            });
+        }
+
+        res.json({
+            success: true,
+            message: '目标已完成',
+            data: {
+                goal: completedGoal
+            }
+        });
+    } catch (error) {
+        console.error('Complete Goal Error:', error);
+        res.status(500).json({
+            success: false,
+            message: '完成目标时服务器错误'
+        });
+    }
+};

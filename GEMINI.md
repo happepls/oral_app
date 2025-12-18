@@ -20,9 +20,10 @@
   - api-gateway: Express API网关 (端口8080)
   - user-service: 用户认证与管理 (端口3001，JWT认证)
   - comms-service: WebSocket实时通信 (待实现)
-  - ai-omni-service: 统一的AI服务编排与Qwen3-Omni多模态AI引擎集成
+  - ai-omni-service: 统一的AI服务编排与Qwen3-Omni多模态AI引擎集成，现在可以智能解析LLM的JSON输出并执行相应动作（如更新用户资料、保存会话总结）。
   - conversation-service: 对话状态管理 (待实现)
   - history-analytics-service: 对话历史存储与分析
+  - media-processing-service: 音频流转码与对象存储 (Node.js, Tencent Cloud COS)
 - **通信协议**: 
     - **WebSocket**: 用于实时音视频流传输
     - **HTTPS**: 用于处理用户注册、登录、查询历史记录等业务逻辑的 RESTful API
@@ -32,13 +33,15 @@
     - **缓存**: Redis (缓存用户会话、热点数据)
 - **基础设施**:
     - **API 网关**: Nginx / Kong (作为所有请求的统一入口，负责路由、认证、限流)
-    - **对象存储**: AWS S3 / Aliyun OSS (存储录制的音频文件)
+    - **对象存储**: Tencent Cloud COS (存储录制的音频文件)
 - **AI引擎**: Qwen3-Omni (ASR+LLM+TTS 一体化)，通过OpenRouter集成
 
 ## 关键文件与目录结构
 ```
 oral_app/
 ├── docker-compose.yml   # Local development environment services
+├── test_client.py             # 更新：支持自动重连和角色显示
+├── ...
 ├── client/              # React前端应用
 │   ├── src/
 │   │   ├── pages/             # 页面组件
@@ -48,22 +51,25 @@ oral_app/
 │   │   │   ├── Conversation.js
 │   │   │   ├── Discovery.js
 │   │   │   ├── Profile.js
-│   │   │   └── History.js    # 对话历史页面
+│   │   │   ├── History.js    # 更新：显示会话总结和奖励
+│   │   │   ├── Onboarding.js # 新增：用户资料收集页面
+│   │   │   └── GoalSetting.js # 新增：目标设置页面
 │   │   ├── components/        # 可复用组件
-│   │   │   ├── Login.js
-│   │   │   ├── RealTimeRecorder.js
-│   │   │   ├── Register.js
-│   │   │   └── BottomNav.js
-│   │   ├── contexts/          # React Context状态管理
+│   │   │   ├── BottomNav.js
+│   │   │   └── RealTimeRecorder.js
+│   │   ├── contexts/          # 可复用组件
 │   │   │   └── AuthContext.js # 用户认证状态
 │   │   ├── services/          # API服务层
 │   │   │   └── api.js        # RESTful API调用封装
-│   │   ├── App.js
+│   │   ├── App.js            # 更新：新增Onboarding和GoalSetting页面路由
 │   │   ├── index.js
 │   │   └── index.css         # Tailwind CSS入口
 │   ├── public/
+│   │   ├── favicon.ico
 │   │   ├── index.html
-│   │   └── manifest.json
+│   │   ├── manifest.json
+│   │   ├── recorder-processor.js
+│   │   └── robots.txt
 │   ├── Dockerfile            # Docker容器化配置
 │   ├── .env                  # 环境变量配置
 │   ├── config-overrides.js    # webpack配置覆盖
@@ -94,19 +100,11 @@ oral_app/
 │   │   ├── Dockerfile
 │   │   └── package.json
 │   ├── ai-omni-service/      # 统一的AI服务编排与Qwen3-Omni集成
-│   │   ├── src/
-│   │   │   ├── index.js          # 统一入口点和HTTP服务器
-│   │   │   ├── llm/
-│   │   │   │   └── interface.js  # LLM服务接口
-│   │   │   ├── prompt/
-│   │   │   │   └── system.js     # 系统提示词模板
-│   │   │   ├── qwen3omni/
-│   │   │   │   ├── client.js     # Qwen3-Omni客户端实现
-│   │   │   │   └── service.js    # 服务层处理客户端请求
-│   │   │   └── tts/
-│   │   │       └── interface.js  # TTS服务接口
+│   │   ├── app/
+│   │   │   ├── main.py       # 更新：处理LLM的JSON输出并执行action，传递role信息
+│   │   │   └── prompt_manager.py # 更新：InfoCollector提示词，使其更智能
 │   │   ├── .env.example
-│   │   ├── Dockerfile
+│   │   ├── Dockerfile        # 更新：使用本地下载的Linux wheels，解决构建网络问题
 │   │   ├── README.md
 │   │   └── package.json
 │   ├── comms-service/
@@ -119,13 +117,21 @@ oral_app/
 │   │   ├── package.json
 │   │   └── src/
 │   │       ├── controllers/
-│   │       │   └── historyController.js
+│   │       │   └── historyController.js # 更新：支持保存会话总结
 │   │       ├── models/
-│   │       │   └── Conversation.js
-│   │       ├── routes/
-│   │       │   └── historyRoutes.js
-│   │       └── index.js
-│   └── media-processing-service/
+│   │       │   └── Conversation.js      # 更新：新增summary字段
+│   │       └── routes/
+│   │           └── historyRoutes.js
+│   ├── media-processing-service/
+│   │   ├── .env.example
+│   │   ├── Dockerfile
+│   │   ├── package.json
+│   │   └── src/
+│   │       ├── controllers/mediaController.js
+│   │       ├── routes/mediaRoutes.js
+│   │       ├── utils/cos.js
+│   │       └── utils/transcoder.js
+│   └── user-service/
 └── docs/                     # 项目文档
 ```
 

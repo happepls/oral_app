@@ -150,6 +150,20 @@ services:
     networks:
       - oral_app_net
 
+  media-processing-service:
+    build: ./services/media-processing-service
+    container_name: oral_app_media_processing_service
+    restart: always
+    ports:
+      - "3005:3005"
+    volumes:
+      - ./services/media-processing-service/src:/app/src
+      - ./services/media-processing-service/.env:/app/.env
+    env_file:
+      - ./services/media-processing-service/.env
+    networks:
+      - oral_app_net
+
 volumes:
   postgres_data:
   mongo_data:

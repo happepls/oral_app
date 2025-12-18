@@ -2,6 +2,10 @@ const { WebSocketServer, WebSocket } = require('ws');
 const jwt = require('jsonwebtoken');
 const url = require('url');
 const { createClient } = require('redis');
+const fs = require('fs');
+const path = require('path');
+const axios = require('axios');
+const FormData = require('form-data');
 
 // --- Redis Client Setup ---
 const redisClient = createClient({
@@ -20,6 +24,7 @@ if (!JWT_SECRET) {
 }
 
 const AI_SERVICE_URL = 'ws://ai-omni-service:8082/stream';
+const MEDIA_SERVICE_URL = 'http://media-processing-service:3005/api/media/upload';
 
 console.log('WebSocket server is running on port 8080');
 
@@ -69,16 +74,42 @@ wss.on('connection', async function connection(clientWs, req) {
     clientWs.userId = userId;
     clientWs.sessionId = sessionId;
 
+    // --- Audio Recording Setup ---
+    const recordingDir = path.join('/tmp', 'recordings');
+    if (!fs.existsSync(recordingDir)) {
+        fs.mkdirSync(recordingDir, { recursive: true });
+    }
+    const recordingPath = path.join(recordingDir, `${sessionId}.pcm`); // Assuming raw PCM or whatever client sends
+    const recordingStream = fs.createWriteStream(recordingPath);
+    
+    recordingStream.on('error', (err) => {
+        console.error(`Error writing recording for session ${sessionId}:`, err);
+    });
+
     const aiServiceWs = new WebSocket(AI_SERVICE_URL);
 
     aiServiceWs.on('open', () => {
       console.log(`Successfully connected to AI Service for user ${userId} and session ${sessionId}`);
+      
+      // Send initialization message to AI Service
+      aiServiceWs.send(JSON.stringify({
+          type: 'session_start',
+          userId: userId,
+          sessionId: sessionId,
+          token: token
+      }));
+
       clientWs.send(JSON.stringify({ type: 'info', message: 'Welcome! Your connection is authenticated and bridged to the AI service.' }));
 
       // NOW that the AI service connection is open, start forwarding messages.
       clientWs.on('message', (message) => {
         if (aiServiceWs.readyState === WebSocket.OPEN) {
           if (Buffer.isBuffer(message)) {
+            // Write to recording stream
+            if (recordingStream.writable) {
+                recordingStream.write(message);
+            }
+
             // console.log(`Wrapping binary message of size ${message.length} from user ${userId}, session ${sessionId} into JSON for AI service.`);
             const messageForAI = JSON.stringify({
               type: 'audio_stream',
@@ -157,6 +188,47 @@ wss.on('connection', async function connection(clientWs, req) {
 
     clientWs.on('close', async () => {
       console.log(`Client connection closed for user ${userId}. Closing connection to AI service and cleaning up session.`);
+      
+      // --- Finalize Recording and Upload ---
+      if (recordingStream) {
+          recordingStream.end();
+          console.log(`Recording finished for session ${sessionId}. Uploading to media service...`);
+          
+          try {
+              // Wait for stream to finish closing
+              await new Promise(resolve => recordingStream.on('finish', resolve));
+              
+              const form = new FormData();
+              // Check if file has size
+              const stats = fs.statSync(recordingPath);
+              if (stats.size > 0) {
+                  form.append('audio', fs.createReadStream(recordingPath));
+                  // You might want to pass userId/sessionId metadata if the media service supports it
+                  
+                  const response = await axios.post(MEDIA_SERVICE_URL, form, {
+                      headers: {
+                          ...form.getHeaders()
+                      },
+                      maxContentLength: Infinity,
+                      maxBodyLength: Infinity
+                  });
+                  
+                  console.log(`Recording uploaded successfully for session ${sessionId}:`, response.data);
+              } else {
+                  console.log(`Recording for session ${sessionId} was empty. Skipping upload.`);
+              }
+          } catch (err) {
+              console.error(`Failed to upload recording for session ${sessionId}:`, err.message);
+          } finally {
+              // Cleanup local file
+              if (fs.existsSync(recordingPath)) {
+                  fs.unlink(recordingPath, (err) => {
+                      if (err) console.error(`Error deleting local recording ${recordingPath}:`, err);
+                  });
+              }
+          }
+      }
+
       // --- Session Cleanup ---
       await redisClient.del(sessionKey);
       console.log(`Session ${sessionId} for user ${userId} removed from Redis.`);

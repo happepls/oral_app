@@ -9,6 +9,8 @@ const MessageSchema = new mongoose.Schema({
 const ConversationSchema = new mongoose.Schema({
   userId: { type: String, required: true, index: true },
   sessionId: { type: String, required: true, unique: true },
+  goalId: { type: String },
+  summary: { type: String },
   startTime: { type: Date, default: Date.now },
   endTime: { type: Date },
   topic: { type: String },

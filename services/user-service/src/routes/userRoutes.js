@@ -15,4 +15,9 @@ router.post('/verify', userController.verifyToken);
 router.get('/profile', protect, userController.getProfile);
 router.put('/profile', protect, userController.updateProfile);
 
+// Goal routes
+router.post('/goals', protect, userController.createGoal);
+router.get('/goals/active', protect, userController.getActiveGoal);
+router.put('/goals/:id/complete', protect, userController.completeGoal);
+
 module.exports = router;

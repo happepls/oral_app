@@ -4,10 +4,8 @@ WORKDIR /app
 
 COPY package*.json ./
 
-# Install dependencies (use npm ci for production, install for dev)
-# For local dev with volume mapping, we might skip this or handle it differently
-# But for a proper image build:
-RUN npm install
+# Copy node_modules from host to avoid npm install network issues
+COPY node_modules ./node_modules
 
 COPY . .
 

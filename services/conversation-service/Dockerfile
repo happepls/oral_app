@@ -1,4 +1,3 @@
-
 # Use an official Node.js runtime as a parent image
 FROM node:18-alpine
 
@@ -8,9 +7,8 @@ WORKDIR /usr/src/app
 # Copy package.json and package-lock.json to the working directory
 COPY package*.json ./
 
-# Install any needed packages
-# RUN npm config set registry https://registry.npmmirror.com
-RUN npm install
+# Copy node_modules from host to avoid npm install network issues
+COPY node_modules ./node_modules
 
 # Copy the rest of the application's source code from the host to the image's filesystem
 COPY . .

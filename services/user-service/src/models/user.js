@@ -44,7 +44,10 @@ User.findById = async (id) => {
 };
 
 User.update = async (id, updates) => {
-  const allowedUpdates = ['username', 'avatar_url', 'native_language', 'learning_goal'];
+  const allowedUpdates = [
+      'username', 'avatar_url', 'native_language', 'learning_goal',
+      'nickname', 'gender', 'birth_year', 'target_language', 'interests', 'points'
+  ];
   const updateFields = [];
   const values = [];
   let index = 1;
@@ -72,6 +75,43 @@ User.update = async (id, updates) => {
   const { rows } = await db.query(query, values);
   return rows[0];
 };
+
+User.createGoal = async (userId, goalData) => {
+    const { target_language, target_level, current_proficiency, completion_time_days, interests } = goalData;
+    
+    // Deactivate previous active goals for this user
+    await db.query(
+        "UPDATE user_goals SET status = 'abandoned', completed_at = NOW() WHERE user_id = $1 AND status = 'active'",
+        [userId]
+    );
+
+    const query = `
+        INSERT INTO user_goals (user_id, target_language, target_level, current_proficiency, completion_time_days, interests)
+        VALUES ($1, $2, $3, $4, $5, $6)
+        RETURNING *
+    `;
+    const values = [userId, target_language, target_level, current_proficiency || 0, completion_time_days, interests];
+    
+    const { rows } = await db.query(query, values);
+    
+    // Also update the user's current target_language and interests for convenience
+    await User.update(userId, { target_language, interests });
+
+    return rows[0];
+};
+
+User.getActiveGoal = async (userId) => {
+    const query = `SELECT * FROM user_goals WHERE user_id = $1 AND status = 'active' ORDER BY created_at DESC LIMIT 1`;
+    const { rows } = await db.query(query, [userId]);
+    return rows[0] || null;
+};
+
+User.completeGoal = async (goalId, userId) => {
+    const query = `UPDATE user_goals SET status = 'completed', completed_at = NOW() WHERE id = $1 AND user_id = $2 RETURNING *`;
+    const { rows } = await db.query(query, [goalId, userId]);
+    return rows[0];
+};
+
 
 User.findByEmail = async (email) => {
     const { rows } = await db.query('SELECT * FROM users WHERE email = $1', [email]);

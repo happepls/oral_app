@@ -17,7 +17,7 @@ function History() {
       try {
         setLoading(true);
         const data = await historyAPI.getUserHistory(user.id);
-        // data is an array of conversations
+        // data is an array of conversations. Assume each item now includes 'summary' and 'rewards'
         setHistoryItems(data);
       } catch (err) {
         console.error('Failed to fetch history:', err);
@@ -81,26 +81,40 @@ function History() {
           {historyItems.map((item) => (
             <div 
               key={item._id || item.sessionId}
-              className="flex items-center p-4 rounded-xl bg-white dark:bg-slate-800 shadow-sm cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors"
+              className="flex flex-col p-4 rounded-xl bg-white dark:bg-slate-800 shadow-sm cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors"
               onClick={() => console.log('View history details', item.sessionId)}
             >
-              <div className="flex items-center justify-center w-10 h-10 rounded-full bg-primary/20 text-primary mr-4">
-                <span className="material-symbols-outlined">forum</span>
+              <div className="flex items-center">
+                <div className="flex items-center justify-center w-10 h-10 rounded-full bg-primary/20 text-primary mr-4">
+                  <span className="material-symbols-outlined">forum</span>
+                </div>
+                <div className="flex-1">
+                  <h3 className="text-base font-bold text-slate-900 dark:text-white">{item.topic || '自由对话'}</h3>
+                  <p className="text-sm text-slate-500 dark:text-slate-400">
+                      {formatDate(item.startTime)} • {calculateDuration(item.startTime, item.endTime)}
+                  </p>
+                </div>
+                <div className="flex flex-col items-end">
+                  {item.metrics?.fluency && (
+                      <>
+                          <span className="text-lg font-bold text-primary">{item.metrics.fluency}</span>
+                          <span className="text-xs text-slate-500 dark:text-slate-400">分</span>
+                      </>
+                  )}
+                </div>
               </div>
-              <div className="flex-1">
-                <h3 className="text-base font-bold text-slate-900 dark:text-white">{item.topic || '自由对话'}</h3>
-                <p className="text-sm text-slate-500 dark:text-slate-400">
-                    {formatDate(item.startTime)} • {calculateDuration(item.startTime, item.endTime)}
-                </p>
-              </div>
-              <div className="flex flex-col items-end">
-                {item.metrics?.fluency && (
-                    <>
-                        <span className="text-lg font-bold text-primary">{item.metrics.fluency}</span>
-                        <span className="text-xs text-slate-500 dark:text-slate-400">分</span>
-                    </>
-                )}
-              </div>
+              
+              {item.summary && (
+                <div className="mt-3 pt-3 border-t border-slate-200 dark:border-slate-700">
+                  <p className="text-sm text-slate-700 dark:text-slate-300">总结: {item.summary}</p>
+                </div>
+              )}
+
+              {item.rewards !== undefined && (
+                <div className="mt-2 text-right">
+                  <span className="text-sm font-medium text-amber-500">奖励: {item.rewards} 点</span>
+                </div>
+              )}
             </div>
           ))}
         </div>

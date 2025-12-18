@@ -77,3 +77,43 @@ exports.getConversationDetail = async (req, res) => {
     res.status(500).json({ success: false, message: 'Server Error' });
   }
 };
+
+exports.saveSummary = async (req, res) => {
+  try {
+    const { sessionId, userId, summary, feedback, proficiency_score_delta, goalId } = req.body;
+
+    let conversation = await Conversation.findOne({ sessionId });
+
+    if (conversation) {
+      conversation.summary = summary || conversation.summary;
+      if (goalId) conversation.goalId = goalId;
+      
+      if (!conversation.metrics) conversation.metrics = {};
+      if (feedback) conversation.metrics.feedback = feedback;
+      if (proficiency_score_delta !== undefined) conversation.metrics.proficiencyScoreDelta = proficiency_score_delta;
+      
+      await conversation.save();
+    } else {
+      if (!userId) {
+          return res.status(400).json({ success: false, message: 'UserId required to create conversation summary' });
+      }
+      conversation = new Conversation({
+        sessionId,
+        userId,
+        summary,
+        goalId,
+        metrics: {
+            feedback,
+            proficiencyScoreDelta: proficiency_score_delta
+        }
+      });
+      await conversation.save();
+    }
+
+    res.status(200).json({ success: true, data: conversation });
+  } catch (error) {
+    console.error('Save Summary Error:', error);
+    res.status(500).json({ success: false, message: 'Server Error' });
+  }
+};
+
