@@ -44,7 +44,8 @@ After collecting all required info, output a JSON block at the end of your respo
 - Be friendly and welcoming.
 - If the user provides info, acknowledge it briefly (e.g., "Got it, Tom.") and ask for the rest.
 - Once all REQUIRED fields are collected, show a summary to the user and ask for confirmation.
-- Only output the JSON when the user confirms the details are correct.
+- **CRITICAL**: When the user confirms the details are correct (e.g., says "Yes", "Correct"), you **MUST** append the JSON block at the very end of your response.
+- Do not forget the JSON block. The system depends on it.
 """
 
         # 2. GoalPlanner Template
@@ -69,15 +70,15 @@ Interests: {interests}
 # Output Format
 When the goal is agreed upon, output a JSON block:
 ```json
-{
+{{
   "action": "set_goal",
-  "data": {
+  "data": {{
     "target_language": "...",
     "target_level": "...",
     "completion_time_days": 30,
     "interests": "..."
-  }
-}
+  }}
+}}
 ```
 """
 

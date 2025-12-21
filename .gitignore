@@ -84,6 +84,8 @@ __pycache__/
 *.py[cod]
 *$py.class
 *.so
+*.whl
+**/wheels/
 
 # IDE配置文件
 .trae/

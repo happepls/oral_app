@@ -135,11 +135,24 @@ services:
     volumes:
       - ./services/ai-omni-service/models:/usr/src/app/models
       - ./services/ai-omni-service/.env:/app/.env
+      - ./services/ai-omni-service/app:/app/app
     env_file:
       - ./services/ai-omni-service/.env
     dns:
       - 8.8.8.8
       - 8.8.4.4
+    networks:
+      - oral_app_net
+
+  ai-glm-service:
+    build: ./services/ai-glm-service
+    container_name: oral_app_ai_glm_service
+    restart: always
+    ports:
+      - "8084:8084"
+    volumes:
+      - ./services/ai-glm-service/app:/app/app
+      - ./services/ai-glm-service/models:/app/models
     networks:
       - oral_app_net
 

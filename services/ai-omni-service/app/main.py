@@ -45,12 +45,12 @@ async def fetch_user_context(user_id: str, token: str):
             # 1. Profile
             base_url = "http://user-service:3000" 
             
-            profile_resp = await client.get(f"{base_url}/api/users/profile", headers=headers)
+            profile_resp = await client.get(f"{base_url}/profile", headers=headers)
             profile_data = profile_resp.json().get('data', {}).get('user', {})
             
             # 2. Active Goal
-            goal_resp = await client.get(f"{base_url}/api/users/goals/active", headers=headers)
-            goal_data = goal_resp.json().get('data', {}).get('goal', {})
+            goal_resp = await client.get(f"{base_url}/goals/active", headers=headers)
+            goal_data = goal_resp.json().get('data', {}).get('goal') or {}
             
             logger.info(f"Fetched context for user {user_id}: {profile_data.get('username')}, Goal: {goal_data.get('target_language')}")
             return profile_data, goal_data
@@ -64,10 +64,10 @@ async def execute_action(action: str, data: dict, token: str, user_id: str = Non
     async with httpx.AsyncClient() as client:
         try:
             if action == "update_profile":
-                await client.put(f"{base_url}/api/users/profile", json=data, headers=headers)
+                await client.put(f"{base_url}/profile", json=data, headers=headers)
                 logger.info(f"Updated profile: {data}")
             elif action == "set_goal":
-                await client.post(f"{base_url}/api/users/goals", json=data, headers=headers)
+                await client.post(f"{base_url}/goals", json=data, headers=headers)
                 logger.info(f"Set goal: {data}")
             elif action == "save_summary":
                  # Prepare payload for history service

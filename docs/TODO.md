@@ -2,7 +2,7 @@
 
 ## In Progress
 
-- [ ] Verify the new "Oral Tutor" backend flow (Context Fetching -> Prompt Selection -> Action Execution).并通过test_client.py的对话测试（支持多轮对话、文本输入）
+- [ ] [AI Engine] ai-glm-service: Implement model loading (GLM-ASR/LLM/TTS) and pipeline logic
 
 ## To Do
 
@@ -96,4 +96,6 @@
 - [x] [Backend] 创建历史与分析服务：实现对话的异步存储
 - [x] [Testing] 在 test_client.py 调试脚本中集成 PCM 音频输入和实时 TTS 输出功能，实现真实的音频输入输出模拟。
 - [x] [AI Engine] Prompt Engineering: Optimize System Prompt for 'AI Oral Tutor' persona (correct grammar/expression over pronunciation, intelligent turn-taking).
-- [X] [Backend] 创建媒体处理服务：实现音频流转码和 S3/OSS 存储
+- [x] [Backend] 创建媒体处理服务：实现音频流转码和 S3/OSS 存储
+- [x] Verify the new "Oral Tutor" backend flow (Context Fetching -> Prompt Selection -> Action Execution).并通过test_client.py的对话测试（支持多轮对话、文本输入）
+- [x] [AI Engine] ai-glm-service: Setup Docker environment and fix dependency network issues using local wheels strategy
