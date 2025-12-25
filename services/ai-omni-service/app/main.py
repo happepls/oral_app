@@ -132,15 +132,21 @@ class WebSocketCallback(OmniRealtimeCallback):
         self.session_id = session_id
         self.conversation = None 
         self.full_response_text = ""
-        
-        # Determine Role based on context
-        self.role = "OralTutor"
-        if not user_context.get('target_language'):
-            self.role = "InfoCollector"
-        elif not user_context.get('active_goal'):
-            self.role = "GoalPlanner"
-        
+        self.role = self._determine_role(user_context)
         logger.info(f"Assigned Role: {self.role}")
+
+    def _determine_role(self, context):
+        # Handle 401 errors by defaulting to InfoCollector
+        if not context or isinstance(context, str):
+            return "InfoCollector"
+            
+        # Check target language from goal data
+        goal = context.get('active_goal', {})
+        if not goal or not goal.get('target_language'):
+            return "InfoCollector" if not goal else "GoalPlanner"
+            
+        # Only switch to OralTutor if all conditions met
+        return "OralTutor"
 
     def on_open(self) -> None:
         logger.info("DashScope Connection Open")
@@ -155,7 +161,9 @@ class WebSocketCallback(OmniRealtimeCallback):
             }), 
             self.loop
         )
-        
+        self._update_session_prompt()
+
+    def _update_session_prompt(self):
         if self.conversation:
              full_ctx = {**self.user_context}
              if self.user_context.get('active_goal'):
@@ -188,21 +196,54 @@ class WebSocketCallback(OmniRealtimeCallback):
                      text = payload.get('delta') 
                      if text:
                         self.full_response_text += text
-                        await self.websocket.send_json({ "type": "text_response", "payload": text, "role": self.role })
+                        # Only send role with first delta or role_switch event
+                        if not hasattr(self, '_sent_role_for_turn'):
+                            await self.websocket.send_json({ "type": "role_switch", "payload": {"role": self.role} })
+                            self._sent_role_for_turn = True
+                        await self.websocket.send_json({ "type": "text_response", "payload": text })
 
                 elif event_name == 'response.audio_transcript.done' or event_name == 'response.text.done':
+                     logger.info(f"AI Response Finished: {self.full_response_text[:50]}...")
                      # Process Action
                      text = self.full_response_text
-                     json_match = re.search(r'```json\s*(\{.*?\})\s*```', text, re.DOTALL)
+                     # Try finding JSON with backticks first, then just raw JSON object
+                     json_match = re.search(r'```json\s*(\{.*?"action".*?\})\s*```', text, re.DOTALL)
+                     if not json_match:
+                         # Fallback: Look for a JSON block starting with { and containing "action"
+                         json_match = re.search(r'(\{.*?"action".*?\})', text, re.DOTALL)
+
                      if json_match:
                          try:
                              json_str = json_match.group(1)
+                             # Clean up potential trailing characters if regex grabbed too much
+                             if json_str.count('{') == json_str.count('}'):
+                                 pass
+                             else:
+                                 # Naive balancing (optional, but regex usually grabs greedily)
+                                 pass
+                                 
                              action_data = json.loads(json_str)
                              action = action_data.get('action')
                              data = action_data.get('data')
                              if action and data:
                                  logger.info(f"Detected Action: {action}")
                                  await execute_action(action, data, self.token, self.user_id, self.session_id)
+                                 
+                                 # Refresh Context & Role
+                                 new_profile, new_goal = await fetch_user_context(self.user_id, self.token)
+                                 self.user_context = new_profile
+                                 self.user_context['active_goal'] = new_goal
+                                 
+                                 new_role = self._determine_role(self.user_context)
+                                 if new_role != self.role:
+                                     logger.info(f"Role Switching: {self.role} -> {new_role}")
+                                     self.role = new_role
+                                     self._update_session_prompt()
+                                     await self.websocket.send_json({
+                                         "type": "role_switch",
+                                         "payload": {"role": self.role}
+                                     })
+
                          except json.JSONDecodeError:
                              logger.error("Failed to decode JSON action block")
                      
@@ -211,15 +252,17 @@ class WebSocketCallback(OmniRealtimeCallback):
                 elif event_name == 'conversation.item.input_audio_transcription.completed':
                      text = payload.get('transcript')
                      if text:
+                         logger.info(f"User Transcription (Final): {text}")
                          await self.websocket.send_json({ "type": "transcription", "text": text })
 
                 elif 'input' in event_name and 'transcript' in event_name:
                      text = payload.get('delta') or payload.get('text') or payload.get('transcript')
                      if text:
+                         logger.debug(f"User Transcription Delta: {text}")
                          await self.websocket.send_json({ "type": "transcription", "text": text })
 
             except Exception as e:
-                logger.error(f"Error processing event: {e}")
+                logger.error(f"Error processing event {event_name}: {e}")
 
         asyncio.run_coroutine_threadsafe(process_event(), self.loop)
 
@@ -296,34 +339,79 @@ async def websocket_endpoint(client_ws: WebSocket):
         heartbeat_task = asyncio.create_task(heartbeat())
         
         while True:
-            message = await client_ws.receive_text()
-            data = json.loads(message)
-            msg_type = data.get('type')
-            payload = data.get('payload', {})
-            
-            if msg_type == 'audio_stream':
-                audio_b64 = payload.get('audioBuffer')
-                if audio_b64 and conversation:
-                    conversation.append_audio(audio_b64)
-            
-            elif msg_type == 'text_message':
-                text = payload.get('text')
-                if text and conversation:
-                    conversation.create_response(instructions=f"User said: {text}")
+            try:
+                message = await client_ws.receive_text()
+                data = json.loads(message)
+                msg_type = data.get('type')
+                payload = data.get('payload', {})
+                
+                # Validate connection state before processing
+                if not conversation:
+                    logger.warning(f"Received {msg_type} but conversation not established")
+                    await client_ws.send_json({"type": "error", "payload": {"error": "Conversation not established", "type": "invalid_state"}})
+                    continue
+                
+                if msg_type == 'audio_stream':
+                    audio_b64 = payload.get('audioBuffer')
+                    if audio_b64:
+                        # logger.debug(f"Received audio buffer: {len(audio_b64)} bytes")
+                        conversation.append_audio(audio_b64)
+                
+                elif msg_type == 'text_message':
+                    text = payload.get('text')
+                    if text:
+                        logger.info(f"User Text Message: {text}")
+                        conversation.create_response(instructions=f"User said: {text}")
 
-            elif msg_type == 'user_audio_ended' and conversation:
-                conversation.create_response()
+                elif msg_type == 'user_audio_ended':
+                    logger.info("User Audio Ended event received")
+                    conversation.create_response()
+                
+                elif msg_type == 'user_interruption':
+                    logger.info("User interruption received - stopping current response")
+                    # Clear any ongoing response and reset the conversation state
+                    conversation.create_response(instructions="User interrupted. Please stop your current response and wait for their next input.")
+                        
+                elif msg_type == 'ping':
+                    await client_ws.send_json({"type": "pong"})
                     
-            elif msg_type == 'ping':
-                await client_ws.send_json({"type": "pong"})
+            except json.JSONDecodeError as e:
+                logger.error(f"Invalid JSON received: {e}")
+                await client_ws.send_json({"type": "error", "payload": {"error": "Invalid message format", "type": "invalid_json"}})
+            except Exception as e:
+                logger.error(f"Error processing message: {e}")
+                if "receive" in str(e).lower() or "disconnect" in str(e).lower():
+                    break
+                # Don't break the loop on processing errors, just log and continue
+                try:
+                    await client_ws.send_json({"type": "error", "payload": {"error": "Message processing failed", "type": "processing_error"}})
+                except:
+                    pass # Connection likely closed
 
     except WebSocketDisconnect:
-        logger.info("Client disconnected")
+        logger.info("Client disconnected normally")
+        # Send a clean disconnect message before closing
+        try:
+            await client_ws.send_json({"type": "connection_closed", "payload": {"reason": "client_disconnected"}})
+        except:
+            pass  # Connection already closed
     except Exception as e:
         logger.error(f"WebSocket Error: {e}")
+        # Send error details to client for better reconnection handling
+        try:
+            await client_ws.send_json({"type": "error", "payload": {"error": str(e), "type": "connection_error"}})
+        except:
+            pass  # Connection already broken
     finally:
-        if heartbeat_task: heartbeat_task.cancel()
-        if conversation: conversation.close()
+        if heartbeat_task: 
+            heartbeat_task.cancel()
+            try:
+                await heartbeat_task
+            except asyncio.CancelledError:
+                pass
+        if conversation: 
+            conversation.close()
+        logger.info(f"WebSocket connection cleaned up for user {user_id}")
 
 if __name__ == "__main__":
     port = int(os.getenv("AI_SERVICE_PORT", 8082))

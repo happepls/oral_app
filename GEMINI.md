@@ -154,6 +154,28 @@ oral_app/
 ```
 
 
+## 当前状态 (Current Status)
+- ✅ **Dynamic Role Switching**: InfoCollector -> GoalPlanner -> OralTutor implemented
+- ✅ **AI Service**: Qwen3-Omni integration via DashScope SDK
+- ✅ **Test Client**: `test_client.py` script for backend verification - FIXED
+- 🔄 **GLM-ASR Service**: Fixing model loading issues (transformers version compatibility)
+- ✅ **WebSocket Protocol**: Role switching events now properly handled in client
+- 🔄 **Audio Streaming**: WebRTC integration in progress
+
+## 已知问题 (Known Issues)
+1. **GLM-ASR Service**: Model loading fails due to transformers version incompatibility
+2. ✅ **Test Client**: User interruption now implemented with 'interrupt' command
+3. ✅ **Test Client**: AI role changes now displayed during conversation (InfoCollector -> GoalPlanner -> OralTutor)
+4. ✅ **Test Client**: WebSocket reconnection now automatic with exponential backoff
+
+## 最近修复 (Recent Fixes)
+- **ai-omni-service**: Fixed infinite error loop when WebSocket connection is closed unexpectedly.
+- **test_client.py**: Fixed duplicate role labels in output, implemented microphone muting during TTS playback to prevent self-talking/echo, and improved WebSocket reconnection logic.
+- **test_client.py**: Enhanced with proper user interruption handling
+- **test_client.py**: Added AI role display (InfoCollector, GoalPlanner, OralTutor)
+- **test_client.py**: Implemented automatic WebSocket reconnection with exponential backoff
+- **test_client.py**: Added connection state management and role tracking
+
 ## 核心业务逻辑
 
 ### 1. SROP 核心架构设计理念
@@ -221,10 +243,6 @@ oral_app/
 - **`ai-omni-service`**:
   - **Ports**: `8082:8082` 和 `8081:8081` - AI服务API和WebSocket端口。
   - 依赖 `postgres` 和 `redis`，表明它需要连接数据库和缓存。
-- **`ai-glm-service`**:
-  - **Ports**: `8084:8084` - AI GLM服务端口。
-  - **Volumes**: 挂载 `/app/app` 用于代码热重载，以及 `/app/models` 用于本地模型加载。
-  - **Build Strategy**: 推荐使用**Local Wheels Strategy**。在构建 Docker 镜像前，先在宿主机 `wheels/` 目录下下载好所有 Python 依赖包 (`pip download ...`)，然后在 Dockerfile 中使用 `COPY wheels /wheels` 和 `pip install --no-index --find-links=/wheels ...` 进行离线安装。配合精确版本锁定的 `requirements.txt`，可彻底解决国内网络环境下的 `pip install` 超时和依赖回溯问题。
 - **`history-analytics-service`**:
   - **Ports**: `3004:3004` - 对话历史存储与分析服务的端口。
   - 依赖 `mongo`，表明它需要连接MongoDB数据库。

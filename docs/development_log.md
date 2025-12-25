@@ -419,3 +419,31 @@
 
 *   **Next Steps**:
   *   Implement the actual GLM-ASR, LLM, and TTS model loading logic within `ai-glm-service`.
+
+### 2025-12-25
+- **Experimentation (Abandoned)**: Attempted to implement `ai-glm-service` using GLM-ASR-Nano-2512.
+  - Encountered significant compatibility issues with `transformers` library due to missing custom model code in the official Hugging Face repository and ambiguous documentation.
+  - While the VAD pipeline was successfully verified with a mock ASR, the actual GLM model loading proved blocking.
+- **Decision**: Abandoned the `ai-glm-service` approach to focus resources on optimizing the existing `ai-omni-service` (Qwen-Omni based).
+- **Cleanup**: Removed `services/ai-glm-service`, `test_glm_client.py`, and related configurations in `docker-compose.yml` and `nginx.conf`.
+
+
+- **Test Client Improvements**:
+  - Implemented 'Barge-in' feature: TTS playback is interrupted when user speech is detected.
+  - Enhanced robustness: Client now attempts to reconnect on server errors.
+  - Added support for local audio device ('sounddevice') for real-time voice testing.
+- **Service Optimization**:
+  - Added interaction logging to 'ai-omni-service' for better observability.
+  - Cleaned up debug logs.
+
+- **AI Omni Service Enhancement**:
+  - Implemented **Dynamic Role Switching**: The service now re-evaluates the user's role (InfoCollector -> GoalPlanner -> OralTutor) after every successful action execution (e.g., profile update) by re-fetching the user context.
+  - Added 'role_switch' event to notify the client of role changes.
+  - Refactored `WebSocketCallback` to centralize role determination logic.
+
+*   **Reliability & Testing Enhancements**:
+    *   **Infinite Loop Fix**: Resolved a critical issue in `ai-omni-service` where the WebSocket loop would spin infinitely after a client disconnection or protocol error. Implemented robust error checking to break the loop on disconnection events.
+    *   **Test Client Robustness**: Significantly improved `test_client.py`:
+        *   Fixed an issue where role labels (`[OralTutor]`) were printed for every token, now displaying them only once per turn.
+        *   Implemented a "Strict Mute" logic during TTS playback to prevent the microphone from capturing the AI's output (echo/self-talking), ensuring cleaner turn-taking.
+        *   Enhanced WebSocket error handling to strictly treat server errors as connection failures, triggering the automatic reconnection logic.
