@@ -157,24 +157,20 @@ oral_app/
 ## 当前状态 (Current Status)
 - ✅ **Dynamic Role Switching**: InfoCollector -> GoalPlanner -> OralTutor implemented
 - ✅ **AI Service**: Qwen3-Omni integration via DashScope SDK
-- ✅ **Test Client**: `test_client.py` script for backend verification - FIXED
-- 🔄 **GLM-ASR Service**: Fixing model loading issues (transformers version compatibility)
-- ✅ **WebSocket Protocol**: Role switching events now properly handled in client
+- ✅ **Manual Turn-Taking**: Server-side VAD disabled; client triggers responses via `user_audio_ended` event (Manual Commit).
+- ✅ **Interactive Test Client**: `test_client_scenario.py` supports real-time audio input and manual commit using Enter key.
+- ✅ **Protocol Fix**: `comms-service` now correctly wraps `audioBuffer` in a `payload` object for `ai-omni-service`.
 - 🔄 **Audio Streaming**: WebRTC integration in progress
 
 ## 已知问题 (Known Issues)
-1. **GLM-ASR Service**: Model loading fails due to transformers version incompatibility
-2. ✅ **Test Client**: User interruption now implemented with 'interrupt' command
-3. ✅ **Test Client**: AI role changes now displayed during conversation (InfoCollector -> GoalPlanner -> OralTutor)
-4. ✅ **Test Client**: WebSocket reconnection now automatic with exponential backoff
+1. **User Service Error**: `PUT /profile` returns 500 Internal Server Error during InfoCollector summary (under investigation).
+2. **GLM-ASR Service**: Model loading fails due to transformers version incompatibility (Low Priority).
 
 ## 最近修复 (Recent Fixes)
-- **ai-omni-service**: Fixed infinite error loop when WebSocket connection is closed unexpectedly.
-- **test_client.py**: Fixed duplicate role labels in output, implemented microphone muting during TTS playback to prevent self-talking/echo, and improved WebSocket reconnection logic.
-- **test_client.py**: Enhanced with proper user interruption handling
-- **test_client.py**: Added AI role display (InfoCollector, GoalPlanner, OralTutor)
-- **test_client.py**: Implemented automatic WebSocket reconnection with exponential backoff
-- **test_client.py**: Added connection state management and role tracking
+- **ai-omni-service**: Disabled VAD to support Manual Mode.
+- **comms-service**: Fixed JSON structure for `audio_stream` forwarding (wrapped in `payload`).
+- **test_client_scenario.py**: Rewritten as an interactive CLI tool for audio testing.
+- **Prompt**: Updated InfoCollector to ask for learning challenges.
 
 ## 核心业务逻辑
 

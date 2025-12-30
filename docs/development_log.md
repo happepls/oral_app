@@ -447,3 +447,14 @@
         *   Fixed an issue where role labels (`[OralTutor]`) were printed for every token, now displaying them only once per turn.
         *   Implemented a "Strict Mute" logic during TTS playback to prevent the microphone from capturing the AI's output (echo/self-talking), ensuring cleaner turn-taking.
         *   Enhanced WebSocket error handling to strictly treat server errors as connection failures, triggering the automatic reconnection logic.
+- Refactored 'test_client_scenario.py' to Interactive Audio Client with Manual Commit mode.
+- Disabled Server-side VAD in 'ai-omni-service' to support client-controlled turn management.
+\n### 2025-12-30 Manual Mode & Protocol Fixes
+- **Feature**: Implemented Manual Turn-Taking (Manual Commit) mode.
+    - Disabled server-side VAD in `ai-omni-service` to prevent premature interruptions.
+    - Refactored `test_client_scenario.py` to support interactive audio recording with explicit stop signal (Enter key).
+- **Bug Fix**: Fixed Audio Stream Protocol mismatch.
+    - `comms-service` now wraps `audioBuffer` in a `payload` object, matching `ai-omni-service`'s expectation.
+    - Verified end-to-end audio flow: Client -> Comms -> AI -> Cloud.
+- **Optimization**: Updated InfoCollector prompt to ask for "learning challenges" and merge them into `interests`.
+- **Known Issue**: Investigating 500 Error on `PUT /profile` during automatic profile update.

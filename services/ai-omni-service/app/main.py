@@ -176,9 +176,8 @@ class WebSocketCallback(OmniRealtimeCallback):
                  output_modalities=[MultiModality.TEXT, MultiModality.AUDIO],
                  instructions=system_prompt,
                  voice="Cherry",
-                 enable_turn_detection=True,
-                 turn_detection_threshold=0.4,
-                 turn_detection_silence_duration_ms=1500,
+                 # Manual Mode: Disable turn detection
+                 enable_turn_detection=False,
              )
 
     def on_event(self, response: dict) -> None:
@@ -299,12 +298,19 @@ async def websocket_endpoint(client_ws: WebSocket):
             user_id = init_data.get('userId')
             session_id = init_data.get('sessionId')
             token = init_data.get('token')
+            
             logger.info(f"Session Start: User {user_id}, Session {session_id}")
             
-            # Fetch Context
-            profile, goal = await fetch_user_context(user_id, token)
-            user_context = profile
-            user_context['active_goal'] = goal
+            # 1. Fetch Context (Profile + Goal)
+            if not token:
+                logger.warning("No token provided in session_start. Context fetching will likely fail.")
+                
+            user_context, active_goal = await fetch_user_context(user_id, token)
+            
+            # Inject active_goal into user_context so WebSocketCallback can see it
+            if user_context is None:
+                user_context = {}
+            user_context['active_goal'] = active_goal
             
         else:
             logger.warning("Expected session_start message first")
@@ -352,16 +358,20 @@ async def websocket_endpoint(client_ws: WebSocket):
                     continue
                 
                 if msg_type == 'audio_stream':
+                    # Debug log for audio receipt
+                    # logger.info("Received audio_stream frame")
                     audio_b64 = payload.get('audioBuffer')
                     if audio_b64:
-                        # logger.debug(f"Received audio buffer: {len(audio_b64)} bytes")
                         conversation.append_audio(audio_b64)
+                    else:
+                        logger.warning(f"Received audio_stream but payload.audioBuffer is missing. Keys: {list(payload.keys())}")
                 
-                elif msg_type == 'text_message':
+                elif msg_type == 'text_message' or msg_type == 'input_text':
                     text = payload.get('text')
                     if text:
                         logger.info(f"User Text Message: {text}")
-                        conversation.create_response(instructions=f"User said: {text}")
+                        # Use instructions as fallback for text input since direct methods are not exposed
+                        conversation.create_response(instructions=f"User input: {text}")
 
                 elif msg_type == 'user_audio_ended':
                     logger.info("User Audio Ended event received")

@@ -118,6 +118,10 @@ services:
     build: ./services/comms-service
     container_name: oral_app_comms_service
     restart: always
+    volumes:
+      - ./services/comms-service/src:/usr/src/app/src
+    environment:
+      - JWT_SECRET=your_jwt_secret_key_change_in_production
     env_file:
       - ./services/comms-service/.env
     depends_on:

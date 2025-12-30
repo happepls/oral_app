@@ -29,11 +29,26 @@ const MEDIA_SERVICE_URL = 'http://media-processing-service:3005/api/media/upload
 console.log('WebSocket server is running on port 8080');
 
 wss.on('connection', async function connection(clientWs, req) {
-  console.log('A new client is attempting to connect...');
+  const connectionTime = new Date().toISOString();
+  console.log(`[CONN] New attempt at ${connectionTime} from ${req.socket.remoteAddress}`);
+
+  // Aggressive logging removed to reduce noise
+  // clientWs.on('message', (data, isBinary) => {
+  //     const type = isBinary ? 'Binary' : 'Text';
+  //     const content = isBinary ? `${data.length} bytes` : data.toString();
+  //     console.log(`[RAW RECV] ${type}: ${content.substring(0, 50)}...`);
+  // });
 
   try {
     const queryObject = url.parse(req.url, true).query;
-    const token = queryObject.token;
+    let token = queryObject.token;
+
+    if (!token && req.headers.authorization) {
+        const parts = req.headers.authorization.split(' ');
+        if (parts.length === 2 && parts[0] === 'Bearer') {
+            token = parts[1];
+        }
+    }
 
     if (!token) {
       console.log('Connection rejected: No token provided.');
@@ -102,40 +117,36 @@ wss.on('connection', async function connection(clientWs, req) {
       clientWs.send(JSON.stringify({ type: 'info', message: 'Welcome! Your connection is authenticated and bridged to the AI service.' }));
 
       // NOW that the AI service connection is open, start forwarding messages.
-      clientWs.on('message', (message) => {
+      clientWs.on('message', (message, isBinary) => {
         if (aiServiceWs.readyState === WebSocket.OPEN) {
-          if (Buffer.isBuffer(message)) {
+          if (isBinary) {
             // Write to recording stream
             if (recordingStream.writable) {
                 recordingStream.write(message);
             }
 
-            // console.log(`Wrapping binary message of size ${message.length} from user ${userId}, session ${sessionId} into JSON for AI service.`);
             const messageForAI = JSON.stringify({
               type: 'audio_stream',
-              userId: userId,
-              sessionId: sessionId,
-              audioBuffer: message.toString('base64'),
-              context: {} 
+              payload: {
+                  userId: userId,
+                  sessionId: sessionId,
+                  audioBuffer: message.toString('base64'),
+                  context: {} 
+              }
             });
+            console.log(`Forwarding audio chunk (${message.length} bytes) to AI service`);
             aiServiceWs.send(messageForAI);
           } else {
-             // Forward JSON messages (e.g. text chat) directly
              try {
                 const msgStr = message.toString();
-                const parsed = JSON.parse(msgStr);
-                // Ensure userId/sessionId are attached if missing? 
-                // For now, just forward what the client sends, trusting it matches the protocol or wrapping it.
-                // The Python service expects { type: 'text_message', payload: { text: ... } }
-                // Let's assume the client sends the correct format or we map it here.
-                // If the client sends { type: 'chat', text: '...' }, we might need to transform.
-                // For now, let's just forward.
-                console.log(`Forwarding JSON message from user ${userId}: ${msgStr}`);
+                console.log(`[FORWARD TEXT] Client -> AI (${userId}): ${msgStr}`);
                 aiServiceWs.send(msgStr);
              } catch (e) {
-                 console.log(`Received invalid non-binary message from user ${userId}. Ignoring.`);
+                 console.log(`Received invalid text message from user ${userId}: ${e.message}`);
              }
           }
+        } else {
+            console.log(`[DROP] Client -> AI (${userId}): AI service not ready (State: ${aiServiceWs.readyState})`);
         }
       });
 

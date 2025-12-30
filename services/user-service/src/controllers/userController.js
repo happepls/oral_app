@@ -234,7 +234,8 @@ exports.updateProfile = async (req, res) => {
     });
 
   } catch (error) {
-    console.error('Update Profile Error:', error);
+    console.error('Update Profile Error:', error.message);
+    if (error.detail) console.error('Error Detail:', error.detail);
     res.status(500).json({
       success: false,
       message: '更新用户资料时服务器错误'

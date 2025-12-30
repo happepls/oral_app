@@ -36,6 +36,10 @@
 - [x] [Testing] **Debug & Stability**:
     - [x] Fixed infinite error loop in `ai-omni-service` when WebSocket connection closes.
     - [x] Updated `test_client.py`: Fixed duplicate role labels, implemented microphone muting during TTS playback, and improved reconnection logic.
+    - [x] **[Feature] Interactive Test Client**: Refactored `test_client_scenario.py` to support real-time audio input with Manual Commit (Enter key) mode.
+    - [x] **[Feature] Manual Turn-Taking**: Disabled Server-side VAD in `ai-omni-service` to allow client-controlled response triggering via `user_audio_ended` event.
+    - [x] **[Debug] Audio Payload Fix**: Resolved `audio_stream` payload structure mismatch between `comms-service` and `ai-omni-service`.
+    - [x] **[Optimization] Prompt Engineering**: Enhanced `InfoCollector` prompt to ask for learning challenges and merge them into `interests`.
 - [x] [Frontend] Refactor Conversation.js to use WebSocket for text messages instead of HTTP API.
 - [x] [Frontend] Move WebSocket management from RealTimeRecorder to Conversation.js.
 - [x] [Infrastructure] Fix Nginx configuration for comms-service upstream port (8080) and WS path (/api/ws/).
