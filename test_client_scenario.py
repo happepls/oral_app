@@ -59,24 +59,32 @@ def register_and_login():
     data = res.json().get('data', {})
     return data.get('token'), data.get('user', {}).get('id')
 
-def setup_profile(token):
-    requests.put(f"{API_BASE}/users/profile", 
+def setup_profile(token, proficiency=30, target_lang="English"):
+    res = requests.put(f"{API_BASE}/users/profile", 
                 headers={"Authorization": f"Bearer {token}"},
                 json={
+                    "nickname": "Tester",
                     "native_language": "Chinese",
-                    "target_language": "English",
-                    "proficiency": 30,
+                    "target_language": target_lang,
+                    "proficiency": proficiency,
                     "interests": "Business, Travel"
                 })
+    print(f"Setup Profile: {res.status_code}")
 
-def setup_goal(token):
-    requests.post(f"{API_BASE}/users/goal",
+def setup_goal(token, proficiency=0, target_lang="English"):
+    desc = "Practice business negotiation" if target_lang == "Japanese" else "Practice leading a meeting"
+    res = requests.post(f"{API_BASE}/users/goals",
                  headers={"Authorization": f"Bearer {token}"},
                  json={
                      "type": "business_meeting",
-                     "description": "Practice leading a meeting",
-                     "target_level": "Intermediate"
+                     "description": desc,
+                     "target_level": "Intermediate",
+                     "target_language": target_lang,
+                     "current_proficiency": proficiency
                  })
+    print(f"Setup Goal: {res.status_code}")
+    if res.status_code != 201:
+        print(f"Goal Setup Error: {res.text}")
 
 class AudioHandler:
     def __init__(self, ws):
@@ -216,6 +224,9 @@ class InteractiveClient:
                 print("3. Press [Enter] while AI is speaking to INTERRUPT & RECORD.")
                 print("4. Type 'q' and Enter to quit.")
                 
+                if self.scenario == 'summary':
+                    print(f"{Color.BLUE}Hint: To test summary, say 'Goodbye' or 'I want to stop'.{Color.ENDC}")
+                
             elif m_type == 'role_switch':
                 print(f"\n{Color.HEADER}>>> Role Switched to: {payload.get('role')} <<<{Color.ENDC}")
 
@@ -309,10 +320,20 @@ if __name__ == "__main__":
     token, uid = register_and_login()
     
     # Setup context based on scenario
+    target_lang = "Japanese" if args.scenario in ['tutor', 'summary'] else "English"
+    
     if args.scenario != 'info': 
-        setup_profile(token)
+        prof = 91 if args.scenario == 'summary' else 30
+        print(f"{Color.BLUE}>>> Setting up Profile (Native: Chinese, Target: {target_lang}, Prof: {prof})...{Color.ENDC}")
+        setup_profile(token, proficiency=prof, target_lang=target_lang)
+    if args.scenario == 'goal':
+        print(f"{Color.BLUE}>>> Scenario: Goal Planning (Profile exists, Goal missing)...{Color.ENDC}")
+    if args.scenario == 'summary':
+        print(f"{Color.BLUE}>>> Scenario: Summary/Graduation (Proficiency > 90, Goal Active)...{Color.ENDC}")
+
     if args.scenario in ['tutor', 'summary']: 
-        setup_goal(token)
+        print(f"{Color.BLUE}>>> Setting up Active Goal ({target_lang} Practice)...{Color.ENDC}")
+        setup_goal(token, proficiency=prof, target_lang=target_lang)
     
     print(f"Starting Interactive Client for scenario: {args.scenario}")
     client = InteractiveClient(token, args.scenario)

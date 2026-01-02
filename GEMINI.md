@@ -155,26 +155,26 @@ oral_app/
 
 
 ## 当前状态 (Current Status)
-- ✅ **Dynamic Role Switching**: InfoCollector -> GoalPlanner -> OralTutor implemented
-- ✅ **AI Service**: Qwen3-Omni integration via DashScope SDK
-- ✅ **Manual Turn-Taking**: Server-side VAD disabled; client triggers responses via `user_audio_ended` event (Manual Commit).
-- ✅ **Interactive Test Client**: `test_client_scenario.py` supports real-time audio input and manual commit using Enter key.
-- ✅ **Protocol Fix**: `comms-service` now correctly wraps `audioBuffer` in a `payload` object for `ai-omni-service`.
+- ✅ **Dynamic Role Switching**: InfoCollector -> GoalPlanner -> OralTutor -> SummaryExpert implemented.
+- ✅ **AI Service**: Qwen3-Omni integration via DashScope SDK with robust error handling and auto-reconnection.
+- ✅ **Goal Management**: `complete_goal` action implemented to archive goals and trigger new planning.
+- ✅ **Bilingual Strategy**: Dynamic strategy implemented (Immersion for Japanese, Bridge Mode for others).
+- ✅ **Manual Turn-Taking**: Server-side VAD disabled; client triggers responses via `user_audio_ended`.
+- ✅ **JSON Suppression**: Backend filters JSON blocks from client text stream for cleaner UI.
 - 🔄 **Audio Streaming**: WebRTC integration in progress
+- ⚠️ **Deployment**: Docker build for `ai-omni-service` currently stalling due to network issues (Codebase is up-to-date).
 
 ## 已知问题 (Known Issues)
-1. **User Service Error**: `PUT /profile` returns 500 Internal Server Error during InfoCollector summary (under investigation).
+1. **Network Instability**: `ai-omni-service` build and connection to DashScope are intermittent due to network environment.
 2. **GLM-ASR Service**: Model loading fails due to transformers version incompatibility (Low Priority).
 
 ## 最近修复 (Recent Fixes)
+- **Bilingual Logic**: Implemented dynamic language strategy in `OralTutor` to fix Japanese/Chinese TTS pronunciation conflicts while allowing mixing for other languages.
+- **Interruption Handling**: Implemented server-side logic to ignore events from interrupted turns, fixing "TTS continues" issue.
+- **JSON Hiding**: Implemented text stream filtering in `ai-omni-service` to hide JSON action blocks from the client.
+- **500 Error Fix**: Fixed `user-service` crash on `set_goal` by handling undefined fields.
+- **SummaryExpert**: Refined prompt to trigger `complete_goal` action instead of trying to set a new goal immediately.
 - **InfoCollector**: Updated to support Native Language interaction and fixed profile update logic.
-- **Stability**: Fixed `ai-omni-service` crash on malformed JSON and implemented auto-reconnection logic.
-- **Interruption**: Implemented "Barge-in" logic in `test_client_scenario.py` (Mute playback + Auto-Record) and fixed double-Enter bug.
-- **Onboarding**: Added Native Language selection in frontend.
-- **ai-omni-service**: Disabled VAD to support Manual Mode.
-- **comms-service**: Fixed JSON structure for `audio_stream` forwarding (wrapped in `payload`).
-- **test_client_scenario.py**: Rewritten as an interactive CLI tool for audio testing.
-- **Prompt**: Updated InfoCollector to ask for learning challenges.
 
 ## 核心业务逻辑
 

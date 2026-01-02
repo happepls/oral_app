@@ -69,6 +69,11 @@ async def execute_action(action: str, data: dict, token: str, user_id: str = Non
             elif action == "set_goal":
                 await client.post(f"{base_url}/goals", json=data, headers=headers)
                 logger.info(f"Set goal: {data}")
+            elif action == "complete_goal":
+                goal_id = data.get('goal_id')
+                if goal_id:
+                    await client.put(f"{base_url}/goals/{goal_id}/complete", headers=headers)
+                    logger.info(f"Completed goal: {goal_id}")
             elif action == "save_summary":
                  # Prepare payload for history service
                  payload = {
@@ -134,17 +139,29 @@ class WebSocketCallback(OmniRealtimeCallback):
         self.full_response_text = ""
         self.role = self._determine_role(user_context)
         self.is_connected = False # Track connection state
+        self.suppress_text_sending = False # Flag to hide JSON from client
+        self.interrupted_turn = False # Flag to ignore interrupted responses
         logger.info(f"Assigned Role: {self.role}")
 
     def _determine_role(self, context):
-        # Handle 401 errors by defaulting to InfoCollector
+        # Handle 401 errors or empty context by defaulting to InfoCollector
         if not context or isinstance(context, str):
             return "InfoCollector"
             
-        # Check target language from goal data
+        # Check if basic profile info exists (Native Language is key)
+        if not context.get('native_language'):
+            return "InfoCollector"
+            
+        # Check if active goal exists
         goal = context.get('active_goal', {})
-        if not goal or not goal.get('target_language'):
-            return "InfoCollector" if not goal else "GoalPlanner"
+        # If no goal or goal is empty, go to GoalPlanner
+        if not goal or not goal.get('type'):
+            return "GoalPlanner"
+            
+        # Check if proficiency is high (Graduation/Summary Mode)
+        # Note: Proficiency is stored in the active goal
+        if goal.get('current_proficiency', 0) >= 90:
+            return "SummaryExpert"
             
         # Only switch to OralTutor if all conditions met
         return "OralTutor"
@@ -177,7 +194,7 @@ class WebSocketCallback(OmniRealtimeCallback):
              self.conversation.update_session(
                  output_modalities=[MultiModality.TEXT, MultiModality.AUDIO],
                  instructions=system_prompt,
-                 voice="Cherry",
+                 voice=os.getenv("QWEN3_OMNI_VOICE", "Cherry"),
                  # Manual Mode: Disable turn detection
                  enable_turn_detection=False,
              )
@@ -188,6 +205,11 @@ class WebSocketCallback(OmniRealtimeCallback):
         
         async def process_event():
             try:
+                # Ignore events if this turn was interrupted (except errors/system)
+                if self.interrupted_turn and event_name in ['response.audio.delta', 'response.audio_transcript.delta', 'response.text.done', 'response.audio_transcript.done']:
+                    logger.debug(f"Ignoring event {event_name} due to interruption")
+                    return
+
                 if event_name == 'response.audio.delta': 
                      audio_data = payload.get('delta') 
                      if audio_data:
@@ -197,14 +219,30 @@ class WebSocketCallback(OmniRealtimeCallback):
                      text = payload.get('delta') 
                      if text:
                         self.full_response_text += text
-                        # Only send role with first delta or role_switch event
-                        if not hasattr(self, '_sent_role_for_turn'):
-                            await self.websocket.send_json({ "type": "role_switch", "payload": {"role": self.role} })
-                            self._sent_role_for_turn = True
-                        await self.websocket.send_json({ "type": "text_response", "payload": text })
+                        
+                        # Check for JSON block start to suppress streaming
+                        # We want to hide ```json ... ``` from the client
+                        if "```json" in self.full_response_text and not self.suppress_text_sending:
+                            self.suppress_text_sending = True
+                            # Optional: We could try to send the text *before* the JSON if it was in this chunk
+                            # But simple boolean flag is robust enough for "at the end" JSON.
+                        
+                        if not self.suppress_text_sending:
+                            # Only send role with first delta or role_switch event
+                            if not hasattr(self, '_sent_role_for_turn'):
+                                await self.websocket.send_json({ "type": "role_switch", "payload": {"role": self.role} })
+                                self._sent_role_for_turn = True
+                            await self.websocket.send_json({ "type": "text_response", "payload": text })
 
                 elif event_name == 'response.audio_transcript.done' or event_name == 'response.text.done':
                      logger.info(f"AI Response Finished: {self.full_response_text[:50]}...")
+                     
+                     if self.interrupted_turn:
+                         logger.info("Skipping action execution due to interruption")
+                         self.full_response_text = ""
+                         self.suppress_text_sending = False
+                         return
+
                      # Process Action
                      text = self.full_response_text
                      
@@ -246,6 +284,7 @@ class WebSocketCallback(OmniRealtimeCallback):
                          logger.error(f"Error processing action parsing: {e}")
                      
                      self.full_response_text = "" # Reset
+                     self.suppress_text_sending = False # Reset suppression for next turn
 
                 elif event_name == 'conversation.item.input_audio_transcription.completed':
                      text = payload.get('transcript')
@@ -387,10 +426,12 @@ async def websocket_endpoint(client_ws: WebSocket):
 
                 elif msg_type == 'user_audio_ended':
                     logger.info("User Audio Ended event received")
+                    if callback: callback.interrupted_turn = False
                     conversation.create_response()
                 
                 elif msg_type == 'user_interruption':
                     logger.info("User interruption received - stopping current response")
+                    if callback: callback.interrupted_turn = True
                     # Do not trigger a new response here. 
                     # The client has already muted playback.
                     # We wait for the new audio stream (which starts immediately) and the subsequent user_audio_ended.

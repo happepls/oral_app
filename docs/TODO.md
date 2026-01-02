@@ -32,6 +32,11 @@
 
 ## Done
 
+- [x] [Backend] **Bug Fixes & Logic Refinements**:
+    - [x] **500 Error Fix**: Resolved `user-service` 500 error by defaulting undefined `type`/`description` fields to null in `createGoal`.
+    - [x] **Interruption Handling**: Implemented server-side logic in `ai-omni-service` to ignore response events for interrupted turns.
+    - [x] **JSON Suppression**: Implemented text stream filtering to hide JSON action blocks from the client UI.
+    - [x] **Bilingual Logic**: Implemented dynamic language strategy in `OralTutor` (Immersion for Japanese, Bridge Mode for others).
 - [x] [Backend] **InfoCollector**: Verified functional via `test_client_scenario.py` (correctly switches role and collects data).
 - [x] [Frontend] **Onboarding**: Implemented Native Language selection in `Onboarding.js` and connected to backend API.
 - [x] [AI Engine] **Prompt Engineering**: Updated `InfoCollector` prompt to dynamically use the user's native language.

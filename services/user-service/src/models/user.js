@@ -77,7 +77,7 @@ User.update = async (id, updates) => {
 };
 
 User.createGoal = async (userId, goalData) => {
-    const { target_language, target_level, current_proficiency, completion_time_days, interests } = goalData;
+    const { type, description, target_language, target_level, current_proficiency, completion_time_days, interests } = goalData;
     
     // Deactivate previous active goals for this user
     await db.query(
@@ -86,11 +86,20 @@ User.createGoal = async (userId, goalData) => {
     );
 
     const query = `
-        INSERT INTO user_goals (user_id, target_language, target_level, current_proficiency, completion_time_days, interests)
-        VALUES ($1, $2, $3, $4, $5, $6)
+        INSERT INTO user_goals (user_id, type, description, target_language, target_level, current_proficiency, completion_time_days, interests)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
         RETURNING *
     `;
-    const values = [userId, target_language, target_level, current_proficiency || 0, completion_time_days, interests];
+    const values = [
+        userId, 
+        type || null, 
+        description || null, 
+        target_language, 
+        target_level, 
+        current_proficiency || 0, 
+        completion_time_days, 
+        interests
+    ];
     
     const { rows } = await db.query(query, values);
     

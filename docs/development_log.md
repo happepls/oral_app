@@ -471,3 +471,22 @@
     - **Interruption Logic**: Implemented "Barge-in" logic in `test_client_scenario.py` (Mutes playback + Auto-Record + Double-Enter fix).
     - **Audio Safety**: Fixed `OSError: [Errno -9988]` in test client by implementing safe stream muting instead of closing/reopening streams during interruption.
 - **Verification**: Verified `InfoCollector` flow and Interruption logic successfully.
+
+## 2026-01-02 (Mac)
+### Summary
+Refined AI Role logic (`OralTutor`, `SummaryExpert`) and fixed stability issues in `ai-omni-service`.
+1.  **Bilingual Logic Optimization**:
+    -   Observed that Qwen-Omni TTS fails to switch accents when reading Chinese characters inside a Japanese sentence (reads them as Kanji).
+    -   Implemented a **Dynamic Language Strategy** in `prompt_manager.py`:
+        -   **Japanese**: Enforced "Immersion Mode" (Target Language Only) to ensure correct pronunciation.
+        -   **Other Languages**: Allowed "Bridge Mode" (Bilingual Mixing) for better scaffolding.
+2.  **Interruption Handling**:
+    -   Fixed issue where backend continued processing interrupted turns.
+    -   Implemented `interrupted_turn` flag in `ai-omni-service` to ignore subsequent events (Action/Audio) for that turn.
+3.  **JSON Output Suppression**:
+    *   Implemented backend filtering to strip JSON action blocks from the text stream sent to the client, solving the "JSON in chat bubble" issue.
+4.  **Bug Fixes**:
+    *   Fixed `user-service` 500 error on `set_goal` (missing default values for `type`/`description`).
+    *   Refined `SummaryExpert` to output `complete_goal` action, triggering a clean transition to `GoalPlanner`.
+5.  **Environment**:
+    *   Encountered network timeouts connecting to DashScope/Docker Hub. Codebase is updated, but container rebuild requires stable network.

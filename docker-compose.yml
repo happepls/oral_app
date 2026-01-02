@@ -142,6 +142,8 @@ services:
       - ./services/ai-omni-service/app:/app/app
     env_file:
       - ./services/ai-omni-service/.env
+    environment:
+      - QWEN3_OMNI_MODEL=qwen3-omni-flash-realtime-2025-12-01
     networks:
       - oral_app_net
 

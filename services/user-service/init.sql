@@ -29,6 +29,8 @@ CREATE TABLE IF NOT EXISTS user_identities (
 CREATE TABLE IF NOT EXISTS user_goals (
     id SERIAL PRIMARY KEY,
     user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    type VARCHAR(50), -- e.g. business_meeting, daily_chat
+    description TEXT, -- Specific goal description
     target_language VARCHAR(50) NOT NULL,
     target_level VARCHAR(20) NOT NULL, -- Beginner, Intermediate, Advanced, Native
     current_proficiency INT DEFAULT 0, -- 0-100
