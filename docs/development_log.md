@@ -458,3 +458,16 @@
     - Verified end-to-end audio flow: Client -> Comms -> AI -> Cloud.
 - **Optimization**: Updated InfoCollector prompt to ask for "learning challenges" and merge them into `interests`.
 - **Known Issue**: Investigating 500 Error on `PUT /profile` during automatic profile update.
+
+### 2026-01-02 Stability & Onboarding Improvements
+- **Stability Fixes (ai-omni-service)**:
+    - **JSON Parsing**: Replaced fragile regex with robust bracket-matching to handle LLM JSON outputs (prevented crashes on malformed JSON).
+    - **Auto-Reconnection**: Implemented logic to automatically reconnect to DashScope when session timeouts occur, ensuring long-running session stability.
+    - **Connection Handling**: Fixed infinite loop issues and improved error logging for WebSocket disconnects.
+- **Frontend & Onboarding**:
+    - **Native Language Support**: Updated `Onboarding.js` to collect user's native language.
+    - **Prompt Engineering**: Updated `InfoCollector` system prompt to dynamically use the user's native language for the initial interview.
+- **Testing Enhancements**:
+    - **Interruption Logic**: Implemented "Barge-in" logic in `test_client_scenario.py` (Mutes playback + Auto-Record + Double-Enter fix).
+    - **Audio Safety**: Fixed `OSError: [Errno -9988]` in test client by implementing safe stream muting instead of closing/reopening streams during interruption.
+- **Verification**: Verified `InfoCollector` flow and Interruption logic successfully.

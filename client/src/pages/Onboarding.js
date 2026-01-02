@@ -1,12 +1,14 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { useAuth } from '../contexts/AuthContext'; // Assuming AuthContext might have user update logic or just provide token for API calls
+import { useAuth } from '../contexts/AuthContext';
+import { userAPI } from '../services/api';
 
 function Onboarding() {
   const navigate = useNavigate();
   const { user, loading, updateProfile } = useAuth(); // Assuming updateProfile will be part of AuthContext or a separate API service
   const [nickname, setNickname] = useState(user?.nickname || '');
   const [gender, setGender] = useState(user?.gender || '');
+  const [nativeLanguage, setNativeLanguage] = useState(user?.nativeLanguage || '');
   const [learningLanguage, setLearningLanguage] = useState(user?.learningLanguage || '');
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
@@ -16,25 +18,27 @@ function Onboarding() {
     setError('');
     setSuccess('');
 
-    // Placeholder for API call to update user profile
-    // In a real scenario, this would call an API service, likely part of user-service
     try {
-      // Simulate API call
-      // const result = await api.updateUserProfile({ nickname, gender, learningLanguage });
-      // For now, simulate success
-      const result = { success: true };
+      // Call API to update user profile
+      const result = await userAPI.updateProfile({ 
+          nickname, 
+          gender, 
+          native_language: nativeLanguage, 
+          target_language: learningLanguage 
+      });
 
-      if (result.success) {
+      if (result) {
         setSuccess('个人资料更新成功！');
         // Optionally update the user context immediately
-        // updateProfile({ nickname, gender, learningLanguage });
-        // Navigate to the next step, e.g., GoalSetting or Discovery
-        navigate('/discovery'); // Or '/goal-setting'
-      } else {
-        setError(result.message || '更新个人资料失败，请重试。');
+        if (updateProfile) {
+            await updateProfile();
+        }
+        // Navigate to the next step
+        navigate('/discovery'); 
       }
     } catch (err) {
-      setError('网络或服务器错误，请稍后重试。');
+      console.error(err);
+      setError(err.message || '网络或服务器错误，请稍后重试。');
     }
   };
 
@@ -90,6 +94,29 @@ function Onboarding() {
                 <option value="female">女性</option>
                 <option value="other">其他</option>
                 <option value="prefer_not_to_say">不愿透露</option>
+              </select>
+            </div>
+
+            <div>
+              <label htmlFor="nativeLanguage" className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">
+                母语
+              </label>
+              <select
+                id="nativeLanguage"
+                value={nativeLanguage}
+                onChange={(e) => setNativeLanguage(e.target.value)}
+                required
+                disabled={loading}
+                className="w-full px-4 py-3 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white focus:border-primary focus:ring-2 focus:ring-primary/50 outline-none disabled:opacity-50"
+              >
+                <option value="">请选择</option>
+                <option value="Chinese">中文</option>
+                <option value="English">英语</option>
+                <option value="Spanish">西班牙语</option>
+                <option value="French">法语</option>
+                <option value="German">德语</option>
+                <option value="Japanese">日语</option>
+                <option value="Korean">韩语</option>
               </select>
             </div>
 

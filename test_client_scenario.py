@@ -84,14 +84,23 @@ class AudioHandler:
         self.p = pyaudio.PyAudio()
         self.recording = False
         self.keep_running = True
+        self.stream_lock = threading.Lock()
+        self.muted = False # Mute flag for interruption
         
         # Output Stream
-        self.out_stream = self.p.open(
-            format=pyaudio.paInt16,
-            channels=CHANNELS,
-            rate=SAMPLE_RATE,
-            output=True
-        )
+        self._open_output_stream()
+
+    def _open_output_stream(self):
+        try:
+            self.out_stream = self.p.open(
+                format=pyaudio.paInt16,
+                channels=CHANNELS,
+                rate=SAMPLE_RATE,
+                output=True
+            )
+        except Exception as e:
+            print(f"Error opening output stream: {e}")
+            self.out_stream = None
 
     def start_input_stream(self):
         """Starts the microphone capture thread."""
@@ -115,9 +124,8 @@ class AudioHandler:
                         self.ws.send(data, opcode=websocket.ABNF.OPCODE_BINARY)
                     else:
                         # Send silence for keep-alive (reduced frequency)
-                        # DashScope needs some activity, but not 25fps silence.
                         self.ws.send(silence_frame, opcode=websocket.ABNF.OPCODE_BINARY)
-                        time.sleep(2.0) # Send silence every 2 seconds
+                        time.sleep(2.0)
                 except Exception as e:
                     if self.keep_running:
                         print(f"{Color.RED}[Audio] Error: {e}{Color.ENDC}")
@@ -130,16 +138,34 @@ class AudioHandler:
 
     def play_audio(self, data):
         """Plays received audio data."""
-        try:
-            self.out_stream.write(data)
-        except Exception as e:
-            print(f"Playback error: {e}")
+        if self.muted:
+            return # Skip playback if muted
+
+        with self.stream_lock:
+            if self.out_stream:
+                try:
+                    self.out_stream.write(data)
+                except Exception as e:
+                    # print(f"Playback error: {e}")
+                    pass
+
+    def stop_playback(self):
+        """Mutes playback to simulate stopping."""
+        self.muted = True
+
+    def reset_playback(self):
+        """Unmutes playback."""
+        self.muted = False
 
     def cleanup(self):
         self.keep_running = False
-        if self.out_stream:
-            self.out_stream.stop_stream()
-            self.out_stream.close()
+        with self.stream_lock:
+            if self.out_stream:
+                try:
+                    self.out_stream.stop_stream()
+                    self.out_stream.close()
+                except:
+                    pass
         self.p.terminate()
 
 class InteractiveClient:
@@ -150,10 +176,14 @@ class InteractiveClient:
         self.audio_handler = None
         self.role = None
         self.running = True
+        self.is_playing = False # Track if AI is speaking
+        self.interrupted_turn = False # Track if we are in an interrupted state
 
     def on_message(self, ws, message):
         # Binary = Audio Response
         if isinstance(message, bytes):
+            if not self.interrupted_turn:
+                self.is_playing = True
             if self.audio_handler:
                 self.audio_handler.play_audio(message)
             return
@@ -165,10 +195,13 @@ class InteractiveClient:
             payload = data.get('payload')
 
             if m_type == 'text_response' or m_type == 'ai_response':
+                if not self.interrupted_turn:
+                    self.is_playing = True
                 txt = payload if isinstance(payload, str) else data.get('text', '')
                 print(f"{Color.YELLOW}{txt}{Color.ENDC}", end="", flush=True)
             
             elif m_type == 'response.audio.done':
+                self.is_playing = False
                 print("") # Newline after streaming text
 
             elif m_type == 'transcription':
@@ -180,7 +213,8 @@ class InteractiveClient:
                 print(f"{Color.GREEN}Instructions:{Color.ENDC}")
                 print("1. Press [Enter] to start talking.")
                 print("2. Press [Enter] again to stop talking and send (Manual Commit).")
-                print("3. Type 'q' and Enter to quit.")
+                print("3. Press [Enter] while AI is speaking to INTERRUPT & RECORD.")
+                print("4. Type 'q' and Enter to quit.")
                 
             elif m_type == 'role_switch':
                 print(f"\n{Color.HEADER}>>> Role Switched to: {payload.get('role')} <<<{Color.ENDC}")
@@ -215,14 +249,28 @@ class InteractiveClient:
                 break
             
             if self.audio_handler:
-                if not self.audio_handler.recording:
+                if self.is_playing:
+                    # Interruption Logic
+                    print(f"{Color.RED}>>> ✋ Interrupted AI. Starting Recording immediately...{Color.ENDC}")
+                    self.is_playing = False
+                    self.interrupted_turn = True # Flag to ignore trailing audio state updates
+                    self.audio_handler.stop_playback() # Mute
+                    self.ws.send(json.dumps({"type": "user_interruption"}))
+                    
+                    # Start Recording Immediately
+                    self.audio_handler.recording = True
+                elif not self.audio_handler.recording:
                     # Start Recording
                     print(f"{Color.GREEN}>>> 🔴 Recording... (Press Enter to Stop){Color.ENDC}")
                     self.audio_handler.recording = True
+                    self.audio_handler.reset_playback() # Unmute for next turn
+                    self.interrupted_turn = False # Reset interruption flag
                 else:
                     # Stop Recording & Commit
                     print(f"{Color.BLUE}>>> ⏹️ Stopped. Sending Commit...{Color.ENDC}")
                     self.audio_handler.recording = False
+                    self.audio_handler.reset_playback() # Unmute to hear response
+                    self.interrupted_turn = False # Reset interruption flag
                     # Send commit signal
                     self.ws.send(json.dumps({"type": "user_audio_ended"}))
 

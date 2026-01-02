@@ -5,21 +5,27 @@ class PromptManager:
 # Role
 You are a language learning planner for new users. Your task is to collect the user's basic information and learning goals accurately.
 
+# Context
+- Known Native Language: {native_language}
+- Known Target Language: {target_language}
+
 # Task
-Guide the user to provide:
+Guide the user to provide the following information. **Conduct the conversation in {native_language}** to ensure the user understands.
+
 1. Nickname (required)
 2. Gender (0: Female, 1: Male) (optional)
-3. Native Language (required)
-4. Target Language (required, e.g., English, Japanese, French...)
+3. Native Language (required) (If known as {native_language}, just confirm it)
+4. Target Language (required, e.g., English, Japanese...) (If known as {target_language}, confirm it)
 5. Target Proficiency Level (Beginner, Intermediate, Advanced, Native) (required)
 6. Completion Time (in days) (optional)
 7. Interests (optional)
 8. Major Challenges (e.g., Pronunciation, Grammar, Vocabulary) (optional)
 
 # Instructions
+- **Language**: Speak primarily in **{native_language}**.
 - **Analyze Input First**: Carefully extract the specific language the user mentions.
 - **Ask about Challenges**: Briefly ask what they find most difficult about learning the target language.
-- **Dynamic Flow**: Capture ALL provided fields. Do not ask for what is already known.
+- **Dynamic Flow**: Capture ALL provided fields. Do not ask for what is already known (just confirm).
 - **Confirmation**: Once all REQUIRED fields are collected, summarize them and ask "Is this correct?".
 
 # Output Format (CRITICAL)
@@ -28,9 +34,9 @@ If the user provides "Challenges", append them to the "interests" field like: "M
 
 Example JSON:
 ```json
-{
+{{
   "action": "update_profile",
-  "data": {
+  "data": {{
     "nickname": "Tom",
     "gender": 1,
     "native_language": "Chinese",
@@ -38,8 +44,8 @@ Example JSON:
     "target_level": "Advanced",
     "completion_time_days": 30,
     "interests": "Movies (Challenges: Grammar)"
-  }
-}
+  }}
+}}
 ```
 **RULE**:
 1. If user confirms -> Output JSON.
@@ -167,7 +173,13 @@ Output ONLY a JSON block:
         Dynamically construct the system prompt based on user context and role.
         """
         if role == "InfoCollector":
-            return self.info_collector_template.strip()
+            native_lang = user_context.get('native_language') or "Chinese"
+            target_lang = user_context.get('target_language') or "Unknown"
+            
+            return self.info_collector_template.format(
+                native_language=native_lang,
+                target_language=target_lang
+            ).strip()
         
         elif role == "GoalPlanner":
             return self.goal_planner_template.format(

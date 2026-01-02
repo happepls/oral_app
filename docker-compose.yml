@@ -142,9 +142,6 @@ services:
       - ./services/ai-omni-service/app:/app/app
     env_file:
       - ./services/ai-omni-service/.env
-    dns:
-      - 223.5.5.5
-      - 223.6.6.6
     networks:
       - oral_app_net
 

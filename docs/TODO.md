@@ -7,11 +7,10 @@
 ## To Do
 
 - [ ] [Frontend] **前端页面适配**:
-    - [ ] `Onboarding.js`: 实现用户资料收集表单，适配 `AuthContext`。
     - [ ] `GoalSetting.js`: 实现目标设置界面，支持文本输入。
     - [ ] `Conversation.js`: 适配新AI角色交互逻辑（对话模式仅用于"OralTutor"）。
 - [ ] [Frontend] **需求收集**:
-    - [ ] 在 `Onboarding.js` 和 `GoalSetting.js` 中集成文本输入组件，收集用户口语练习的具体需求（场景、话题、侧重点）。
+    - [ ] 在 `GoalSetting.js` 中集成文本输入组件，收集用户口语练习的具体需求（场景、话题、侧重点）。
     - [ ] 确保收集到的需求数据结构化，便于后续传递给AI。
 - [ ] [Frontend] Integration: Verify the new Role Switching and Barge-in logic in `Conversation.js`.
 - [ ] [Backend] **Conversation State**: Implement `conversation-service` to persist chat history and state across sessions.
@@ -33,7 +32,14 @@
 
 ## Done
 
+- [x] [Backend] **InfoCollector**: Verified functional via `test_client_scenario.py` (correctly switches role and collects data).
+- [x] [Frontend] **Onboarding**: Implemented Native Language selection in `Onboarding.js` and connected to backend API.
+- [x] [AI Engine] **Prompt Engineering**: Updated `InfoCollector` prompt to dynamically use the user's native language.
+- [x] [Testing] **Interruption**: Implemented "User Interruption" logic in `test_client_scenario.py` (Mutes playback + Auto-Record, Fixed double-Enter bug).
 - [x] [Testing] **Debug & Stability**:
+    - [x] Fixed `ai-omni-service` crash caused by malformed JSON from LLM (improved regex/parsing).
+    - [x] Implemented auto-reconnection logic in `ai-omni-service` to handle DashScope timeouts/disconnections.
+    - [x] Fixed `OSError: [Errno -9988] Stream closed` in `test_client_scenario.py` by implementing safe mute/unmute logic instead of closing streams.
     - [x] Fixed infinite error loop in `ai-omni-service` when WebSocket connection closes.
     - [x] Updated `test_client.py`: Fixed duplicate role labels, implemented microphone muting during TTS playback, and improved reconnection logic.
     - [x] **[Feature] Interactive Test Client**: Refactored `test_client_scenario.py` to support real-time audio input with Manual Commit (Enter key) mode.

@@ -167,6 +167,10 @@ oral_app/
 2. **GLM-ASR Service**: Model loading fails due to transformers version incompatibility (Low Priority).
 
 ## 最近修复 (Recent Fixes)
+- **InfoCollector**: Updated to support Native Language interaction and fixed profile update logic.
+- **Stability**: Fixed `ai-omni-service` crash on malformed JSON and implemented auto-reconnection logic.
+- **Interruption**: Implemented "Barge-in" logic in `test_client_scenario.py` (Mute playback + Auto-Record) and fixed double-Enter bug.
+- **Onboarding**: Added Native Language selection in frontend.
 - **ai-omni-service**: Disabled VAD to support Manual Mode.
 - **comms-service**: Fixed JSON structure for `audio_stream` forwarding (wrapped in `payload`).
 - **test_client_scenario.py**: Rewritten as an interactive CLI tool for audio testing.

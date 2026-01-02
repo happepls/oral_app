@@ -133,6 +133,7 @@ class WebSocketCallback(OmniRealtimeCallback):
         self.conversation = None 
         self.full_response_text = ""
         self.role = self._determine_role(user_context)
+        self.is_connected = False # Track connection state
         logger.info(f"Assigned Role: {self.role}")
 
     def _determine_role(self, context):
@@ -150,6 +151,7 @@ class WebSocketCallback(OmniRealtimeCallback):
 
     def on_open(self) -> None:
         logger.info("DashScope Connection Open")
+        self.is_connected = True
         asyncio.run_coroutine_threadsafe(
             self.websocket.send_json({
                 "type": "connection_established", 
@@ -205,46 +207,43 @@ class WebSocketCallback(OmniRealtimeCallback):
                      logger.info(f"AI Response Finished: {self.full_response_text[:50]}...")
                      # Process Action
                      text = self.full_response_text
-                     # Try finding JSON with backticks first, then just raw JSON object
-                     json_match = re.search(r'```json\s*(\{.*?"action".*?\})\s*```', text, re.DOTALL)
-                     if not json_match:
-                         # Fallback: Look for a JSON block starting with { and containing "action"
-                         json_match = re.search(r'(\{.*?"action".*?\})', text, re.DOTALL)
-
-                     if json_match:
-                         try:
-                             json_str = json_match.group(1)
-                             # Clean up potential trailing characters if regex grabbed too much
-                             if json_str.count('{') == json_str.count('}'):
-                                 pass
-                             else:
-                                 # Naive balancing (optional, but regex usually grabs greedily)
-                                 pass
+                     
+                     # Improved JSON extraction: Find outermost braces
+                     try:
+                         start_idx = text.find('{')
+                         end_idx = text.rfind('}')
+                         
+                         if start_idx != -1 and end_idx != -1 and end_idx > start_idx:
+                             potential_json = text[start_idx : end_idx + 1]
+                             # Verify it contains "action" before trying to load (optimization)
+                             if '"action"' in potential_json:
+                                 action_data = json.loads(potential_json)
+                                 action = action_data.get('action')
+                                 data = action_data.get('data')
                                  
-                             action_data = json.loads(json_str)
-                             action = action_data.get('action')
-                             data = action_data.get('data')
-                             if action and data:
-                                 logger.info(f"Detected Action: {action}")
-                                 await execute_action(action, data, self.token, self.user_id, self.session_id)
-                                 
-                                 # Refresh Context & Role
-                                 new_profile, new_goal = await fetch_user_context(self.user_id, self.token)
-                                 self.user_context = new_profile
-                                 self.user_context['active_goal'] = new_goal
-                                 
-                                 new_role = self._determine_role(self.user_context)
-                                 if new_role != self.role:
-                                     logger.info(f"Role Switching: {self.role} -> {new_role}")
-                                     self.role = new_role
-                                     self._update_session_prompt()
-                                     await self.websocket.send_json({
-                                         "type": "role_switch",
-                                         "payload": {"role": self.role}
-                                     })
-
-                         except json.JSONDecodeError:
-                             logger.error("Failed to decode JSON action block")
+                                 if action and data:
+                                     logger.info(f"Detected Action: {action}")
+                                     await execute_action(action, data, self.token, self.user_id, self.session_id)
+                                     
+                                     # Refresh Context & Role
+                                     new_profile, new_goal = await fetch_user_context(self.user_id, self.token)
+                                     self.user_context = new_profile
+                                     self.user_context['active_goal'] = new_goal
+                                     
+                                     new_role = self._determine_role(self.user_context)
+                                     if new_role != self.role:
+                                         logger.info(f"Role Switching: {self.role} -> {new_role}")
+                                         self.role = new_role
+                                         self._update_session_prompt()
+                                         await self.websocket.send_json({
+                                             "type": "role_switch",
+                                             "payload": {"role": self.role}
+                                         })
+                         
+                     except json.JSONDecodeError:
+                         logger.error("Failed to decode JSON action block")
+                     except Exception as e:
+                         logger.error(f"Error processing action parsing: {e}")
                      
                      self.full_response_text = "" # Reset
 
@@ -267,9 +266,10 @@ class WebSocketCallback(OmniRealtimeCallback):
 
     def on_close(self, close_status_code: int, close_msg: str) -> None:
         logger.info(f"DashScope Connection Closed: {close_msg}")
+        self.is_connected = False
         # Notify client about closure/error
         asyncio.run_coroutine_threadsafe(
-             self.websocket.send_json({"type": "error", "payload": f"Backend Connection Closed: {close_msg}"}),
+             self.websocket.send_json({"type": "info", "payload": f"Backend Connection Closed (will reconnect on input): {close_msg}"}),
              self.loop
         )
 
@@ -351,6 +351,18 @@ async def websocket_endpoint(client_ws: WebSocket):
                 msg_type = data.get('type')
                 payload = data.get('payload', {})
                 
+                # Check for reconnection need on user activity
+                if (not conversation or (callback and not callback.is_connected)) and msg_type in ['audio_stream', 'text_message', 'input_text', 'user_audio_ended']:
+                    logger.info("Reconnecting to DashScope due to new user input...")
+                    try:
+                        if conversation:
+                            conversation.close()
+                    except:
+                        pass
+                    conversation = connect_dashscope()
+                    # Wait a tiny bit for on_open? Not strictly necessary as SDK queues or we just send.
+                    # But prompt update happens in on_open.
+                
                 # Validate connection state before processing
                 if not conversation:
                     logger.warning(f"Received {msg_type} but conversation not established")
@@ -379,8 +391,10 @@ async def websocket_endpoint(client_ws: WebSocket):
                 
                 elif msg_type == 'user_interruption':
                     logger.info("User interruption received - stopping current response")
-                    # Clear any ongoing response and reset the conversation state
-                    conversation.create_response(instructions="User interrupted. Please stop your current response and wait for their next input.")
+                    # Do not trigger a new response here. 
+                    # The client has already muted playback.
+                    # We wait for the new audio stream (which starts immediately) and the subsequent user_audio_ended.
+                    pass
                         
                 elif msg_type == 'ping':
                     await client_ws.send_json({"type": "pong"})
