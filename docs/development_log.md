@@ -489,4 +489,4 @@ Refined AI Role logic (`OralTutor`, `SummaryExpert`) and fixed stability issues 
     *   Fixed `user-service` 500 error on `set_goal` (missing default values for `type`/`description`).
     *   Refined `SummaryExpert` to output `complete_goal` action, triggering a clean transition to `GoalPlanner`.
 5.  **Environment**:
-    *   Encountered network timeouts connecting to DashScope/Docker Hub. Codebase is updated, but container rebuild requires stable network.
+    *   Encountered network timeouts connecting to DashScope/Docker Hub. Codebase is updated, but container rebuild requires stable network.\n## 2026-01-05\n- 优化 `test_client_scenario.py`：分离输入输出采样率（16k/24k），修复打断时的文本泄露，添加持久化验证提示。\n- 修复 AI 服务打断逻辑：在 `ai-omni-service` 中实现 `cancel_response()` 调用和 `ignored_response_ids` 过滤，在保持会话上下文的同时解决了旧音频泄露和 "active response" 错误。\n- 恢复音频解码：重新应用 `base64.b64decode` 以确保 AI 能听到正确解码的用户语音音频。\n- 实现对话持久化：在 `ai-omni-service` 中添加消息历史累积和同步逻辑，实现对话记录实时保存至 MongoDB。\n- 清理冗余文件：删除 `test_client.py`，统一使用 `test_client_scenario.py` 进行场景化测试。

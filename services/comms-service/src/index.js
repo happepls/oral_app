@@ -94,12 +94,15 @@ wss.on('connection', async function connection(clientWs, req) {
     if (!fs.existsSync(recordingDir)) {
         fs.mkdirSync(recordingDir, { recursive: true });
     }
-    const recordingPath = path.join(recordingDir, `${sessionId}.pcm`); // Assuming raw PCM or whatever client sends
-    const recordingStream = fs.createWriteStream(recordingPath);
     
-    recordingStream.on('error', (err) => {
-        console.error(`Error writing recording for session ${sessionId}:`, err);
-    });
+    const userRecordingPath = path.join(recordingDir, `${sessionId}_user.pcm`);
+    const aiRecordingPath = path.join(recordingDir, `${sessionId}_ai.pcm`);
+    
+    const userRecordingStream = fs.createWriteStream(userRecordingPath);
+    const aiRecordingStream = fs.createWriteStream(aiRecordingPath);
+    
+    userRecordingStream.on('error', (err) => console.error(`Error writing user recording for session ${sessionId}:`, err));
+    aiRecordingStream.on('error', (err) => console.error(`Error writing AI recording for session ${sessionId}:`, err));
 
     const aiServiceWs = new WebSocket(AI_SERVICE_URL);
 
@@ -120,9 +123,9 @@ wss.on('connection', async function connection(clientWs, req) {
       clientWs.on('message', (message, isBinary) => {
         if (aiServiceWs.readyState === WebSocket.OPEN) {
           if (isBinary) {
-            // Write to recording stream
-            if (recordingStream.writable) {
-                recordingStream.write(message);
+            // Write to user recording stream
+            if (userRecordingStream.writable) {
+                userRecordingStream.write(message);
             }
 
             const messageForAI = JSON.stringify({
@@ -169,6 +172,12 @@ wss.on('connection', async function connection(clientWs, req) {
                 // Decode base64 and send as binary
                 try {
                     const audioBuffer = Buffer.from(data.payload, 'base64');
+
+                    // Write AI audio to AI recording stream
+                    if (aiRecordingStream.writable) {
+                        aiRecordingStream.write(audioBuffer);
+                    }
+
                     // console.log(`Forwarding audio response as binary (${audioBuffer.length} bytes) to user ${userId}`);
                     clientWs.send(audioBuffer, { binary: true });
                 } catch (err) {
@@ -201,21 +210,34 @@ wss.on('connection', async function connection(clientWs, req) {
       console.log(`Client connection closed for user ${userId}. Closing connection to AI service and cleaning up session.`);
       
       // --- Finalize Recording and Upload ---
-      if (recordingStream) {
-          recordingStream.end();
+      if (userRecordingStream && aiRecordingStream) {
+          userRecordingStream.end();
+          aiRecordingStream.end();
           console.log(`Recording finished for session ${sessionId}. Uploading to media service...`);
           
           try {
-              // Wait for stream to finish closing
-              await new Promise(resolve => recordingStream.on('finish', resolve));
+              // Wait for streams to finish closing
+              await Promise.all([
+                  new Promise(resolve => userRecordingStream.on('finish', resolve)),
+                  new Promise(resolve => aiRecordingStream.on('finish', resolve))
+              ]);
               
               const form = new FormData();
-              // Check if file has size
-              const stats = fs.statSync(recordingPath);
-              if (stats.size > 0) {
-                  form.append('audio', fs.createReadStream(recordingPath));
-                  // You might want to pass userId/sessionId metadata if the media service supports it
-                  
+              let hasFiles = false;
+              
+              // Check user audio
+              if (fs.existsSync(userRecordingPath) && fs.statSync(userRecordingPath).size > 0) {
+                  form.append('user_audio', fs.createReadStream(userRecordingPath), { filename: path.basename(userRecordingPath) });
+                  hasFiles = true;
+              }
+              
+              // Check AI audio
+              if (fs.existsSync(aiRecordingPath) && fs.statSync(aiRecordingPath).size > 0) {
+                  form.append('ai_audio', fs.createReadStream(aiRecordingPath), { filename: path.basename(aiRecordingPath) });
+                  hasFiles = true;
+              }
+
+              if (hasFiles) {
                   const response = await axios.post(MEDIA_SERVICE_URL, form, {
                       headers: {
                           ...form.getHeaders()
@@ -224,19 +246,21 @@ wss.on('connection', async function connection(clientWs, req) {
                       maxBodyLength: Infinity
                   });
                   
-                  console.log(`Recording uploaded successfully for session ${sessionId}:`, response.data);
+                  console.log(`Recordings uploaded successfully for session ${sessionId}:`, response.data);
               } else {
-                  console.log(`Recording for session ${sessionId} was empty. Skipping upload.`);
+                  console.log(`Recordings for session ${sessionId} were empty. Skipping upload.`);
               }
           } catch (err) {
-              console.error(`Failed to upload recording for session ${sessionId}:`, err.message);
+              console.error(`Failed to upload recordings for session ${sessionId}:`, err.message);
           } finally {
-              // Cleanup local file
-              if (fs.existsSync(recordingPath)) {
-                  fs.unlink(recordingPath, (err) => {
-                      if (err) console.error(`Error deleting local recording ${recordingPath}:`, err);
-                  });
-              }
+              // Cleanup local files
+              [userRecordingPath, aiRecordingPath].forEach(p => {
+                  if (fs.existsSync(p)) {
+                      fs.unlink(p, (err) => {
+                          if (err) console.error(`Error deleting local recording ${p}:`, err);
+                      });
+                  }
+              });
           }
       }
 

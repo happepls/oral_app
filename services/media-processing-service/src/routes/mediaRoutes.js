@@ -24,6 +24,6 @@ const storage = multer.diskStorage({
 
 const upload = multer({ storage: storage });
 
-router.post('/upload', upload.single('audio'), mediaController.uploadAndProcessAudio);
+router.post('/upload', upload.fields([{ name: 'user_audio', maxCount: 1 }, { name: 'ai_audio', maxCount: 1 }]), mediaController.uploadAndProcessAudio);
 
 module.exports = router;

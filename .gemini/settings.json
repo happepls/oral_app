@@ -1,5 +1,23 @@
 {
   "context": {
-    "includeDirectories": ["./docs"]
+    "includeDirectories": [
+      "./docs"
+    ]
+  },
+  "general": {
+    "previewFeatures": true,
+    "vimMode": true,
+    "enablePromptCompletion": true
+  },
+  "ui": {
+    "hideTips": true,
+    "showStatusInTitle": true,
+    "hideFooter": true,
+    "footer": {
+      "hideContextPercentage": false
+    }
+  },
+  "output": {
+    "format": "json"
   }
 }

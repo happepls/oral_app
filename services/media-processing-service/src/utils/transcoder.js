@@ -7,11 +7,18 @@ const fs = require('fs');
  * @param {string} inputPath - Path to the input file.
  * @param {string} outputPath - Path to the output file.
  * @param {string} format - Target format (e.g., 'mp3', 'aac').
+ * @param {Array<string>} inputOptions - Optional input options for ffmpeg (e.g., for raw PCM).
  * @returns {Promise<string>} - Path to the transcoded file.
  */
-const transcodeAudio = (inputPath, outputPath, format = 'mp3') => {
+const transcodeAudio = (inputPath, outputPath, format = 'mp3', inputOptions = []) => {
     return new Promise((resolve, reject) => {
-        ffmpeg(inputPath)
+        let command = ffmpeg(inputPath);
+        
+        if (inputOptions && inputOptions.length > 0) {
+            command = command.inputOptions(inputOptions);
+        }
+
+        command
             .toFormat(format)
             .on('end', () => {
                 console.log(`Transcoding finished: ${outputPath}`);

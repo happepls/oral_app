@@ -110,9 +110,11 @@ function History() {
                 </div>
               )}
 
-              {item.rewards !== undefined && (
+              {(item.rewards !== undefined || item.metrics?.proficiencyScoreDelta !== undefined) && (
                 <div className="mt-2 text-right">
-                  <span className="text-sm font-medium text-amber-500">奖励: {item.rewards} 点</span>
+                  <span className="text-sm font-medium text-amber-500">
+                    奖励: {item.rewards !== undefined ? item.rewards : item.metrics?.proficiencyScoreDelta} 点
+                  </span>
                 </div>
               )}
             </div>

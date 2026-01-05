@@ -20,7 +20,8 @@ except ImportError:
 # Configuration
 API_BASE = "http://localhost:8080/api"
 WS_URL = "ws://localhost:8080/api/ws/"
-SAMPLE_RATE = 24000 # Omni supports 24k
+INPUT_SAMPLE_RATE = 16000  # 16kHz for ASR (Media Service Requirement)
+OUTPUT_SAMPLE_RATE = 24000 # 24kHz for TTS (AI Output)
 CHANNELS = 1
 CHUNK_SIZE = 1024
 
@@ -103,7 +104,7 @@ class AudioHandler:
             self.out_stream = self.p.open(
                 format=pyaudio.paInt16,
                 channels=CHANNELS,
-                rate=SAMPLE_RATE,
+                rate=OUTPUT_SAMPLE_RATE,
                 output=True
             )
         except Exception as e:
@@ -116,14 +117,14 @@ class AudioHandler:
             stream = self.p.open(
                 format=pyaudio.paInt16,
                 channels=CHANNELS,
-                rate=SAMPLE_RATE,
+                rate=INPUT_SAMPLE_RATE,
                 input=True,
                 frames_per_buffer=CHUNK_SIZE
             )
             
             silence_frame = b'\x00' * (CHUNK_SIZE * 2) # 16-bit silence
             
-            print(f"{Color.GREEN}[Audio] Microphone initialized.{Color.ENDC}")
+            print(f"{Color.GREEN}[Audio] Microphone initialized (Rate: {INPUT_SAMPLE_RATE}Hz).{Color.ENDC}")
             
             while self.keep_running:
                 try:
@@ -190,7 +191,9 @@ class InteractiveClient:
     def on_message(self, ws, message):
         # Binary = Audio Response
         if isinstance(message, bytes):
-            if not self.interrupted_turn:
+            if self.interrupted_turn:
+                return  # Drop audio packets if interrupted
+            if not self.is_playing: # Only set true if not already
                 self.is_playing = True
             if self.audio_handler:
                 self.audio_handler.play_audio(message)
@@ -203,14 +206,18 @@ class InteractiveClient:
             payload = data.get('payload')
 
             if m_type == 'text_response' or m_type == 'ai_response':
-                if not self.interrupted_turn:
+                if self.interrupted_turn:
+                    return # Skip printing text if interrupted
+                    
+                if not self.is_playing:
                     self.is_playing = True
                 txt = payload if isinstance(payload, str) else data.get('text', '')
                 print(f"{Color.YELLOW}{txt}{Color.ENDC}", end="", flush=True)
             
             elif m_type == 'response.audio.done':
-                self.is_playing = False
-                print("") # Newline after streaming text
+                if not self.interrupted_turn:
+                    self.is_playing = False
+                    print("") # Newline after streaming text
 
             elif m_type == 'transcription':
                 print(f"\r{Color.BLUE}You: {data.get('text')}{Color.ENDC}")
@@ -336,5 +343,9 @@ if __name__ == "__main__":
         setup_goal(token, proficiency=prof, target_lang=target_lang)
     
     print(f"Starting Interactive Client for scenario: {args.scenario}")
+    
+    print(f"\n{Color.GREEN}[IMPORTANT] Verification Command:{Color.ENDC}")
+    print(f'curl -s "http://localhost:3004/api/history/user/{uid}" | grep -o \'"audioUrl":"[^"]*"\'\n')
+
     client = InteractiveClient(token, args.scenario)
     client.run()

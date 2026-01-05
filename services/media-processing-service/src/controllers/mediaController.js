@@ -6,44 +6,68 @@ const { uploadFile } = require('../utils/cos');
 
 exports.uploadAndProcessAudio = async (req, res) => {
     try {
-        if (!req.file) {
-            return res.status(400).json({ error: 'No audio file provided' });
+        if (!req.files || Object.keys(req.files).length === 0) {
+            return res.status(400).json({ error: 'No audio files provided' });
         }
 
-        const inputPath = req.file.path;
-        const fileId = uuidv4();
-        // Assuming input is PCM/WAV or WebM. Let's convert to MP3 for storage/playback compatibility.
-        // If it's raw PCM, we might need to specify input options, but multer usually saves with extension if we config it.
-        // For now, assume the container handles extension or we detect it.
-        
-        const outputFilename = `${fileId}.mp3`;
-        const outputPath = path.join(path.dirname(inputPath), outputFilename);
-        
-        // Transcode
-        await transcodeAudio(inputPath, outputPath, 'mp3');
+        const results = {};
+        const processingTasks = [];
 
-        // Upload to COS
-        // We'll organize by date YYYY/MM/DD
-        const date = new Date();
-        const key = `audio/${date.getFullYear()}/${date.getMonth() + 1}/${date.getDate()}/${outputFilename}`;
-        
-        const uploadResult = await uploadFile(outputPath, key);
+        // Helper function to process a single file
+        const processFile = async (fieldname, file) => {
+            const inputPath = file.path;
+            const fileId = uuidv4();
+            const outputFilename = `${fileId}_${fieldname === 'user_audio' ? 'user' : 'ai'}.mp3`;
+            const outputPath = path.join(path.dirname(inputPath), outputFilename);
+            
+            let inputOptions = [];
+            if (fieldname === 'user_audio') {
+                // User Audio: 16kHz
+                inputOptions = ['-f s16le', '-ar 16000', '-ac 1'];
+            } else if (fieldname === 'ai_audio') {
+                // AI Audio: 24kHz
+                inputOptions = ['-f s16le', '-ar 24000', '-ac 1'];
+            }
 
-        // Cleanup local files
-        fs.unlink(inputPath, (err) => { if (err) console.error('Error deleting input file:', err); });
-        fs.unlink(outputPath, (err) => { if (err) console.error('Error deleting output file:', err); });
+            try {
+                // Transcode
+                await transcodeAudio(inputPath, outputPath, 'mp3', inputOptions);
 
-        // Construct public URL (assuming public read or needing presigned URL)
-        // For standard public bucket: https://<bucket>.cos.<region>.myqcloud.com/<key>
-        const bucket = process.env.TENCENT_BUCKET;
-        const region = process.env.TENCENT_REGION;
-        const publicUrl = `https://${bucket}.cos.${region}.myqcloud.com/${key}`;
+                // Upload to COS
+                const date = new Date();
+                const key = `audio/${date.getFullYear()}/${date.getMonth() + 1}/${date.getDate()}/${outputFilename}`;
+                const uploadResult = await uploadFile(outputPath, key);
+                
+                // Public URL
+                const bucket = process.env.TENCENT_BUCKET;
+                const region = process.env.TENCENT_REGION;
+                const publicUrl = `https://${bucket}.cos.${region}.myqcloud.com/${key}`;
+
+                results[`${fieldname}Url`] = publicUrl;
+                results[`${fieldname}Key`] = key;
+
+            } catch (err) {
+                console.error(`Error processing ${fieldname}:`, err);
+                throw err;
+            } finally {
+                // Cleanup
+                if (fs.existsSync(inputPath)) fs.unlink(inputPath, () => {});
+                if (fs.existsSync(outputPath)) fs.unlink(outputPath, () => {});
+            }
+        };
+
+        if (req.files['user_audio']) {
+            processingTasks.push(processFile('user_audio', req.files['user_audio'][0]));
+        }
+        if (req.files['ai_audio']) {
+            processingTasks.push(processFile('ai_audio', req.files['ai_audio'][0]));
+        }
+
+        await Promise.all(processingTasks);
 
         res.json({
             success: true,
-            url: publicUrl,
-            key: key,
-            location: uploadResult.Location
+            data: results
         });
 
     } catch (error) {

@@ -7,11 +7,11 @@
 ## To Do
 
 - [ ] [Frontend] **前端页面适配**:
-    - [ ] `GoalSetting.js`: 实现目标设置界面，支持文本输入。
-    - [ ] `Conversation.js`: 适配新AI角色交互逻辑（对话模式仅用于"OralTutor"）。
+- [ ] `GoalSetting.js`: 实现目标设置界面，支持文本输入。
+- [ ] `Conversation.js`: 适配新AI角色交互逻辑（对话模式仅用于"OralTutor"）。
 - [ ] [Frontend] **需求收集**:
-    - [ ] 在 `GoalSetting.js` 中集成文本输入组件，收集用户口语练习的具体需求（场景、话题、侧重点）。
-    - [ ] 确保收集到的需求数据结构化，便于后续传递给AI。
+- [ ] 在 `GoalSetting.js` 中集成文本输入组件，收集用户口语练习的具体需求（场景、话题、侧重点）。
+- [ ] 确保收集到的需求数据结构化，便于后续传递给AI。
 - [ ] [Frontend] Integration: Verify the new Role Switching and Barge-in logic in `Conversation.js`.
 - [ ] [Backend] **Conversation State**: Implement `conversation-service` to persist chat history and state across sessions.
 - [ ] [Backend] **Media Processing**: Connect `media-processing-service` for saving audio session archives.
@@ -33,24 +33,24 @@
 ## Done
 
 - [x] [Backend] **Bug Fixes & Logic Refinements**:
-    - [x] **500 Error Fix**: Resolved `user-service` 500 error by defaulting undefined `type`/`description` fields to null in `createGoal`.
-    - [x] **Interruption Handling**: Implemented server-side logic in `ai-omni-service` to ignore response events for interrupted turns.
-    - [x] **JSON Suppression**: Implemented text stream filtering to hide JSON action blocks from the client UI.
-    - [x] **Bilingual Logic**: Implemented dynamic language strategy in `OralTutor` (Immersion for Japanese, Bridge Mode for others).
+- [x] **500 Error Fix**: Resolved `user-service` 500 error by defaulting undefined `type`/`description` fields to null in `createGoal`.
+- [x] **Interruption Handling**: Implemented server-side logic in `ai-omni-service` to ignore response events for interrupted turns.
+- [x] **JSON Suppression**: Implemented text stream filtering to hide JSON action blocks from the client UI.
+- [x] **Bilingual Logic**: Implemented dynamic language strategy in `OralTutor` (Immersion for Japanese, Bridge Mode for others).
 - [x] [Backend] **InfoCollector**: Verified functional via `test_client_scenario.py` (correctly switches role and collects data).
 - [x] [Frontend] **Onboarding**: Implemented Native Language selection in `Onboarding.js` and connected to backend API.
 - [x] [AI Engine] **Prompt Engineering**: Updated `InfoCollector` prompt to dynamically use the user's native language.
 - [x] [Testing] **Interruption**: Implemented "User Interruption" logic in `test_client_scenario.py` (Mutes playback + Auto-Record, Fixed double-Enter bug).
 - [x] [Testing] **Debug & Stability**:
-    - [x] Fixed `ai-omni-service` crash caused by malformed JSON from LLM (improved regex/parsing).
-    - [x] Implemented auto-reconnection logic in `ai-omni-service` to handle DashScope timeouts/disconnections.
-    - [x] Fixed `OSError: [Errno -9988] Stream closed` in `test_client_scenario.py` by implementing safe mute/unmute logic instead of closing streams.
-    - [x] Fixed infinite error loop in `ai-omni-service` when WebSocket connection closes.
-    - [x] Updated `test_client.py`: Fixed duplicate role labels, implemented microphone muting during TTS playback, and improved reconnection logic.
-    - [x] **[Feature] Interactive Test Client**: Refactored `test_client_scenario.py` to support real-time audio input with Manual Commit (Enter key) mode.
-    - [x] **[Feature] Manual Turn-Taking**: Disabled Server-side VAD in `ai-omni-service` to allow client-controlled response triggering via `user_audio_ended` event.
-    - [x] **[Debug] Audio Payload Fix**: Resolved `audio_stream` payload structure mismatch between `comms-service` and `ai-omni-service`.
-    - [x] **[Optimization] Prompt Engineering**: Enhanced `InfoCollector` prompt to ask for learning challenges and merge them into `interests`.
+- [x] Fixed `ai-omni-service` crash caused by malformed JSON from LLM (improved regex/parsing).
+- [x] Implemented auto-reconnection logic in `ai-omni-service` to handle DashScope timeouts/disconnections.
+- [x] Fixed `OSError: [Errno -9988] Stream closed` in `test_client_scenario.py` by implementing safe mute/unmute logic instead of closing streams.
+- [x] Fixed infinite error loop in `ai-omni-service` when WebSocket connection closes.
+- [x] Updated `test_client.py`: Fixed duplicate role labels, implemented microphone muting during TTS playback, and improved reconnection logic.
+- [x] **[Feature] Interactive Test Client**: Refactored `test_client_scenario.py` to support real-time audio input with Manual Commit (Enter key) mode.
+- [x] **[Feature] Manual Turn-Taking**: Disabled Server-side VAD in `ai-omni-service` to allow client-controlled response triggering via `user_audio_ended` event.
+- [x] **[Debug] Audio Payload Fix**: Resolved `audio_stream` payload structure mismatch between `comms-service` and `ai-omni-service`.
+- [x] **[Optimization] Prompt Engineering**: Enhanced `InfoCollector` prompt to ask for learning challenges and merge them into `interests`.
 - [x] [Frontend] Refactor Conversation.js to use WebSocket for text messages instead of HTTP API.
 - [x] [Frontend] Move WebSocket management from RealTimeRecorder to Conversation.js.
 - [x] [Infrastructure] Fix Nginx configuration for comms-service upstream port (8080) and WS path (/api/ws/).
@@ -125,3 +125,7 @@
 - [x] [Backend] 创建媒体处理服务：实现音频流转码和 S3/OSS 存储
 - [x] Verify the new "Oral Tutor" backend flow (Context Fetching -> Prompt Selection -> Action Execution).并通过test_client.py的对话测试（支持多轮对话、文本输入）
 - [x] [AI Engine] ai-glm-service: Setup Docker environment and fix dependency network issues using local wheels strategy
+- [x] [Backend] **Persistence & Persistence Fix**: Implemented message history tracking in `ai-omni-service` and integrated with `history-analytics-service` to save dialogues to MongoDB.
+- [x] [Backend] **Interruption Logic Optimization**: Replaced simplistic interruption flag with `cancel_response()` call and `ignored_response_ids` filtering to prevent old audio leaks and "active response" errors while maintaining conversation context.
+- [x] [Backend] **Audio Quality Fix**: Restored `base64.b64decode` in `ai-omni-service` to correctly process binary audio stream from `comms-service`.
+- [x] [Testing] **Consolidation**: Optimized `test_client_scenario.py` with proper sample rates and persistence verification hints, and deleted redundant `test_client.py`.
