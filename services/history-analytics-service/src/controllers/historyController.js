@@ -117,3 +117,53 @@ exports.saveSummary = async (req, res) => {
   }
 };
 
+exports.getStats = async (req, res) => {
+  try {
+    const { userId } = req.params;
+
+    if (!userId) {
+        return res.status(400).json({ success: false, message: 'UserId is required' });
+    }
+
+    const totalSessions = await Conversation.countDocuments({ userId });
+    
+    // Aggregate for total duration and avg fluency
+    const stats = await Conversation.aggregate([
+      { $match: { userId: userId } },
+      {
+        $group: {
+          _id: null,
+          totalDurationMs: { $sum: { $subtract: ["$endTime", "$startTime"] } },
+          avgFluency: { $avg: "$metrics.proficiencyScoreDelta" }
+        }
+      }
+    ]);
+
+    // Calculate Learning Streak or Distinct Days
+    const distinctDays = await Conversation.aggregate([
+        { $match: { userId: userId } },
+        { 
+            $project: { 
+                dateStr: { $dateToString: { format: "%Y-%m-%d", date: "$startTime" } } 
+            } 
+        },
+        { $group: { _id: "$dateStr" } },
+        { $count: "count" }
+    ]);
+
+    const data = {
+        totalSessions,
+        totalDurationMinutes: stats.length > 0 ? Math.round((stats[0].totalDurationMs || 0) / 1000 / 60) : 0,
+        averageScore: stats.length > 0 ? Math.round(stats[0].avgFluency || 0) : 0,
+        learningDays: distinctDays.length > 0 ? distinctDays[0].count : 0
+    };
+
+    res.status(200).json({ success: true, data });
+  } catch (error) {
+    console.error('Get Stats Error:', error);
+    res.status(500).json({ success: false, message: 'Server Error' });
+  }
+};
+
+
+

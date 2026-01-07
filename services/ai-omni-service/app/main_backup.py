@@ -33,6 +33,7 @@ load_dotenv()
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
+#logging.getLogger("dashscope").setLevel(logging.DEBUG)
 logger = logging.getLogger(__name__)
 
 # Configure DashScope API Key
@@ -91,6 +92,24 @@ async def execute_action(action: str, data: dict, token: str, user_id: str = Non
         except Exception as e:
             logger.error(f"Error executing action {action}: {e}")
 
+async def save_conversation_history(session_id: str, user_id: str, messages: list):
+    url = "http://history-analytics-service:3004/api/history/conversation"
+    payload = {
+        "sessionId": session_id,
+        "userId": user_id,
+        "messages": messages,
+        "topic": "General Practice" # Can be updated dynamically later
+    }
+    async with httpx.AsyncClient() as client:
+        try:
+            resp = await client.post(url, json=payload)
+            if resp.status_code != 200:
+                logger.error(f"Failed to save history: {resp.status_code} {resp.text}")
+            else:
+                logger.info(f"Saved {len(messages)} messages to history for session {session_id}")
+        except Exception as e:
+            logger.error(f"Error saving history: {e}")
+
 # --- Health Check Server (Port 8081) ---
 class HealthCheckHandler(BaseHTTPRequestHandler):
     def do_GET(self):
@@ -144,6 +163,7 @@ class WebSocketCallback(OmniRealtimeCallback):
         self.interrupted_turn = False # Flag to ignore interrupted responses
         self.current_response_id = None
         self.ignored_response_ids = set()
+        self.messages = []
         logger.info(f"Assigned Role: {self.role}")
 
     def _determine_role(self, context):
@@ -261,6 +281,15 @@ class WebSocketCallback(OmniRealtimeCallback):
                         self.suppress_text_sending = False
                         return
 
+                    # Save AI Message to History
+                    if self.full_response_text:
+                        self.messages.append({
+                            "role": "assistant",
+                            "content": self.full_response_text,
+                            "timestamp": datetime.utcnow().isoformat()
+                        })
+                        await save_conversation_history(self.session_id, self.user_id, self.messages)
+
                     # Process Action
                     text = self.full_response_text
 
@@ -308,6 +337,12 @@ class WebSocketCallback(OmniRealtimeCallback):
                     text = payload.get('transcript')
                     if text:
                         logger.info(f"User Transcription (Final): {text}")
+                        self.messages.append({
+                            "role": "user",
+                            "content": text,
+                            "timestamp": datetime.utcnow().isoformat()
+                        })
+                        await save_conversation_history(self.session_id, self.user_id, self.messages)
                         await self.websocket.send_json({ "type": "transcription", "text": text })
 
                 elif 'input' in event_name and 'transcript' in event_name:

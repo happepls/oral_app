@@ -449,7 +449,8 @@
         *   Enhanced WebSocket error handling to strictly treat server errors as connection failures, triggering the automatic reconnection logic.
 - Refactored 'test_client_scenario.py' to Interactive Audio Client with Manual Commit mode.
 - Disabled Server-side VAD in 'ai-omni-service' to support client-controlled turn management.
-\n### 2025-12-30 Manual Mode & Protocol Fixes
+
+### 2025-12-30 Manual Mode & Protocol Fixes
 - **Feature**: Implemented Manual Turn-Taking (Manual Commit) mode.
     - Disabled server-side VAD in `ai-omni-service` to prevent premature interruptions.
     - Refactored `test_client_scenario.py` to support interactive audio recording with explicit stop signal (Enter key).
@@ -490,3 +491,24 @@ Refined AI Role logic (`OralTutor`, `SummaryExpert`) and fixed stability issues 
     *   Refined `SummaryExpert` to output `complete_goal` action, triggering a clean transition to `GoalPlanner`.
 5.  **Environment**:
     *   Encountered network timeouts connecting to DashScope/Docker Hub. Codebase is updated, but container rebuild requires stable network.\n## 2026-01-05\n- 优化 `test_client_scenario.py`：分离输入输出采样率（16k/24k），修复打断时的文本泄露，添加持久化验证提示。\n- 修复 AI 服务打断逻辑：在 `ai-omni-service` 中实现 `cancel_response()` 调用和 `ignored_response_ids` 过滤，在保持会话上下文的同时解决了旧音频泄露和 "active response" 错误。\n- 恢复音频解码：重新应用 `base64.b64decode` 以确保 AI 能听到正确解码的用户语音音频。\n- 实现对话持久化：在 `ai-omni-service` 中添加消息历史累积和同步逻辑，实现对话记录实时保存至 MongoDB。\n- 清理冗余文件：删除 `test_client.py`，统一使用 `test_client_scenario.py` 进行场景化测试。
+
+## 2026-01-06 (Session 2)
+- **[Backend] 实现 `ai-omni-service` 音频缓冲与上传，填充 MongoDB 消息中的 `audioUrl`。\n- [Backend] 实现 `history-analytics-service` 的 `GET /stats/:userId` 接口。\n- [Backend] 完善 `comms-service` 的 WebRTC 信令日志记录，为前端集成做准备。
+
+## 2026-01-07
+### Frontend Adaptation & Requirement Collection
+- **Frontend Pages**:
+    - Implemented `Onboarding.js` to collect user profile data (native language, proficiency, interests) and update via `AuthContext`.
+    - Implemented `GoalSetting.js` to collect specific learning goals (type, level, description) and integrated with `user-service` API.
+    - Updated `AuthContext.js` and `api.js` to support new user profile and goal endpoints.
+- **Conversation Logic**:
+    - Completely rewrote `Conversation.js` to support the new multi-role WebSocket protocol.
+    - Implemented **Role Switching** UI awareness (displays current role).
+    - Implemented **Barge-in (Interruption)** logic:
+        - Stops audio playback immediately upon user recording start.
+        - Sends `user_interruption` signal to backend.
+        - Ignores incoming audio/text packets during interruption state.
+    - Implemented **Audio Playback Queue** to manage sequential audio chunks and clean cancellation.
+- **Recorder Component**:
+    - Enhanced `RealTimeRecorder.js` to expose `start/stop` callbacks and control methods for parent components.
+    - Verified `recorder-processor.js` correctly downsamples to 16kHz Int16 PCM, matching backend requirements.

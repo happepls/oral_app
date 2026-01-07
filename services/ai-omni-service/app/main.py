@@ -32,7 +32,9 @@ except ImportError:
 load_dotenv()
 
 # Configure logging
+
 logging.basicConfig(level=logging.INFO)
+#logging.getLogger("dashscope").setLevel(logging.DEBUG)
 logger = logging.getLogger(__name__)
 
 # Configure DashScope API Key
@@ -97,7 +99,8 @@ async def save_conversation_history(session_id: str, user_id: str, messages: lis
         "sessionId": session_id,
         "userId": user_id,
         "messages": messages,
-        "topic": "General Practice" # Can be updated dynamically later
+        "topic": "General Practice",
+        "endTime": datetime.utcnow().isoformat()
     }
     async with httpx.AsyncClient() as client:
         try:
@@ -163,6 +166,10 @@ class WebSocketCallback(OmniRealtimeCallback):
         self.current_response_id = None
         self.ignored_response_ids = set()
         self.messages = []
+        self.user_audio_buffer = bytearray()
+        self.ai_audio_buffer = bytearray()
+        self.last_user_audio_url = None
+        self.last_ai_audio_url = None
         logger.info(f"Assigned Role: {self.role}")
 
     def _determine_role(self, context):
@@ -221,6 +228,60 @@ class WebSocketCallback(OmniRealtimeCallback):
                 enable_turn_detection=False,
             )
 
+    async def upload_audio_to_cos(self, audio_data: bytes, audio_type: str) -> str:
+        """
+        Uploads audio data to media-processing-service.
+        audio_type: 'user_audio' or 'ai_audio'
+        Returns: Public URL of the uploaded file or None.
+        """
+        if not audio_data:
+            return None
+        
+        url = "http://media-processing-service:3005/api/media/upload"
+        filename = f"{self.session_id}_{int(time.time())}.pcm"
+        files = {audio_type: (filename, audio_data, 'application/octet-stream')}
+        
+        async with httpx.AsyncClient() as client:
+            try:
+                resp = await client.post(url, files=files, timeout=10.0)
+                if resp.status_code == 200:
+                    data = resp.json().get('data', {})
+                    return data.get(f'{audio_type}Url')
+                else:
+                    logger.error(f"Failed to upload audio: {resp.status_code} {resp.text}")
+                    return None
+            except Exception as e:
+                logger.error(f"Error uploading audio to COS: {e}")
+                return None
+
+
+    async def upload_audio_to_cos(self, audio_data: bytes, audio_type: str) -> str:
+        """
+        Uploads audio data to media-processing-service.
+        audio_type: 'user_audio' or 'ai_audio'
+        Returns: Public URL of the uploaded file or None.
+        """
+        if not audio_data:
+            return None
+        
+        url = "http://media-processing-service:3005/api/media/upload"
+        filename = f"{self.session_id}_{int(time.time())}.pcm"
+        files = {audio_type: (filename, audio_data, 'application/octet-stream')}
+        
+        async with httpx.AsyncClient() as client:
+            try:
+                resp = await client.post(url, files=files, timeout=10.0)
+                if resp.status_code == 200:
+                    data = resp.json().get('data', {})
+                    return data.get(f'{audio_type}Url')
+                else:
+                    logger.error(f"Failed to upload audio: {resp.status_code} {resp.text}")
+                    return None
+            except Exception as e:
+                logger.error(f"Error uploading audio to COS: {e}")
+                return None
+
+
     def on_event(self, response: dict) -> None:
         event_name = response.get('type')
         payload = response
@@ -250,6 +311,11 @@ class WebSocketCallback(OmniRealtimeCallback):
                 if event_name == 'response.audio.delta':
                     audio_data = payload.get('delta')
                     if audio_data:
+                        try:
+                            audio_bytes = base64.b64decode(audio_data)
+                            self.ai_audio_buffer.extend(audio_bytes)
+                        except:
+                            pass
                         await self.websocket.send_json({ "type": "audio_response", "payload": audio_data, "role": self.role })
 
                 elif event_name == 'response.audio_transcript.delta':
@@ -271,6 +337,24 @@ class WebSocketCallback(OmniRealtimeCallback):
                                 self._sent_role_for_turn = True
                             await self.websocket.send_json({ "type": "text_response", "payload": text })
 
+                elif event_name == 'response.audio.done':
+                    if self.ai_audio_buffer:
+                        audio_data = bytes(self.ai_audio_buffer)
+                        self.ai_audio_buffer = bytearray()
+                        
+                        # Async upload
+                        async def upload_ai_task(data):
+                            url = await self.upload_audio_to_cos(data, 'ai_audio')
+                            if url:
+                                logger.info(f"AI Audio Uploaded: {url}")
+                                self.last_ai_audio_url = url
+                                # Update last assistant message
+                                if self.messages and self.messages[-1]['role'] == 'assistant':
+                                    self.messages[-1]['audioUrl'] = url
+                                    await save_conversation_history(self.session_id, self.user_id, self.messages)
+                        
+                        asyncio.create_task(upload_ai_task(audio_data))
+
                 elif event_name == 'response.audio_transcript.done' or event_name == 'response.text.done':
                     logger.info(f"AI Response Finished: {self.full_response_text[:50]}...")
 
@@ -278,15 +362,22 @@ class WebSocketCallback(OmniRealtimeCallback):
                         logger.info("Skipping action execution due to interruption")
                         self.full_response_text = ""
                         self.suppress_text_sending = False
+                        self.ai_audio_buffer = bytearray() # Clear buffer
                         return
 
                     # Save AI Message to History
                     if self.full_response_text:
-                        self.messages.append({
+                        msg = {
                             "role": "assistant",
                             "content": self.full_response_text,
                             "timestamp": datetime.utcnow().isoformat()
-                        })
+                        }
+                        # If audio URL is already available (unlikely for short text, but possible), add it
+                        if self.last_ai_audio_url:
+                            msg['audioUrl'] = self.last_ai_audio_url
+                            self.last_ai_audio_url = None # Consume it
+                        
+                        self.messages.append(msg)
                         await save_conversation_history(self.session_id, self.user_id, self.messages)
 
                     # Process Action
@@ -336,11 +427,16 @@ class WebSocketCallback(OmniRealtimeCallback):
                     text = payload.get('transcript')
                     if text:
                         logger.info(f"User Transcription (Final): {text}")
-                        self.messages.append({
+                        msg = {
                             "role": "user",
                             "content": text,
                             "timestamp": datetime.utcnow().isoformat()
-                        })
+                        }
+                        if self.last_user_audio_url:
+                            msg['audioUrl'] = self.last_user_audio_url
+                            self.last_user_audio_url = None # Consume
+                            
+                        self.messages.append(msg)
                         await save_conversation_history(self.session_id, self.user_id, self.messages)
                         await self.websocket.send_json({ "type": "transcription", "text": text })
 
@@ -468,7 +564,16 @@ async def websocket_endpoint(client_ws: WebSocket):
                     # logger.info("Received audio_stream frame")
                     audio_b64 = payload.get('audioBuffer')
                     if audio_b64:
-                        conversation.append_audio(audio_b64)
+                        try:
+                            # Pass base64 string to SDK (it handles decoding/sending)
+                            conversation.append_audio(audio_b64)
+                            
+                            # Decode for our own storage/upload
+                            if callback:
+                                audio_bytes = base64.b64decode(audio_b64)
+                                callback.user_audio_buffer.extend(audio_bytes)
+                        except Exception as e:
+                            logger.error(f"Failed to process audio frame: {e}")
                     else:
                         logger.warning(f"Received audio_stream but payload.audioBuffer is missing. Keys: {list(payload.keys())}")
 
@@ -481,7 +586,33 @@ async def websocket_endpoint(client_ws: WebSocket):
 
                 elif msg_type == 'user_audio_ended':
                     logger.info("User Audio Ended event received")
-                    if callback: callback.interrupted_turn = False
+                    if callback: 
+                        callback.interrupted_turn = False
+                        
+                        # Upload User Audio
+                        if callback.user_audio_buffer:
+                            audio_data = bytes(callback.user_audio_buffer)
+                            callback.user_audio_buffer = bytearray() # Reset immediately
+                            
+                            # Async upload task
+                            async def upload_task(data):
+                                url = await callback.upload_audio_to_cos(data, 'user_audio')
+                                if url:
+                                    logger.info(f"User Audio Uploaded: {url}")
+                                    # Find the last user message and update it
+                                    # Note: Race condition with transcription event. 
+                                    # Transcription usually arrives later or around same time.
+                                    # We'll try to update the LAST user message if it matches?
+                                    # Or just store it in callback to be attached to the NEXT transcription event?
+                                    # Transcription event comes from DashScope. 
+                                    callback.last_user_audio_url = url
+                                    # If message already exists (rare but possible), update it
+                                    if callback.messages and callback.messages[-1]['role'] == 'user':
+                                        callback.messages[-1]['audioUrl'] = url
+                                        await save_conversation_history(session_id, user_id, callback.messages)
+
+                            asyncio.create_task(upload_task(audio_data))
+
                     conversation.create_response()
 
                 elif msg_type == 'user_interruption':

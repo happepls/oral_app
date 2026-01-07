@@ -40,7 +40,8 @@
 ```
 oral_app/
 ├───docker-compose.yml   # Local development environment services
-├───test_client_scenario.py    # 多场景交互测试脚本
+├───test_client_scenario.py    # 多场景交互测试脚本 (支持 goal, tutor, summary, xintong_service)
+├───auto_test.py               # 自动化后端流程验证脚本
 ├───...
 ├── client/              # React前端应用
 │   ├── src/
@@ -166,10 +167,17 @@ oral_app/
 - 🔄 **Audio Streaming**: WebRTC integration in progress
 
 ## 最近修复 (Recent Fixes)
+- **Frontend Proxy**: Fixed Create React App proxy configuration by moving `setupProxy.js` to `client/src/` and removing conflicting `package.json` proxy setting.
+- **Frontend Flow**: Implemented forced redirection in `Discovery.js` to ensure users complete Onboarding and Goal Setting.
+- **Audio Processing**: Resolved `ai-omni-service` crash ("Object of type bytes is not JSON serializable") by correctly handling base64 audio strings for DashScope SDK.
+- **Test Scenarios**: Extended `test_client_scenario.py` with `xintong_service` for verifying custom prompt injection and cross-domain role switching.
+- **Frontend Adaptation**: Adapted `Conversation.js` for new Role Switching (InfoCollector -> GoalPlanner -> OralTutor) and Interruption (Barge-in) logic.
+- **Requirement Collection**: Implemented `Onboarding.js` and `GoalSetting.js` to collect structured user needs (interests, target level, etc.).
+- **Protocol Bridge**: `comms-service` now correctly bridges binary audio (Frontend) to JSON+Base64 (AI Service).
 - **Barge-in Logic**: Implemented `cancel_response()` and `ignored_response_ids` to allow seamless interruption without context loss.
 - **Persistence Fix**: Added dialogue synchronization from `ai-omni-service` to `history-analytics-service`.
 - **Audio Decoding**: Re-implemented `base64.b64decode` to fix user speech recognition issues.
-- **Test Client**: Consolidated all testing logic into `test_client_scenario.py` and optimized audio parameters.
+- **Test Client**: Consolidated all testing logic into `test_client_scenario.py` and optimized audio parameters. 执行$source .venv/bin/activate激活python环境后，运行`python test_client_scenario.py`即可。
 - **Bilingual Logic**: Implemented dynamic language strategy in `OralTutor` to fix Japanese/Chinese TTS pronunciation conflicts while allowing mixing for other languages.
 - **JSON Hiding**: Implemented text stream filtering in `ai-omni-service` to hide JSON action blocks from the client.
 - **500 Error Fix**: Fixed `user-service` crash on `set_goal` by handling undefined fields.

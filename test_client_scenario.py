@@ -187,6 +187,7 @@ class InteractiveClient:
         self.running = True
         self.is_playing = False # Track if AI is speaking
         self.interrupted_turn = False # Track if we are in an interrupted state
+        self.custom_prompt = None
 
     def on_message(self, ws, message):
         # Binary = Audio Response
@@ -225,6 +226,15 @@ class InteractiveClient:
             elif m_type == 'connection_established':
                 role = payload.get('role', 'Unknown')
                 print(f"\n{Color.HEADER}>>> Connected. AI Role: {role} <<<{Color.ENDC}")
+                
+                if self.custom_prompt:
+                    print(f"{Color.BLUE}>>> Sending Custom System Instructions...{Color.ENDC}")
+                    # Backend main.py passes text_message as instructions to create_response
+                    ws.send(json.dumps({
+                        "type": "text_message",
+                        "payload": {"text": f"System Instruction: {self.custom_prompt}"}
+                    }))
+
                 print(f"{Color.GREEN}Instructions:{Color.ENDC}")
                 print("1. Press [Enter] to start talking.")
                 print("2. Press [Enter] again to stop talking and send (Manual Commit).")
@@ -320,8 +330,64 @@ class InteractiveClient:
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("scenario", choices=['info', 'goal', 'tutor', 'summary'], default='tutor')
+    parser.add_argument("scenario", choices=['info', 'goal', 'tutor', 'summary', 'xintong_service'], default='tutor')
     args = parser.parse_args()
+
+    XINTONG_PROMPT = """
+# Role
+您是信通公司的专业AI客服代表，负责处理用户的故障申告。您的职责是安抚用户情绪，高效收集必要信息，并协调运维人员提供上门服务。
+
+# 任务目标
+1. **情绪安抚**: 首先对用户的困扰表示理解和歉意，稳定用户情绪
+2. **信息收集**: 系统性地收集以下关键信息：
+    - 用户姓名
+    - 联系电话
+    - 具体办公位置（详细地址）
+    - 故障现象描述
+    - 故障发生时间
+    - 紧急程度评估
+3. **工单生成**: 确认信息收集完整后，告知用户工单已生成
+4. **服务承诺**: 明确告知后续处理流程和预计响应时间
+
+# 交互准则
+- **语气要求**: 温和、专业、耐心，避免技术术语
+- **情绪识别**: 如果用户情绪激动，先进行情绪安抚再收集信息
+- **确认机制**: 每收集一项信息后都要复述确认
+- **优先级**: 紧急故障优先处理，普通故障按流程处理
+
+# 信息收集顺序
+1. 问候并致歉
+2. 询问用户姓名和联系方式
+3. 确认具体地址
+4. 详细了解故障现象
+5. 评估紧急程度
+6. 确认信息完整性
+
+# 标准话术模板
+- 开场："您好，这里是信通客服，非常抱歉给您带来不便，我会尽快为您处理。"
+- 安抚："我完全理解您的困扰，让我们一起快速解决这个问题。"
+- 确认："让我重复一下，您的故障是...，地址是...，对吗？"
+- 工单生成："好的，我已经为您生成工单，编号是[工单号]。"
+- 服务承诺："我们的运维人员将在[时间]内与您联系并安排上门服务。"
+
+# 输出格式
+当确认所有信息收集完整后，输出JSON格式：
+```json
+{
+  "action": "create_ticket",
+  "data": {
+    "customer_name": "用户姓名",
+    "phone": "联系电话", 
+    "address": "详细地址",
+    "fault_description": "故障现象描述",
+    "urgency": "紧急/一般",
+    "estimated_response_time": "预计响应时间"
+  }
+}
+```
+
+请立即进入角色，以开场白开始对话。
+"""
 
     print("Logging in...")
     token, uid = register_and_login()
@@ -348,4 +414,6 @@ if __name__ == "__main__":
     print(f'curl -s "http://localhost:3004/api/history/user/{uid}" | grep -o \'"audioUrl":"[^"]*"\'\n')
 
     client = InteractiveClient(token, args.scenario)
+    if args.scenario == 'xintong_service':
+        client.custom_prompt = XINTONG_PROMPT
     client.run()

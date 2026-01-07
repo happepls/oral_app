@@ -6,13 +6,8 @@
 
 ## To Do
 
-- [ ] [Frontend] **前端页面适配**:
-- [ ] `GoalSetting.js`: 实现目标设置界面，支持文本输入。
-- [ ] `Conversation.js`: 适配新AI角色交互逻辑（对话模式仅用于"OralTutor"）。
-- [ ] [Frontend] **需求收集**:
-- [ ] 在 `GoalSetting.js` 中集成文本输入组件，收集用户口语练习的具体需求（场景、话题、侧重点）。
-- [ ] 确保收集到的需求数据结构化，便于后续传递给AI。
-- [ ] [Frontend] Integration: Verify the new Role Switching and Barge-in logic in `Conversation.js`.
+- [ ] [Testing] **Multi-Scenario Verification**: Continue verifying `test_client_scenario.py` with all supported scenarios (`goal`, `tutor`, `summary`, `xintong_service`).
+- [ ] [Frontend] **E2E Testing**: Execute the manual test plan in `tests/frontend_flow_verification.md` to ensure UI stability.
 - [ ] [Backend] **Conversation State**: Implement `conversation-service` to persist chat history and state across sessions.
 - [ ] [Backend] **Media Processing**: Connect `media-processing-service` for saving audio session archives.
 - [ ] [Optimization] 端到端音频流延迟的性能测试和优化
@@ -32,6 +27,18 @@
 
 ## Done
 
+- [x] [Frontend] **Proxy Fix**: Resolved login proxy errors by moving `setupProxy.js` to `client/src/` and removing conflicting `package.json` proxy config.
+- [x] [Frontend] **Flow Control**: Implemented mandatory profile/goal completion checks in `Discovery.js`.
+- [x] [Testing] **Test Plan**: Created `tests/frontend_flow_verification.md` for manual E2E verification.
+- [x] [Backend] **Audio Processing Fix**: Resolved "Object of type bytes is not JSON serializable" error in `ai-omni-service` by correctly passing base64 strings to DashScope SDK while keeping byte decoding for local storage.
+- [x] [Testing] **Scenario Expansion**: Added `xintong_service` scenario to `test_client_scenario.py` with custom prompt injection for cross-domain role testing.
+- [x] [Frontend] **前端页面适配**:
+- [x] `Onboarding.js`: 实现用户资料收集表单，适配 AuthContext。
+- [x] `GoalSetting.js`: 实现目标设置界面，支持文本输入。
+- [x] `Conversation.js`: 适配新AI角色交互逻辑（对话模式仅用于"OralTutor"）。
+- [x] [Frontend] **需求收集**:
+- [x] 在 `Onboarding.js` 和 `GoalSetting.js` 中，集成文本输入组件，收集用户口语练习的具体需求（如：场景、话题、侧重点）。
+- [x] 确保收集到的需求数据结构化，便于后续传递给AI。
 - [x] [Backend] **Bug Fixes & Logic Refinements**:
 - [x] **500 Error Fix**: Resolved `user-service` 500 error by defaulting undefined `type`/`description` fields to null in `createGoal`.
 - [x] **Interruption Handling**: Implemented server-side logic in `ai-omni-service` to ignore response events for interrupted turns.
