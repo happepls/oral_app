@@ -200,7 +200,7 @@ JSON Block:
             return self.goal_planner_template.format(
                 nickname=user_context.get('nickname', 'User'),
                 target_language=user_context.get('target_language', 'English'),
-                current_proficiency=user_context.get('proficiency', 0),
+                current_proficiency=user_context.get('proficiency', 1),
                 interests=user_context.get('interests', '')
             ).strip()
             

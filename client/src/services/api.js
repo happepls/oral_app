@@ -58,6 +58,22 @@ export const userAPI = {
       body: JSON.stringify(updates)
     });
     return handleResponse(response);
+  },
+
+  async createGoal(goalData) {
+    const response = await fetch(`${API_BASE_URL}/users/goals`, {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      body: JSON.stringify(goalData)
+    });
+    return handleResponse(response);
+  },
+
+  async getActiveGoal() {
+    const response = await fetch(`${API_BASE_URL}/users/goals/active`, {
+      headers: getAuthHeaders()
+    });
+    return handleResponse(response);
   }
 };
 

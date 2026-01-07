@@ -142,10 +142,19 @@ wss.on('connection', async function connection(clientWs, req) {
           } else {
              try {
                 const msgStr = message.toString();
-                console.log(`[FORWARD TEXT] Client -> AI (${userId}): ${msgStr}`);
-                aiServiceWs.send(msgStr);
+                const msgJson = JSON.parse(msgStr);
+                
+                if (['webrtc_offer', 'webrtc_answer', 'webrtc_candidate'].includes(msgJson.type)) {
+                     console.log(`[WebRTC] Forwarding ${msgJson.type} from Client ${userId} to AI`);
+                     aiServiceWs.send(msgStr);
+                } else {
+                     console.log(`[FORWARD TEXT] Client -> AI (${userId}): ${msgStr}`);
+                     aiServiceWs.send(msgStr);
+                }
              } catch (e) {
-                 console.log(`Received invalid text message from user ${userId}: ${e.message}`);
+                 // Not JSON or parse error, just forward as string
+                 console.log(`[FORWARD RAW] Client -> AI (${userId}): ${message.toString()}`);
+                 aiServiceWs.send(message.toString());
              }
           }
         } else {
@@ -193,11 +202,16 @@ wss.on('connection', async function connection(clientWs, req) {
                 });
                 console.log(`Forwarding AI text response to user ${userId}: ${data.payload}`);
                 clientWs.send(responseToClient);
+            } else if (['webrtc_offer', 'webrtc_answer', 'webrtc_candidate'].includes(data.type)) {
+                // WebRTC Signaling Forwarding
+                console.log(`[WebRTC] Forwarding ${data.type} from AI service to user ${userId}`);
+                clientWs.send(messageString);
             } else {
                 // Forward other JSON messages (system_message, connection_established, etc.)
                 console.log(`Forwarding ${data.type} from AI service to user ${userId}`);
                 clientWs.send(messageString);
             }
+
           } else {
             console.log(`Forwarding binary message of size ${message.length} from AI service to user ${userId}.`);
             clientWs.send(message, { binary: true });

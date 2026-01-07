@@ -1,15 +1,16 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
-import { userAPI } from '../services/api';
 
 function Onboarding() {
   const navigate = useNavigate();
-  const { user, loading, updateProfile } = useAuth(); // Assuming updateProfile will be part of AuthContext or a separate API service
+  const { user, loading, updateProfile } = useAuth();
   const [nickname, setNickname] = useState(user?.nickname || '');
   const [gender, setGender] = useState(user?.gender || '');
-  const [nativeLanguage, setNativeLanguage] = useState(user?.nativeLanguage || '');
-  const [learningLanguage, setLearningLanguage] = useState(user?.learningLanguage || '');
+  const [nativeLanguage, setNativeLanguage] = useState(user?.native_language || 'Chinese');
+  const [targetLanguage, setTargetLanguage] = useState(user?.target_language || 'English');
+  const [proficiency, setProficiency] = useState(user?.points || 30); // Using 'points' as proxy for proficiency or just sending it
+  const [interests, setInterests] = useState(user?.interests || '');
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
 
@@ -19,22 +20,21 @@ function Onboarding() {
     setSuccess('');
 
     try {
-      // Call API to update user profile
-      const result = await userAPI.updateProfile({ 
+      const result = await updateProfile({ 
           nickname, 
           gender, 
           native_language: nativeLanguage, 
-          target_language: learningLanguage 
+          target_language: targetLanguage,
+          proficiency: parseInt(proficiency), // Ensure it's a number
+          interests: interests
       });
 
-      if (result) {
+      if (result.success) {
         setSuccess('个人资料更新成功！');
-        // Optionally update the user context immediately
-        if (updateProfile) {
-            await updateProfile();
-        }
-        // Navigate to the next step
-        navigate('/discovery'); 
+        // Navigate to goal setting instead of discovery directly
+        setTimeout(() => navigate('/goal-setting'), 1000);
+      } else {
+        setError(result.message || '更新失败');
       }
     } catch (err) {
       console.error(err);
@@ -47,7 +47,7 @@ function Onboarding() {
       <div className="flex w-full max-w-md flex-col items-center justify-center flex-grow">
         <div className="w-full px-4">
           <h1 className="text-slate-900 dark:text-white text-3xl font-bold mb-2">完善您的个人资料</h1>
-          <p className="text-slate-600 dark:text-slate-400 mb-8">这些信息有助于我们为您提供更个性化的学习体验。</p>
+          <p className="text-slate-600 dark:text-slate-400 mb-8">告诉我们您的语言背景，以便为您定制课程。</p>
 
           <form onSubmit={handleSubmit} className="space-y-4">
             {error && (
@@ -73,7 +73,6 @@ function Onboarding() {
                 required
                 disabled={loading}
                 className="w-full px-4 py-3 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white focus:border-primary focus:ring-2 focus:ring-primary/50 outline-none disabled:opacity-50"
-                placeholder="请输入您的昵称"
               />
             </div>
 
@@ -85,7 +84,6 @@ function Onboarding() {
                 id="gender"
                 value={gender}
                 onChange={(e) => setGender(e.target.value)}
-                required
                 disabled={loading}
                 className="w-full px-4 py-3 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white focus:border-primary focus:ring-2 focus:ring-primary/50 outline-none disabled:opacity-50"
               >
@@ -93,59 +91,85 @@ function Onboarding() {
                 <option value="male">男性</option>
                 <option value="female">女性</option>
                 <option value="other">其他</option>
-                <option value="prefer_not_to_say">不愿透露</option>
               </select>
             </div>
 
-            <div>
-              <label htmlFor="nativeLanguage" className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">
-                母语
-              </label>
-              <select
-                id="nativeLanguage"
-                value={nativeLanguage}
-                onChange={(e) => setNativeLanguage(e.target.value)}
-                required
-                disabled={loading}
-                className="w-full px-4 py-3 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white focus:border-primary focus:ring-2 focus:ring-primary/50 outline-none disabled:opacity-50"
-              >
-                <option value="">请选择</option>
-                <option value="Chinese">中文</option>
-                <option value="English">英语</option>
-                <option value="Spanish">西班牙语</option>
-                <option value="French">法语</option>
-                <option value="German">德语</option>
-                <option value="Japanese">日语</option>
-                <option value="Korean">韩语</option>
-              </select>
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <label htmlFor="nativeLanguage" className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">
+                  母语
+                </label>
+                <select
+                  id="nativeLanguage"
+                  value={nativeLanguage}
+                  onChange={(e) => setNativeLanguage(e.target.value)}
+                  required
+                  disabled={loading}
+                  className="w-full px-4 py-3 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white focus:border-primary focus:ring-2 focus:ring-primary/50 outline-none disabled:opacity-50"
+                >
+                  <option value="Chinese">中文</option>
+                  <option value="English">英语</option>
+                  <option value="Japanese">日语</option>
+                  <option value="French">法语</option>
+                </select>
+              </div>
+
+              <div>
+                <label htmlFor="targetLanguage" className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">
+                  学习语言
+                </label>
+                <select
+                  id="targetLanguage"
+                  value={targetLanguage}
+                  onChange={(e) => setTargetLanguage(e.target.value)}
+                  required
+                  disabled={loading}
+                  className="w-full px-4 py-3 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white focus:border-primary focus:ring-2 focus:ring-primary/50 outline-none disabled:opacity-50"
+                >
+                  <option value="English">英语</option>
+                  <option value="Japanese">日语</option>
+                  <option value="Chinese">中文</option>
+                  <option value="French">法语</option>
+                </select>
+              </div>
             </div>
 
             <div>
-              <label htmlFor="learningLanguage" className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">
-                学习语言
+              <label htmlFor="proficiency" className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">
+                当前水平 (0-100)
               </label>
-              <select
-                id="learningLanguage"
-                value={learningLanguage}
-                onChange={(e) => setLearningLanguage(e.target.value)}
-                required
+              <input
+                type="range"
+                id="proficiency"
+                min="0"
+                max="100"
+                value={proficiency}
+                onChange={(e) => setProficiency(e.target.value)}
+                className="w-full h-2 bg-slate-200 rounded-lg appearance-none cursor-pointer dark:bg-slate-700"
+              />
+              <div className="text-right text-sm text-slate-500">{proficiency}</div>
+            </div>
+
+            <div>
+              <label htmlFor="interests" className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">
+                兴趣爱好 / 学习重点
+              </label>
+              <textarea
+                id="interests"
+                value={interests}
+                onChange={(e) => setInterests(e.target.value)}
+                rows="3"
                 disabled={loading}
                 className="w-full px-4 py-3 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white focus:border-primary focus:ring-2 focus:ring-primary/50 outline-none disabled:opacity-50"
-              >
-                <option value="">请选择</option>
-                <option value="english">英语</option>
-                <option value="spanish">西班牙语</option>
-                <option value="chinese">中文</option>
-                <option value="french">法语</option>
-                <option value="german">德语</option>
-              </select>
+                placeholder="例如：商务谈判, 旅游对话, 雅思口语..."
+              ></textarea>
             </div>
 
             <button
               type="submit"
               disabled={loading}
               className="w-full mt-6 flex items-center justify-center rounded-lg h-12 px-5 bg-primary text-white text-base font-bold hover:bg-primary/90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
-              {loading ? '保存中...' : '保存'}
+              {loading ? '保存中...' : '下一步：设定目标'}
             </button>
           </form>
         </div>

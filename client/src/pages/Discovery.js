@@ -1,9 +1,39 @@
-import React from 'react';
+import React, { useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import BottomNav from '../components/BottomNav';
+import { useAuth } from '../contexts/AuthContext';
+import { userAPI } from '../services/api';
 
 function Discovery() {
   const navigate = useNavigate();
+  const { user } = useAuth();
+
+  useEffect(() => {
+    const checkUserStatus = async () => {
+        if (user) {
+            // 1. Check Profile (Native Language as proxy for Onboarding completion)
+            if (!user.native_language) {
+                navigate('/onboarding');
+                return;
+            }
+
+            // 2. Check Active Goal
+            try {
+                const goalRes = await userAPI.getActiveGoal();
+                if (!goalRes || !goalRes.goal) {
+                    navigate('/goal-setting');
+                }
+            } catch (e) {
+                // If error or no goal, maybe safe to let them browse or force goal setting?
+                // For now, let's strictly enforce flow
+                console.log('No active goal found, redirecting...');
+                navigate('/goal-setting');
+            }
+        }
+    };
+    
+    checkUserStatus();
+  }, [user, navigate]);
 
   const topics = [
     { name: '旅游观光', level: '中级', gradient: 'from-purple-400 to-orange-400' },

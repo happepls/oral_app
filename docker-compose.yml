@@ -47,6 +47,8 @@ services:
       - ./client/node_modules:/app/node_modules
     environment:
       - REACT_APP_API_URL=/api
+      - PROXY_TARGET=http://api-gateway
+      - WDS_SOCKET_PORT=5001
     networks:
       - oral_app_net
 
