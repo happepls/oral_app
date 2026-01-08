@@ -288,6 +288,9 @@ React前端应用的Docker容器化配置。
     - **Client-Side AEC**: Enabled `echoCancellation`, `noiseSuppression`, and `autoGainControl` in `RealTimeRecorder.js` to prevent audio feedback loops during speaker playback.
     - **Test Client**: Updated `test_client.py` with 24kHz sample rate for better TTS quality and basic software-based echo cancellation.
     - **Backend**: `ai-omni-service` now logs full event payloads for deeper debugging of DashScope interactions.
+- **Interruption Handling**: Reliable barge-in logic requires resetting the interruption flag (`isInterrupted`) in `handleRecordingStop` to ensure the client can receive the new response. The backend `Conversation has none active response` error is a benign race condition during interruption.
+- **Audio Playback**: `AudioContext.decodeAudioData` detaches the input ArrayBuffer. Always clone the buffer (`buffer.slice(0)`) before decoding if you need to use it for fallback logic (e.g., raw PCM).
+- **Auth Context**: `AuthContext` must explicitly expose the `token` in its provider value for consuming components (like `Conversation.js`) to authenticate WebSocket connections.
 - 当用户提出对今天的开发工作进行收尾时，请以 AI 助手的身份完成今日收尾工作，将执行以下4项任务：
     1）使用 mcp-tasks 工具，更新开发计划到 `docs/TODO.md`，不改动已完成计划内容。
     2）若项目结构有变动则更新 GEMINI.md ，以准确反映当前项目状态；注意不得改变 Gemini Added Memories 的内容及格式。
