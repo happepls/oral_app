@@ -20,6 +20,9 @@
 - [ ] [Deployment] 完善 Docker Compose 部署配置
 - [ ] [Deployment] 实现 CI/CD 流水线自动化
 - [ ] [Testing] 编写完整的集成测试套件
+- [ ] [Frontend] 完善 Discovery 页面交互：修复无效的跳转入口（点击无反应）
+- [ ] [Frontend] Profile 页面数据对接：将静态展示替换为真实用户的动态个人资料
+- [ ] [Frontend] Onboarding 升级：扩充母语/学习语言选项至 10 种（中/英/法/德/俄/意/西/葡/日/韩）
 
 ## Backlog
 
@@ -136,3 +139,6 @@
 - [x] [Backend] **Interruption Logic Optimization**: Replaced simplistic interruption flag with `cancel_response()` call and `ignored_response_ids` filtering to prevent old audio leaks and "active response" errors while maintaining conversation context.
 - [x] [Backend] **Audio Quality Fix**: Restored `base64.b64decode` in `ai-omni-service` to correctly process binary audio stream from `comms-service`.
 - [x] [Testing] **Consolidation**: Optimized `test_client_scenario.py` with proper sample rates and persistence verification hints, and deleted redundant `test_client.py`.
+- [x] 10
+- [x] 11
+- [x] 12

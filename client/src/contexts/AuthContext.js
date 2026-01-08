@@ -5,20 +5,23 @@ const AuthContext = createContext(null);
 
 export const AuthProvider = ({ children }) => {
   const [user, setUser] = useState(null);
+  const [token, setToken] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
   useEffect(() => {
-    const token = localStorage.getItem('authToken');
+    const savedToken = localStorage.getItem('authToken');
     const savedUser = localStorage.getItem('user');
     
-    if (token && savedUser) {
+    if (savedToken && savedUser) {
+      setToken(savedToken);
       try {
         setUser(JSON.parse(savedUser));
       } catch (err) {
         console.error('Failed to parse user data:', err);
         localStorage.removeItem('authToken');
         localStorage.removeItem('user');
+        setToken(null);
       }
     }
     
@@ -34,10 +37,11 @@ export const AuthProvider = ({ children }) => {
       
       // The API response is now standardized with success/data format
       // handleResponse in api.js extracts the data part for successful responses
-      const { user: userData, token } = response;
-      localStorage.setItem('authToken', token);
+      const { user: userData, token: newToken } = response;
+      localStorage.setItem('authToken', newToken);
       localStorage.setItem('user', JSON.stringify(userData));
       setUser(userData);
+      setToken(newToken);
       return { success: true };
     } catch (err) {
       const errorMessage = err.message || '登录失败，请稍后重试';
@@ -57,10 +61,11 @@ export const AuthProvider = ({ children }) => {
       
       // The API response is now standardized with success/data format
       // handleResponse in api.js extracts the data part for successful responses
-      const { user: newUser, token } = response;
-      localStorage.setItem('authToken', token);
+      const { user: newUser, token: newToken } = response;
+      localStorage.setItem('authToken', newToken);
       localStorage.setItem('user', JSON.stringify(newUser));
       setUser(newUser);
+      setToken(newToken);
       return { success: true };
     } catch (err) {
       const errorMessage = err.message || '注册失败，请稍后重试';
@@ -91,6 +96,7 @@ export const AuthProvider = ({ children }) => {
     localStorage.removeItem('authToken');
     localStorage.removeItem('user');
     setUser(null);
+    setToken(null);
     setError(null);
   };
 
@@ -109,6 +115,7 @@ export const AuthProvider = ({ children }) => {
 
   const value = {
     user,
+    token,
     loading,
     error,
     login,

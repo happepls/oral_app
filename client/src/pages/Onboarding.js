@@ -20,9 +20,17 @@ function Onboarding() {
     setSuccess('');
 
     try {
+      // Convert gender string to integer for database
+      const genderMap = {
+        '': null,
+        'male': 1,
+        'female': 0,
+        'other': 2
+      };
+      
       const result = await updateProfile({ 
           nickname, 
-          gender, 
+          gender: genderMap[gender] !== undefined ? genderMap[gender] : null, 
           native_language: nativeLanguage, 
           target_language: targetLanguage,
           proficiency: parseInt(proficiency), // Ensure it's a number

@@ -72,7 +72,9 @@ function Conversation() {
         // If raw PCM, this will fail.
         let audioBuffer;
         try {
-            audioBuffer = await ctx.decodeAudioData(arrayBuffer);
+            // Clone the buffer because decodeAudioData detaches it
+            const decodeBuffer = arrayBuffer.slice(0);
+            audioBuffer = await ctx.decodeAudioData(decodeBuffer);
         } catch (e) {
             // Fallback: Assume Raw PCM Int16 24kHz Mono
             const int16Array = new Int16Array(arrayBuffer);
@@ -221,8 +223,8 @@ function Conversation() {
       if (!user?.id) return;
       try {
         const res = await conversationAPI.startSession({ userId: user.id });
-        if (res.success) {
-            setSessionId(res.data.sessionId);
+        if (res && res.sessionId) {
+            setSessionId(res.sessionId);
         } else {
             setWebSocketError('无法创建会话');
         }
@@ -251,15 +253,22 @@ function Conversation() {
   const handleRecordingStart = () => {
     isInterruptedRef.current = false; // Reset flag for new turn
     
-    // Interruption Logic
-    if (isAISpeaking) {
-        console.log('Interruption triggered!');
-        stopAudioPlayback();
+    // Check if we need to interrupt backend streaming
+    const wasBackendStreaming = isAISpeaking;
+    
+    // Always stop local audio playback immediately
+    stopAudioPlayback();
+    
+    // If backend was streaming, send interruption signal
+    if (wasBackendStreaming) {
+        console.log('Interruption triggered (Backend Streaming)!');
         isInterruptedRef.current = true;
         
         if (socketRef.current?.readyState === WebSocket.OPEN) {
             socketRef.current.send(JSON.stringify({ type: 'user_interruption' }));
         }
+    } else {
+        console.log('Recording started (New Turn)');
     }
   };
 
@@ -268,6 +277,8 @@ function Conversation() {
         console.log('Sending user_audio_ended');
         socketRef.current.send(JSON.stringify({ type: 'user_audio_ended' }));
     }
+    // Allow AI to speak again after user is done
+    isInterruptedRef.current = false;
   };
 
   const handleAudioData = (data) => {

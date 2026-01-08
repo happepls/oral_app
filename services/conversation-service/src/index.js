@@ -47,8 +47,11 @@ app.post('/start', async (req, res) => {
       console.log(`Found existing session for user ${userId}: ${sessionId}`);
       await redis.expire(userSessionKey, SESSION_EXPIRATION_SECONDS);
       res.status(200).json({ 
+        success: true,
         message: 'Existing session retrieved.',
-        sessionId: sessionId 
+        data: {
+            sessionId: sessionId
+        }
       });
     } else {
       // 3. If no session, create a new one
@@ -59,13 +62,19 @@ app.post('/start', async (req, res) => {
       await redis.set(userSessionKey, sessionId, 'EX', SESSION_EXPIRATION_SECONDS);
       
       res.status(201).json({ 
+        success: true,
         message: 'New conversation session started.',
-        sessionId: sessionId 
+        data: {
+            sessionId: sessionId
+        }
       });
     }
   } catch (error) {
     console.error(`Failed to get/create session for user ${userId}:`, error);
-    res.status(500).json({ message: 'Internal server error while managing session.' });
+    res.status(500).json({ 
+        success: false,
+        message: 'Internal server error while managing session.' 
+    });
   }
 });
 

@@ -80,16 +80,15 @@ exports.login = async (req, res) => {
     }
 
     // 3. Respond with token in the expected format
+    const userWithoutPassword = { ...user };
+    delete userWithoutPassword.password;
+    
     res.json({
       success: true,
       message: '登录成功',
       data: {
         token: generateToken(user.id),
-        user: {
-          id: user.id,
-          username: user.username,
-          email: user.email,
-        },
+        user: userWithoutPassword,
       },
     });
   } catch (error) {
@@ -117,16 +116,16 @@ exports.googleSignIn = async (req, res) => {
     });
 
     if (user) {
+      // Remove password if it exists
+      const userWithoutPassword = { ...user };
+      delete userWithoutPassword.password;
+
       res.json({
         success: true,
         message: 'Google登录成功',
         data: {
           token: generateToken(user.id),
-          user: {
-            id: user.id,
-            username: user.username,
-            email: user.email,
-          },
+          user: userWithoutPassword,
         },
       });
     } else {
