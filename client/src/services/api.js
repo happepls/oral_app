@@ -87,6 +87,25 @@ export const aiAPI = {
     return handleResponse(response);
   },
 
+  async tts(text, voice = null) {
+    const body = { text };
+    if (voice) {
+        body.voice = voice;
+    }
+
+    const response = await fetch(`${API_BASE_URL}/ai/tts`, {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      body: JSON.stringify(body)
+    });
+    
+    if (!response.ok) {
+        throw new Error('语音合成失败');
+    }
+    
+    return response.blob();
+  },
+
   async getScenarios() {
     const response = await fetch(`${API_BASE_URL}/ai/scenarios`, {
       headers: getAuthHeaders()
@@ -141,11 +160,35 @@ export const aiAPI = {
 };
 
 export const conversationAPI = {
-  async startSession({ userId }) {
+  async startSession(data) {
     const response = await fetch(`${API_BASE_URL}/conversation/start`, {
       method: 'POST',
       headers: getAuthHeaders(),
-      body: JSON.stringify({ userId })
+      body: JSON.stringify(data)
+    });
+    return handleResponse(response);
+  },
+
+  async endSession(sessionId) {
+    const response = await fetch(`${API_BASE_URL}/conversation/end`, {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      body: JSON.stringify({ sessionId })
+    });
+    return handleResponse(response);
+  },
+
+  async getHistory(sessionId) {
+    const response = await fetch(`${API_BASE_URL}/history/session/${sessionId}`, {
+      headers: getAuthHeaders()
+    });
+    return handleResponse(response);
+  },
+
+  async getActiveSessions(userId, goalId) {
+    const params = new URLSearchParams({ userId, goalId });
+    const response = await fetch(`${API_BASE_URL}/conversation/sessions?${params.toString()}`, {
+        headers: getAuthHeaders()
     });
     return handleResponse(response);
   }

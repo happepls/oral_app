@@ -4,8 +4,11 @@ exports.saveConversation = async (req, res) => {
   try {
     const { sessionId, userId, messages, topic, metrics, startTime, endTime } = req.body;
 
-    // Filter out empty messages
-    const validMessages = messages ? messages.filter(msg => msg.content && msg.content.trim().length > 0) : [];
+    // Filter out empty messages (must have content OR audioUrl)
+    // Relaxed check: allow '...' placeholders if they have audio, or just audio
+    const validMessages = messages ? messages.filter(msg => 
+        (msg.content && msg.content.trim().length > 0) || msg.audioUrl
+    ) : [];
 
     let conversation = await Conversation.findOne({ sessionId });
 

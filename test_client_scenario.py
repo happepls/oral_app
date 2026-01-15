@@ -60,16 +60,20 @@ def register_and_login():
     data = res.json().get('data', {})
     return data.get('token'), data.get('user', {}).get('id')
 
-def setup_profile(token, proficiency=30, target_lang="English"):
+def setup_profile(token, proficiency=30, target_lang=None, interests=None):
+    payload = {
+        "nickname": "Tester",
+        "native_language": "Chinese",
+        "proficiency": proficiency,
+    }
+    if target_lang:
+        payload["target_language"] = target_lang
+    if interests:
+        payload["interests"] = interests
+        
     res = requests.put(f"{API_BASE}/users/profile", 
                 headers={"Authorization": f"Bearer {token}"},
-                json={
-                    "nickname": "Tester",
-                    "native_language": "Chinese",
-                    "target_language": target_lang,
-                    "proficiency": proficiency,
-                    "interests": "Business, Travel"
-                })
+                json=payload)
     print(f"Setup Profile: {res.status_code}")
 
 def setup_goal(token, proficiency=0, target_lang="English"):
@@ -188,6 +192,7 @@ class InteractiveClient:
         self.is_playing = False # Track if AI is speaking
         self.interrupted_turn = False # Track if we are in an interrupted state
         self.custom_prompt = None
+        self.session_id = str(uuid.uuid4()) # Persist Session ID for reconnection
 
     def on_message(self, ws, message):
         # Binary = Audio Response
@@ -205,6 +210,11 @@ class InteractiveClient:
             data = json.loads(message)
             m_type = data.get('type')
             payload = data.get('payload')
+
+            if m_type == 'ping':
+                # Respond to Server Heartbeat
+                ws.send(json.dumps({"type": "pong"}))
+                return
 
             if m_type == 'text_response' or m_type == 'ai_response':
                 if self.interrupted_turn:
@@ -254,7 +264,7 @@ class InteractiveClient:
         print(f"{Color.RED}WS Error: {error}{Color.ENDC}")
 
     def on_close(self, ws, status, msg):
-        print(f"{Color.HEADER}Disconnected.{Color.ENDC}")
+        print(f"{Color.HEADER}Disconnected. Status: {status}, Msg: {msg}{Color.ENDC}")
         self.running = False
 
     def on_open(self, ws):
@@ -270,7 +280,11 @@ class InteractiveClient:
             if not self.running: return
 
         while self.running:
-            cmd = input()
+            try:
+                cmd = input()
+            except EOFError:
+                break
+                
             if cmd.lower() == 'q':
                 self.running = False
                 self.ws.close()
@@ -303,8 +317,8 @@ class InteractiveClient:
                     self.ws.send(json.dumps({"type": "user_audio_ended"}))
 
     def run(self):
-        session_id = str(uuid.uuid4())
-        url = f"{WS_URL}?token={self.token}&sessionId={session_id}"
+        # Use persisted session_id
+        url = f"{WS_URL}?token={self.token}&sessionId={self.session_id}"
         
         self.ws = websocket.WebSocketApp(url,
                                        header=[f"Authorization: Bearer {self.token}"],
@@ -325,7 +339,8 @@ class InteractiveClient:
         finally:
             if self.audio_handler:
                 self.audio_handler.cleanup()
-            self.ws.close()
+            if self.ws:
+                self.ws.close()
             print("Exiting...")
 
 if __name__ == "__main__":
@@ -393,12 +408,22 @@ if __name__ == "__main__":
     token, uid = register_and_login()
     
     # Setup context based on scenario
-    target_lang = "Japanese" if args.scenario in ['tutor', 'summary'] else "English"
+    if args.scenario in ['tutor', 'summary']:
+        target_lang = "Spanish"
+    elif args.scenario == 'xintong_service':
+        target_lang = "English"
+    else:
+        target_lang = None # goal, info
     
     if args.scenario != 'info': 
         prof = 91 if args.scenario == 'summary' else 30
-        print(f"{Color.BLUE}>>> Setting up Profile (Native: Chinese, Target: {target_lang}, Prof: {prof})...{Color.ENDC}")
-        setup_profile(token, proficiency=prof, target_lang=target_lang)
+        
+        # goal scenario: empty interests and target_lang to test elicitation
+        # others: preset interests
+        interests = None if args.scenario == 'goal' else "Business, Travel"
+        
+        print(f"{Color.BLUE}>>> Setting up Profile (Native: Chinese, Target: {target_lang}, Prof: {prof}, Interests: {interests})...{Color.ENDC}")
+        setup_profile(token, proficiency=prof, target_lang=target_lang, interests=interests)
     if args.scenario == 'goal':
         print(f"{Color.BLUE}>>> Scenario: Goal Planning (Profile exists, Goal missing)...{Color.ENDC}")
     if args.scenario == 'summary':

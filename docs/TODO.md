@@ -2,17 +2,8 @@
 
 ## In Progress
 
-- [ ] [Optimization] 端到端音频流延迟的性能测试和优化
-
 ## To Do
 
-- [ ] [Testing] **Multi-Scenario Verification**: Continue verifying `test_client_scenario.py` with all supported scenarios (`goal`, `tutor`, `summary`, `xintong_service`).
-- [ ] [Frontend] **E2E Testing**: Execute the manual test plan in `tests/frontend_flow_verification.md` to ensure UI stability.
-- [ ] [Backend] **Conversation State**: Implement `conversation-service` to persist chat history and state across sessions.
-- [ ] [Backend] **Media Processing**: Connect `media-processing-service` for saving audio session archives.
-- [ ] [Optimization] 端到端音频流延迟的性能测试和优化
-- [ ] [Optimization] 实现音频流缓冲和网络自适应机制
-- [ ] [Monitoring] 添加服务健康监控和告警
 - [ ] [Monitoring] 实现用户行为分析和性能指标收集
 - [ ] [Security] 增强 API 安全性和用户数据保护
 - [ ] [Docs] 更新 user_service/docs/schema.md 文档以对齐数据库表结构
@@ -23,13 +14,20 @@
 - [ ] [Frontend] 完善 Discovery 页面交互：修复无效的跳转入口（点击无反应）
 - [ ] [Frontend] Profile 页面数据对接：将静态展示替换为真实用户的动态个人资料
 - [ ] [Frontend] Onboarding 升级：扩充母语/学习语言选项至 10 种（中/英/法/德/俄/意/西/葡/日/韩）
+- [ ] [Optimization] 端端音频流延迟的性能测试和优化
+- [ ] [Optimization] 实现音频流缓冲和网络自适应机制
 
 ## Backlog
 
 - [ ] [Frontend] 添加多语言界面支持
+- [ ] [Commercialization]  Defined a tiered subscription model (Freemium/Pro) and cost-per-minute unit economics for AI-driven oral practice.
 
 ## Done
 
+- [x] [Monitoring] 添加服务健康监控和告警 (已为所有核心服务添加 /health 端点)
+- [x] [Frontend] 增加 AI 文本回复的播放组件：支持划选文本重听（TTS）及完整回复重听（MP3 URL）
+- [x] [Frontend] 修复用户语音转录（Transcription）未显示问题（增加 Blob-to-JSON 回退机制）
+- [x] [Frontend] 优化打断逻辑，立即停止所有音频播放（包括 TTS 和 MP3）
 - [x] [Frontend] **Proxy Fix**: Resolved login proxy errors by moving `setupProxy.js` to `client/src/` and removing conflicting `package.json` proxy config.
 - [x] [Frontend] **Flow Control**: Implemented mandatory profile/goal completion checks in `Discovery.js`.
 - [x] [Testing] **Test Plan**: Created `tests/frontend_flow_verification.md` for manual E2E verification.
@@ -131,14 +129,23 @@
 - [x] [Backend] 添加会话管理和权限控制
 - [x] [Backend] 创建历史与分析服务：实现对话的异步存储
 - [x] [Testing] 在 test_client.py 调试脚本中集成 PCM 音频输入和实时 TTS 输出功能，实现真实的音频输入输出模拟。
-- [x] [AI Engine] Prompt Engineering: Optimize System Prompt for 'AI Oral Tutor' persona (correct grammar/expression over pronunciation, intelligent turn-taking).
-- [x] [Backend] 创建媒体处理服务：实现音频流转码和 S3/OSS 存储
+- [x] [AI Engine] **Prompt Engineering**: Optimize System Prompt for 'AI Oral Tutor' persona (correct grammar/expression over pronunciation, intelligent turn-taking).
+- [x] [AI Engine] **Prompt Optimization**: Updated `OralTutor` prompt to proactively analyze user expression, vocabulary, and pronunciation in *every* turn.
+- [x] [Documentation] **Business Guide**: Created a comprehensive guide for commercialization, covering legal, cloud, and payment operations.
+- [x] [Backend] **Media Processing Service Implementation**:
 - [x] Verify the new "Oral Tutor" backend flow (Context Fetching -> Prompt Selection -> Action Execution).并通过test_client.py的对话测试（支持多轮对话、文本输入）
 - [x] [AI Engine] ai-glm-service: Setup Docker environment and fix dependency network issues using local wheels strategy
 - [x] [Backend] **Persistence & Persistence Fix**: Implemented message history tracking in `ai-omni-service` and integrated with `history-analytics-service` to save dialogues to MongoDB.
 - [x] [Backend] **Interruption Logic Optimization**: Replaced simplistic interruption flag with `cancel_response()` call and `ignored_response_ids` filtering to prevent old audio leaks and "active response" errors while maintaining conversation context.
 - [x] [Backend] **Audio Quality Fix**: Restored `base64.b64decode` in `ai-omni-service` to correctly process binary audio stream from `comms-service`.
 - [x] [Testing] **Consolidation**: Optimized `test_client_scenario.py` with proper sample rates and persistence verification hints, and deleted redundant `test_client.py`.
-- [x] 10
-- [x] 11
-- [x] 12
+- [x] [Frontend] **E2E Testing**: Execute the manual test plan in `tests/frontend_flow_verification.md` to ensure UI stability.
+- [x] [Backend] **Conversation State**: Implement `conversation-service` to persist chat history and state across sessions.
+- [x] [Backend] **Media Processing**: Connect `media-processing-service` for saving audio session archives.
+- [x] [Infrastructure] 修复 Nginx `/api/conversation/` 路由导致的 502 错误
+- [x] [Frontend] 升级 Discovery 页面，支持查看和恢复活跃会话 (Active Sessions List)
+- [x] [Backend] 实现基于目标的会话管理 (Max 3 sessions per goal in conversation-service)
+- [x] [Backend] 优化用户录音存储逻辑，解决刷新后音频条丢失问题 (Placeholder & Relaxed Filtering)
+- [x] [Backend] 实现会话持久化与历史回溯 (Session Persistence & History Restoration)
+- [x] [Frontend] 修复消息覆盖问题及音频播放稳定性 (Turn ID & Audio Mapping)
+- [x] [Testing] **Multi-Scenario Verification**: Continue verifying `test_client_scenario.py` with all supported scenarios (`goal`, `tutor`, `summary`, `xintong_service`).

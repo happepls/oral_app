@@ -160,13 +160,20 @@ oral_app/
 - ✅ **AI Service**: Qwen3-Omni integration via DashScope SDK with robust error handling and auto-reconnection.
 - ✅ **Interruption Handling**: Reliable barge-in logic using `cancel_response()` and ID filtering.
 - ✅ **Persistence**: Automatic dialogue saving to MongoDB and PCM recording upload to COS.
+- ✅ **Session Persistence**: URL-based session restoration and history loading from MongoDB implemented.
+- ✅ **Goal-based Session Management**: FIFO session list (max 3) per user goal in `conversation-service`.
 - ✅ **Goal Management**: `complete_goal` action implemented to archive goals and trigger new planning.
 - ✅ **Bilingual Strategy**: Dynamic strategy implemented (Immersion for Japanese, Bridge Mode for others).
 - ✅ **Manual Turn-Taking**: Server-side VAD disabled; client triggers responses via `user_audio_ended`.
 - ✅ **JSON Suppression**: Backend filters JSON blocks from client text stream for cleaner UI.
+- ✅ **UI/UX Polishing**: Hidden transcription placeholders and integrated session switching in Discovery.
 - 🔄 **Audio Streaming**: WebRTC integration in progress
 
 ## 最近修复 (Recent Fixes)
+- **Session Restoration**: Fixed `ai-omni-service` to restore message history on WebSocket reconnect, preventing data loss during refresh.
+- **Audio Association**: Improved audio-to-message matching logic in `ai-omni-service` using placeholders to handle ASR/Upload race conditions.
+- **502 Gateway Fix**: Added Nginx routing for `conversation-service` to resolve API connection errors.
+- **Message Integrity**: Relaxed filtering in `history-analytics-service` to persist messages with audio even if text is empty.
 - **Frontend Proxy**: Fixed Create React App proxy configuration by moving `setupProxy.js` to `client/src/` and removing conflicting `package.json` proxy setting.
 - **Frontend Flow**: Implemented forced redirection in `Discovery.js` to ensure users complete Onboarding and Goal Setting.
 - **Audio Processing**: Resolved `ai-omni-service` crash ("Object of type bytes is not JSON serializable") by correctly handling base64 audio strings for DashScope SDK.
@@ -286,13 +293,12 @@ React前端应用的Docker容器化配置。
 - **WebSocket Only for Chat**: The frontend `Conversation.js` has been refactored to use WebSocket for both text messages and audio streaming, abandoning the deprecated HTTP chat API. Nginx routing for `/api/ws/` has been corrected to point to `comms-service` on port 8080.
 - **Audio Optimization**:
     - **Client-Side AEC**: Enabled `echoCancellation`, `noiseSuppression`, and `autoGainControl` in `RealTimeRecorder.js` to prevent audio feedback loops during speaker playback.
-    - **Test Client**: Updated `test_client.py` with 24kHz sample rate for better TTS quality and basic software-based echo cancellation.
     - **Backend**: `ai-omni-service` now logs full event payloads for deeper debugging of DashScope interactions.
 - **Interruption Handling**: Reliable barge-in logic requires resetting the interruption flag (`isInterrupted`) in `handleRecordingStop` to ensure the client can receive the new response. The backend `Conversation has none active response` error is a benign race condition during interruption.
 - **Audio Playback**: `AudioContext.decodeAudioData` detaches the input ArrayBuffer. Always clone the buffer (`buffer.slice(0)`) before decoding if you need to use it for fallback logic (e.g., raw PCM).
 - **Auth Context**: `AuthContext` must explicitly expose the `token` in its provider value for consuming components (like `Conversation.js`) to authenticate WebSocket connections.
 - 当用户提出对今天的开发工作进行收尾时，请以 AI 助手的身份完成今日收尾工作，将执行以下4项任务：
-    1）使用 mcp-tasks 工具，更新开发计划到 `docs/TODO.md`，不改动已完成计划内容。
+    1）使用 mcp-tasks 工具，根据当前开发进度更新开发计划到 `docs/TODO.md`，不改动已完成计划内容。
     2）若项目结构有变动则更新 GEMINI.md ，以准确反映当前项目状态；注意不得改变 Gemini Added Memories 的内容及格式。
     3）在 `docs/development_log.md` 追加当日工作摘要，更新日志仅追加，不覆盖。
     4）将所有变更提交并推送到远程仓库 origin/master，提交信息格式为 mac {{今日日期}}。

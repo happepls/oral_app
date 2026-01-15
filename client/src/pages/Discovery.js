@@ -1,16 +1,21 @@
-import React, { useEffect } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import BottomNav from '../components/BottomNav';
 import { useAuth } from '../contexts/AuthContext';
-import { userAPI } from '../services/api';
+import { userAPI, conversationAPI } from '../services/api';
 
 function Discovery() {
   const navigate = useNavigate();
   const { user } = useAuth();
+  const [activeGoal, setActiveGoal] = useState(null);
+  const [activeSessions, setActiveSessions] = useState([]);
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    const checkUserStatus = async () => {
-        if (user) {
+    const fetchData = async () => {
+        if (!user) return;
+
+        try {
             // 1. Check Profile (Native Language as proxy for Onboarding completion)
             if (!user.native_language) {
                 navigate('/onboarding');
@@ -18,22 +23,43 @@ function Discovery() {
             }
 
             // 2. Check Active Goal
-            try {
-                const goalRes = await userAPI.getActiveGoal();
-                if (!goalRes || !goalRes.goal) {
-                    navigate('/goal-setting');
-                }
-            } catch (e) {
-                // If error or no goal, maybe safe to let them browse or force goal setting?
-                // For now, let's strictly enforce flow
-                console.log('No active goal found, redirecting...');
+            const goalRes = await userAPI.getActiveGoal();
+            if (!goalRes || !goalRes.goal) {
                 navigate('/goal-setting');
+                return;
             }
+            setActiveGoal(goalRes.goal);
+
+            // 3. Fetch Active Sessions for this Goal
+            const goalId = goalRes.goal.id || goalRes.goal._id;
+            const sessionsRes = await conversationAPI.getActiveSessions(user.id, goalId);
+            if (sessionsRes && sessionsRes.sessions) {
+                setActiveSessions(sessionsRes.sessions);
+            }
+
+        } catch (e) {
+            console.error('Error fetching discovery data:', e);
+            // navigate('/goal-setting');
+        } finally {
+            setLoading(false);
         }
     };
     
-    checkUserStatus();
+    fetchData();
   }, [user, navigate]);
+
+  const handleStartNewSession = () => {
+      // Navigating to /conversation without params triggers new session creation
+      navigate('/conversation');
+  };
+
+  const handleResumeSession = (sessionId) => {
+      navigate(`/conversation?sessionId=${sessionId}`);
+  };
+
+  const handleSwitchGoal = () => {
+      navigate('/goal-setting');
+  };
 
   const topics = [
     { name: '旅游观光', level: '中级', gradient: 'from-purple-400 to-orange-400' },
@@ -53,6 +79,10 @@ function Discovery() {
     { title: '面试练习', duration: '20 分钟', icon: 'work' }
   ];
 
+  if (loading) {
+      return <div className="flex items-center justify-center min-h-screen">Loading...</div>;
+  }
+
   return (
     <div className="relative flex flex-col min-h-screen w-full bg-background-light dark:bg-background-dark">
       <main className="flex-grow pb-28">
@@ -64,6 +94,74 @@ function Discovery() {
               <span className="material-symbols-outlined text-2xl">notifications</span>
             </button>
           </div>
+        </div>
+
+        {/* Active Goal Section */}
+        {activeGoal && (
+            <div className="px-4 py-2">
+                <div className="bg-gradient-to-r from-primary to-blue-600 rounded-xl p-4 text-white shadow-lg">
+                    <div className="flex justify-between items-start">
+                        <div>
+                            <p className="text-sm opacity-90">当前目标</p>
+                            <h2 className="text-xl font-bold mt-1">{activeGoal.target_language} - {activeGoal.type}</h2>
+                            <p className="text-sm opacity-80 mt-1">
+                                {activeGoal.duration_days} 天计划 • {activeGoal.daily_minutes} 分钟/天
+                            </p>
+                        </div>
+                        <button 
+                            onClick={handleSwitchGoal}
+                            className="bg-white/20 hover:bg-white/30 px-3 py-1 rounded-full text-xs transition-colors backdrop-blur-sm">
+                            切换
+                        </button>
+                    </div>
+                </div>
+            </div>
+        )}
+
+        {/* My Sessions Section (New Feature) */}
+        <div className="px-4 py-4">
+             <div className="flex justify-between items-center mb-3">
+                 <h3 className="text-xl font-bold text-slate-900 dark:text-white">我的练习</h3>
+                 <button 
+                    onClick={handleStartNewSession}
+                    className="flex items-center gap-1 text-primary font-medium text-sm">
+                    <span className="material-symbols-outlined text-lg">add_circle</span>
+                    新建
+                 </button>
+             </div>
+             
+             {activeSessions.length > 0 ? (
+                 <div className="grid gap-3">
+                     {activeSessions.map((sessionId, index) => (
+                         <div 
+                             key={sessionId} 
+                             onClick={() => handleResumeSession(sessionId)}
+                             className="flex items-center gap-4 bg-white dark:bg-slate-800 p-4 rounded-xl shadow-sm border border-slate-100 dark:border-slate-700 cursor-pointer hover:border-primary transition-colors">
+                             <div className="w-10 h-10 rounded-full bg-blue-100 text-blue-600 flex items-center justify-center shrink-0">
+                                 <span className="material-symbols-outlined">forum</span>
+                             </div>
+                             <div className="flex-1 min-w-0">
+                                 <p className="font-medium truncate text-slate-900 dark:text-white">
+                                     会话 #{index + 1}
+                                 </p>
+                                 <p className="text-xs text-slate-500 truncate font-mono mt-0.5">
+                                     ID: {sessionId.slice(0, 8)}...
+                                 </p>
+                             </div>
+                             <span className="material-symbols-outlined text-slate-400">arrow_forward_ios</span>
+                         </div>
+                     ))}
+                 </div>
+             ) : (
+                 <div className="text-center py-6 bg-slate-50 dark:bg-slate-800/50 rounded-xl border border-dashed border-slate-300 dark:border-slate-700">
+                     <p className="text-slate-500 text-sm">暂无活跃会话</p>
+                     <button 
+                        onClick={handleStartNewSession}
+                        className="mt-2 text-primary text-sm font-medium">
+                        开始第一次练习
+                     </button>
+                 </div>
+             )}
         </div>
 
         {/* Search Bar */}

@@ -20,6 +20,9 @@ import httpx
 import dashscope
 import websocket
 from dashscope.audio.qwen_omni import OmniRealtimeConversation, OmniRealtimeCallback, MultiModality
+from dashscope.audio.tts import SpeechSynthesizer
+from fastapi.responses import Response
+
 try:
     from app.prompt_manager import prompt_manager
 except ImportError:
@@ -39,6 +42,10 @@ logger = logging.getLogger(__name__)
 
 # Configure DashScope API Key
 dashscope.api_key = os.getenv("QWEN3_OMNI_API_KEY")
+
+class TTSRequest(BaseModel):
+    text: str
+    voice: str = os.getenv("QWEN3_OMNI_VOICE", "Cherry")
 
 # --- Helper Functions ---
 async def fetch_user_context(user_id: str, token: str):
@@ -112,6 +119,22 @@ async def save_conversation_history(session_id: str, user_id: str, messages: lis
         except Exception as e:
             logger.error(f"Error saving history: {e}")
 
+async def fetch_conversation_history(session_id: str):
+    url = f"http://history-analytics-service:3004/api/history/session/{session_id}"
+    async with httpx.AsyncClient() as client:
+        try:
+            resp = await client.get(url)
+            if resp.status_code == 200:
+                data = resp.json().get('data', {})
+                # Extract messages list from the conversation object
+                return data.get('messages', [])
+            else:
+                logger.warning(f"Failed to fetch history: {resp.status_code}")
+                return []
+        except Exception as e:
+            logger.error(f"Error fetching history: {e}")
+            return []
+
 # --- Health Check Server (Port 8081) ---
 class HealthCheckHandler(BaseHTTPRequestHandler):
     def do_GET(self):
@@ -150,7 +173,7 @@ app.add_middleware(
 # --- DashScope Integration ---
 
 class WebSocketCallback(OmniRealtimeCallback):
-    def __init__(self, websocket: WebSocket, loop: asyncio.AbstractEventLoop, user_context: dict, token: str, user_id: str, session_id: str):
+    def __init__(self, websocket: WebSocket, loop: asyncio.AbstractEventLoop, user_context: dict, token: str, user_id: str, session_id: str, history_messages: list = []):
         self.websocket = websocket
         self.loop = loop
         self.user_context = user_context
@@ -165,12 +188,12 @@ class WebSocketCallback(OmniRealtimeCallback):
         self.interrupted_turn = False # Flag to ignore interrupted responses
         self.current_response_id = None
         self.ignored_response_ids = set()
-        self.messages = []
+        self.messages = history_messages # Initialize with restored history
         self.user_audio_buffer = bytearray()
         self.ai_audio_buffer = bytearray()
         self.last_user_audio_url = None
         self.last_ai_audio_url = None
-        logger.info(f"Assigned Role: {self.role}")
+        logger.info(f"Assigned Role: {self.role}, Loaded History: {len(self.messages)} msgs")
 
     def _determine_role(self, context):
         # Handle 401 errors or empty context by defaulting to InfoCollector
@@ -218,6 +241,22 @@ class WebSocketCallback(OmniRealtimeCallback):
                 full_ctx.update(self.user_context['active_goal'])
 
             system_prompt = prompt_manager.generate_system_prompt(full_ctx, role=self.role)
+            
+            # --- Context Restoration: Append History ---
+            # If we have history, append it to the system prompt to simulate multi-turn memory
+            # for the new DashScope session.
+            if self.messages:
+                history_text = "\n\n# Previous Conversation Context:\n"
+                # Take last 10 messages to fit context window
+                recent_msgs = self.messages[-10:] 
+                for msg in recent_msgs:
+                    role_label = "User" if msg['role'] == 'user' else "AI"
+                    content = msg.get('content', '')
+                    history_text += f"{role_label}: {content}\n"
+                
+                system_prompt += history_text
+                logger.info(f"Restored {len(recent_msgs)} messages to system prompt context.")
+
             logger.info(f"Sending System Prompt ({self.role}): {system_prompt[:100]}...")
 
             self.conversation.update_session(
@@ -348,6 +387,16 @@ class WebSocketCallback(OmniRealtimeCallback):
                             if url:
                                 logger.info(f"AI Audio Uploaded: {url}")
                                 self.last_ai_audio_url = url
+                                
+                                # Notify Client
+                                await self.websocket.send_json({
+                                    "type": "audio_url",
+                                    "payload": {
+                                        "url": url,
+                                        "role": "assistant"
+                                    }
+                                })
+
                                 # Update last assistant message
                                 if self.messages and self.messages[-1]['role'] == 'assistant':
                                     self.messages[-1]['audioUrl'] = url
@@ -427,24 +476,34 @@ class WebSocketCallback(OmniRealtimeCallback):
                     text = payload.get('transcript')
                     if text:
                         logger.info(f"User Transcription (Final): {text}")
-                        msg = {
-                            "role": "user",
-                            "content": text,
-                            "timestamp": datetime.utcnow().isoformat()
-                        }
-                        if self.last_user_audio_url:
-                            msg['audioUrl'] = self.last_user_audio_url
-                            self.last_user_audio_url = None # Consume
+                        
+                        # Check if last message is a user placeholder
+                        updated_placeholder = False
+                        if self.messages and self.messages[-1]['role'] == 'user' and self.messages[-1].get('content') == '...':
+                            logger.info("Updating placeholder with transcription")
+                            self.messages[-1]['content'] = text
+                            updated_placeholder = True
+                        
+                        if not updated_placeholder:
+                            msg = {
+                                "role": "user",
+                                "content": text,
+                                "timestamp": datetime.utcnow().isoformat()
+                            }
+                            if self.last_user_audio_url:
+                                msg['audioUrl'] = self.last_user_audio_url
+                                self.last_user_audio_url = None # Consume
                             
-                        self.messages.append(msg)
+                            self.messages.append(msg)
+                        
                         await save_conversation_history(self.session_id, self.user_id, self.messages)
-                        await self.websocket.send_json({ "type": "transcription", "text": text })
+                        await self.websocket.send_json({ "type": "transcription", "text": text, "isFinal": True })
 
                 elif 'input' in event_name and 'transcript' in event_name:
                     text = payload.get('delta') or payload.get('text') or payload.get('transcript')
                     if text:
                         logger.debug(f"User Transcription Delta: {text}")
-                        await self.websocket.send_json({ "type": "transcription", "text": text })
+                        await self.websocket.send_json({ "type": "transcription", "text": text, "isFinal": False })
 
             except Exception as e:
                 logger.error(f"Error processing event {event_name}: {e}")
@@ -502,6 +561,10 @@ async def websocket_endpoint(client_ws: WebSocket):
                 user_context = {}
             user_context['active_goal'] = active_goal
 
+            # 2. Fetch Conversation History
+            history_messages = await fetch_conversation_history(session_id)
+            logger.info(f"Fetched {len(history_messages)} messages from history service")
+
         else:
             logger.warning("Expected session_start message first")
             pass
@@ -513,7 +576,7 @@ async def websocket_endpoint(client_ws: WebSocket):
 
     def connect_dashscope():
         nonlocal conversation, callback
-        callback = WebSocketCallback(client_ws, loop, user_context, token, user_id, session_id)
+        callback = WebSocketCallback(client_ws, loop, user_context, token, user_id, session_id, history_messages)
         conversation = OmniRealtimeConversation(
             model=os.getenv("QWEN3_OMNI_MODEL", "qwen3-omni-flash-realtime"),
             callback=callback,
@@ -523,11 +586,40 @@ async def websocket_endpoint(client_ws: WebSocket):
         return conversation
 
     async def heartbeat():
+        # 10ms of 16kHz mono 16-bit PCM silence
+        silence_frame = b'\x00' * 320 
+        
         while True:
             try:
-                await asyncio.sleep(20)
-                await client_ws.send_json({"type": "ping", "payload": {"timestamp": int(time.time())}})
-            except:
+                await asyncio.sleep(15)
+                # Keep Client WebSocket alive
+                try:
+                    await client_ws.send_json({"type": "ping", "payload": {"timestamp": int(time.time())}})
+                except:
+                    break
+                
+                # Keep DashScope WebSocket alive
+                if conversation and callback and callback.is_connected:
+                    try:
+                        # Sending silence to keep session active
+                        # Note: DashScope might interpret this as input, but silence is usually ignored or treated as pause.
+                        # We use a very short duration to minimize impact.
+                        # Using raw bytes directly if append_audio supports it (it expects base64 string usually in this wrapper?)
+                        # Checking SDK: conversation.append_audio(data) -> sends input_audio_buffer.append
+                        # data can be bytes or base64? 
+                        # In `websocket_endpoint`: conversation.append_audio(audio_b64)
+                        # So it expects base64 string.
+                        
+                        silence_b64 = base64.b64encode(silence_frame).decode('utf-8')
+                        conversation.append_audio(silence_b64)
+                        # logger.debug("Sent heartbeat silence to DashScope")
+                    except Exception as ds_e:
+                        logger.warning(f"Failed to send heartbeat to DashScope: {ds_e}")
+
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                logger.error(f"Heartbeat loop error: {e}")
                 break
 
     try:
@@ -599,17 +691,38 @@ async def websocket_endpoint(client_ws: WebSocket):
                                 url = await callback.upload_audio_to_cos(data, 'user_audio')
                                 if url:
                                     logger.info(f"User Audio Uploaded: {url}")
-                                    # Find the last user message and update it
-                                    # Note: Race condition with transcription event. 
-                                    # Transcription usually arrives later or around same time.
-                                    # We'll try to update the LAST user message if it matches?
-                                    # Or just store it in callback to be attached to the NEXT transcription event?
-                                    # Transcription event comes from DashScope. 
+                                    
+                                    # Notify Client
+                                    await client_ws.send_json({
+                                        "type": "audio_url",
+                                        "payload": {
+                                            "url": url,
+                                            "role": "user"
+                                        }
+                                    })
+
                                     callback.last_user_audio_url = url
-                                    # If message already exists (rare but possible), update it
-                                    if callback.messages and callback.messages[-1]['role'] == 'user':
-                                        callback.messages[-1]['audioUrl'] = url
-                                        await save_conversation_history(session_id, user_id, callback.messages)
+                                    
+                                    # Update logic: Only attach to the VERY LAST message if it is a USER PLACEHOLDER.
+                                    # Otherwise, create a new message. This prevents overwriting history.
+                                    updated = False
+                                    if callback.messages and callback.messages[-1]['role'] == 'user' and callback.messages[-1].get('content') == '...':
+                                         callback.messages[-1]['audioUrl'] = url
+                                         updated = True
+                                         logger.info("Attached audio to existing placeholder.")
+                                    
+                                    if not updated:
+                                        # No suitable placeholder found (or last message was AI/History). Create new.
+                                        logger.info("Creating new user message for audio.")
+                                        msg = {
+                                            "role": "user",
+                                            "content": "...", # Placeholder
+                                            "audioUrl": url,
+                                            "timestamp": datetime.utcnow().isoformat()
+                                        }
+                                        callback.messages.append(msg)
+                                    
+                                    await save_conversation_history(session_id, user_id, callback.messages)
 
                             asyncio.create_task(upload_task(audio_data))
 
@@ -677,6 +790,38 @@ async def websocket_endpoint(client_ws: WebSocket):
         if conversation:
             conversation.close()
         logger.info(f"WebSocket connection cleaned up for user {user_id}")
+
+# --- TTS Endpoint ---
+@app.post("/tts")
+async def text_to_speech(request: TTSRequest):
+    try:
+        if not request.text:
+            raise HTTPException(status_code=400, detail="Text is required")
+
+        # Use the voice mapping if necessary, or pass directly if model supports it
+        # For standard DashScope TTS, we might need a specific model ID.
+        # However, for Omni compatibility, we'll try to use the requested voice.
+        # Note: 'Cherry' and 'Ryan' are omni-specific voice names. 
+        # For standard Sambert TTS, we'll use high-quality fallbacks.
+        tts_model = request.voice
+        if tts_model.lower() == "cherry":
+            tts_model = "sambert-zhimiao-emo-v1" # Female fallback
+        elif tts_model.lower() == "ryan":
+            tts_model = "sambert-zhishuo-v1"   # Male fallback
+
+        result = SpeechSynthesizer.call(model=tts_model,
+                                      text=request.text,
+                                      sample_rate=24000,
+                                      format='mp3')
+
+        if result.get_audio_data() is not None:
+            return Response(content=result.get_audio_data(), media_type="audio/mpeg")
+        else:
+             logger.error(f"TTS Error: {result}")
+             raise HTTPException(status_code=500, detail="TTS generation failed")
+    except Exception as e:
+        logger.error(f"TTS Exception: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 if __name__ == "__main__":
     port = int(os.getenv("AI_SERVICE_PORT", 8082))

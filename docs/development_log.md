@@ -385,7 +385,7 @@
     - 更新了 `History.js`，支持显示会话总结和奖励。
     - 更新了 `client/src/App.js`，添加了 `Onboarding` 和 `GoalSetting` 页面的路由。
 - **后端AI服务 (`ai-omni-service`) 优化**：
-    - 修复了 `ai-omni-service` 的Docker构建问题，通过在宿主机下载 `manylinux2014_aarch64` wheels 并拷贝到容器内进行安装，解决了网络连接和架构不匹配的问题。
+    - 修复了 `ai-omni-service` 的Docker构建问题，通过在宿主机下载 `manylinux2014_aarch64` wheels 并拷贝到容器内进行安装，解决了网络连接 and 架构不匹配的问题。
     - 改进了 `prompt_manager.py` 中 `InfoCollector` 的提示词，使其能够更智能地从用户输入中提取信息。
     - 更新了 `ai-omni-service/app/main.py`，实现了对LLM输出中JSON动作块的解析，并能调用相应的后端服务（如 `update_profile`, `save_summary`）。
     - 在WebSocket响应中包含了当前AI角色的信息，以便客户端显示。
@@ -535,3 +535,46 @@ Refined AI Role logic (`OralTutor`, `SummaryExpert`) and fixed stability issues 
     - Fixed "deaf AI" after interruption by ensuring `isInterrupted` flag is reset in `handleRecordingStop`.
     - Confirmed backend `Conversation has none active response` error is benign race condition.
 - **Verification**: `tests/frontend_flow_verification.md` all cases passed.
+
+## 2026-01-12 (Monday)
+*   **AI Prompt Engineering & Interaction Optimization**:
+    *   **Proactive Analysis (OralTutor)**: Updated the `OralTutor` prompt to shift from "passive correction" to "proactive analysis". The AI now provides 1-2 sentences of targeted feedback on user expression, vocabulary, or pronunciation in *every* exchange.
+    *   **Strict Confirmation Loop (Info/Goal)**: Enhanced `InfoCollector` and `GoalPlanner` templates to enforce a "Summary & Confirmation" rule. The AI must now summarize all collected data and receive explicit user confirmation before outputting JSON action blocks, ensuring database data integrity.
+*   **Commercialization & Global Operations Guide**:
+    *   Created `docs/Commercialization_Guide.md`, providing a complete roadmap for offshore company setup (Doola, Firstbase), Stripe integration (supporting Global Cards + Alipay/WeChat), and App Store compliance.
+*   **Test Suite & Scenario Verification**:
+    *   Refactored `test_client_scenario.py` to support flexible profile initialization. Made `target_language` and `interests` optional to allow for "cold start" testing of the `InfoCollector` and `GoalPlanner`.
+    *   Verified the `goal` scenario to ensure the AI correctly elicit goals and interests from a fresh user profile.
+*   **Next Steps**: Complete the E2E verification of `summary` and `xintong_service` scenarios; initiate performance profiling for audio stream latency.
+
+### 2026-01-13
+- **Backend**: 为所有核心微服务（user-service, comms-service, history-analytics-service, media-processing-service）添加了 `/health` 健康检查端点。
+- **Backend**: 在 `ai-omni-service` 中实现了 `/tts` 接口，支持指定文本的语音合成。
+- **Frontend**: 在 `Conversation.js` 中实现了文本划选播放功能。用户划选 AI 回复文本后，会出现悬浮小喇叭图标，点击即可重听选中的片段音频。
+- **Stability**: 修复了 `test_client_scenario.py` 的心跳超时问题，增强了 WebSocket 连接的稳定性。
+- **Frontend**: 增强了音频播放功能，除划选文本合成语音（TTS）外，现支持在 AI 消息气泡中点击“重听完整音频”按钮，播放由后端上传至对象存储的完整 MP3 文件。
+- **Backend**: `ai-omni-service` 新增 `audio_url` WebSocket 事件，在音频上传完成后实时推送 URL 给前端。
+- **Stability**: 在 `ai-omni-service` 中增加了针对 DashScope 的心跳机制（每15秒发送静音帧），解决了因会话闲置 20s 导致连接断开和上下文丢失的问题。
+- **Frontend**: 优化了打断逻辑，当用户开始说话时，强制结束当前 AI 消息气泡（标记为 interrupted），确保后续的新回复会显示在独立的新气泡中，避免了打断前后内容混杂的问题。
+- **Frontend**: 修复了用户语音转录（Transcription）未显示的问题。优化了 WebSocket `transcription` 事件处理逻辑，支持流式增量显示和最终结果修正。
+- **Backend**: 增强了上下文恢复能力，在 DashScope 会话重连时，自动将最近 10 条对话历史注入 System Prompt，确保多轮对话上下文不丢失，解决因连接超时导致的“失忆”问题。
+- **Frontend**: 增强了 WebSocket 消息处理的鲁棒性，当后端通过二进制通道发送 JSON 数据（如转录文本）时，前端会自动识别并解析，修复了用户输入气泡丢失的问题。
+- **Frontend**: 完善了音频打断机制，确保在用户开始说话时，不仅停止实时 TTS 流，也同步停止完整音频回放，避免声音重叠。
+
+## 2026-01-15
+### 今日进展
+- **[前端] 对话稳定性优化**: 修复了消息气泡被覆盖的问题，通过引入唯一的 Turn ID 确保每一轮录音对应独立的消息块。
+- **[前端] 会话恢复与持久化**: 实现了基于 URL 参数的会话恢复逻辑。刷新页面或通过链接访问时，可自动从 MongoDB 加载历史记录。
+- **[后端] AI 服务上下文恢复**: 增强了 `ai-omni-service`，在 WebSocket 重连时主动从 `history-analytics-service` 拉取历史消息，确保 LLM 具备完整的上下文记忆。
+- **[后端] 录音关联与数据完整性**: 
+    - 解决了刷新后用户音频条丢失的问题：实现了占位符机制，并放宽了历史服务的消息过滤条件（允许存仅含音频的消息）。
+    - 优化了 ASR 转录与音频上传的竞态处理，采用倒序查找和占位符更新策略。
+- **[后端] 多会话管理**: 
+    - 升级了 `conversation-service`，支持按练习目标管理会话。
+    - 引入 Redis List 实现 FIFO 会话列表，每个目标最多保留 3 个活跃会话。
+- **[前端] 发现页功能升级**: 
+    - 重新设计了 `Discovery.js`，展示当前练习目标及活跃会话列表。
+    - 实现了“新建会话”与“恢复历史会话”的无缝切换。
+- **[基础设施] 路由修复**: 完善了 Nginx 配置，修复了 `/api/conversation/` 路径的 502 错误。
+- **[UI/UX] 细节优化**: 移除了前端不必要的加载动画，采用占位符静默更新策略，提升了对话流畅度。
+

@@ -29,52 +29,87 @@ app.get('/', (req, res) => {
 
 // Endpoint to start a new conversation session
 app.post('/start', async (req, res) => {
-  const { userId } = req.body;
+  const { userId, goalId, forceNew } = req.body;
 
   if (!userId) {
     return res.status(400).json({ message: 'userId is required.' });
   }
 
-  const userSessionKey = `user_session:${userId}`;
-  const SESSION_EXPIRATION_SECONDS = 86040; // 23.9 hours
+  // Use goalId to separate sessions, default to 'general' if not provided
+  const effectiveGoalId = goalId || 'general';
+  const sessionListKey = `user:${userId}:goal:${effectiveGoalId}:sessions`;
+  const legacyUserSessionKey = `user_session:${userId}`; // Keep for backward compat
+  
+  const SESSION_EXPIRATION_SECONDS = 86400 * 7; // 7 days retention for the list
 
   try {
-    // 1. Try to get the existing session from Redis
-    let sessionId = await redis.get(userSessionKey);
+    let sessionId;
 
-    if (sessionId) {
-      // 2. If session exists, refresh its expiration and return it
-      console.log(`Found existing session for user ${userId}: ${sessionId}`);
-      await redis.expire(userSessionKey, SESSION_EXPIRATION_SECONDS);
-      res.status(200).json({ 
-        success: true,
-        message: 'Existing session retrieved.',
-        data: {
-            sessionId: sessionId
-        }
-      });
-    } else {
-      // 3. If no session, create a new one
-      sessionId = uuidv4();
-      console.log(`Creating new session for user ${userId}: ${sessionId}`);
-      
-      // Store the new session ID in Redis with the specified expiration
-      await redis.set(userSessionKey, sessionId, 'EX', SESSION_EXPIRATION_SECONDS);
-      
-      res.status(201).json({ 
-        success: true,
-        message: 'New conversation session started.',
-        data: {
-            sessionId: sessionId
-        }
-      });
+    // 1. If NOT forcing new, try to get the most recent session
+    if (!forceNew) {
+      const sessions = await redis.lrange(sessionListKey, 0, 0);
+      if (sessions && sessions.length > 0) {
+        sessionId = sessions[0];
+        console.log(`Found active session for user ${userId}, goal ${effectiveGoalId}: ${sessionId}`);
+        
+        // Refresh expiration of the list
+        await redis.expire(sessionListKey, SESSION_EXPIRATION_SECONDS);
+        
+        return res.status(200).json({ 
+          success: true,
+          message: 'Existing session retrieved.',
+          data: { sessionId }
+        });
+      }
     }
+
+    // 2. Create new session
+    sessionId = uuidv4();
+    console.log(`Creating new session for user ${userId}, goal ${effectiveGoalId}: ${sessionId}`);
+
+    // 3. Push to Redis List and Trim to Max 3
+    await redis.lpush(sessionListKey, sessionId);
+    await redis.ltrim(sessionListKey, 0, 2); // Keep only top 3
+    await redis.expire(sessionListKey, SESSION_EXPIRATION_SECONDS);
+
+    // Update legacy key for backward compatibility
+    await redis.set(legacyUserSessionKey, sessionId, 'EX', 86400);
+
+    res.status(201).json({ 
+      success: true,
+      message: 'New conversation session started.',
+      data: { sessionId }
+    });
+
   } catch (error) {
-    console.error(`Failed to get/create session for user ${userId}:`, error);
+    console.error(`Failed to manage session for user ${userId}:`, error);
     res.status(500).json({ 
         success: false,
         message: 'Internal server error while managing session.' 
     });
+  }
+});
+
+// Endpoint to get active sessions for a goal
+app.get('/sessions', async (req, res) => {
+  const { userId, goalId } = req.query;
+  
+  if (!userId) {
+    return res.status(400).json({ message: 'userId is required.' });
+  }
+
+  const effectiveGoalId = goalId || 'general';
+  const sessionListKey = `user:${userId}:goal:${effectiveGoalId}:sessions`;
+
+  try {
+    const sessions = await redis.lrange(sessionListKey, 0, -1);
+    res.status(200).json({ 
+      success: true, 
+      data: { sessions } 
+    });
+  } catch (error) {
+    console.error(`Failed to retrieve sessions:`, error);
+    res.status(500).json({ message: 'Internal server error.' });
   }
 });
 

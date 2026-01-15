@@ -6,6 +6,7 @@ const fs = require('fs');
 const path = require('path');
 const axios = require('axios');
 const FormData = require('form-data');
+const http = require('http');
 
 // --- Redis Client Setup ---
 const redisClient = createClient({
@@ -15,7 +16,19 @@ const redisClient = createClient({
 redisClient.on('error', (err) => console.log('Redis Client Error', err));
 redisClient.connect();
 
-const wss = new WebSocketServer({ port: 8080 });
+// Create HTTP server for health checks and WS
+const server = http.createServer((req, res) => {
+  const parsedUrl = url.parse(req.url, true);
+  if (parsedUrl.pathname === '/health' || parsedUrl.pathname === '/api/health') {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ status: 'OK', service: 'comms-service', timestamp: new Date().toISOString() }));
+  } else {
+    res.writeHead(404);
+    res.end();
+  }
+});
+
+const wss = new WebSocketServer({ server });
 
 const JWT_SECRET = process.env.JWT_SECRET;
 if (!JWT_SECRET) {
@@ -29,6 +42,7 @@ const MEDIA_SERVICE_URL = 'http://media-processing-service:3005/api/media/upload
 console.log('WebSocket server is running on port 8080');
 
 wss.on('connection', async function connection(clientWs, req) {
+// ... existing connection logic ...
   const connectionTime = new Date().toISOString();
   console.log(`[CONN] New attempt at ${connectionTime} from ${req.socket.remoteAddress}`);
 
@@ -308,4 +322,8 @@ wss.on('connection', async function connection(clientWs, req) {
     console.error('An unexpected error occurred during connection setup:', error);
     clientWs.close(1011, 'Internal server error');
   }
+});
+
+server.listen(8080, () => {
+    console.log('HTTP and WebSocket server listening on port 8080');
 });
