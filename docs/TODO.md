@@ -2,20 +2,16 @@
 
 ## In Progress
 
+- [ ] [Optimization] 端端音频流延迟的性能测试和优化
+- [ ] [Optimization] 实现音频流缓冲和网络自适应机制
+
 ## To Do
 
-- [ ] [Monitoring] 实现用户行为分析和性能指标收集
 - [ ] [Security] 增强 API 安全性和用户数据保护
-- [ ] [Docs] 更新 user_service/docs/schema.md 文档以对齐数据库表结构
 - [ ] [Docs] 编写 API 文档和使用指南
 - [ ] [Deployment] 完善 Docker Compose 部署配置
 - [ ] [Deployment] 实现 CI/CD 流水线自动化
 - [ ] [Testing] 编写完整的集成测试套件
-- [ ] [Frontend] 完善 Discovery 页面交互：修复无效的跳转入口（点击无反应）
-- [ ] [Frontend] Profile 页面数据对接：将静态展示替换为真实用户的动态个人资料
-- [ ] [Frontend] Onboarding 升级：扩充母语/学习语言选项至 10 种（中/英/法/德/俄/意/西/葡/日/韩）
-- [ ] [Optimization] 端端音频流延迟的性能测试和优化
-- [ ] [Optimization] 实现音频流缓冲和网络自适应机制
 
 ## Backlog
 
@@ -24,6 +20,11 @@
 
 ## Done
 
+- [x] [Monitoring] 实现用户行为分析和性能指标收集 (Added Nginx logging and stats API)
+- [x] [Frontend] Profile 页面数据对接：将静态展示替换为真实用户的动态个人资料 (Integrated with history-analytics-service)
+- [x] [Docs] 更新 user_service/docs/schema.md 文档以对齐数据库表结构
+- [x] [Feature] 引入口语水平评测体系 (Implemented Proficiency Update role in PromptManager and history tracking)
+- [x] [Feature] 语法库智能体 (Implemented Grammar Guide role and Frontend integration)
 - [x] [Monitoring] 添加服务健康监控和告警 (已为所有核心服务添加 /health 端点)
 - [x] [Frontend] 增加 AI 文本回复的播放组件：支持划选文本重听（TTS）及完整回复重听（MP3 URL）
 - [x] [Frontend] 修复用户语音转录（Transcription）未显示问题（增加 Blob-to-JSON 回退机制）

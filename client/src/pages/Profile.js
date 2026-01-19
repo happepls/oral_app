@@ -1,15 +1,18 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import BottomNav from '../components/BottomNav';
+import { useAuth } from '../contexts/AuthContext';
+import { historyAPI } from '../services/api';
 
 function Profile() {
   const navigate = useNavigate();
-
-  const stats = [
-    { label: '学习词汇', value: '850' },
-    { label: '连续天数', value: '24 天' },
-    { label: '练习时长', value: '102 小时' }
-  ];
+  const { user, logout } = useAuth();
+  const [stats, setStats] = useState({
+    vocab: '0',
+    days: '0',
+    hours: '0'
+  });
+  const [loading, setLoading] = useState(true);
 
   const achievements = [
     { name: '词汇大师', icon: '🏆', unlocked: true },
@@ -37,6 +40,46 @@ function Profile() {
     { icon: 'palette', label: '主题', value: '深色' }
   ];
 
+  useEffect(() => {
+    const fetchStats = async () => {
+      if (user?.id) {
+        try {
+          const data = await historyAPI.getStats(user.id);
+          // Assuming the API returns { totalSessions, totalDurationMinutes, averageScore, learningDays }
+          // Mapping to the UI's stats. Vocabulary is mocked or estimated for now since we don't track words yet.
+          setStats({
+            vocab: (data.totalSessions * 50).toString(), // Estimate: 50 words per session
+            days: `${data.learningDays || 0} 天`,
+            hours: `${Math.round((data.totalDurationMinutes || 0) / 60)} 小时`
+          });
+        } catch (error) {
+          console.error('Failed to fetch stats:', error);
+        } finally {
+          setLoading(false);
+        }
+      } else {
+        setLoading(false);
+      }
+    };
+
+    fetchStats();
+  }, [user]);
+
+  const handleLogout = () => {
+    logout();
+    navigate('/login');
+  };
+
+  if (loading) {
+    return <div className="flex h-screen items-center justify-center bg-background-light dark:bg-background-dark text-slate-900 dark:text-white">加载中...</div>;
+  }
+
+  const statItems = [
+    { label: '估计词汇', value: stats.vocab },
+    { label: '学习天数', value: stats.days },
+    { label: '练习时长', value: stats.hours }
+  ];
+
   return (
     <div className="relative flex flex-col min-h-screen w-full bg-background-light dark:bg-background-dark">
       {/* Top App Bar */}
@@ -56,17 +99,26 @@ function Profile() {
         {/* Profile Header */}
         <div className="flex p-4 pt-8">
           <div className="flex w-full flex-col gap-4 items-center">
-            <div className="w-32 h-32 rounded-full bg-gradient-to-br from-blue-400 to-purple-500 border-4 border-primary"></div>
+            {user?.avatar_url ? (
+                <img src={user.avatar_url} alt="Avatar" className="w-32 h-32 rounded-full border-4 border-primary object-cover" />
+            ) : (
+                <div className="w-32 h-32 rounded-full bg-gradient-to-br from-blue-400 to-purple-500 border-4 border-primary flex items-center justify-center text-4xl text-white font-bold">
+                    {user?.username?.[0]?.toUpperCase() || 'User'}
+                </div>
+            )}
             <div className="flex flex-col items-center">
-              <p className="text-2xl font-bold text-slate-900 dark:text-white">张三</p>
-              <p className="text-base text-slate-600 dark:text-slate-400">学习英语 - B1 水平</p>
+              <p className="text-2xl font-bold text-slate-900 dark:text-white">{user?.username || '用户'}</p>
+              <p className="text-base text-slate-600 dark:text-slate-400">
+                {user?.target_language ? `学习 ${user.target_language}` : '开始你的语言之旅'} 
+                {user?.target_level ? ` - ${user.target_level}` : ''}
+              </p>
             </div>
           </div>
         </div>
 
         {/* Stats Overview */}
         <div className="flex flex-wrap gap-4 p-4">
-          {stats.map((stat, index) => (
+          {statItems.map((stat, index) => (
             <div key={index} className="flex min-w-[150px] flex-1 flex-col gap-2 rounded-xl p-4 bg-white dark:bg-slate-800 shadow-sm">
               <p className="text-sm font-medium text-slate-600 dark:text-slate-400">{stat.label}</p>
               <p className="text-2xl font-bold text-slate-900 dark:text-white">{stat.value}</p>
@@ -79,10 +131,10 @@ function Profile() {
           <div className="flex w-full flex-1 flex-col gap-4 rounded-xl bg-white dark:bg-slate-800 p-6 shadow-sm">
             <p className="text-lg font-bold text-slate-900 dark:text-white">每周进度</p>
             <div className="flex items-baseline gap-2">
-              <p className="text-3xl font-bold text-slate-900 dark:text-white">4小时30分</p>
-              <p className="text-base font-medium text-green-500">+15%</p>
+              <p className="text-3xl font-bold text-slate-900 dark:text-white">{stats.hours}</p>
+              {/* <p className="text-base font-medium text-green-500">+15%</p> */}
             </div>
-            <p className="text-base text-slate-600 dark:text-slate-400 -mt-2">本周</p>
+            <p className="text-base text-slate-600 dark:text-slate-400 -mt-2">总练习时长</p>
             
             <div className="grid grid-flow-col gap-4 h-[180px] items-end pt-4">
               {weeklyData.map((item, index) => (
@@ -143,7 +195,7 @@ function Profile() {
         {/* Logout Button */}
         <div className="p-4 pt-8 pb-8">
           <button 
-            onClick={() => navigate('/')}
+            onClick={handleLogout}
             className="w-full flex items-center justify-center gap-2 rounded-xl bg-white dark:bg-slate-800 p-4 font-bold text-red-500 shadow-sm hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors">
             <span className="material-symbols-outlined">logout</span>
             退出登录

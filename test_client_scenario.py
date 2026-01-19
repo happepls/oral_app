@@ -182,9 +182,10 @@ class AudioHandler:
         self.p.terminate()
 
 class InteractiveClient:
-    def __init__(self, token, scenario):
+    def __init__(self, token, scenario, user_id):
         self.token = token
         self.scenario = scenario
+        self.user_id = user_id
         self.ws = None
         self.audio_handler = None
         self.role = None
@@ -269,6 +270,18 @@ class InteractiveClient:
 
     def on_open(self, ws):
         print("WebSocket Connection Opened.")
+        
+        # Send Handshake
+        handshake = {
+            "type": "session_start",
+            "token": self.token,
+            "userId": self.user_id,
+            "sessionId": self.session_id,
+            "scenario": self.scenario
+        }
+        ws.send(json.dumps(handshake))
+        print(f"{Color.GREEN}>>> Sent Handshake: {handshake}{Color.ENDC}")
+
         if AUDIO_AVAILABLE:
             self.audio_handler = AudioHandler(ws)
             self.audio_handler.start_input_stream()
@@ -316,9 +329,50 @@ class InteractiveClient:
                     # Send commit signal
                     self.ws.send(json.dumps({"type": "user_audio_ended"}))
 
+    def auto_run(self):
+        """Automated test sequence to trigger summary and proficiency update."""
+        print(f"\n{Color.HEADER}>>> Starting AUTOMATED Test Sequence for {self.scenario} <<<{Color.ENDC}")
+        
+        # Use persisted session_id
+        url = f"{WS_URL}?token={self.token}&sessionId={self.session_id}&scenario={self.scenario}"
+        
+        self.ws = websocket.WebSocketApp(url,
+                                       header=[f"Authorization: Bearer {self.token}"],
+                                       on_open=self.on_open,
+                                       on_message=self.on_message,
+                                       on_error=self.on_error,
+                                       on_close=self.on_close)
+        
+        ws_thread = threading.Thread(target=self.ws.run_forever)
+        ws_thread.daemon = True
+        ws_thread.start()
+
+        # Wait for connection
+        print("Waiting for connection...")
+        time.sleep(3)
+        
+        # Sequence
+        msgs = [
+            "Hello, I am ready to practice.",
+            "I want to learn about past tense verbs.",
+            "I walked to the store yesterday.",
+            "Thank you, that is helpful. I need to go now. Please summarize my performance."
+        ]
+        
+        for msg in msgs:
+            if not self.running: break
+            print(f"\n{Color.GREEN}>>> [Auto] Sending: {msg}{Color.ENDC}")
+            self.ws.send(json.dumps({"type": "text_message", "payload": {"text": msg}}))
+            # Wait for response (simulated)
+            time.sleep(15) 
+            
+        print(f"\n{Color.HEADER}>>> Auto Sequence Complete. Waiting for final events... <<<{Color.ENDC}")
+        time.sleep(5)
+        self.ws.close()
+
     def run(self):
         # Use persisted session_id
-        url = f"{WS_URL}?token={self.token}&sessionId={self.session_id}"
+        url = f"{WS_URL}?token={self.token}&sessionId={self.session_id}&scenario={self.scenario}"
         
         self.ws = websocket.WebSocketApp(url,
                                        header=[f"Authorization: Bearer {self.token}"],
@@ -345,7 +399,8 @@ class InteractiveClient:
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("scenario", choices=['info', 'goal', 'tutor', 'summary', 'xintong_service'], default='tutor')
+    parser.add_argument("scenario", choices=['info', 'goal', 'tutor', 'summary', 'xintong_service', 'grammar_guide'], default='tutor')
+    parser.add_argument("--auto", action="store_true", help="Run automated test sequence")
     args = parser.parse_args()
 
     XINTONG_PROMPT = """
@@ -408,7 +463,7 @@ if __name__ == "__main__":
     token, uid = register_and_login()
     
     # Setup context based on scenario
-    if args.scenario in ['tutor', 'summary']:
+    if args.scenario in ['tutor', 'summary', 'grammar_guide']:
         target_lang = "Spanish"
     elif args.scenario == 'xintong_service':
         target_lang = "English"
@@ -429,7 +484,7 @@ if __name__ == "__main__":
     if args.scenario == 'summary':
         print(f"{Color.BLUE}>>> Scenario: Summary/Graduation (Proficiency > 90, Goal Active)...{Color.ENDC}")
 
-    if args.scenario in ['tutor', 'summary']: 
+    if args.scenario in ['tutor', 'summary', 'grammar_guide']: 
         print(f"{Color.BLUE}>>> Setting up Active Goal ({target_lang} Practice)...{Color.ENDC}")
         setup_goal(token, proficiency=prof, target_lang=target_lang)
     
@@ -438,7 +493,11 @@ if __name__ == "__main__":
     print(f"\n{Color.GREEN}[IMPORTANT] Verification Command:{Color.ENDC}")
     print(f'curl -s "http://localhost:3004/api/history/user/{uid}" | grep -o \'"audioUrl":"[^"]*"\'\n')
 
-    client = InteractiveClient(token, args.scenario)
+    client = InteractiveClient(token, args.scenario, uid)
     if args.scenario == 'xintong_service':
         client.custom_prompt = XINTONG_PROMPT
-    client.run()
+    
+    if args.auto:
+        client.auto_run()
+    else:
+        client.run()

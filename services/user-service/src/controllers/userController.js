@@ -286,31 +286,151 @@ exports.getActiveGoal = async (req, res) => {
 };
 
 exports.completeGoal = async (req, res) => {
+
     try {
+
         const userId = req.user.id;
+
         const goalId = req.params.id;
+
         
+
         const completedGoal = await User.completeGoal(goalId, userId);
+
         
+
         if (!completedGoal) {
+
              return res.status(404).json({
+
                 success: false,
+
                 message: '目标未找到或已完成'
+
             });
+
         }
 
+
+
         res.json({
+
             success: true,
+
             message: '目标已完成',
+
             data: {
+
                 goal: completedGoal
+
             }
+
         });
+
     } catch (error) {
+
         console.error('Complete Goal Error:', error);
+
         res.status(500).json({
+
             success: false,
+
             message: '完成目标时服务器错误'
+
         });
+
     }
+
+};
+
+
+
+exports.updateProficiencyInternal = async (req, res) => {
+
+
+
+    try {
+
+
+
+        console.log(`[User] Internal Update Proficiency: ID=${req.params.id}, Body=${JSON.stringify(req.body)}`);
+
+
+
+        const userId = req.params.id;
+
+
+
+        const { delta } = req.body;
+
+
+
+        
+
+
+
+        const updatedGoal = await User.updateProficiency(userId, delta);
+
+
+
+
+
+        
+
+        if (!updatedGoal) {
+
+            return res.status(404).json({ success: false, message: 'No active goal found' });
+
+        }
+
+        
+
+        res.json({ success: true, data: { goal: updatedGoal } });
+
+    } catch (error) {
+
+        console.error('Update Proficiency Error:', error);
+
+        res.status(500).json({ success: false, message: 'Server Error' });
+
+    }
+
+};
+
+
+
+exports.getUserInternal = async (req, res) => {
+
+    try {
+
+        const userId = req.params.id;
+
+        const user = await User.findById(userId);
+
+        if (!user) return res.status(404).json({ success: false });
+
+
+
+        // Attach active goal proficiency for convenience
+
+        const activeGoal = await User.getActiveGoal(userId);
+
+        const userData = { ...user };
+
+        delete userData.password;
+
+        userData.proficiency = activeGoal ? activeGoal.current_proficiency : (user.points || 0);
+
+
+
+        res.json({ success: true, data: userData });
+
+    } catch (error) {
+
+        console.error('Get User Internal Error:', error);
+
+        res.status(500).json({ success: false });
+
+    }
+
 };

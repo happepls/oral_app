@@ -85,6 +85,27 @@ exports.saveSummary = async (req, res) => {
   try {
     const { sessionId, userId, summary, feedback, proficiency_score_delta, goalId } = req.body;
 
+    // Helper for syncing proficiency
+    const syncProficiency = async (uid, delta) => {
+        if (delta && delta !== 0) {
+            try {
+                console.log(`[Summary] Syncing proficiency delta ${delta} for user ${uid}`);
+                const syncRes = await fetch(`http://user-service:3000/internal/users/${uid}/proficiency`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ delta })
+                });
+                if (!syncRes.ok) {
+                    console.error(`[Summary] Sync failed: ${syncRes.status} ${await syncRes.text()}`);
+                } else {
+                    console.log(`[Summary] Sync success: ${await syncRes.text()}`);
+                }
+            } catch (syncError) {
+                console.error('Failed to sync proficiency to user-service:', syncError);
+            }
+        }
+    };
+
     let conversation = await Conversation.findOne({ sessionId });
 
     if (conversation) {
@@ -93,13 +114,22 @@ exports.saveSummary = async (req, res) => {
       
       if (!conversation.metrics) conversation.metrics = {};
       if (feedback) conversation.metrics.feedback = feedback;
-      if (proficiency_score_delta !== undefined) conversation.metrics.proficiencyScoreDelta = proficiency_score_delta;
+      if (proficiency_score_delta !== undefined) {
+          conversation.metrics.proficiencyScoreDelta = proficiency_score_delta;
+          await syncProficiency(userId || conversation.userId, proficiency_score_delta);
+      }
       
       await conversation.save();
     } else {
       if (!userId) {
           return res.status(400).json({ success: false, message: 'UserId required to create conversation summary' });
       }
+      
+      // Sync first
+      if (proficiency_score_delta !== undefined) {
+          await syncProficiency(userId, proficiency_score_delta);
+      }
+
       conversation = new Conversation({
         sessionId,
         userId,
@@ -158,8 +188,27 @@ exports.getStats = async (req, res) => {
         totalSessions,
         totalDurationMinutes: stats.length > 0 ? Math.round((stats[0].totalDurationMs || 0) / 1000 / 60) : 0,
         averageScore: stats.length > 0 ? Math.round(stats[0].avgFluency || 0) : 0,
-        learningDays: distinctDays.length > 0 ? distinctDays[0].count : 0
+        learningDays: distinctDays.length > 0 ? distinctDays[0].count : 0,
+        proficiency: 0 // Default
     };
+
+    // Fetch real-time proficiency from user-service
+    try {
+        const userRes = await fetch(`http://user-service:3000/internal/users/${userId}`);
+        const text = await userRes.text(); // Get raw text first for debugging
+        console.log(`[Stats] User Service Response for ${userId}: ${text}`);
+        
+        if (userRes.ok) {
+            const userData = JSON.parse(text);
+            if (userData.success && userData.data) {
+                data.proficiency = userData.data.proficiency || 0;
+            }
+        } else {
+            console.error(`[Stats] User Service fetch failed: ${userRes.status}`);
+        }
+    } catch (e) {
+        console.error('Failed to fetch user proficiency for stats:', e);
+    }
 
     res.status(200).json({ success: true, data });
   } catch (error) {

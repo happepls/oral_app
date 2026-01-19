@@ -2,27 +2,135 @@ import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import BottomNav from '../components/BottomNav';
 import { useAuth } from '../contexts/AuthContext';
-import { userAPI, conversationAPI } from '../services/api';
+import { userAPI, conversationAPI, historyAPI } from '../services/api';
+
+// --- Level Configuration (MVP: Hardcoded) ---
+const LEVELS = [
+    { 
+        id: 1, 
+        minScore: 0, 
+        title: "Level 1: 基础起步", 
+        desc: "简单句型与日常问候",
+        points: [
+            { title: "Simple Present (一般现在时)", content: "Used for facts, habits, and general truths. e.g., 'I play tennis.'" },
+            { title: "To Be Verbs", content: "Am, Is, Are usage. e.g., 'She is a doctor.'" }
+        ]
+    },
+    { 
+        id: 2, 
+        minScore: 10, 
+        title: "Level 2: 过去与未来", 
+        desc: "描述经历与计划",
+        points: [
+            { title: "Simple Past (一般过去时)", content: "Actions completed in the past. e.g., 'I walked home.'" },
+            { title: "Simple Future (一般将来时)", content: "Will / Going to. e.g., 'I will help you.'" }
+        ]
+    },
+    { 
+        id: 3, 
+        minScore: 20, 
+        title: "Level 3: 持续进行", 
+        desc: "正在发生的动作",
+        points: [
+            { title: "Present Continuous", content: "Action happening now. e.g., 'I am eating.'" },
+            { title: "Past Continuous", content: "Action in progress in the past. e.g., 'I was sleeping.'" }
+        ]
+    },
+    { 
+        id: 4, 
+        minScore: 30, 
+        title: "Level 4: 完成状态", 
+        desc: "经验与结果",
+        points: [
+            { title: "Present Perfect", content: "Past action with present result. e.g., 'I have finished.'" },
+            { title: "For vs Since", content: "Duration vs Start point." }
+        ]
+    },
+    { 
+        id: 5, 
+        minScore: 40, 
+        title: "Level 5: 比较与最高", 
+        desc: "描述差异",
+        points: [
+            { title: "Comparatives", content: "Better, Faster, More interesting." },
+            { title: "Superlatives", content: "Best, Fastest, Most interesting." }
+        ]
+    },
+    { 
+        id: 6, 
+        minScore: 50, 
+        title: "Level 6: 假设与条件", 
+        desc: "如果...会怎样",
+        points: [
+            { title: "First Conditional", content: "Real possibility. 'If it rains, I will stay home.'" },
+            { title: "Second Conditional", content: "Unreal/Hypothetical. 'If I won the lottery...'" }
+        ]
+    },
+    { 
+        id: 7, 
+        minScore: 60, 
+        title: "Level 7: 被动语态", 
+        desc: "强调动作承受者",
+        points: [
+            { title: "Passive Voice", content: "Focus on object. 'The book was written by him.'" },
+            { title: "By + Agent", content: "When to specify the doer." }
+        ]
+    },
+    { 
+        id: 8, 
+        minScore: 70, 
+        title: "Level 8: 复杂从句", 
+        desc: "长难句构建",
+        points: [
+            { title: "Relative Clauses", content: "Who, Which, That. 'The man who called you...'" },
+            { title: "Noun Clauses", content: "Using 'That' or 'Wh-' words as objects." }
+        ]
+    },
+    { 
+        id: 9, 
+        minScore: 80, 
+        title: "Level 9: 虚拟与倒装", 
+        desc: "高级表达技巧",
+        points: [
+            { title: "Subjunctive Mood", content: "Wishes, demands. 'I suggest that he go.'" },
+            { title: "Inversion", content: "Emphasis. 'Never have I seen such a thing.'" }
+        ]
+    },
+    { 
+        id: 10, 
+        minScore: 90, 
+        title: "Level 10: 毕业挑战", 
+        desc: "综合运用与地道表达",
+        points: [
+            { title: "Idioms & Phrasal Verbs", content: "Native-like expressions." },
+            { title: "Nuance & Register", content: "Formal vs Informal tone." }
+        ]
+    }
+];
 
 function Discovery() {
   const navigate = useNavigate();
   const { user } = useAuth();
   const [activeGoal, setActiveGoal] = useState(null);
   const [activeSessions, setActiveSessions] = useState([]);
+  const [stats, setStats] = useState(null);
+  const [userProficiency, setUserProficiency] = useState(0);
   const [loading, setLoading] = useState(true);
+  
+  // Modal State
+  const [showLevelModal, setShowLevelModal] = useState(false);
+  const [selectedLevel, setSelectedLevel] = useState(null);
 
   useEffect(() => {
     const fetchData = async () => {
         if (!user) return;
 
         try {
-            // 1. Check Profile (Native Language as proxy for Onboarding completion)
             if (!user.native_language) {
                 navigate('/onboarding');
                 return;
             }
 
-            // 2. Check Active Goal
             const goalRes = await userAPI.getActiveGoal();
             if (!goalRes || !goalRes.goal) {
                 navigate('/goal-setting');
@@ -30,7 +138,13 @@ function Discovery() {
             }
             setActiveGoal(goalRes.goal);
 
-            // 3. Fetch Active Sessions for this Goal
+            const statsRes = await historyAPI.getStats(user.id);
+            if (statsRes && statsRes.data) {
+                setStats(statsRes.data);
+                // Use proficiency from API (which now syncs with user-service)
+                setUserProficiency(statsRes.data.proficiency || 0);
+            }
+
             const goalId = goalRes.goal.id || goalRes.goal._id;
             const sessionsRes = await conversationAPI.getActiveSessions(user.id, goalId);
             if (sessionsRes && sessionsRes.sessions) {
@@ -39,7 +153,6 @@ function Discovery() {
 
         } catch (e) {
             console.error('Error fetching discovery data:', e);
-            // navigate('/goal-setting');
         } finally {
             setLoading(false);
         }
@@ -49,204 +162,230 @@ function Discovery() {
   }, [user, navigate]);
 
   const handleStartNewSession = () => {
-      // Navigating to /conversation without params triggers new session creation
-      navigate('/conversation');
+      // Find first uncompleted level
+      const nextLevel = LEVELS.find(l => userProficiency < l.minScore + 10) || LEVELS[LEVELS.length - 1];
+      const defaultTopic = nextLevel.points[0].title;
+      navigate(`/conversation?scenario=tutor&topic=${encodeURIComponent(defaultTopic)}`);
   };
 
   const handleResumeSession = (sessionId) => {
       navigate(`/conversation?sessionId=${sessionId}`);
   };
 
-  const handleSwitchGoal = () => {
-      navigate('/goal-setting');
+  const handleLevelClick = (level) => {
+      if (userProficiency >= level.minScore) {
+          // Unlocked
+          setSelectedLevel(level);
+          setShowLevelModal(true);
+      } else {
+          // Locked - Show simple toast or alert
+          alert(`请先将熟练度提升至 ${level.minScore} 分以解锁此关卡！(当前: ${userProficiency})`);
+      }
   };
 
-  const topics = [
-    { name: '旅游观光', level: '中级', gradient: 'from-purple-400 to-orange-400' },
-    { name: '商务英语', level: '高级', gradient: 'from-blue-400 to-green-400' },
-    { name: '日常生活', level: '初级', gradient: 'from-pink-400 to-yellow-400' }
-  ];
-
-  const aiPartners = [
-    { name: 'Tom', role: '科技爱好者', avatar: '👨‍💻' },
-    { name: 'Maria', role: '旅行博主', avatar: '✈️' },
-    { name: 'Leo', role: '音乐评论家', avatar: '🎵' },
-    { name: 'Chloe', role: 'CEO', avatar: '👩‍💼' }
-  ];
-
-  const conversations = [
-    { title: '餐厅点餐', duration: '10 分钟', icon: 'restaurant' },
-    { title: '面试练习', duration: '20 分钟', icon: 'work' }
-  ];
+  const handleStartLevelPractice = () => {
+      if (!selectedLevel) return;
+      // Use first point as topic, or maybe generic level topic
+      const topic = `${selectedLevel.title}: ${selectedLevel.points.map(p => p.title).join(', ')}`;
+      navigate(`/conversation?scenario=tutor&topic=${encodeURIComponent(topic)}`);
+      setShowLevelModal(false);
+  };
 
   if (loading) {
       return <div className="flex items-center justify-center min-h-screen">Loading...</div>;
   }
 
+  // Calculate overall progress based on proficiency (0-100)
+  const progress = Math.min(100, userProficiency);
+
   return (
     <div className="relative flex flex-col min-h-screen w-full bg-background-light dark:bg-background-dark">
+      
+      {/* Level Detail Modal */}
+      {showLevelModal && selectedLevel && (
+          <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/60 backdrop-blur-sm animate-in fade-in duration-200">
+              <div className="bg-white dark:bg-slate-800 w-full sm:w-96 sm:rounded-2xl rounded-t-2xl p-6 shadow-2xl animate-in slide-in-from-bottom duration-300">
+                  <div className="flex justify-between items-start mb-4">
+                      <div>
+                          <h3 className="text-xl font-bold text-slate-900 dark:text-white">{selectedLevel.title}</h3>
+                          <p className="text-sm text-slate-500">{selectedLevel.desc}</p>
+                      </div>
+                      <button 
+                        onClick={() => setShowLevelModal(false)}
+                        className="p-1 rounded-full hover:bg-slate-100 dark:hover:bg-slate-700">
+                        <span className="material-symbols-outlined text-slate-400">close</span>
+                      </button>
+                  </div>
+                  
+                  <div className="space-y-4 mb-6">
+                      <h4 className="text-sm font-bold text-slate-700 dark:text-slate-300 uppercase tracking-wide">语法要点</h4>
+                      {selectedLevel.points.map((p, idx) => (
+                          <div key={idx} className="bg-slate-50 dark:bg-slate-700/50 p-3 rounded-xl border border-slate-100 dark:border-slate-700">
+                              <p className="font-semibold text-primary text-sm mb-1">{p.title}</p>
+                              <p className="text-xs text-slate-600 dark:text-slate-400 leading-relaxed">{p.content}</p>
+                          </div>
+                      ))}
+                  </div>
+
+                  <button 
+                      onClick={handleStartLevelPractice}
+                      className="w-full bg-primary text-white py-3.5 rounded-xl font-bold text-lg shadow-lg shadow-primary/30 hover:bg-primary/90 transition-all active:scale-[0.98]">
+                      开始练习
+                  </button>
+              </div>
+          </div>
+      )}
+
       <main className="flex-grow pb-28">
         {/* Header */}
         <div className="flex flex-col gap-2 p-4 pb-2">
           <div className="flex h-12 items-center justify-between">
             <p className="text-3xl font-bold leading-tight tracking-tight text-slate-900 dark:text-white">发现</p>
-            <button className="flex h-12 w-12 items-center justify-center text-slate-900 dark:text-white">
-              <span className="material-symbols-outlined text-2xl">notifications</span>
-            </button>
+            <div className="flex items-center gap-2">
+                <div className="bg-orange-100 text-orange-600 px-3 py-1 rounded-full text-xs font-bold flex items-center gap-1">
+                    🔥 {stats?.learningDays || 0} 天
+                </div>
+            </div>
           </div>
         </div>
 
-        {/* Active Goal Section */}
+        {/* Active Goal / Progress Card */}
         {activeGoal && (
             <div className="px-4 py-2">
-                <div className="bg-gradient-to-r from-primary to-blue-600 rounded-xl p-4 text-white shadow-lg">
-                    <div className="flex justify-between items-start">
-                        <div>
-                            <p className="text-sm opacity-90">当前目标</p>
-                            <h2 className="text-xl font-bold mt-1">{activeGoal.target_language} - {activeGoal.type}</h2>
-                            <p className="text-sm opacity-80 mt-1">
-                                {activeGoal.duration_days} 天计划 • {activeGoal.daily_minutes} 分钟/天
-                            </p>
+                <div className="bg-gradient-to-r from-indigo-600 to-purple-600 rounded-2xl p-5 text-white shadow-xl relative overflow-hidden">
+                     {/* Decorative Circles */}
+                    <div className="absolute -top-10 -right-10 w-40 h-40 bg-white opacity-10 rounded-full blur-2xl"></div>
+                    <div className="absolute bottom-0 left-0 w-32 h-32 bg-purple-500 opacity-20 rounded-full blur-xl"></div>
+                    
+                    <div className="relative z-10">
+                        <div className="flex justify-between items-start mb-6">
+                            <div>
+                                <p className="text-xs font-medium text-indigo-100 mb-1">当前目标</p>
+                                <h2 className="text-2xl font-bold tracking-tight">{activeGoal.target_language}</h2>
+                                <p className="text-sm text-indigo-100 opacity-80">{activeGoal.type}</p>
+                            </div>
+                            <div className="text-right">
+                                <p className="text-3xl font-bold text-white">{userProficiency}</p>
+                                <p className="text-xs text-indigo-200">熟练度</p>
+                            </div>
                         </div>
-                        <button 
-                            onClick={handleSwitchGoal}
-                            className="bg-white/20 hover:bg-white/30 px-3 py-1 rounded-full text-xs transition-colors backdrop-blur-sm">
-                            切换
-                        </button>
+
+                        {/* Progress Bar */}
+                        <div>
+                            <div className="flex justify-between text-xs font-medium text-indigo-100 mb-2">
+                                <span>总体进度</span>
+                                <span>{progress}%</span>
+                            </div>
+                            <div className="h-3 bg-black/20 rounded-full overflow-hidden backdrop-blur-sm">
+                                <div 
+                                    className="h-full bg-gradient-to-r from-yellow-400 to-orange-400 rounded-full transition-all duration-1000 ease-out shadow-[0_0_10px_rgba(251,191,36,0.5)]"
+                                    style={{ width: `${progress}%` }}
+                                ></div>
+                            </div>
+                        </div>
                     </div>
                 </div>
             </div>
         )}
 
-        {/* My Sessions Section (New Feature) */}
-        <div className="px-4 py-4">
+        {/* Level Map (Grid Layout) */}
+        <div className="px-4 py-6">
+             <div className="flex items-center justify-between mb-4">
+                 <h3 className="text-xl font-bold text-slate-900 dark:text-white">练习关卡</h3>
+                 <span className="text-xs text-slate-500 font-medium bg-slate-100 dark:bg-slate-800 px-2 py-1 rounded-md">
+                     Level {Math.floor(userProficiency / 10) + 1}
+                 </span>
+             </div>
+             
+             <div className="grid grid-cols-2 gap-4">
+                 {LEVELS.map((level) => {
+                     const isUnlocked = userProficiency >= level.minScore;
+                     const isCompleted = userProficiency >= (level.minScore + 10); // Simple logic
+                     const isCurrent = isUnlocked && !isCompleted;
+
+                     return (
+                         <div 
+                            key={level.id}
+                            onClick={() => handleLevelClick(level)}
+                            className={`relative p-4 rounded-xl border-2 transition-all duration-200 cursor-pointer overflow-hidden group
+                                ${isCurrent 
+                                    ? 'bg-white dark:bg-slate-800 border-primary shadow-md scale-[1.02]' 
+                                    : isCompleted 
+                                        ? 'bg-green-50 dark:bg-green-900/10 border-green-200 dark:border-green-800/30' 
+                                        : 'bg-slate-50 dark:bg-slate-900 border-slate-100 dark:border-slate-800 opacity-70'
+                                }
+                            `}
+                         >
+                             <div className="flex justify-between items-start mb-3">
+                                 <span className={`text-xs font-bold px-2 py-0.5 rounded-md
+                                     ${isCurrent ? 'bg-primary/10 text-primary' : isCompleted ? 'bg-green-100 text-green-700' : 'bg-slate-200 text-slate-500'}
+                                 `}>
+                                     Lv.{level.id}
+                                 </span>
+                                 {isCompleted ? (
+                                     <span className="material-symbols-outlined text-green-500 text-lg">check_circle</span>
+                                 ) : !isUnlocked ? (
+                                     <span className="material-symbols-outlined text-slate-400 text-lg">lock</span>
+                                 ) : (
+                                     <span className="material-symbols-outlined text-primary text-lg animate-pulse">play_circle</span>
+                                 )}
+                             </div>
+                             
+                             <h4 className={`font-bold text-sm mb-1 ${!isUnlocked && 'text-slate-400'}`}>
+                                 {level.title.split(': ')[1]}
+                             </h4>
+                             <p className="text-xs text-slate-500 line-clamp-1">{level.desc}</p>
+                             
+                             {/* Progress Indication within Level (Optional) */}
+                             {isCurrent && (
+                                 <div className="absolute bottom-0 left-0 w-full h-1 bg-primary/10">
+                                     <div 
+                                        className="h-full bg-primary" 
+                                        style={{ width: `${Math.min(100, (userProficiency - level.minScore) * 10)}%` }}
+                                     ></div>
+                                 </div>
+                             )}
+                         </div>
+                     );
+                 })}
+             </div>
+        </div>
+
+        {/* My Sessions Section (Compact) */}
+        <div className="px-4 py-2">
              <div className="flex justify-between items-center mb-3">
-                 <h3 className="text-xl font-bold text-slate-900 dark:text-white">我的练习</h3>
+                 <h3 className="text-lg font-bold text-slate-900 dark:text-white">最近练习</h3>
                  <button 
                     onClick={handleStartNewSession}
-                    className="flex items-center gap-1 text-primary font-medium text-sm">
-                    <span className="material-symbols-outlined text-lg">add_circle</span>
-                    新建
+                    className="text-primary text-sm font-medium hover:underline">
+                    新建练习
                  </button>
              </div>
              
              {activeSessions.length > 0 ? (
-                 <div className="grid gap-3">
-                     {activeSessions.map((sessionId, index) => (
+                 <div className="space-y-3">
+                     {activeSessions.slice(0, 3).map((sessionId, index) => (
                          <div 
                              key={sessionId} 
                              onClick={() => handleResumeSession(sessionId)}
-                             className="flex items-center gap-4 bg-white dark:bg-slate-800 p-4 rounded-xl shadow-sm border border-slate-100 dark:border-slate-700 cursor-pointer hover:border-primary transition-colors">
-                             <div className="w-10 h-10 rounded-full bg-blue-100 text-blue-600 flex items-center justify-center shrink-0">
-                                 <span className="material-symbols-outlined">forum</span>
+                             className="flex items-center gap-3 bg-white dark:bg-slate-800 p-3 rounded-lg border border-slate-100 dark:border-slate-700 cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-700/50">
+                             <div className="w-8 h-8 rounded-full bg-slate-100 text-slate-500 flex items-center justify-center shrink-0">
+                                 <span className="material-symbols-outlined text-lg">history</span>
                              </div>
                              <div className="flex-1 min-w-0">
-                                 <p className="font-medium truncate text-slate-900 dark:text-white">
-                                     会话 #{index + 1}
+                                 <p className="text-sm font-medium text-slate-900 dark:text-white truncate">
+                                     练习 #{index + 1}
                                  </p>
-                                 <p className="text-xs text-slate-500 truncate font-mono mt-0.5">
-                                     ID: {sessionId.slice(0, 8)}...
+                                 <p className="text-xs text-slate-400 truncate font-mono">
+                                     {sessionId.slice(0, 8)}...
                                  </p>
                              </div>
-                             <span className="material-symbols-outlined text-slate-400">arrow_forward_ios</span>
                          </div>
                      ))}
                  </div>
              ) : (
-                 <div className="text-center py-6 bg-slate-50 dark:bg-slate-800/50 rounded-xl border border-dashed border-slate-300 dark:border-slate-700">
-                     <p className="text-slate-500 text-sm">暂无活跃会话</p>
-                     <button 
-                        onClick={handleStartNewSession}
-                        className="mt-2 text-primary text-sm font-medium">
-                        开始第一次练习
-                     </button>
-                 </div>
+                 <p className="text-sm text-slate-400 text-center py-4">暂无历史记录</p>
              )}
-        </div>
-
-        {/* Search Bar */}
-        <div className="px-4 py-3">
-          <label className="flex h-12 w-full flex-col">
-            <div className="flex h-full w-full items-stretch rounded-xl overflow-hidden">
-              <div className="flex items-center justify-center bg-slate-200 dark:bg-slate-800 pl-4 text-slate-500 dark:text-slate-400">
-                <span className="material-symbols-outlined text-2xl">search</span>
-              </div>
-              <input 
-                className="flex-1 px-2 py-2 bg-slate-200 dark:bg-slate-800 text-slate-900 dark:text-white placeholder:text-slate-500 dark:placeholder:text-slate-400 border-none outline-none focus:ring-0"
-                placeholder="搜索主题、伙伴..."
-              />
-            </div>
-          </label>
-        </div>
-
-        {/* Filter Tabs */}
-        <div className="flex gap-3 overflow-x-auto p-4 pt-1 no-scrollbar">
-          <div className="flex h-9 shrink-0 items-center justify-center gap-x-2 rounded-full bg-primary px-4 text-white cursor-pointer">
-            <p className="text-sm font-medium">全部</p>
-          </div>
-          <div className="flex h-9 shrink-0 items-center justify-center gap-x-2 rounded-full bg-slate-200 dark:bg-slate-800 px-4 cursor-pointer">
-            <p className="text-sm font-medium text-slate-900 dark:text-white">主题</p>
-          </div>
-          <div className="flex h-9 shrink-0 items-center justify-center gap-x-2 rounded-full bg-slate-200 dark:bg-slate-800 px-4 cursor-pointer">
-            <p className="text-sm font-medium text-slate-900 dark:text-white">会话</p>
-          </div>
-          <div className="flex h-9 shrink-0 items-center justify-center gap-x-2 rounded-full bg-slate-200 dark:bg-slate-800 px-4 cursor-pointer">
-            <p className="text-sm font-medium text-slate-900 dark:text-white">课程</p>
-          </div>
-        </div>
-
-        {/* Recommended Topics */}
-        <h3 className="px-4 pb-2 pt-4 text-xl font-bold text-slate-900 dark:text-white">为您推荐</h3>
-        <div className="flex overflow-x-auto no-scrollbar">
-          <div className="flex items-stretch gap-4 px-4 py-2">
-            {topics.map((topic, index) => (
-              <div key={index} className="flex w-64 shrink-0 flex-col gap-3 rounded-xl bg-white dark:bg-slate-800 p-3 cursor-pointer hover:shadow-lg transition-shadow">
-                <div className={`aspect-video w-full rounded-lg bg-gradient-to-br ${topic.gradient}`}></div>
-                <div>
-                  <p className="font-medium text-slate-900 dark:text-white">{topic.name}</p>
-                  <p className="text-sm text-slate-500 dark:text-slate-400">{topic.level}</p>
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-
-        {/* AI Partners */}
-        <h3 className="px-4 pb-2 pt-6 text-xl font-bold text-slate-900 dark:text-white">新的AI伙伴</h3>
-        <div className="flex overflow-x-auto no-scrollbar">
-          <div className="flex items-stretch gap-4 px-4 py-2">
-            {aiPartners.map((partner, index) => (
-              <div key={index} className="flex w-40 shrink-0 flex-col items-center gap-3 rounded-xl bg-white dark:bg-slate-800 p-4 text-center cursor-pointer hover:shadow-lg transition-shadow">
-                <div className="h-24 w-24 rounded-full bg-gradient-to-br from-blue-400 to-purple-500 flex items-center justify-center text-4xl">
-                  {partner.avatar}
-                </div>
-                <div className="flex flex-col">
-                  <p className="font-semibold text-slate-900 dark:text-white">{partner.name}</p>
-                  <p className="text-xs text-slate-500 dark:text-slate-400">{partner.role}</p>
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-
-        {/* Trending Conversations */}
-        <h3 className="px-4 pb-2 pt-6 text-xl font-bold text-slate-900 dark:text-white">热门会话</h3>
-        <div className="flex flex-col gap-3 px-4 py-2">
-          {conversations.map((conv, index) => (
-            <div 
-              key={index}
-              onClick={() => navigate('/conversation')}
-              className="flex items-center gap-4 rounded-xl bg-white dark:bg-slate-800 p-3 cursor-pointer hover:shadow-lg transition-shadow">
-              <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-lg bg-primary/20 text-primary">
-                <span className="material-symbols-outlined">{conv.icon}</span>
-              </div>
-              <div className="flex-grow">
-                <p className="font-medium text-slate-900 dark:text-white">{conv.title}</p>
-                <p className="text-sm text-slate-500 dark:text-slate-400">{conv.duration}</p>
-              </div>
-              <span className="material-symbols-outlined text-slate-500 dark:text-slate-400">chevron_right</span>
-            </div>
-          ))}
         </div>
       </main>
 
