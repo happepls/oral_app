@@ -326,7 +326,9 @@ function Conversation() {
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     // Connect directly to API Gateway (Nginx) on port 8080 to bypass frontend proxy issues
     const host = `${window.location.hostname}:8080`;
-    const wsUrl = `${protocol}//${host}/api/ws/?token=${token}&sessionId=${sessionId}`;
+    const searchParams = new URLSearchParams(window.location.search);
+    const scenario = searchParams.get('scenario');
+    const wsUrl = `${protocol}//${host}/api/ws/?token=${token}&sessionId=${sessionId}${scenario ? `&scenario=${scenario}` : ''}`;
 
     socketRef.current = new WebSocket(wsUrl);
 
@@ -335,6 +337,18 @@ function Conversation() {
       setIsConnected(true);
       setMessages(prev => [...prev, { type: 'system', content: '连接成功！请按住麦克风开始说话。' }]);
       setWebSocketError(null);
+
+      // Send session_start handshake
+      const searchParams = new URLSearchParams(window.location.search);
+      const payload = {
+          type: 'session_start',
+          userId: user.id,
+          sessionId: sessionId,
+          token: token,
+          scenario: searchParams.get('scenario'),
+          topic: searchParams.get('topic')
+      };
+      socketRef.current.send(JSON.stringify(payload));
     };
 
     socketRef.current.onmessage = async (event) => {
@@ -379,6 +393,8 @@ function Conversation() {
       // Check URL for sessionId (e.g., ?sessionId=...)
       const searchParams = new URLSearchParams(window.location.search);
       const urlSessionId = searchParams.get('sessionId') || searchParams.get('session'); // Support both
+      const scenario = searchParams.get('scenario');
+      const topic = searchParams.get('topic');
 
       if (urlSessionId) {
           console.log('Restoring session:', urlSessionId);
@@ -433,17 +449,20 @@ function Conversation() {
             const res = await conversationAPI.startSession({ 
                 userId: user.id,
                 goalId: goalId,
+                scenario: scenario, // Pass scenario if exists
+                topic: topic,       // Pass topic if exists
                 forceNew: true 
             });
 
             if (res && res.sessionId) {
                 setSessionId(res.sessionId);
-                // DO NOT update URL history for new sessions initiated from root.
-                // This ensures refreshing /conversation always starts a FRESH session.
-                // const newParams = new URLSearchParams(window.location.search);
-                // newParams.set('sessionId', res.sessionId);
-                // const newUrl = `${window.location.pathname}?${newParams.toString()}`;
-                // window.history.replaceState({ path: newUrl }, '', newUrl);
+                
+                // Update URL to include sessionId, preventing "No History" error on refresh
+                const newParams = new URLSearchParams(window.location.search);
+                newParams.set('sessionId', res.sessionId);
+                // Keep scenario/topic for reference or remove them? keeping them is fine.
+                const newUrl = `${window.location.pathname}?${newParams.toString()}`;
+                window.history.replaceState({ path: newUrl }, '', newUrl);
             } else {
                 setWebSocketError('无法创建会话');
             }

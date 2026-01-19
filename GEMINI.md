@@ -170,6 +170,9 @@ oral_app/
 - 🔄 **Audio Streaming**: WebRTC integration in progress
 
 ## 最近修复 (Recent Fixes)
+- **Monitoring & Stats**: Implemented Nginx detailed logging and `history-analytics-service` stats API to power User Profile data.
+- **Proficiency Tracking**: Integrated `proficiency_score_delta` tracking in `PromptManager` and `history-analytics-service` to dynamically update user level.
+- **Grammar Guide**: Implemented `GrammarGuide` role in `ai-omni-service` and frontend entry point for targeted grammar practice.
 - **Session Restoration**: Fixed `ai-omni-service` to restore message history on WebSocket reconnect, preventing data loss during refresh.
 - **Audio Association**: Improved audio-to-message matching logic in `ai-omni-service` using placeholders to handle ASR/Upload race conditions.
 - **502 Gateway Fix**: Added Nginx routing for `conversation-service` to resolve API connection errors.

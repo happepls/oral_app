@@ -81,6 +81,7 @@ wss.on('connection', async function connection(clientWs, req) {
 
     const userId = decoded.id;
     const sessionId = queryObject.sessionId;
+    const scenario = queryObject.scenario;
 
     if (!sessionId) {
       console.log('Connection rejected: No sessionId provided.');
@@ -128,7 +129,8 @@ wss.on('connection', async function connection(clientWs, req) {
           type: 'session_start',
           userId: userId,
           sessionId: sessionId,
-          token: token
+          token: token,
+          scenario: scenario
       }));
 
       clientWs.send(JSON.stringify({ type: 'info', message: 'Welcome! Your connection is authenticated and bridged to the AI service.' }));

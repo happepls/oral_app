@@ -207,6 +207,13 @@ export const historyAPI = {
       headers: getAuthHeaders()
     });
     return handleResponse(response);
+  },
+
+  async getStats(userId) {
+    const response = await fetch(`${API_BASE_URL}/history/stats/${userId}`, {
+      headers: getAuthHeaders()
+    });
+    return handleResponse(response);
   }
 };
 

@@ -121,6 +121,30 @@ User.completeGoal = async (goalId, userId) => {
     return rows[0];
 };
 
+User.updateProficiency = async (userId, delta) => {
+    // 1. Find active goal
+    const activeGoal = await User.getActiveGoal(userId);
+    if (!activeGoal) {
+        console.log(`[User] No active goal found for user ${userId} to update proficiency.`);
+        return null;
+    }
+
+    const currentScore = parseInt(activeGoal.current_proficiency || 0, 10);
+    const deltaVal = parseInt(delta, 10);
+
+    // 2. Calculate new proficiency (clamped 0-100)
+    let newScore = currentScore + deltaVal;
+    if (newScore > 100) newScore = 100;
+    if (newScore < 0) newScore = 0;
+
+    console.log(`[User] Updating proficiency: ${currentScore} + ${deltaVal} = ${newScore}`);
+
+    // 3. Update
+    const query = `UPDATE user_goals SET current_proficiency = $1, updated_at = NOW() WHERE id = $2 RETURNING *`;
+    const { rows } = await db.query(query, [newScore, activeGoal.id]);
+    return rows[0];
+};
+
 
 User.findByEmail = async (email) => {
     const { rows } = await db.query('SELECT * FROM users WHERE email = $1', [email]);

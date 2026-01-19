@@ -94,6 +94,7 @@ async def execute_action(action: str, data: dict, token: str, user_id: str = Non
                     "proficiency_score_delta": data.get("proficiency_score_delta"),
                     "goalId": data.get("goalId")
                 }
+                logger.info(f"[Action] Trace: Saving Summary. Delta: {payload.get('proficiency_score_delta')}, Session: {session_id}")
                 history_url = "http://history-analytics-service:3004/api/history/summary"
                 resp = await client.post(history_url, json=payload)
                 logger.info(f"Summary generated & saved: {data}, Status: {resp.status_code}")
@@ -173,13 +174,14 @@ app.add_middleware(
 # --- DashScope Integration ---
 
 class WebSocketCallback(OmniRealtimeCallback):
-    def __init__(self, websocket: WebSocket, loop: asyncio.AbstractEventLoop, user_context: dict, token: str, user_id: str, session_id: str, history_messages: list = []):
+    def __init__(self, websocket: WebSocket, loop: asyncio.AbstractEventLoop, user_context: dict, token: str, user_id: str, session_id: str, history_messages: list = [], scenario: str = None):
         self.websocket = websocket
         self.loop = loop
         self.user_context = user_context
         self.token = token
         self.user_id = user_id
         self.session_id = session_id
+        self.scenario = scenario
         self.conversation = None
         self.full_response_text = ""
         self.role = self._determine_role(user_context)
@@ -405,7 +407,8 @@ class WebSocketCallback(OmniRealtimeCallback):
                         asyncio.create_task(upload_ai_task(audio_data))
 
                 elif event_name == 'response.audio_transcript.done' or event_name == 'response.text.done':
-                    logger.info(f"AI Response Finished: {self.full_response_text[:50]}...")
+                    logger.info(f"AI Response Finished. Raw Length: {len(self.full_response_text)}")
+                    logger.info(f"Raw Output: {self.full_response_text}") # Uncomment for deep debugging
 
                     if self.interrupted_turn:
                         logger.info("Skipping action execution due to interruption")
@@ -441,6 +444,7 @@ class WebSocketCallback(OmniRealtimeCallback):
                             potential_json = text[start_idx : end_idx + 1]
                             # Verify it contains "action" before trying to load (optimization)
                             if '"action"' in potential_json:
+                                logger.info(f"Potential JSON found: {potential_json[:100]}...")
                                 action_data = json.loads(potential_json)
                                 action = action_data.get('action')
                                 data = action_data.get('data')
@@ -533,50 +537,82 @@ async def websocket_endpoint(client_ws: WebSocket):
     callback = None
     heartbeat_task = None
 
-    # State
-    user_id = None
-    session_id = None
-    token = None
+    # 1. Parse Query Params as Defaults
+    query_params = client_ws.query_params
+    user_id = query_params.get('userId')
+    session_id = query_params.get('sessionId')
+    token = query_params.get('token')
+    scenario = query_params.get('scenario')
+    topic = query_params.get('topic')
+    
     user_context = {}
+    
+    # Log initial connection info
+    logger.info(f"WS Connect: User={user_id}, Session={session_id}, Scenario={scenario}")
 
-    # Wait for session_start
+    # 2. Wait for optional session_start (Non-blocking check effectively)
+    # We'll peek at the first message. If it's session_start, we update context.
+    # If it's audio/other, we proceed with defaults.
     try:
-        init_msg = await client_ws.receive_text()
-        init_data = json.loads(init_msg)
-        if init_data.get('type') == 'session_start':
-            user_id = init_data.get('userId')
-            session_id = init_data.get('sessionId')
-            token = init_data.get('token')
+        # We need to fetch context regardless, so let's try to get initial message
+        # likely containing more info, OR start using defaults.
+        
+        # Strategy: We'll try to fetch context using defaults first to be safe
+        if user_id and token:
+             user_context, active_goal = await fetch_user_context(user_id, token)
+             if user_context is None: user_context = {}
+             user_context['active_goal'] = active_goal
+             if topic: user_context['custom_topic'] = topic
+        
+        # Now wait for first message
+        message = await client_ws.receive()
+        
+        start_processing_immediately = False
+        initial_payload = None
 
-            logger.info(f"Session Start: User {user_id}, Session {session_id}")
-
-            # 1. Fetch Context (Profile + Goal)
-            if not token:
-                logger.warning("No token provided in session_start. Context fetching will likely fail.")
-
-            user_context, active_goal = await fetch_user_context(user_id, token)
-
-            # Inject active_goal into user_context so WebSocketCallback can see it
-            if user_context is None:
-                user_context = {}
-            user_context['active_goal'] = active_goal
-
-            # 2. Fetch Conversation History
-            history_messages = await fetch_conversation_history(session_id)
-            logger.info(f"Fetched {len(history_messages)} messages from history service")
-
-        else:
-            logger.warning("Expected session_start message first")
-            pass
+        if message["type"] == "websocket.receive":
+            if "text" in message:
+                try:
+                    init_data = json.loads(message["text"])
+                    if init_data.get('type') == 'session_start':
+                        # Update with explicit handshake data
+                        user_id = init_data.get('userId') or user_id
+                        session_id = init_data.get('sessionId') or session_id
+                        token = init_data.get('token') or token
+                        scenario = init_data.get('scenario') or scenario
+                        topic = init_data.get('topic') or topic
+                        
+                        logger.info(f"Handshake received: User {user_id}, Session {session_id}")
+                        
+                        # Re-fetch context if handshake provided new token/user
+                        user_context, active_goal = await fetch_user_context(user_id, token)
+                        if user_context is None: user_context = {}
+                        user_context['active_goal'] = active_goal
+                        if topic: user_context['custom_topic'] = topic
+                        
+                    else:
+                        # Text message but not session_start? Treat as normal input
+                        start_processing_immediately = True
+                        initial_payload = init_data
+                except json.JSONDecodeError:
+                    pass # Not JSON
+            elif "bytes" in message:
+                # Binary data (Audio) - Client started streaming immediately
+                start_processing_immediately = True
+                initial_payload = {"type": "audio_stream", "payload": {"audioBuffer": base64.b64encode(message["bytes"]).decode('utf-8')}}
+        
+        # Fetch History after context is settled
+        history_messages = await fetch_conversation_history(session_id) if session_id else []
+        logger.info(f"History loaded: {len(history_messages)} messages")
 
     except Exception as e:
-        logger.error(f"Error awaiting session start: {e}")
+        logger.error(f"Error during handshake: {e}")
         await client_ws.close()
         return
 
     def connect_dashscope():
         nonlocal conversation, callback
-        callback = WebSocketCallback(client_ws, loop, user_context, token, user_id, session_id, history_messages)
+        callback = WebSocketCallback(client_ws, loop, user_context, token, user_id, session_id, history_messages, scenario)
         conversation = OmniRealtimeConversation(
             model=os.getenv("QWEN3_OMNI_MODEL", "qwen3-omni-flash-realtime"),
             callback=callback,
@@ -592,27 +628,15 @@ async def websocket_endpoint(client_ws: WebSocket):
         while True:
             try:
                 await asyncio.sleep(15)
-                # Keep Client WebSocket alive
                 try:
                     await client_ws.send_json({"type": "ping", "payload": {"timestamp": int(time.time())}})
                 except:
                     break
                 
-                # Keep DashScope WebSocket alive
                 if conversation and callback and callback.is_connected:
                     try:
-                        # Sending silence to keep session active
-                        # Note: DashScope might interpret this as input, but silence is usually ignored or treated as pause.
-                        # We use a very short duration to minimize impact.
-                        # Using raw bytes directly if append_audio supports it (it expects base64 string usually in this wrapper?)
-                        # Checking SDK: conversation.append_audio(data) -> sends input_audio_buffer.append
-                        # data can be bytes or base64? 
-                        # In `websocket_endpoint`: conversation.append_audio(audio_b64)
-                        # So it expects base64 string.
-                        
                         silence_b64 = base64.b64encode(silence_frame).decode('utf-8')
                         conversation.append_audio(silence_b64)
-                        # logger.debug("Sent heartbeat silence to DashScope")
                     except Exception as ds_e:
                         logger.warning(f"Failed to send heartbeat to DashScope: {ds_e}")
 
@@ -625,6 +649,18 @@ async def websocket_endpoint(client_ws: WebSocket):
     try:
         conversation = connect_dashscope()
         heartbeat_task = asyncio.create_task(heartbeat())
+        
+        # Process the initial message if we consumed it during handshake
+        if start_processing_immediately and initial_payload:
+            # Inject into loop processing logic manually or just handle here?
+            # It's cleaner to handle here quickly
+            msg_type = initial_payload.get('type')
+            if msg_type == 'audio_stream':
+                 audio_b64 = initial_payload.get('payload', {}).get('audioBuffer')
+                 if audio_b64:
+                     conversation.append_audio(audio_b64)
+                     if callback:
+                         callback.user_audio_buffer.extend(base64.b64decode(audio_b64))
 
         while True:
             try:
@@ -642,8 +678,6 @@ async def websocket_endpoint(client_ws: WebSocket):
                     except:
                         pass
                     conversation = connect_dashscope()
-                    # Wait a tiny bit for on_open? Not strictly necessary as SDK queues or we just send.
-                    # But prompt update happens in on_open.
 
                 # Validate connection state before processing
                 if not conversation:
@@ -673,8 +707,36 @@ async def websocket_endpoint(client_ws: WebSocket):
                     text = payload.get('text')
                     if text:
                         logger.info(f"User Text Message: {text}")
-                        # Use instructions as fallback for text input since direct methods are not exposed
-                        conversation.create_response(instructions=f"User input: {text}")
+                        
+                        # 1. Cancel any active response to prevent "active response" error
+                        if conversation:
+                            try:
+                                # We need to use internal method or just try/except if SDK doesn't expose clean check
+                                # The SDK's cancel_response sends 'conversation.item.truncate' etc.
+                                conversation.cancel_response()
+                                # Give a tiny pause for state update
+                                await asyncio.sleep(0.1) 
+                            except Exception:
+                                pass
+
+                        # 2. Regenerate prompt with REINFORCED instructions
+                        if callback:
+                            base_prompt = prompt_manager.generate_system_prompt(callback.user_context, role=callback.role)
+                            
+                            # Append user input AND the critical JSON rule at the very end
+                            # This structure (System -> User -> System Reminder) works best for instruction following.
+                            full_instructions = (
+                                f"{base_prompt}\n\n"
+                                f"# User Input\n"
+                                f"The user just said: \"{text}\"\n\n"
+                                f"# SYSTEM INSTRUCTION (HIGHEST PRIORITY)\n"
+                                f"1. Respond naturally to the user.\n"
+                                f"2. CRITICAL: If the user asked to STOP, SUMMARIZE, or END the session, you MUST output the JSON block with proficiency stats.\n"
+                                f"3. DO NOT output JSON for normal chit-chat unless requested."
+                            )
+                            conversation.create_response(instructions=full_instructions)
+                        else:
+                            conversation.create_response(instructions=f"User input: {text}")
 
                 elif msg_type == 'user_audio_ended':
                     logger.info("User Audio Ended event received")
@@ -758,7 +820,9 @@ async def websocket_endpoint(client_ws: WebSocket):
                 await client_ws.send_json({"type": "error", "payload": {"error": "Invalid message format", "type": "invalid_json"}})
             except Exception as e:
                 logger.error(f"Error processing message: {e}")
-                if "receive" in str(e).lower() or "disconnect" in str(e).lower():
+                err_str = str(e).lower()
+                if "receive" in err_str or "disconnect" in err_str or "not connected" in err_str:
+                    logger.info("Breaking loop due to connection error")
                     break
                 # Don't break the loop on processing errors, just log and continue
                 try:
