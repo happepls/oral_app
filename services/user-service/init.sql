@@ -36,6 +36,7 @@ CREATE TABLE IF NOT EXISTS user_goals (
     current_proficiency INT DEFAULT 0, -- 0-100
     completion_time_days INT,
     interests TEXT, -- Goal specific interests
+    scenarios JSONB, -- List of 10 scenarios + tasks
     status VARCHAR(20) DEFAULT 'active', -- active, completed, abandoned
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     completed_at TIMESTAMPTZ

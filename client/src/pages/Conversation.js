@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useLocation } from 'react-router-dom';
 import { conversationAPI, aiAPI } from '../services/api';
 import RealTimeRecorder from '../components/RealTimeRecorder';
 import { useAuth } from '../contexts/AuthContext';
@@ -7,6 +7,7 @@ import AudioBar from '../components/AudioBar'; // Import the new AudioBar compon
 
 function Conversation() {
   const navigate = useNavigate();
+  const location = useLocation();
   const { user, token, loading } = useAuth(); // Added loading state
   
   // UI States
@@ -23,6 +24,11 @@ function Conversation() {
   const [sessionId, setSessionId] = useState(null);
   const [selection, setSelection] = useState({ text: '', x: 0, y: 0, visible: false });
   const [isSynthesizing, setIsSynthesizing] = useState(false);
+
+  // Scenario Tasks State
+  const [tasks, setTasks] = useState(location.state?.tasks || []);
+  const [completedTasks, setCompletedTasks] = useState(new Set());
+  const [showTasks, setShowTasks] = useState(tasks.length > 0);
   
   // Refs
   const socketRef = useRef(null);
@@ -180,6 +186,17 @@ function Conversation() {
           });
           setIsAISpeaking(false);
           break;
+        case 'task_completed':
+           const taskName = data.payload?.task;
+           if (taskName) {
+               setCompletedTasks(prev => {
+                   const newSet = new Set(prev);
+                   newSet.add(taskName);
+                   return newSet;
+               });
+               setMessages(prev => [...prev, { type: 'system', content: `✅ 完成任务: ${taskName}` }]);
+           }
+           break;
         case 'transcription':
            console.log('Transcription Event:', data);
            // User transcription
@@ -544,7 +561,41 @@ function Conversation() {
   };
 
   return (
-    <div className="flex flex-col h-screen max-w-lg mx-auto bg-background-light dark:bg-background-dark">
+    <div className="flex flex-col h-screen max-w-lg mx-auto bg-background-light dark:bg-background-dark relative">
+      {/* Task Sidebar/Overlay */}
+      {tasks.length > 0 && (
+          <div className={`fixed top-20 right-4 z-20 w-48 bg-white/90 dark:bg-slate-800/90 backdrop-blur rounded-xl shadow-lg border border-slate-100 dark:border-slate-700 p-4 transition-transform duration-300 ${showTasks ? 'translate-x-0' : 'translate-x-[110%]'}`}>
+              <div className="flex justify-between items-center mb-2">
+                  <h3 className="font-bold text-xs uppercase tracking-wide text-slate-500">Mission Tasks</h3>
+                  <button onClick={() => setShowTasks(false)} className="text-slate-400 hover:text-slate-600">
+                      <span className="material-symbols-outlined text-sm">close</span>
+                  </button>
+              </div>
+              <ul className="space-y-2">
+                  {tasks.map((task, idx) => {
+                      const isCompleted = completedTasks.has(task);
+                      return (
+                          <li key={idx} className={`text-xs flex items-start gap-2 ${isCompleted ? 'text-green-600 dark:text-green-400 line-through opacity-70' : 'text-slate-700 dark:text-slate-200'}`}>
+                              <span className={`w-3 h-3 rounded-full border flex items-center justify-center shrink-0 mt-0.5 ${isCompleted ? 'bg-green-100 border-green-200' : 'border-slate-300'}`}>
+                                  {isCompleted && <span className="material-symbols-outlined text-[8px] font-bold">check</span>}
+                              </span>
+                              <span>{task}</span>
+                          </li>
+                      );
+                  })}
+              </ul>
+          </div>
+      )}
+      
+      {/* Toggle Tasks Button */}
+      {tasks.length > 0 && !showTasks && (
+          <button 
+            onClick={() => setShowTasks(true)}
+            className="fixed top-20 right-4 z-20 bg-white dark:bg-slate-800 p-2 rounded-full shadow-md border border-slate-200 dark:border-slate-700 text-primary">
+              <span className="material-symbols-outlined">assignment</span>
+          </button>
+      )}
+
       {/* Header */}
       <header className="flex items-center justify-between p-4 border-b border-gray-200 dark:border-gray-800 bg-white/80 dark:bg-slate-900/80 backdrop-blur shrink-0 z-10">
         <button 

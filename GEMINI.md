@@ -156,7 +156,10 @@ oral_app/
 
 
 ## 当前状态 (Current Status)
-- ✅ **Dynamic Role Switching**: InfoCollector -> GoalPlanner -> OralTutor -> SummaryExpert implemented.
+- ✅ **Proficiency Scoring**: End-to-end scoring loop fixed and verified via automated testing.
+- ✅ **Scenario-based Training**: InfoCollector -> GoalPlanner (w/ Scenarios) -> OralTutor (w/ Tasks).
+- ✅ **Dynamic Curriculum**: Auto-generation of 10 goal-specific scenarios with 3 tasks each.
+- ✅ **Frontend Task Tracking**: Real-time task sidebar and completion feedback in Conversation.
 - ✅ **AI Service**: Qwen3-Omni integration via DashScope SDK with robust error handling and auto-reconnection.
 - ✅ **Interruption Handling**: Reliable barge-in logic using `cancel_response()` and ID filtering.
 - ✅ **Persistence**: Automatic dialogue saving to MongoDB and PCM recording upload to COS.
@@ -170,6 +173,8 @@ oral_app/
 - 🔄 **Audio Streaming**: WebRTC integration in progress
 
 ## 最近修复 (Recent Fixes)
+- **Scoring Loop**: Fixed `ai-omni-service` crash on STOP command and `user-service` DB schema mismatch (`updated_at` column).
+- **Scenario Logic**: Implemented `scenario_set` in `GoalPlanner` and Task Sidebar in `Conversation.js`.
 - **Monitoring & Stats**: Implemented Nginx detailed logging and `history-analytics-service` stats API to power User Profile data.
 - **Proficiency Tracking**: Integrated `proficiency_score_delta` tracking in `PromptManager` and `history-analytics-service` to dynamically update user level.
 - **Grammar Guide**: Implemented `GrammarGuide` role in `ai-omni-service` and frontend entry point for targeted grammar practice.
