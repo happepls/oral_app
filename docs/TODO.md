@@ -12,6 +12,9 @@
 - [ ] [Deployment] 完善 Docker Compose 部署配置
 - [ ] [Deployment] 实现 CI/CD 流水线自动化
 - [ ] [Testing] 编写完整的集成测试套件
+- [ ] [Frontend] **Scenario Verification**: Silence JSON action text in TTS and verify task checkbox logic in Conversation page.
+- [ ] [AI] **Scenario Scoring Alignment**: Adapt AI scoring to evaluate 3 specific tasks per scenario over multiple turns.
+- [ ] [Bug] **Scenario Persistence**: Fix message persistence issue where scenario practice sessions fail to save history.
 
 ## Backlog
 
@@ -150,3 +153,6 @@
 - [x] [Backend] 实现会话持久化与历史回溯 (Session Persistence & History Restoration)
 - [x] [Frontend] 修复消息覆盖问题及音频播放稳定性 (Turn ID & Audio Mapping)
 - [x] [Testing] **Multi-Scenario Verification**: Continue verifying `test_client_scenario.py` with all supported scenarios (`goal`, `tutor`, `summary`, `xintong_service`).
+- [x] [Quality] **Proficiency System Hardening**: Verify atomic updates in `user-service` and ensure frontend visual consistency immediately after session end.
+- [x] [Testing] **Test Client Upgrade**: Implement automated "Barge-in" interruption simulation and pre/post-session proficiency verification in `test_client_scenario.py`.
+- [x] [Frontend] **Discovery UI Refinement**: Polish Level unlock animations and ensure Grammar Guide modal data is dynamic/accurate.

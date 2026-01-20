@@ -599,3 +599,10 @@ Refined AI Role logic (`OralTutor`, `SummaryExpert`) and fixed stability issues 
 - **Database Schema**: Updated `services/user-service/docs/schema.md` to accurately reflect the PostgreSQL schema (`users`, `user_identities`, `user_goals`).
 - **Project Context**: Updated `GEMINI.md` with recent architectural changes and feature additions.
 
+### 2026-01-20
+- **AI Scoring System**: Fixed end-to-end proficiency scoring loop. Debugged and resolved  crash when handling 'STOP' commands by adding missing  parameter. Fixed  database schema mismatch by adding missing  column to  table. Verified logic with .
+- **Scenario-based Practice**: Implemented  logic in . AI now automatically generates 10 tailored scenarios (9 relevant + 1 small talk) with 3 tasks each upon goal creation.
+- **Frontend Refactoring**: 
+    - : Replaced static level cards with dynamic scenario-based mission cards.
+    - : Integrated a mission task sidebar with real-time feedback for task completion ( action).
+- **Core Role Hardening**: Enhanced  to handle scenario task injection and reinforced 'STOP' command adherence via  overrides.

@@ -333,6 +333,15 @@ class InteractiveClient:
         """Automated test sequence to trigger summary and proficiency update."""
         print(f"\n{Color.HEADER}>>> Starting AUTOMATED Test Sequence for {self.scenario} <<<{Color.ENDC}")
         
+        # 1. Pre-Check Proficiency
+        try:
+            res = requests.get(f"http://localhost:3004/api/history/stats/{self.user_id}")
+            initial_prof = res.json().get('data', {}).get('proficiency', 0)
+            print(f"{Color.BLUE}>>> [Auto] Initial Proficiency: {initial_prof}{Color.ENDC}")
+        except Exception as e:
+            print(f"{Color.RED}[Auto] Failed to fetch initial stats: {e}{Color.ENDC}")
+            initial_prof = 0
+
         # Use persisted session_id
         url = f"{WS_URL}?token={self.token}&sessionId={self.session_id}&scenario={self.scenario}"
         
@@ -351,12 +360,21 @@ class InteractiveClient:
         print("Waiting for connection...")
         time.sleep(3)
         
-        # Sequence
+        # 2. Interruption Test
+        print(f"\n{Color.YELLOW}>>> [Auto] Testing Interruption...{Color.ENDC}")
+        # Send a prompt that triggers a long response
+        self.ws.send(json.dumps({"type": "text_message", "payload": {"text": "Tell me a long story about Spanish history in Spanish."}}))
+        time.sleep(2) # Wait for AI to start speaking
+        print(f"{Color.RED}>>> [Auto] INTERRUPTING NOW!{Color.ENDC}")
+        self.ws.send(json.dumps({"type": "user_interruption"}))
+        self.ws.send(json.dumps({"type": "user_audio_ended"})) # Simulate quick stop after interrupt
+        time.sleep(3) # Wait for cancellation to settle
+
+        # 3. Normal Dialogue & Summary
         msgs = [
-            "Hello, I am ready to practice.",
-            "I want to learn about past tense verbs.",
+            "Sorry, I interrupted. Let's practice past tense verbs.",
             "I walked to the store yesterday.",
-            "Thank you, that is helpful. I need to go now. Please summarize my performance."
+            "Goodbye. I am done for today."
         ]
         
         for msg in msgs:
@@ -367,8 +385,26 @@ class InteractiveClient:
             time.sleep(15) 
             
         print(f"\n{Color.HEADER}>>> Auto Sequence Complete. Waiting for final events... <<<{Color.ENDC}")
-        time.sleep(5)
+        time.sleep(10) # Increased from 5 to 10
         self.ws.close()
+        
+        # 4. Post-Check Proficiency
+        try:
+            # Wait a bit for async processing
+            time.sleep(2)
+            res = requests.get(f"http://localhost:3004/api/history/stats/{self.user_id}")
+            final_prof = res.json().get('data', {}).get('proficiency', 0)
+            print(f"{Color.BLUE}>>> [Auto] Final Proficiency: {final_prof}{Color.ENDC}")
+            
+            if final_prof > initial_prof:
+                print(f"{Color.GREEN}✅ SUCCESS: Proficiency increased from {initial_prof} to {final_prof}{Color.ENDC}")
+            elif final_prof == 100:
+                print(f"{Color.GREEN}✅ SUCCESS: Proficiency reached Max (100){Color.ENDC}")
+            else:
+                print(f"{Color.RED}❌ FAILURE: Proficiency did not increase ({initial_prof} -> {final_prof}){Color.ENDC}")
+                
+        except Exception as e:
+            print(f"{Color.RED}[Auto] Failed to fetch final stats: {e}{Color.ENDC}")
 
     def run(self):
         # Use persisted session_id

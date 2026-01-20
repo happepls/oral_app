@@ -117,9 +117,8 @@ function Discovery() {
   const [userProficiency, setUserProficiency] = useState(0);
   const [loading, setLoading] = useState(true);
   
-  // Modal State
-  const [showLevelModal, setShowLevelModal] = useState(false);
-  const [selectedLevel, setSelectedLevel] = useState(null);
+  // Scenarios State
+  const [scenarios, setScenarios] = useState([]);
 
   useEffect(() => {
     const fetchData = async () => {
@@ -137,11 +136,21 @@ function Discovery() {
                 return;
             }
             setActiveGoal(goalRes.goal);
+            
+            // Set Scenarios (with Fallback for legacy goals)
+            if (goalRes.goal.scenarios && goalRes.goal.scenarios.length > 0) {
+                setScenarios(goalRes.goal.scenarios);
+            } else {
+                // Fallback for existing goals without scenarios
+                setScenarios([
+                    { title: "General Practice", tasks: ["Discuss daily routine", "Practice past tense", "Talk about hobbies"] },
+                    { title: "Travel Basics", tasks: ["Ask for directions", "Order food", "Book a hotel"] }
+                ]);
+            }
 
             const statsRes = await historyAPI.getStats(user.id);
             if (statsRes && statsRes.data) {
                 setStats(statsRes.data);
-                // Use proficiency from API (which now syncs with user-service)
                 setUserProficiency(statsRes.data.proficiency || 0);
             }
 
@@ -162,80 +171,37 @@ function Discovery() {
   }, [user, navigate]);
 
   const handleStartNewSession = () => {
-      // Find first uncompleted level
-      const nextLevel = LEVELS.find(l => userProficiency < l.minScore + 10) || LEVELS[LEVELS.length - 1];
-      const defaultTopic = nextLevel.points[0].title;
-      navigate(`/conversation?scenario=tutor&topic=${encodeURIComponent(defaultTopic)}`);
+      // Default to first scenario
+      if (scenarios.length > 0) {
+          handleScenarioClick(scenarios[0]);
+      } else {
+          navigate(`/conversation?scenario=tutor`);
+      }
   };
 
   const handleResumeSession = (sessionId) => {
       navigate(`/conversation?sessionId=${sessionId}`);
   };
 
-  const handleLevelClick = (level) => {
-      if (userProficiency >= level.minScore) {
-          // Unlocked
-          setSelectedLevel(level);
-          setShowLevelModal(true);
-      } else {
-          // Locked - Show simple toast or alert
-          alert(`请先将熟练度提升至 ${level.minScore} 分以解锁此关卡！(当前: ${userProficiency})`);
-      }
-  };
-
-  const handleStartLevelPractice = () => {
-      if (!selectedLevel) return;
-      // Use first point as topic, or maybe generic level topic
-      const topic = `${selectedLevel.title}: ${selectedLevel.points.map(p => p.title).join(', ')}`;
-      navigate(`/conversation?scenario=tutor&topic=${encodeURIComponent(topic)}`);
-      setShowLevelModal(false);
+  const handleScenarioClick = (scenario) => {
+      // Navigate with scenario title and tasks
+      // We pass tasks via state to avoid re-fetching in Conversation
+      navigate(`/conversation?scenario=${encodeURIComponent(scenario.title)}`, {
+          state: { tasks: scenario.tasks }
+      });
   };
 
   if (loading) {
       return <div className="flex items-center justify-center min-h-screen">Loading...</div>;
   }
 
-  // Calculate overall progress based on proficiency (0-100)
+  // Calculate overall progress
+  // MVP: Simply based on proficiency or scenarios completed (if we tracked that)
   const progress = Math.min(100, userProficiency);
 
   return (
     <div className="relative flex flex-col min-h-screen w-full bg-background-light dark:bg-background-dark">
       
-      {/* Level Detail Modal */}
-      {showLevelModal && selectedLevel && (
-          <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/60 backdrop-blur-sm animate-in fade-in duration-200">
-              <div className="bg-white dark:bg-slate-800 w-full sm:w-96 sm:rounded-2xl rounded-t-2xl p-6 shadow-2xl animate-in slide-in-from-bottom duration-300">
-                  <div className="flex justify-between items-start mb-4">
-                      <div>
-                          <h3 className="text-xl font-bold text-slate-900 dark:text-white">{selectedLevel.title}</h3>
-                          <p className="text-sm text-slate-500">{selectedLevel.desc}</p>
-                      </div>
-                      <button 
-                        onClick={() => setShowLevelModal(false)}
-                        className="p-1 rounded-full hover:bg-slate-100 dark:hover:bg-slate-700">
-                        <span className="material-symbols-outlined text-slate-400">close</span>
-                      </button>
-                  </div>
-                  
-                  <div className="space-y-4 mb-6">
-                      <h4 className="text-sm font-bold text-slate-700 dark:text-slate-300 uppercase tracking-wide">语法要点</h4>
-                      {selectedLevel.points.map((p, idx) => (
-                          <div key={idx} className="bg-slate-50 dark:bg-slate-700/50 p-3 rounded-xl border border-slate-100 dark:border-slate-700">
-                              <p className="font-semibold text-primary text-sm mb-1">{p.title}</p>
-                              <p className="text-xs text-slate-600 dark:text-slate-400 leading-relaxed">{p.content}</p>
-                          </div>
-                      ))}
-                  </div>
-
-                  <button 
-                      onClick={handleStartLevelPractice}
-                      className="w-full bg-primary text-white py-3.5 rounded-xl font-bold text-lg shadow-lg shadow-primary/30 hover:bg-primary/90 transition-all active:scale-[0.98]">
-                      开始练习
-                  </button>
-              </div>
-          </div>
-      )}
-
       <main className="flex-grow pb-28">
         {/* Header */}
         <div className="flex flex-col gap-2 p-4 pb-2">
@@ -261,8 +227,8 @@ function Discovery() {
                         <div className="flex justify-between items-start mb-6">
                             <div>
                                 <p className="text-xs font-medium text-indigo-100 mb-1">当前目标</p>
-                                <h2 className="text-2xl font-bold tracking-tight">{activeGoal.target_language}</h2>
-                                <p className="text-sm text-indigo-100 opacity-80">{activeGoal.type}</p>
+                                <h2 className="text-2xl font-bold tracking-tight">{activeGoal.description || activeGoal.target_language}</h2>
+                                <p className="text-sm text-indigo-100 opacity-80">{activeGoal.target_level} • {activeGoal.completion_time_days} Days</p>
                             </div>
                             <div className="text-right">
                                 <p className="text-3xl font-bold text-white">{userProficiency}</p>
@@ -288,63 +254,58 @@ function Discovery() {
             </div>
         )}
 
-        {/* Level Map (Grid Layout) */}
+        {/* Scenario List (Grid Layout) */}
         <div className="px-4 py-6">
              <div className="flex items-center justify-between mb-4">
-                 <h3 className="text-xl font-bold text-slate-900 dark:text-white">练习关卡</h3>
+                 <h3 className="text-xl font-bold text-slate-900 dark:text-white">场景练习 (Scenarios)</h3>
                  <span className="text-xs text-slate-500 font-medium bg-slate-100 dark:bg-slate-800 px-2 py-1 rounded-md">
-                     Level {Math.floor(userProficiency / 10) + 1}
+                     {scenarios.length} Missions
                  </span>
              </div>
              
-             <div className="grid grid-cols-2 gap-4">
-                 {LEVELS.map((level) => {
-                     const isUnlocked = userProficiency >= level.minScore;
-                     const isCompleted = userProficiency >= (level.minScore + 10); // Simple logic
-                     const isCurrent = isUnlocked && !isCompleted;
+             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                 {scenarios.map((scenario, index) => {
+                     // MVP Status Logic: Unlock 1 by 1 or all unlocked?
+                     // Let's assume all unlocked for now to reduce complexity, or unlock based on index <= progress/10
+                     const isLocked = false; 
 
                      return (
                          <div 
-                            key={level.id}
-                            onClick={() => handleLevelClick(level)}
-                            className={`relative p-4 rounded-xl border-2 transition-all duration-200 cursor-pointer overflow-hidden group
-                                ${isCurrent 
-                                    ? 'bg-white dark:bg-slate-800 border-primary shadow-md scale-[1.02]' 
-                                    : isCompleted 
-                                        ? 'bg-green-50 dark:bg-green-900/10 border-green-200 dark:border-green-800/30' 
-                                        : 'bg-slate-50 dark:bg-slate-900 border-slate-100 dark:border-slate-800 opacity-70'
+                            key={index}
+                            onClick={() => !isLocked && handleScenarioClick(scenario)}
+                            className={`relative p-4 rounded-xl border-2 transition-all duration-200 cursor-pointer overflow-hidden group hover:shadow-lg
+                                ${isLocked 
+                                    ? 'bg-slate-50 dark:bg-slate-900 border-slate-100 dark:border-slate-800 opacity-60'
+                                    : 'bg-white dark:bg-slate-800 border-indigo-100 dark:border-indigo-900/30 hover:border-indigo-300' 
                                 }
                             `}
                          >
                              <div className="flex justify-between items-start mb-3">
                                  <span className={`text-xs font-bold px-2 py-0.5 rounded-md
-                                     ${isCurrent ? 'bg-primary/10 text-primary' : isCompleted ? 'bg-green-100 text-green-700' : 'bg-slate-200 text-slate-500'}
+                                     ${isLocked ? 'bg-slate-200 text-slate-500' : 'bg-indigo-50 text-indigo-600'}
                                  `}>
-                                     Lv.{level.id}
+                                     Mission {index + 1}
                                  </span>
-                                 {isCompleted ? (
-                                     <span className="material-symbols-outlined text-green-500 text-lg">check_circle</span>
-                                 ) : !isUnlocked ? (
+                                 {isLocked ? (
                                      <span className="material-symbols-outlined text-slate-400 text-lg">lock</span>
                                  ) : (
-                                     <span className="material-symbols-outlined text-primary text-lg animate-pulse">play_circle</span>
+                                     <span className="material-symbols-outlined text-indigo-500 text-lg group-hover:scale-110 transition-transform">arrow_forward</span>
                                  )}
                              </div>
                              
-                             <h4 className={`font-bold text-sm mb-1 ${!isUnlocked && 'text-slate-400'}`}>
-                                 {level.title.split(': ')[1]}
+                             <h4 className="font-bold text-base mb-2 text-slate-800 dark:text-slate-100">
+                                 {scenario.title}
                              </h4>
-                             <p className="text-xs text-slate-500 line-clamp-1">{level.desc}</p>
                              
-                             {/* Progress Indication within Level (Optional) */}
-                             {isCurrent && (
-                                 <div className="absolute bottom-0 left-0 w-full h-1 bg-primary/10">
-                                     <div 
-                                        className="h-full bg-primary" 
-                                        style={{ width: `${Math.min(100, (userProficiency - level.minScore) * 10)}%` }}
-                                     ></div>
-                                 </div>
-                             )}
+                             {/* Tasks Preview */}
+                             <div className="space-y-1">
+                                 {scenario.tasks && scenario.tasks.slice(0, 3).map((task, tIdx) => (
+                                     <div key={tIdx} className="flex items-center gap-2 text-xs text-slate-500">
+                                         <span className="w-1.5 h-1.5 rounded-full bg-slate-300"></span>
+                                         <span className="truncate">{task}</span>
+                                     </div>
+                                 ))}
+                             </div>
                          </div>
                      );
                  })}

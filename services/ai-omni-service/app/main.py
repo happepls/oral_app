@@ -239,8 +239,26 @@ class WebSocketCallback(OmniRealtimeCallback):
     def _update_session_prompt(self):
         if self.conversation:
             full_ctx = {**self.user_context}
-            if self.user_context.get('active_goal'):
-                full_ctx.update(self.user_context['active_goal'])
+            active_goal = self.user_context.get('active_goal') or {}
+            
+            if active_goal:
+                full_ctx.update(active_goal)
+
+            # --- Scenario & Task Injection ---
+            # If a specific scenario is selected (via WS param), try to find its detailed tasks in the goal
+            if self.scenario and active_goal.get('scenarios'):
+                scenarios = active_goal.get('scenarios', [])
+                # Simple matching by Title (or ID if we had one)
+                matched_scenario = next((s for s in scenarios if s.get('title') == self.scenario), None)
+                
+                if matched_scenario:
+                    tasks_str = ", ".join(matched_scenario.get('tasks', []))
+                    full_ctx['custom_topic'] = f"{self.scenario} (Tasks: {tasks_str})"
+                    logger.info(f"Selected Scenario: {self.scenario}, Tasks: {tasks_str}")
+                else:
+                    full_ctx['custom_topic'] = self.scenario
+            elif self.scenario:
+                full_ctx['custom_topic'] = self.scenario
 
             system_prompt = prompt_manager.generate_system_prompt(full_ctx, role=self.role)
             
@@ -451,22 +469,30 @@ class WebSocketCallback(OmniRealtimeCallback):
 
                                 if action and data:
                                     logger.info(f"Detected Action: {action}")
-                                    await execute_action(action, data, self.token, self.user_id, self.session_id)
-
-                                    # Refresh Context & Role
-                                    new_profile, new_goal = await fetch_user_context(self.user_id, self.token)
-                                    self.user_context = new_profile
-                                    self.user_context['active_goal'] = new_goal
-
-                                    new_role = self._determine_role(self.user_context)
-                                    if new_role != self.role:
-                                        logger.info(f"Role Switching: {self.role} -> {new_role}")
-                                        self.role = new_role
-                                        self._update_session_prompt()
+                                    
+                                    if action == "complete_task":
+                                        # Forward to client for UI update
                                         await self.websocket.send_json({
-                                            "type": "role_switch",
-                                            "payload": {"role": self.role}
+                                            "type": "task_completed",
+                                            "payload": data
                                         })
+                                    else:
+                                        await execute_action(action, data, self.token, self.user_id, self.session_id)
+
+                                        # Refresh Context & Role
+                                        new_profile, new_goal = await fetch_user_context(self.user_id, self.token)
+                                        self.user_context = new_profile
+                                        self.user_context['active_goal'] = new_goal
+
+                                        new_role = self._determine_role(self.user_context)
+                                        if new_role != self.role:
+                                            logger.info(f"Role Switching: {self.role} -> {new_role}")
+                                            self.role = new_role
+                                            self._update_session_prompt()
+                                            await self.websocket.send_json({
+                                                "type": "role_switch",
+                                                "payload": {"role": self.role}
+                                            })
 
                     except json.JSONDecodeError:
                         logger.error("Failed to decode JSON action block")
@@ -708,33 +734,49 @@ async def websocket_endpoint(client_ws: WebSocket):
                     if text:
                         logger.info(f"User Text Message: {text}")
                         
-                        # 1. Cancel any active response to prevent "active response" error
+                        # 1. Cancel any active response
                         if conversation:
                             try:
-                                # We need to use internal method or just try/except if SDK doesn't expose clean check
-                                # The SDK's cancel_response sends 'conversation.item.truncate' etc.
                                 conversation.cancel_response()
-                                # Give a tiny pause for state update
                                 await asyncio.sleep(0.1) 
                             except Exception:
                                 pass
 
-                        # 2. Regenerate prompt with REINFORCED instructions
-                        if callback:
-                            base_prompt = prompt_manager.generate_system_prompt(callback.user_context, role=callback.role)
-                            
-                            # Append user input AND the critical JSON rule at the very end
-                            # This structure (System -> User -> System Reminder) works best for instruction following.
-                            full_instructions = (
-                                f"{base_prompt}\n\n"
-                                f"# User Input\n"
-                                f"The user just said: \"{text}\"\n\n"
-                                f"# SYSTEM INSTRUCTION (HIGHEST PRIORITY)\n"
-                                f"1. Respond naturally to the user.\n"
-                                f"2. CRITICAL: If the user asked to STOP, SUMMARIZE, or END the session, you MUST output the JSON block with proficiency stats.\n"
-                                f"3. DO NOT output JSON for normal chit-chat unless requested."
+                        # 2. Check for STOP command (Deterministic Override)
+                        stop_keywords = ["STOP", "QUIT", "BYE", "GOODBYE", "SUMMARIZE", "END SESSION"]
+                        is_stop_command = any(k in text.upper() for k in stop_keywords)
+
+                        if is_stop_command and callback:
+                            logger.info(f"STOP command detected: {text}. Forcing summary.")
+                            force_instruction = (
+                                f"The user has issued a SYSTEM STOP COMMAND.\n"
+                                f"1. Say goodbye.\n"
+                                f"2. OUTPUT THE JSON SUMMARY BLOCK IMMEDIATELY.\n"
                             )
-                            conversation.create_response(instructions=full_instructions)
+                            # Force update system prompt to ensure compliance
+                            conversation.update_session(
+                                instructions=force_instruction,
+                                output_modalities=[MultiModality.TEXT, MultiModality.AUDIO]
+                            )
+                            # Send a "System Command" as user input to break roleplay frame
+                            # We don't send this to the client, just to the LLM context
+                            # The SDK append_message adds to history
+                            # But we need to be careful not to mess up client history? 
+                            # Client history is managed by `callback.messages`. 
+                            # DashScope SDK manages its own history.
+                            # We can just send `text` as usual, but prompt logic handles it.
+                            
+                            # Let's try explicit instruction with the text
+                            conversation.create_response(instructions=force_instruction)
+                        
+                        elif callback:
+                            # Normal flow: Update prompt with context if needed, but create_response instructions 
+                            # acts as the "Turn Instructions". 
+                            # We keep the original system prompt (via update_session in callback) and just send user input.
+                            # But to reinforce, we can prepend system instructions to the user input wrapper.
+                            
+                            # Actually, let's trust the Base Prompt + User Input
+                            conversation.create_response(instructions=f"User input: {text}")
                         else:
                             conversation.create_response(instructions=f"User input: {text}")
 
