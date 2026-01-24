@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
-import { conversationAPI, aiAPI } from '../services/api';
+import { conversationAPI, aiAPI, userAPI } from '../services/api';
 import RealTimeRecorder from '../components/RealTimeRecorder';
 import { useAuth } from '../contexts/AuthContext';
 import AudioBar from '../components/AudioBar'; // Import the new AudioBar component
@@ -28,7 +28,42 @@ function Conversation() {
   // Scenario Tasks State
   const [tasks, setTasks] = useState(location.state?.tasks || []);
   const [completedTasks, setCompletedTasks] = useState(new Set());
-  const [showTasks, setShowTasks] = useState(tasks.length > 0);
+  const [showTasks, setShowTasks] = useState(false); // Can keep for toggle, but default to true if tasks exist
+
+  // Initialize completed tasks set
+  useEffect(() => {
+      if (tasks.length > 0) {
+          const completed = new Set();
+          tasks.forEach(t => {
+              if (typeof t === 'object' && t.status === 'completed') {
+                  completed.add(t.text);
+              }
+          });
+          setCompletedTasks(completed);
+          setShowTasks(true); // Auto-show when tasks loaded
+      }
+  }, [tasks]);
+
+  // Separate Effect: Fetch Tasks if missing (Page Refresh)
+  useEffect(() => {
+      const searchParams = new URLSearchParams(window.location.search);
+      const scenarioParam = searchParams.get('scenario');
+      
+      if (tasks.length === 0 && scenarioParam && user && token) {
+          console.log('Fetching tasks for scenario:', scenarioParam);
+          userAPI.getActiveGoal().then(res => {
+              if (res && res.goal && res.goal.scenarios) {
+                  const activeScenario = res.goal.scenarios.find(s => s.title.trim() === scenarioParam.trim());
+                  if (activeScenario && activeScenario.tasks) {
+                      setTasks(activeScenario.tasks);
+                      console.log('Tasks fetched:', activeScenario.tasks);
+                  } else {
+                      console.warn('Scenario not found in goal:', scenarioParam);
+                  }
+              }
+          }).catch(err => console.error('Task fetch error:', err));
+      }
+  }, [user, token, tasks.length]); // Run when auth is ready or tasks empty
   
   // Refs
   const socketRef = useRef(null);
@@ -156,6 +191,28 @@ function Conversation() {
     setIsAISpeaking(false);
   };
 
+  const playSuccessSound = useCallback(() => {
+    initAudioContext();
+    const ctx = audioContextRef.current;
+    if (!ctx) return;
+
+    const oscillator = ctx.createOscillator();
+    const gainNode = ctx.createGain();
+
+    oscillator.type = 'sine';
+    oscillator.frequency.setValueAtTime(500, ctx.currentTime);
+    oscillator.frequency.exponentialRampToValueAtTime(1000, ctx.currentTime + 0.1);
+
+    gainNode.gain.setValueAtTime(0.1, ctx.currentTime);
+    gainNode.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.3);
+
+    oscillator.connect(gainNode);
+    gainNode.connect(ctx.destination);
+
+    oscillator.start();
+    oscillator.stop(ctx.currentTime + 0.3);
+  }, []);
+
   // --- Message Handler ---
   const handleJsonMessage = useCallback((data) => {
       if (isInterruptedRef.current && data.type !== 'role_switch') {
@@ -166,13 +223,23 @@ function Conversation() {
         case 'text_response':
         case 'ai_response':
           const content = data.payload || data.text;
+          const responseId = data.responseId; // Capture ID
+          
           if (content) {
               setMessages(prev => {
                   const last = prev[prev.length - 1];
+                  
+                  // Match by responseId if available, otherwise fallback to "last AI message" logic
+                  // Note: responseId might be undefined for legacy or initial system messages
                   if (last && last.type === 'ai' && !last.isFinal) {
+                      // Check ID match if possible
+                      if (responseId && last.responseId && last.responseId !== responseId) {
+                          // Different ID -> New Message (shouldn't happen if isFinal logic works, but safe check)
+                          return [...prev, { type: 'ai', content: content, speaker: currentRoleRef.current, isFinal: false, responseId }];
+                      }
                       return [...prev.slice(0, -1), { ...last, content: last.content + content }];
                   }
-                  return [...prev, { type: 'ai', content: content, speaker: currentRoleRef.current, isFinal: false }];
+                  return [...prev, { type: 'ai', content: content, speaker: currentRoleRef.current, isFinal: false, responseId }];
               });
           }
           break;
@@ -187,15 +254,37 @@ function Conversation() {
           setIsAISpeaking(false);
           break;
         case 'task_completed':
-           const taskName = data.payload?.task;
-           if (taskName) {
-               setCompletedTasks(prev => {
-                   const newSet = new Set(prev);
-                   newSet.add(taskName);
-                   return newSet;
-               });
-               setMessages(prev => [...prev, { type: 'system', content: `✅ 完成任务: ${taskName}` }]);
-           }
+           playSuccessSound();
+           
+           // Re-fetch the latest goal state from DB to sync task progress
+           userAPI.getActiveGoal().then(res => {
+               if (res && res.goal && res.goal.scenarios) {
+                   const searchParams = new URLSearchParams(window.location.search);
+                   const currentScenarioTitle = searchParams.get('scenario') || location.state?.scenario;
+                   
+                   if (!currentScenarioTitle) return;
+
+                   const activeScenario = res.goal.scenarios.find(s => s.title.trim() === currentScenarioTitle.trim());
+                   
+                   if (activeScenario && activeScenario.tasks) {
+                       setTasks(activeScenario.tasks);
+                       
+                       // Re-calculate completed set
+                       const newCompleted = new Set();
+                       activeScenario.tasks.forEach(t => {
+                           if (typeof t === 'object' && t.status === 'completed') {
+                               newCompleted.add(t.text);
+                           }
+                       });
+                       setCompletedTasks(newCompleted);
+                       
+                       // Show toast
+                       const completedTask = activeScenario.tasks.find(t => t.status === 'completed' && !completedTasks.has(t.text));
+                       const toastMsg = completedTask ? `✅ 完成任务: ${completedTask.text}` : '✅ 进度已保存';
+                       setMessages(prev => [...prev, { type: 'system', content: toastMsg }]);
+                   }
+               }
+           }).catch(err => console.error('Failed to sync tasks:', err));
            break;
         case 'transcription':
            console.log('Transcription Event:', data);
@@ -228,13 +317,26 @@ function Conversation() {
            break;
         case 'audio_url':
            const { url, role } = data.payload;
+           const targetResponseId = data.responseId; // Get ID from event
+
            if (role === 'assistant') {
                setMessages(prev => {
                    const newMessages = [...prev];
-                   // Attach URL to the last AI message THAT DOES NOT HAVE A URL YET
-                   // This prevents overwriting a newer message's URL (or absence thereof) with an older message's URL
+                   
+                   // 1. Try Strict Match by Response ID
+                   if (targetResponseId) {
+                       const index = newMessages.findIndex(m => m.type === 'ai' && m.responseId === targetResponseId);
+                       if (index !== -1) {
+                           console.log(`[AudioURL] Attached to message ${index} via ID ${targetResponseId}`);
+                           newMessages[index] = { ...newMessages[index], audioUrl: url };
+                           return newMessages;
+                       }
+                   }
+
+                   // 2. Fallback: Attach to the LAST AI message that doesn't have a URL
                    for (let i = newMessages.length - 1; i >= 0; i--) {
                        if (newMessages[i].type === 'ai' && !newMessages[i].audioUrl) {
+                           console.log(`[AudioURL] Fallback attachment to message ${i}`);
                            newMessages[i] = { ...newMessages[i], audioUrl: url };
                            break;
                        }
@@ -406,20 +508,70 @@ function Conversation() {
   useEffect(() => {
     const init = async () => {
       if (!user?.id || !token) return; // Wait for full auth
-      
+
       // Check URL for sessionId (e.g., ?sessionId=...)
       const searchParams = new URLSearchParams(window.location.search);
       const urlSessionId = searchParams.get('sessionId') || searchParams.get('session'); // Support both
-      const scenario = searchParams.get('scenario');
+      const scenario = searchParams.get('scenario') || location.state?.scenario;
       const topic = searchParams.get('topic');
 
-      if (urlSessionId) {
-          console.log('Restoring session:', urlSessionId);
-          setSessionId(urlSessionId);
-          
+      // Refresh Tasks if missing (Page Refresh)
+      if (!location.state?.tasks && scenario) {
+          try {
+              const goalRes = await userAPI.getActiveGoal();
+              if (goalRes && goalRes.goal && goalRes.goal.scenarios) {
+                  console.log('Available Scenarios:', goalRes.goal.scenarios.map(s => s.title));
+                  console.log('Requested Scenario:', scenario);
+                  
+                  const activeScenario = goalRes.goal.scenarios.find(s => s.title.trim() === scenario.trim());
+                  if (activeScenario && activeScenario.tasks) {
+                      setTasks(activeScenario.tasks);
+                      console.log('Restored tasks from active goal:', activeScenario.tasks);
+                  } else {
+                      console.warn('Scenario not found in active goal');
+                  }
+              }
+          } catch (e) {
+              console.warn('Failed to restore tasks from goal:', e);
+          }
+      }
+
+      // Determine session ID priority: URL > localStorage > new session
+      let effectiveSessionId = urlSessionId;
+
+      // If no URL session ID, check localStorage for persisted session
+      if (!effectiveSessionId && scenario) {
+          const storedSessionId = localStorage.getItem(`session_${scenario}`);
+          if (storedSessionId) {
+              // Verify that the stored session ID is still valid by checking history
+              try {
+                  const historyRes = await conversationAPI.getHistory(storedSessionId);
+                  if (historyRes && historyRes.messages) {
+                      effectiveSessionId = storedSessionId;
+                  }
+              } catch (err) {
+                  console.log('Stored session not valid, will create new one:', err);
+                  // Clear invalid session from storage
+                  localStorage.removeItem(`session_${scenario}`);
+              }
+          }
+      }
+
+      if (effectiveSessionId) {
+          console.log('Restoring session:', effectiveSessionId);
+          setSessionId(effectiveSessionId);
+
+          // Update URL to reflect the session being used
+          const newParams = new URLSearchParams(window.location.search);
+          newParams.set('sessionId', effectiveSessionId);
+          if (scenario) newParams.set('scenario', scenario);
+          if (topic) newParams.set('topic', topic);
+          const newUrl = `${window.location.pathname}?${newParams.toString()}`;
+          window.history.replaceState({ path: newUrl }, '', newUrl);
+
           try {
               // Fetch History
-              const historyRes = await conversationAPI.getHistory(urlSessionId);
+              const historyRes = await conversationAPI.getHistory(effectiveSessionId);
               // handleResponse returns `data.data` (the conversation object)
               if (historyRes && historyRes.messages) {
                   const restoredMessages = historyRes.messages.map(m => ({
@@ -429,13 +581,7 @@ function Conversation() {
                       audioUrl: m.audioUrl || null,
                       speaker: m.role === 'user' ? 'Me' : 'OralTutor' // Basic mapping
                   }));
-                  
-                  // Prepend system message, then history
-                  // setMessages([
-                  //     { type: 'system', content: '正在恢复历史会话...' },
-                  //     ...restoredMessages
-                  // ]);
-                  
+
                   // Just show history. If empty, show welcome.
                   if (restoredMessages.length > 0) {
                       setMessages(restoredMessages);
@@ -455,7 +601,7 @@ function Conversation() {
             let goalId = 'general';
             try {
                 // We assume userAPI is available (imported)
-                const goalRes = await import('../services/api').then(m => m.userAPI.getActiveGoal());
+                const goalRes = await userAPI.getActiveGoal();
                 if (goalRes && goalRes.goal) {
                      goalId = goalRes.goal.id || goalRes.goal._id;
                 }
@@ -463,34 +609,40 @@ function Conversation() {
                 console.warn('Failed to fetch active goal for session start:', e);
             }
 
-            const res = await conversationAPI.startSession({ 
+            const res = await conversationAPI.startSession({
                 userId: user.id,
                 goalId: goalId,
                 scenario: scenario, // Pass scenario if exists
                 topic: topic,       // Pass topic if exists
-                forceNew: true 
+                forceNew: true
             });
 
             if (res && res.sessionId) {
                 setSessionId(res.sessionId);
-                
+
+                // Store session ID in localStorage for future persistence
+                if (scenario) {
+                    localStorage.setItem(`session_${scenario}`, res.sessionId);
+                }
+
                 // Update URL to include sessionId, preventing "No History" error on refresh
                 const newParams = new URLSearchParams(window.location.search);
                 newParams.set('sessionId', res.sessionId);
-                // Keep scenario/topic for reference or remove them? keeping them is fine.
+                if (scenario) newParams.set('scenario', scenario);
+                if (topic) newParams.set('topic', topic);
                 const newUrl = `${window.location.pathname}?${newParams.toString()}`;
                 window.history.replaceState({ path: newUrl }, '', newUrl);
             } else {
                 setWebSocketError('无法创建会话');
             }
-          } catch {
+          } catch (err) {
+            console.error('Error starting session:', err);
             setWebSocketError('网络错误');
           }
       }
     };
     init();
   }, [user, token]); // Added token dependency
-
   // Connect WS when SessionId ready
   useEffect(() => {
     if (sessionId) {
@@ -573,13 +725,14 @@ function Conversation() {
               </div>
               <ul className="space-y-2">
                   {tasks.map((task, idx) => {
-                      const isCompleted = completedTasks.has(task);
+                      const taskText = typeof task === 'string' ? task : task.text;
+                      const isCompleted = completedTasks.has(taskText);
                       return (
                           <li key={idx} className={`text-xs flex items-start gap-2 ${isCompleted ? 'text-green-600 dark:text-green-400 line-through opacity-70' : 'text-slate-700 dark:text-slate-200'}`}>
                               <span className={`w-3 h-3 rounded-full border flex items-center justify-center shrink-0 mt-0.5 ${isCompleted ? 'bg-green-100 border-green-200' : 'border-slate-300'}`}>
                                   {isCompleted && <span className="material-symbols-outlined text-[8px] font-bold">check</span>}
                               </span>
-                              <span>{task}</span>
+                              <span>{taskText}</span>
                           </li>
                       );
                   })}
@@ -666,7 +819,7 @@ function Conversation() {
                      /* Placeholder: Render nothing for text, only AudioBar below if valid */
                      null
                  ) : (
-                     <p className="whitespace-pre-wrap leading-relaxed">{msg.content}</p>
+                     <p className="whitespace-pre-wrap leading-relaxed">{msg.content.replace(/```json[\s\S]*?```/g, '').trim()}</p>
                  )}
                  {msg.audioUrl && (
                    <div className="mt-2">
