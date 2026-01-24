@@ -1,8 +1,42 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { useAuth } from '../contexts/AuthContext';
+
+const quotes = {
+  zh: "“学习另一门语言不仅是学会对相同事物用不同的词表达，更是学会用另一种方式去思考。” – Flora Lewis",
+  en: "“Learning another language is not only learning different words for the same things, but learning another way to think about things.” – Flora Lewis",
+  es: "“Aprender otro idioma no es solo aprender diferentes palabras para las mismas cosas, sino aprender otra forma de pensar sobre las cosas.” – Flora Lewis",
+  fr: "“Apprendre une autre langue, ce n'est pas seulement apprendre d'autres mots pour désigner les mêmes choses, c'est apprendre une autre façon de penser.” – Flora Lewis",
+  ja: "“外国語を学ぶことは、同じ物事を表す違う言葉を覚えるだけでなく、物事の捉え方そのものを学ぶことである。” – Flora Lewis"
+};
 
 function Welcome() {
   const navigate = useNavigate();
+  const { user } = useAuth();
+  const [selectedLang, setSelectedLang] = useState('zh');
+
+  useEffect(() => {
+    if (user && user.native_language) {
+      // Map common language names to codes if necessary, or assume codes are stored
+      const langMap = {
+        'Chinese': 'zh', 'Mandarin': 'zh', 'English': 'en', 
+        'Spanish': 'es', 'French': 'fr', 'Japanese': 'ja'
+      };
+      // Simple check if it's a known code or name
+      const userLang = user.native_language;
+      if (quotes[userLang]) {
+        setSelectedLang(userLang);
+      } else if (langMap[userLang]) {
+        setSelectedLang(langMap[userLang]);
+      }
+    } else {
+       // Fallback to browser language
+       const browserLang = navigator.language.split('-')[0];
+       if (quotes[browserLang]) {
+           setSelectedLang(browserLang);
+       }
+    }
+  }, [user]);
 
   return (
     <div className="relative flex min-h-screen w-full flex-col items-center bg-background-light dark:bg-background-dark p-4">
@@ -14,6 +48,12 @@ function Welcome() {
           </div>
           <h1 className="text-slate-900 dark:text-white tracking-light text-[32px] font-bold leading-tight pt-4">Guaji AI</h1>
           <p className="text-slate-600 dark:text-slate-400 text-base mt-2">高效、深度的AI口语练习</p>
+          
+          <div className="mt-8 px-6 py-4 bg-slate-50 dark:bg-slate-800/50 rounded-xl border border-slate-100 dark:border-slate-800">
+            <p className="text-slate-500 dark:text-slate-400 text-sm font-medium italic leading-relaxed">
+              {quotes[selectedLang]}
+            </p>
+          </div>
         </div>
 
         <div className="flex w-full flex-col items-center">
@@ -40,7 +80,10 @@ function Welcome() {
         </div>
 
         <div className="w-full max-w-md px-4 pt-8 pb-4">
-          <select className="w-full appearance-none rounded-lg border border-slate-300 dark:border-slate-700 bg-background-light dark:bg-slate-800 px-4 py-3 text-center text-slate-700 dark:text-slate-300 focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/50 text-sm">
+          <select 
+            value={selectedLang}
+            onChange={(e) => setSelectedLang(e.target.value)}
+            className="w-full appearance-none rounded-lg border border-slate-300 dark:border-slate-700 bg-background-light dark:bg-slate-800 px-4 py-3 text-center text-slate-700 dark:text-slate-300 focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/50 text-sm">
             <option value="zh">中文</option>
             <option value="en">English</option>
             <option value="es">Español</option>

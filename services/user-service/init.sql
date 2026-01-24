@@ -42,8 +42,24 @@ CREATE TABLE IF NOT EXISTS user_goals (
     completed_at TIMESTAMPTZ
 );
 
+-- Create the user_tasks table (Normalized Task Tracking)
+CREATE TABLE IF NOT EXISTS user_tasks (
+    id SERIAL PRIMARY KEY,
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    goal_id INT NOT NULL REFERENCES user_goals(id) ON DELETE CASCADE,
+    scenario_title VARCHAR(255) NOT NULL,
+    task_description TEXT NOT NULL,
+    status VARCHAR(50) DEFAULT 'pending', -- pending, completed
+    score INT DEFAULT 0, -- 0-100 quality score for this specific task
+    feedback TEXT, -- AI feedback regarding this task
+    completed_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
 -- Add indexes for better query performance
 CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);
 CREATE INDEX IF NOT EXISTS idx_user_identities_user_id ON user_identities(user_id);
 CREATE INDEX IF NOT EXISTS idx_user_goals_user_id ON user_goals(user_id);
 CREATE INDEX IF NOT EXISTS idx_user_goals_status ON user_goals(status);
+CREATE INDEX IF NOT EXISTS idx_user_tasks_goal_id ON user_tasks(goal_id);
+CREATE INDEX IF NOT EXISTS idx_user_tasks_user_id ON user_tasks(user_id);

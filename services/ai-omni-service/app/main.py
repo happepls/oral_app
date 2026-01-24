@@ -68,7 +68,7 @@ async def fetch_user_context(user_id: str, token: str):
             logger.error(f"Error fetching user context: {e}")
             return {}, {}
 
-async def execute_action(action: str, data: dict, token: str, user_id: str = None, session_id: str = None):
+async def execute_action(action: str, data: dict, token: str, user_id: str = None, session_id: str = None, context: dict = None):
     headers = {"Authorization": f"Bearer {token}"}
     base_url = "http://user-service:3000"
     async with httpx.AsyncClient() as client:
@@ -84,6 +84,22 @@ async def execute_action(action: str, data: dict, token: str, user_id: str = Non
                 if goal_id:
                     await client.put(f"{base_url}/goals/{goal_id}/complete", headers=headers)
                     logger.info(f"Completed goal: {goal_id}")
+            elif action == "complete_task":
+                task_name = data.get('task')
+                scenario_title = context.get('custom_topic') if context else None
+                
+                # Robustly extract scenario title from "Title (Tasks: ...)" format
+                if scenario_title and " (Tasks:" in scenario_title:
+                     scenario_title = scenario_title.split(" (Tasks:")[0].strip()
+                
+                if task_name:
+                    payload = {
+                        "scenario": scenario_title or "Unknown", # Fallback, user-service might need to scan all
+                        "task": task_name
+                    }
+                    url = f"{base_url}/internal/users/{user_id}/tasks/complete"
+                    resp = await client.post(url, json=payload)
+                    logger.info(f"Task Completion Request: {payload}, Status: {resp.status_code}, Resp: {resp.text}")
             elif action == "save_summary":
                 # Prepare payload for history service
                 payload = {
@@ -101,15 +117,16 @@ async def execute_action(action: str, data: dict, token: str, user_id: str = Non
         except Exception as e:
             logger.error(f"Error executing action {action}: {e}")
 
-async def save_conversation_history(session_id: str, user_id: str, messages: list):
+async def save_conversation_history(session_id: str, user_id: str, messages: list, topic: str = "General Practice"):
     url = "http://history-analytics-service:3004/api/history/conversation"
     payload = {
         "sessionId": session_id,
         "userId": user_id,
         "messages": messages,
-        "topic": "General Practice",
+        "topic": topic,
         "endTime": datetime.utcnow().isoformat()
     }
+    logger.info(f"Saving history for session {session_id}, User: {user_id}, Topic: {topic}, Msgs: {len(messages)}")
     async with httpx.AsyncClient() as client:
         try:
             resp = await client.post(url, json=payload)
@@ -119,6 +136,8 @@ async def save_conversation_history(session_id: str, user_id: str, messages: lis
                 logger.info(f"Saved {len(messages)} messages to history for session {session_id}")
         except Exception as e:
             logger.error(f"Error saving history: {e}")
+            import traceback
+            traceback.print_exc()
 
 async def fetch_conversation_history(session_id: str):
     url = f"http://history-analytics-service:3004/api/history/session/{session_id}"
@@ -253,12 +272,25 @@ class WebSocketCallback(OmniRealtimeCallback):
                 
                 if matched_scenario:
                     tasks_str = ", ".join(matched_scenario.get('tasks', []))
-                    full_ctx['custom_topic'] = f"{self.scenario} (Tasks: {tasks_str})"
+                    # Persist to self.user_context so execute_action can access it later
+                    self.user_context['custom_topic'] = f"{self.scenario} (Tasks: {tasks_str})"
+                    full_ctx['custom_topic'] = self.user_context['custom_topic']
                     logger.info(f"Selected Scenario: {self.scenario}, Tasks: {tasks_str}")
                 else:
+                    self.user_context['custom_topic'] = self.scenario
                     full_ctx['custom_topic'] = self.scenario
             elif self.scenario:
+                self.user_context['custom_topic'] = self.scenario
                 full_ctx['custom_topic'] = self.scenario
+            
+            # --- Fallback: Use Topic from History if not in URL but restoring ---
+            # If we are restoring a session but no scenario param provided, check if we have a topic in messages?
+            # Ideally we rely on the client to pass the scenario/topic.
+            # But let's log what we have.
+            if not self.scenario and self.messages:
+                 # Check if we can infer topic from DB? Not easily here.
+                 # Rely on client passing scenario=... even for resume.
+                 pass
 
             system_prompt = prompt_manager.generate_system_prompt(full_ctx, role=self.role)
             
@@ -367,7 +399,7 @@ class WebSocketCallback(OmniRealtimeCallback):
                     logger.debug(f"Ignoring event {event_name} due to interruption flag")
                     return
 
-                if event_name == 'response.audio.delta':
+                elif event_name == 'response.audio.delta':
                     audio_data = payload.get('delta')
                     if audio_data:
                         try:
@@ -375,26 +407,28 @@ class WebSocketCallback(OmniRealtimeCallback):
                             self.ai_audio_buffer.extend(audio_bytes)
                         except:
                             pass
-                        await self.websocket.send_json({ "type": "audio_response", "payload": audio_data, "role": self.role })
+                        await self.websocket.send_json({ 
+                            "type": "audio_response", 
+                            "payload": audio_data, 
+                            "role": self.role,
+                            "responseId": self.current_response_id
+                        })
 
                 elif event_name == 'response.audio_transcript.delta':
                     text = payload.get('delta')
                     if text:
                         self.full_response_text += text
-
-                        # Check for JSON block start to suppress streaming
-                        # We want to hide ```json ... ``` from the client
-                        if "```json" in self.full_response_text and not self.suppress_text_sending:
-                            self.suppress_text_sending = True
-                            # Optional: We could try to send the text *before* the JSON if it was in this chunk
-                            # But simple boolean flag is robust enough for "at the end" JSON.
-
-                        if not self.suppress_text_sending:
-                            # Only send role with first delta or role_switch event
-                            if not hasattr(self, '_sent_role_for_turn'):
-                                await self.websocket.send_json({ "type": "role_switch", "payload": {"role": self.role} })
-                                self._sent_role_for_turn = True
-                            await self.websocket.send_json({ "type": "text_response", "payload": text })
+                        # No suppression needed anymore!
+                        
+                        # Only send role with first delta or role_switch event
+                        if not hasattr(self, '_sent_role_for_turn'):
+                            await self.websocket.send_json({ "type": "role_switch", "payload": {"role": self.role} })
+                            self._sent_role_for_turn = True
+                        await self.websocket.send_json({ 
+                            "type": "text_response", 
+                            "payload": text,
+                            "responseId": self.current_response_id
+                        })
 
                 elif event_name == 'response.audio.done':
                     if self.ai_audio_buffer:
@@ -402,11 +436,10 @@ class WebSocketCallback(OmniRealtimeCallback):
                         self.ai_audio_buffer = bytearray()
                         
                         # Async upload
-                        async def upload_ai_task(data):
+                        async def upload_ai_task(data, rid):
                             url = await self.upload_audio_to_cos(data, 'ai_audio')
                             if url:
                                 logger.info(f"AI Audio Uploaded: {url}")
-                                self.last_ai_audio_url = url
                                 
                                 # Notify Client
                                 await self.websocket.send_json({
@@ -414,26 +447,35 @@ class WebSocketCallback(OmniRealtimeCallback):
                                     "payload": {
                                         "url": url,
                                         "role": "assistant"
-                                    }
+                                    },
+                                    "responseId": rid
                                 })
 
-                                # Update last assistant message
+                                # Correctly attach to the matching message
                                 if self.messages and self.messages[-1]['role'] == 'assistant':
                                     self.messages[-1]['audioUrl'] = url
-                                    await save_conversation_history(self.session_id, self.user_id, self.messages)
+                                    await save_conversation_history(self.session_id, self.user_id, self.messages, self.scenario or "General Practice")
+                                else:
+                                    self.last_ai_audio_url = url
                         
-                        asyncio.create_task(upload_ai_task(audio_data))
+                        asyncio.create_task(upload_ai_task(audio_data, self.current_response_id))
 
                 elif event_name == 'response.audio_transcript.done' or event_name == 'response.text.done':
                     logger.info(f"AI Response Finished. Raw Length: {len(self.full_response_text)}")
-                    logger.info(f"Raw Output: {self.full_response_text}") # Uncomment for deep debugging
-
+                    
                     if self.interrupted_turn:
                         logger.info("Skipping action execution due to interruption")
                         self.full_response_text = ""
-                        self.suppress_text_sending = False
-                        self.ai_audio_buffer = bytearray() # Clear buffer
+                        self.ai_audio_buffer = bytearray() 
                         return
+
+                    # Clean Text (Remove JSON blocks if any slipped through)
+                    # This prevents pollution of history and prompt context
+                    clean_text = re.sub(r'```json.*?```', '', self.full_response_text, flags=re.DOTALL | re.IGNORECASE).strip()
+                    clean_text = re.sub(r'\{"action":.*?\}', '', clean_text, flags=re.DOTALL | re.IGNORECASE).strip()
+                    
+                    # Update full_response_text with cleaned version for logic
+                    self.full_response_text = clean_text
 
                     # Save AI Message to History
                     if self.full_response_text:
@@ -442,65 +484,130 @@ class WebSocketCallback(OmniRealtimeCallback):
                             "content": self.full_response_text,
                             "timestamp": datetime.utcnow().isoformat()
                         }
-                        # If audio URL is already available (unlikely for short text, but possible), add it
                         if self.last_ai_audio_url:
                             msg['audioUrl'] = self.last_ai_audio_url
-                            self.last_ai_audio_url = None # Consume it
+                            self.last_ai_audio_url = None 
                         
                         self.messages.append(msg)
-                        await save_conversation_history(self.session_id, self.user_id, self.messages)
+                        await save_conversation_history(self.session_id, self.user_id, self.messages, self.scenario or "General Practice")
 
-                    # Process Action
-                    text = self.full_response_text
+                    # --- KEYWORD SPOTTING LOGIC (New) ---
+                    text_lower = self.full_response_text.lower()
+                    
+                    # 1. Task Completion Keywords (Strong Affirmation)
+                    # Regex for exact phrase match to avoid accidental substring triggers
+                    # Matches: "Perfect!", "Excellent!", "Mission Accomplished", "You nailed it"
+                    # Note: We look for the word followed by punctuation or end of string for robustness
+                    completion_patterns = [
+                        r"\bperfect\b", 
+                        r"\bexcellent\b", 
+                        r"\bmission accomplished\b", 
+                        r"\byou nailed it\b",
+                        r"\bcorrect!\b" 
+                    ]
+                    
+                    is_completed = any(re.search(p, text_lower) for p in completion_patterns)
+                    
+                    if is_completed:
+                        logger.info(f"KEYWORD TRIGGER: Task Completion Detected in '{self.full_response_text[:50]}...'")
+                        
+                        # Infer task name from context (We don't get it from JSON anymore)
+                        # We use the current focus from the context
+                        current_focus = self.user_context.get('custom_topic', '')
+                        # Try to extract just the task name if it's in "Scenario (Tasks: X, Y)" format
+                        # Limitation: This completes the *current active scenario* context. 
+                        # Ideally, we should know WHICH task. For now, we assume the AI is guiding linearly.
+                        # But wait, `complete_task` API requires a task name.
+                        # How do we get the SPECIFIC task name without JSON?
+                        # 
+                        # Strategy: 
+                        # 1. We send a generic "Advance Progress" signal? No, backend needs task name.
+                        # 2. We scan the user context's task list and pick the first 'pending' one?
+                        #    We can't do that easily here without fetching DB again.
+                        # 3. We rely on the AI mentioning the task? Unreliable.
+                        # 
+                        # Better Strategy:
+                        # Since we are in a specific `custom_topic` which usually contains the tasks string:
+                        # "Scenario (Tasks: Ask for A, Ask for B)"
+                        # If we assume linear progression, we can try to complete the *next* task?
+                        # OR, simply send the WHOLE string to user-service and let it figure out which one to mark?
+                        # My `user-service` update allows fuzzy matching.
+                        #
+                        # Let's extract the raw task string from `custom_topic` and pass it.
+                        # However, `custom_topic` might contain ALL tasks.
+                        # 
+                        # Let's fallback to: We send a special "auto_complete_next" signal?
+                        # Or we revert to: The AI Prompt *must* output the task name? 
+                        # No, User said NO JSON.
+                        #
+                        # Solution: We assume the User Service can handle a partial match or we complete the *Scenario*?
+                        # Actually, looking at `user-service`, `completeTask` needs `scenario` and `task`.
+                        # 
+                        # Workaround: We will extract the *first* task from the prompt context's task list?
+                        # No, that will always complete the first one.
+                        #
+                        # Let's parse `self.user_context['custom_topic']`. 
+                        # If it is "Airport (Tasks: A, B, C)", we can't know which one.
+                        # 
+                        # Wait, the `OralTutor` prompt has `{current_focus}`.
+                        # If we update `current_focus` dynamically per turn? We don't.
+                        # 
+                        # Let's look at the `data` payload the user wants.
+                        # "Capture keywords... trigger task_completed".
+                        # 
+                        # If I cannot know the specific task name, I will send a special task name: "**CURRENT_FOCUS**"
+                        # And update `user-service` to handle this magic string by finding the first pending task?
+                        # That's a good backend change.
+                        #
+                        # For now, let's try to parse the AI text to see if it *quotes* the task?
+                        # "Perfect! You successfully **asked for an aisle seat**."
+                        # That's hard.
+                        #
+                        # Let's use the `custom_topic` parsing I added earlier.
+                        # If `custom_topic` is "Ask for window seat", then we use that.
+                        # The `GoalPlanner` sets `custom_topic` to specific tasks usually?
+                        # No, usually it sets it to the Scenario Title + List.
+                        #
+                        # CRITICAL: In `Conversation.js` or `GoalPlanner`, do we set the topic to a SINGLE task?
+                        # No.
+                        #
+                        # Let's assume for this refactor that `task` = "Auto-Detect" or pass the scenario title.
+                        # I will modify `execute_action` to handle `task=None` implies "Complete whatever is pending in this scenario".
+                        
+                        # Let's pass the raw scenario title we have.
+                        scenario_title = self.user_context.get('custom_topic', 'Unknown')
+                        if " (Tasks:" in scenario_title:
+                             scenario_title = scenario_title.split(" (Tasks:")[0].strip()
 
-                    # Improved JSON extraction: Find outermost braces
-                    try:
-                        start_idx = text.find('{')
-                        end_idx = text.rfind('}')
+                        # Trigger Action: We send a specific flag task name
+                        await execute_action("complete_task", {"task": "NEXT_PENDING_TASK"}, self.token, self.user_id, self.session_id, context=self.user_context)
+                        
+                        # Notify Frontend (Generic Success)
+                        await self.websocket.send_json({
+                            "type": "task_completed",
+                            "payload": { "task": "Task Completed" } # Frontend will define what to cross out?
+                        })
 
-                        if start_idx != -1 and end_idx != -1 and end_idx > start_idx:
-                            potential_json = text[start_idx : end_idx + 1]
-                            # Verify it contains "action" before trying to load (optimization)
-                            if '"action"' in potential_json:
-                                logger.info(f"Potential JSON found: {potential_json[:100]}...")
-                                action_data = json.loads(potential_json)
-                                action = action_data.get('action')
-                                data = action_data.get('data')
-
-                                if action and data:
-                                    logger.info(f"Detected Action: {action}")
-                                    
-                                    if action == "complete_task":
-                                        # Forward to client for UI update
-                                        await self.websocket.send_json({
-                                            "type": "task_completed",
-                                            "payload": data
-                                        })
-                                    else:
-                                        await execute_action(action, data, self.token, self.user_id, self.session_id)
-
-                                        # Refresh Context & Role
-                                        new_profile, new_goal = await fetch_user_context(self.user_id, self.token)
-                                        self.user_context = new_profile
-                                        self.user_context['active_goal'] = new_goal
-
-                                        new_role = self._determine_role(self.user_context)
-                                        if new_role != self.role:
-                                            logger.info(f"Role Switching: {self.role} -> {new_role}")
-                                            self.role = new_role
-                                            self._update_session_prompt()
-                                            await self.websocket.send_json({
-                                                "type": "role_switch",
-                                                "payload": {"role": self.role}
-                                            })
-
-                    except json.JSONDecodeError:
-                        logger.error("Failed to decode JSON action block")
-                    except Exception as e:
-                        logger.error(f"Error processing action parsing: {e}")
+                    # 2. Proficiency Scoring (Sentiment)
+                    delta = 0
+                    if is_completed:
+                        delta = 5 # Big boost for completion
+                    elif re.search(r"\b(good|nice|great|well done)\b", text_lower):
+                        delta = 1 # Small boost for encouragement
+                    elif re.search(r"\b(try again|not quite|almost)\b", text_lower):
+                        delta = -1 # Small penalty/learning opportunity
+                    
+                    if delta != 0:
+                        # Send silent proficiency update
+                        await execute_action("save_summary", {
+                            "summary": "Auto-update via keyword spotting", 
+                            "proficiency_score_delta": delta,
+                            "feedback": "Keyword detected",
+                            "goalId": self.user_context.get('active_goal', {}).get('id')
+                        }, self.token, self.user_id, self.session_id, context=self.user_context)
 
                     self.full_response_text = "" # Reset
-                    self.suppress_text_sending = False # Reset suppression for next turn
+
 
                 elif event_name == 'conversation.item.input_audio_transcription.completed':
                     text = payload.get('transcript')
@@ -526,7 +633,7 @@ class WebSocketCallback(OmniRealtimeCallback):
                             
                             self.messages.append(msg)
                         
-                        await save_conversation_history(self.session_id, self.user_id, self.messages)
+                        await save_conversation_history(self.session_id, self.user_id, self.messages, self.scenario or "General Practice")
                         await self.websocket.send_json({ "type": "transcription", "text": text, "isFinal": True })
 
                 elif 'input' in event_name and 'transcript' in event_name:
@@ -610,9 +717,15 @@ async def websocket_endpoint(client_ws: WebSocket):
                         
                         logger.info(f"Handshake received: User {user_id}, Session {session_id}")
                         
-                        # Re-fetch context if handshake provided new token/user
+        # Re-fetch context if handshake provided new token/user
                         user_context, active_goal = await fetch_user_context(user_id, token)
                         if user_context is None: user_context = {}
+                        
+                        # Fallback: If user_id is still None (e.g. not in URL/Handshake), get from profile
+                        if not user_id and user_context:
+                            user_id = user_context.get('id') or user_context.get('userId') or user_context.get('_id')
+                            logger.info(f"User ID inferred from context: {user_id}")
+
                         user_context['active_goal'] = active_goal
                         if topic: user_context['custom_topic'] = topic
                         
@@ -687,6 +800,29 @@ async def websocket_endpoint(client_ws: WebSocket):
                      conversation.append_audio(audio_b64)
                      if callback:
                          callback.user_audio_buffer.extend(base64.b64decode(audio_b64))
+        
+        # Trigger Welcome Message for New Sessions (if no initial input)
+        elif not history_messages:
+            current_topic = scenario or user_context.get('custom_topic') or "General Practice"
+            logger.info(f"New Session Detected (History: {len(history_messages)}). Triggering Welcome Message for Role: {callback.role}, Topic: {current_topic}")
+            
+            # FORCE INITIAL SAVE to ensure persistence of Topic/Scenario
+            # This allows Discovery page to find this session immediately even if the user leaves before the first message completes.
+            await save_conversation_history(session_id, user_id, [], current_topic)
+
+            welcome_instruction = "This is the start of a new session. You MUST greet the user to initiate the interaction."
+            
+            if callback.role == "InfoCollector":
+                welcome_instruction += " Introduce yourself as their personal language goal planner and ask for their nickname."
+            elif callback.role == "GoalPlanner":
+                welcome_instruction += " Welcome them and mention you are ready to design their learning scenarios."
+            elif callback.role == "OralTutor":
+                welcome_instruction += f" Greet the user for their {user_context.get('target_language', 'language')} practice session on {current_topic}."
+            
+            # Use create_response to trigger the greeting
+            # We add a slight delay to ensure the connection is fully ready and stable
+            await asyncio.sleep(0.5)
+            conversation.create_response(instructions=welcome_instruction)
 
         while True:
             try:
@@ -826,7 +962,7 @@ async def websocket_endpoint(client_ws: WebSocket):
                                         }
                                         callback.messages.append(msg)
                                     
-                                    await save_conversation_history(session_id, user_id, callback.messages)
+                                    await save_conversation_history(session_id, user_id, callback.messages, callback.scenario or "General Practice")
 
                             asyncio.create_task(upload_task(audio_data))
 

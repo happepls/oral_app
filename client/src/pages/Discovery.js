@@ -1,115 +1,71 @@
 import React, { useEffect, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useLocation } from 'react-router-dom';
 import BottomNav from '../components/BottomNav';
 import { useAuth } from '../contexts/AuthContext';
 import { userAPI, conversationAPI, historyAPI } from '../services/api';
 
-// --- Level Configuration (MVP: Hardcoded) ---
-const LEVELS = [
-    { 
-        id: 1, 
-        minScore: 0, 
-        title: "Level 1: 基础起步", 
-        desc: "简单句型与日常问候",
-        points: [
-            { title: "Simple Present (一般现在时)", content: "Used for facts, habits, and general truths. e.g., 'I play tennis.'" },
-            { title: "To Be Verbs", content: "Am, Is, Are usage. e.g., 'She is a doctor.'" }
+// --- Fallback Scenario Generator ---
+const generateScenarios = (language, interestsStr) => {
+    // Basic templates for common categories
+    const templates = {
+        'Business': [
+             { title: "Business Introduction", tasks: ["Introduce yourself and your role", "Ask about the company", "Exchange business cards"] },
+             { title: "Meeting Participation", tasks: ["State your opinion", "Agree with a colleague", "Ask for clarification"] },
+             { title: "Negotiation Basics", tasks: ["Make an offer", "Reject a proposal politely", "Suggest a compromise"] },
+             { title: "Client Call", tasks: ["Schedule a meeting", "Confirm details", "End the call professionally"] },
+             { title: "Presentation Q&A", tasks: ["Answer a difficult question", "Thank the audience", "Summarize key points"] },
+             { title: "Networking Event", tasks: ["Start a conversation", "Discuss industry trends", "Ask for contact info"] },
+             { title: "Job Interview", tasks: ["Describe your strengths", "Explain a past challenge", "Ask about the team"] },
+             { title: "Office Small Talk", tasks: ["Ask about the weekend", "Discuss lunch plans", "Talk about current events"] },
+             { title: "Email Dictation", tasks: ["Draft a formal request", "Write a follow-up", "Close an email"] },
+             { title: "Project Update", tasks: ["Report progress", "Mention a blocker", "Ask for resources"] }
+        ],
+        'Travel': [
+             { title: "Airport Check-in", tasks: ["Ask for an aisle seat", "Check luggage", "Ask about boarding time"] },
+             { title: "Hotel Reservation", tasks: ["Book a double room", "Ask for breakfast", "Request late check-out"] },
+             { title: "Asking Directions", tasks: ["Ask where the subway is", "Ask how far it is", "Thank the person"] },
+             { title: "Ordering Food", tasks: ["Ask for the menu", "Order a main dish", "Ask for the bill"] },
+             { title: "Shopping", tasks: ["Ask for a different size", "Ask about the price", "Ask for a discount"] },
+             { title: "Taxi/Uber", tasks: ["Give destination", "Ask about fare", "Ask to stop here"] },
+             { title: "Emergency", tasks: ["Ask for help", "Report lost item", "Find a pharmacy"] },
+             { title: "Museum Visit", tasks: ["Buy a ticket", "Ask for an audio guide", "Ask about closing time"] },
+             { title: "Train Travel", tasks: ["Buy a ticket", "Find the platform", "Ask about delays"] },
+             { title: "Making Friends", tasks: ["Introduce yourself", "Ask about hobbies", "Exchange contacts"] }
+        ],
+        'Daily Life': [
+             { title: "Self Introduction", tasks: ["Name and age", "Where you live", "Your job/study"] },
+             { title: "Ordering Coffee", tasks: ["Order a drink", "Ask for sugar/milk", "Pay by card"] },
+             { title: "Grocery Shopping", tasks: ["Ask where milk is", "Ask about freshness", "Pay at checkout"] },
+             { title: "Talking about Weather", tasks: ["Describe today's weather", "Ask about tomorrow", "Comment on the season"] },
+             { title: "Hobbies", tasks: ["Describe what you like", "Ask someone's hobby", "Suggest doing it together"] },
+             { title: "Family", tasks: ["Talk about siblings", "Describe parents", "Mention pets"] },
+             { title: "Weekend Plans", tasks: ["Say what you will do", "Ask a friend's plan", "Invite someone out"] },
+             { title: "At the Doctor", tasks: ["Describe symptoms", "Ask for medicine", "Ask about recovery"] },
+             { title: "Asking Help", tasks: ["Ask to lift something", "Ask to hold the door", "Thank profusely"] },
+             { title: "Small Talk", tasks: ["Compliment clothing", "Ask about the day", "Say goodbye"] }
         ]
-    },
-    { 
-        id: 2, 
-        minScore: 10, 
-        title: "Level 2: 过去与未来", 
-        desc: "描述经历与计划",
-        points: [
-            { title: "Simple Past (一般过去时)", content: "Actions completed in the past. e.g., 'I walked home.'" },
-            { title: "Simple Future (一般将来时)", content: "Will / Going to. e.g., 'I will help you.'" }
-        ]
-    },
-    { 
-        id: 3, 
-        minScore: 20, 
-        title: "Level 3: 持续进行", 
-        desc: "正在发生的动作",
-        points: [
-            { title: "Present Continuous", content: "Action happening now. e.g., 'I am eating.'" },
-            { title: "Past Continuous", content: "Action in progress in the past. e.g., 'I was sleeping.'" }
-        ]
-    },
-    { 
-        id: 4, 
-        minScore: 30, 
-        title: "Level 4: 完成状态", 
-        desc: "经验与结果",
-        points: [
-            { title: "Present Perfect", content: "Past action with present result. e.g., 'I have finished.'" },
-            { title: "For vs Since", content: "Duration vs Start point." }
-        ]
-    },
-    { 
-        id: 5, 
-        minScore: 40, 
-        title: "Level 5: 比较与最高", 
-        desc: "描述差异",
-        points: [
-            { title: "Comparatives", content: "Better, Faster, More interesting." },
-            { title: "Superlatives", content: "Best, Fastest, Most interesting." }
-        ]
-    },
-    { 
-        id: 6, 
-        minScore: 50, 
-        title: "Level 6: 假设与条件", 
-        desc: "如果...会怎样",
-        points: [
-            { title: "First Conditional", content: "Real possibility. 'If it rains, I will stay home.'" },
-            { title: "Second Conditional", content: "Unreal/Hypothetical. 'If I won the lottery...'" }
-        ]
-    },
-    { 
-        id: 7, 
-        minScore: 60, 
-        title: "Level 7: 被动语态", 
-        desc: "强调动作承受者",
-        points: [
-            { title: "Passive Voice", content: "Focus on object. 'The book was written by him.'" },
-            { title: "By + Agent", content: "When to specify the doer." }
-        ]
-    },
-    { 
-        id: 8, 
-        minScore: 70, 
-        title: "Level 8: 复杂从句", 
-        desc: "长难句构建",
-        points: [
-            { title: "Relative Clauses", content: "Who, Which, That. 'The man who called you...'" },
-            { title: "Noun Clauses", content: "Using 'That' or 'Wh-' words as objects." }
-        ]
-    },
-    { 
-        id: 9, 
-        minScore: 80, 
-        title: "Level 9: 虚拟与倒装", 
-        desc: "高级表达技巧",
-        points: [
-            { title: "Subjunctive Mood", content: "Wishes, demands. 'I suggest that he go.'" },
-            { title: "Inversion", content: "Emphasis. 'Never have I seen such a thing.'" }
-        ]
-    },
-    { 
-        id: 10, 
-        minScore: 90, 
-        title: "Level 10: 毕业挑战", 
-        desc: "综合运用与地道表达",
-        points: [
-            { title: "Idioms & Phrasal Verbs", content: "Native-like expressions." },
-            { title: "Nuance & Register", content: "Formal vs Informal tone." }
-        ]
+    };
+
+    // Determine category based on interest string (simple keyword matching)
+    let category = 'Daily Life'; // Default
+    const lowerInterests = (interestsStr || '').toLowerCase();
+    
+    if (lowerInterests.includes('business') || lowerInterests.includes('work') || lowerInterests.includes('career') || lowerInterests.includes('job') || lowerInterests.includes('商')) {
+        category = 'Business';
+    } else if (lowerInterests.includes('travel') || lowerInterests.includes('trip') || lowerInterests.includes('tour') || lowerInterests.includes('旅')) {
+        category = 'Travel';
     }
-];
+
+    // Clone and adjust titles for language if needed (MVP: keep English titles for clarity, maybe add localized subtitles later)
+    let selectedScenarios = [...templates[category]];
+
+    // Ensure we have exactly 10
+    return selectedScenarios.slice(0, 10);
+};
 
 function Discovery() {
   const navigate = useNavigate();
+  const location = useLocation();
   const { user } = useAuth();
   const [activeGoal, setActiveGoal] = useState(null);
   const [activeSessions, setActiveSessions] = useState([]);
@@ -137,15 +93,13 @@ function Discovery() {
             }
             setActiveGoal(goalRes.goal);
             
-            // Set Scenarios (with Fallback for legacy goals)
+            // Set Scenarios
             if (goalRes.goal.scenarios && goalRes.goal.scenarios.length > 0) {
                 setScenarios(goalRes.goal.scenarios);
             } else {
-                // Fallback for existing goals without scenarios
-                setScenarios([
-                    { title: "General Practice", tasks: ["Discuss daily routine", "Practice past tense", "Talk about hobbies"] },
-                    { title: "Travel Basics", tasks: ["Ask for directions", "Order food", "Book a hotel"] }
-                ]);
+                // Smart Fallback Generation
+                const generated = generateScenarios(goalRes.goal.target_language, goalRes.goal.interests);
+                setScenarios(generated);
             }
 
             const statsRes = await historyAPI.getStats(user.id);
@@ -154,10 +108,13 @@ function Discovery() {
                 setUserProficiency(statsRes.data.proficiency || 0);
             }
 
-            const goalId = goalRes.goal.id || goalRes.goal._id;
-            const sessionsRes = await conversationAPI.getActiveSessions(user.id, goalId);
-            if (sessionsRes && sessionsRes.sessions) {
-                setActiveSessions(sessionsRes.sessions);
+            // Fetch History to find sessions with metadata (like topic)
+            const historyRes = await historyAPI.getUserHistory(user.id);
+            if (historyRes && historyRes.data) {
+                // historyRes.data is the list of conversations
+                // Filter distinct sessions by topic? Or just keep them all.
+                // We want to use this list to check if a scenario has been started.
+                setActiveSessions(historyRes.data); 
             }
 
         } catch (e) {
@@ -168,7 +125,7 @@ function Discovery() {
     };
     
     fetchData();
-  }, [user, navigate]);
+  }, [user, navigate, location.key]); // Trigger re-fetch on navigation back to this page
 
   const handleStartNewSession = () => {
       // Default to first scenario
@@ -184,11 +141,24 @@ function Discovery() {
   };
 
   const handleScenarioClick = (scenario) => {
-      // Navigate with scenario title and tasks
-      // We pass tasks via state to avoid re-fetching in Conversation
-      navigate(`/conversation?scenario=${encodeURIComponent(scenario.title)}`, {
-          state: { tasks: scenario.tasks }
-      });
+      // Check if there is already an active session for this scenario/topic
+      // We search in the history list we fetched (activeSessions now contains full objects)
+      const existingSession = activeSessions.find(s => 
+          s.topic === scenario.title || 
+          (s.topic && s.topic.includes(scenario.title))
+      );
+
+      if (existingSession) {
+          console.log('Resuming existing session for scenario:', scenario.title, existingSession.sessionId);
+          navigate(`/conversation?sessionId=${existingSession.sessionId}&scenario=${encodeURIComponent(scenario.title)}`, {
+              state: { tasks: scenario.tasks }
+          });
+      } else {
+          // Navigate with scenario title and tasks
+          navigate(`/conversation?scenario=${encodeURIComponent(scenario.title)}`, {
+              state: { tasks: scenario.tasks }
+          });
+      }
   };
 
   if (loading) {
@@ -226,9 +196,19 @@ function Discovery() {
                     <div className="relative z-10">
                         <div className="flex justify-between items-start mb-6">
                             <div>
-                                <p className="text-xs font-medium text-indigo-100 mb-1">当前目标</p>
-                                <h2 className="text-2xl font-bold tracking-tight">{activeGoal.description || activeGoal.target_language}</h2>
-                                <p className="text-sm text-indigo-100 opacity-80">{activeGoal.target_level} • {activeGoal.completion_time_days} Days</p>
+                                <p className="text-xs font-medium text-indigo-100 mb-1">当前目标 (Goal)</p>
+                                <h2 className="text-2xl font-bold tracking-tight mb-1">{activeGoal.target_language}</h2>
+                                <p className="text-sm text-indigo-100 opacity-90 mb-2">{activeGoal.description}</p>
+                                <div className="flex flex-wrap gap-2 mt-2">
+                                    <span className="bg-white/20 px-2 py-0.5 rounded text-xs backdrop-blur-sm">
+                                        Level: {activeGoal.target_level}
+                                    </span>
+                                    {activeGoal.interests && (
+                                        <span className="bg-white/20 px-2 py-0.5 rounded text-xs backdrop-blur-sm">
+                                            Topic: {activeGoal.interests}
+                                        </span>
+                                    )}
+                                </div>
                             </div>
                             <div className="text-right">
                                 <p className="text-3xl font-bold text-white">{userProficiency}</p>
@@ -325,20 +305,20 @@ function Discovery() {
              
              {activeSessions.length > 0 ? (
                  <div className="space-y-3">
-                     {activeSessions.slice(0, 3).map((sessionId, index) => (
+                     {activeSessions.slice(0, 3).map((session, index) => (
                          <div 
-                             key={sessionId} 
-                             onClick={() => handleResumeSession(sessionId)}
+                             key={session.sessionId} 
+                             onClick={() => handleResumeSession(session.sessionId)}
                              className="flex items-center gap-3 bg-white dark:bg-slate-800 p-3 rounded-lg border border-slate-100 dark:border-slate-700 cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-700/50">
                              <div className="w-8 h-8 rounded-full bg-slate-100 text-slate-500 flex items-center justify-center shrink-0">
                                  <span className="material-symbols-outlined text-lg">history</span>
                              </div>
                              <div className="flex-1 min-w-0">
                                  <p className="text-sm font-medium text-slate-900 dark:text-white truncate">
-                                     练习 #{index + 1}
+                                     {session.topic || `练习 #${index + 1}`}
                                  </p>
                                  <p className="text-xs text-slate-400 truncate font-mono">
-                                     {sessionId.slice(0, 8)}...
+                                     {new Date(session.startTime).toLocaleDateString()} • {session.sessionId.slice(0, 8)}...
                                  </p>
                              </div>
                          </div>

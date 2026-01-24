@@ -54,6 +54,7 @@ Stripe 是全球最主流的互联网支付处理平台，以其对开发者极�
     *   Apple App Store / Google Play: 15% - 30%。
     *   Stripe: ~2.9% + $0.3 每笔。
 
+
 #### 2. 定价策略 (Pricing)
 **原则**：订阅价格应至少为 AI 边际成本的 **3-5 倍**。
 *   **Freemium (免费增值)**：

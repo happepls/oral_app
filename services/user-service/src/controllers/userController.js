@@ -397,7 +397,32 @@ exports.updateProficiencyInternal = async (req, res) => {
 
 };
 
+exports.completeTaskInternal = async (req, res) => {
+    try {
+        const userId = req.params.id;
+        const { scenario, task } = req.body;
 
+        console.log(`[User] Internal Complete Task: User=${userId}, Scenario=${scenario}, Task=${task}`);
+
+        if (!scenario || !task) {
+            return res.status(400).json({ success: false, message: 'Scenario and Task required' });
+        }
+
+        const updatedGoal = await User.completeTask(userId, scenario, task);
+
+        if (!updatedGoal) {
+            // Task not found or goal not active, but return 200 to not break AI flow
+            console.log('[User] Task completion skipped (not found or no active goal)');
+            return res.json({ success: true, message: 'No update' }); 
+        }
+
+        res.json({ success: true, data: { goal: updatedGoal } });
+
+    } catch (error) {
+        console.error('Complete Task Error:', error);
+        res.status(500).json({ success: false, message: 'Server Error' });
+    }
+};
 
 exports.getUserInternal = async (req, res) => {
 
