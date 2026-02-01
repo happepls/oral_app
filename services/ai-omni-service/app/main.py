@@ -315,6 +315,11 @@ class WebSocketCallback(OmniRealtimeCallback):
                 output_modalities=[MultiModality.TEXT, MultiModality.AUDIO],
                 instructions=system_prompt,
                 voice=os.getenv("QWEN3_OMNI_VOICE", "Cherry"),
+                # Enable input transcription - Official Doc style
+                input_audio_transcription={
+                    "model": os.getenv("QWEN3_OMNI_MODEL", "qwen3-omni-flash-realtime"),
+                    "enabled": True
+                },
                 # Manual Mode: Disable turn detection
                 enable_turn_detection=False,
             )
@@ -461,13 +466,38 @@ class WebSocketCallback(OmniRealtimeCallback):
                         asyncio.create_task(upload_ai_task(audio_data, self.current_response_id))
 
                 elif event_name == 'response.audio_transcript.done' or event_name == 'response.text.done':
-                    logger.info(f"AI Response Finished. Raw Length: {len(self.full_response_text)}")
+                    logger.info(f"AI Response Finished (Done Event).")
                     
                     if self.interrupted_turn:
                         logger.info("Skipping action execution due to interruption")
                         self.full_response_text = ""
                         self.ai_audio_buffer = bytearray() 
                         return
+
+                    # FALLBACK: If we received no deltas, try to get text from the 'done' payload
+                    # This happens in some flows (e.g. manual commit)
+                    if not self.full_response_text:
+                        # Check payload for transcript
+                        transcript = payload.get('transcript') or payload.get('text')
+                        if not transcript and 'item' in payload:
+                             # Try to dig into item content
+                             content = payload['item'].get('content', [])
+                             for part in content:
+                                 if part.get('type') == 'text' or part.get('type') == 'audio_transcript':
+                                     transcript = part.get('text') or part.get('transcript')
+                                     break
+                        
+                        if transcript:
+                            logger.info(f"Recovered text from done payload: {transcript}")
+                            self.full_response_text = transcript
+                            # Send to frontend!
+                            await self.websocket.send_json({ 
+                                "type": "ai_response", 
+                                "text": transcript,
+                                "responseId": self.current_response_id
+                            })
+                        else:
+                            logger.warning(f"Could not recover text from payload: {json.dumps(payload)}")
 
                     # Clean Text (Remove JSON blocks if any slipped through)
                     # This prevents pollution of history and prompt context
@@ -786,7 +816,14 @@ async def websocket_endpoint(client_ws: WebSocket):
                 break
 
     try:
-        conversation = connect_dashscope()
+        try:
+            conversation = connect_dashscope()
+        except Exception as init_e:
+            logger.error(f"Failed to initialize DashScope connection: {init_e}")
+            await client_ws.send_json({"type": "error", "payload": {"error": f"AI Init Failed: {str(init_e)}", "type": "init_error"}})
+            await client_ws.close()
+            return
+
         heartbeat_task = asyncio.create_task(heartbeat())
         
         # Process the initial message if we consumed it during handshake
@@ -921,7 +958,18 @@ async def websocket_endpoint(client_ws: WebSocket):
                     if callback: 
                         callback.interrupted_turn = False
                         
-                        # Upload User Audio
+                        # 1. Check for Empty Audio Buffer first
+                        if not callback.user_audio_buffer:
+                            logger.warning("User Audio Buffer is empty at end of turn. Sending feedback to user.")
+                            await client_ws.send_json({
+                                "type": "ai_response",
+                                "text": "(Listening failed: No audio received. Please try again.)",
+                                "is_system": True
+                            })
+                            # We don't generate a response if no audio
+                            continue
+
+                        # 2. Upload User Audio
                         if callback.user_audio_buffer:
                             audio_data = bytes(callback.user_audio_buffer)
                             callback.user_audio_buffer = bytearray() # Reset immediately
@@ -966,7 +1014,23 @@ async def websocket_endpoint(client_ws: WebSocket):
 
                             asyncio.create_task(upload_task(audio_data))
 
-                    conversation.create_response()
+                    # 3. Force clean state before generating response
+                    if conversation:
+                        try:
+                            # IMPORTANT: Commit audio buffer triggers processing/transcription in Manual Mode
+                            logger.info("Committing audio buffer...")
+                            conversation.commit()
+                            
+                            # To avoid "state mismatch" errors if AI was still "speaking" or finishing up
+                            if hasattr(conversation, 'cancel_response'):
+                                conversation.cancel_response()
+                                # logger.info("Cancelled previous response state before new turn")
+                        except:
+                            pass
+                        
+                        # Add a tiny delay to allow cancellation to propagate if needed (DashScope internal async)
+                        await asyncio.sleep(0.05)
+                        conversation.create_response()
 
                 elif msg_type == 'user_interruption':
                     logger.info("User interruption received - ignoring current response")
