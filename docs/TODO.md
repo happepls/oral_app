@@ -158,3 +158,6 @@
 - [x] [Bug] **Scenario Persistence**: Fix message persistence issue where scenario practice sessions fail to save history.
 - [x] [Feature] **Splash Screen**: Implemented localized quotes based on user native language.
 - [x] [Feature] **Welcome Message**: Implemented AI-driven proactive welcome message for new scenario sessions.
+- [x] [Frontend] **Conversation UI Refactor**: Refactored ConversationScreen with SliverAppBar, Draggable Task Sidebar, and History 404 handling.
+- [x] [Backend] **Voice Stability**: Fixed `ai-omni-service` connection drops and `user_audio_ended` logic, and resolved 401 API Key issue.
+- [x] [Backend] **Chinese Support**: Updated `PromptManager` to support Native Chinese Tutor mode and Bridge Mode.
