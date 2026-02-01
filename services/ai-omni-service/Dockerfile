@@ -9,8 +9,8 @@ WORKDIR /app
 COPY wheels /wheels
 COPY requirements.txt .
 
-# Install python dependencies from local wheels
-RUN pip install --no-cache-dir --no-index --find-links=/wheels -r requirements.txt
+# Install python dependencies (try local wheels first, then online)
+RUN pip install --no-cache-dir --find-links=/wheels -r requirements.txt
 
 # Copy application code
 COPY . .
