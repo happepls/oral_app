@@ -48,17 +48,20 @@ function Conversation() {
   useEffect(() => {
       const searchParams = new URLSearchParams(window.location.search);
       const scenarioParam = searchParams.get('scenario');
+      const decodedScenario = scenarioParam ? decodeURIComponent(scenarioParam) : null;
       
-      if (tasks.length === 0 && scenarioParam && user && token) {
-          console.log('Fetching tasks for scenario:', scenarioParam);
+      if (tasks.length === 0 && decodedScenario && user && token) {
+          console.log('Fetching tasks for scenario:', decodedScenario);
           userAPI.getActiveGoal().then(res => {
               if (res && res.goal && res.goal.scenarios) {
-                  const activeScenario = res.goal.scenarios.find(s => s.title.trim() === scenarioParam.trim());
+                  const activeScenario = res.goal.scenarios.find(s => 
+                      s.title.trim().toLowerCase() === decodedScenario.trim().toLowerCase()
+                  );
                   if (activeScenario && activeScenario.tasks) {
                       setTasks(activeScenario.tasks);
                       console.log('Tasks fetched:', activeScenario.tasks);
                   } else {
-                      console.warn('Scenario not found in goal:', scenarioParam);
+                      console.warn('Scenario not found in goal:', decodedScenario, 'Available:', res.goal.scenarios.map(s => s.title));
                   }
               }
           }).catch(err => console.error('Task fetch error:', err));
