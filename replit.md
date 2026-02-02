@@ -1,14 +1,20 @@
-# Oral AI - Real-time Language Learning Application
+# Guaji AI - 实时口语练习应用
 
-## Overview
+## 概述
 
-Oral AI is a 24/7 AI-powered oral language practice application designed as a "personal language tutor of the future." The platform provides deep personalization and real-time feedback for language learners, positioning itself between mainstream apps like Duolingo and Babbel in a high-value niche market.
+Guaji AI是一款24/7全天候AI口语陪练应用，定位为"面向未来的私人语言导师"。通过深度个性化和实时反馈，帮助用户提升目标语言的口语水平。
 
-The application follows a Scalable Real-time Oral Practice (SROP) microservices architecture, combining a React frontend with multiple Node.js/Python backend services orchestrated through an API gateway. The core AI functionality leverages Qwen3-Omni for unified ASR (Automatic Speech Recognition), LLM processing, and TTS (Text-to-Speech) capabilities.
+应用采用SROP (Scalable Real-time Oral Practice) 微服务架构，结合React前端与多个Node.js/Python后端服务。核心AI功能使用Qwen3-Omni，通过OpenRouter集成，实现统一的ASR（语音识别）、LLM（对话生成）和TTS（语音合成）能力。
 
-## User Preferences
+## 当前状态
 
-Preferred communication style: Simple, everyday language.
+- ✅ 环境配置完成，所有服务正常运行
+- ✅ 用户注册/登录功能正常
+- 🔄 端到端业务流程重构中
+
+## 用户偏好
+
+沟通风格：简单日常语言
 
 ## System Architecture
 

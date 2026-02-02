@@ -1,0 +1,83 @@
+modules = ["nodejs-20", "python-3.11", "postgresql-16"]
+[userenv]
+
+[userenv.shared]
+JWT_SECRET = "oral-ai-jwt-secret-key-2025"
+USER_SERVICE_URL = "http://localhost:3001"
+AI_SERVICE_URL = "http://localhost:8082"
+COMMS_SERVICE_URL = "http://localhost:3003"
+CONVERSATION_SERVICE_URL = "http://localhost:8083"
+
+[agent]
+expertMode = true
+
+[workflows]
+runButton = "Project"
+
+[[workflows.workflow]]
+name = "Project"
+mode = "parallel"
+author = "agent"
+
+[[workflows.workflow.tasks]]
+task = "workflow.run"
+args = "frontend"
+
+[[workflows.workflow.tasks]]
+task = "workflow.run"
+args = "backend"
+
+[[workflows.workflow.tasks]]
+task = "workflow.run"
+args = "user-service"
+
+[[workflows.workflow]]
+name = "frontend"
+author = "agent"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "cd client && DANGEROUSLY_DISABLE_HOST_CHECK=true BROWSER=none PORT=5000 HOST=0.0.0.0 npm start"
+waitForPort = 5000
+
+[workflows.workflow.metadata]
+outputType = "webview"
+
+[[workflows.workflow]]
+name = "backend"
+author = "agent"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "cd api-gateway && PORT=8080 node server.js"
+waitForPort = 8080
+
+[workflows.workflow.metadata]
+outputType = "console"
+
+[[workflows.workflow]]
+name = "user-service"
+author = "agent"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "cd services/user-service && PORT=3001 node src/index.js"
+waitForPort = 3001
+
+[workflows.workflow.metadata]
+outputType = "console"
+
+[[ports]]
+localPort = 3001
+externalPort = 3001
+
+[[ports]]
+localPort = 5000
+externalPort = 80
+
+[[ports]]
+localPort = 8080
+externalPort = 8080
+
+[nix]
+channel = "stable-25_05"
