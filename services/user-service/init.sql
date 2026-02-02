@@ -39,6 +39,7 @@ CREATE TABLE IF NOT EXISTS user_goals (
     scenarios JSONB, -- List of 10 scenarios + tasks
     status VARCHAR(20) DEFAULT 'active', -- active, completed, abandoned
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     completed_at TIMESTAMPTZ
 );
 

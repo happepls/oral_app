@@ -391,14 +391,14 @@ User.updateTaskScore = async (userId, scenarioTitle, taskText, scoreDelta, feedb
         UPDATE user_tasks 
         SET score = $1, 
             interaction_count = $2, 
-            status = $3, 
+            status = $3::varchar, 
             feedback = COALESCE($4, feedback),
-            completed_at = CASE WHEN $3 = 'completed' AND completed_at IS NULL THEN NOW() ELSE completed_at END,
+            completed_at = CASE WHEN $5 = true AND completed_at IS NULL THEN NOW() ELSE completed_at END,
             updated_at = NOW()
-        WHERE id = $5
+        WHERE id = $6
         RETURNING *
     `;
-    await db.query(updateQuery, [newScore, newInteractions, newStatus, feedback, task.id]);
+    await db.query(updateQuery, [newScore, newInteractions, newStatus, feedback, shouldComplete, task.id]);
 
     if (shouldComplete) {
         const statsQuery = `
