@@ -6,7 +6,7 @@ JWT_SECRET = "oral-ai-jwt-secret-key-2025"
 USER_SERVICE_URL = "http://localhost:3001"
 AI_SERVICE_URL = "http://localhost:8082"
 COMMS_SERVICE_URL = "http://localhost:3003"
-CONVERSATION_SERVICE_URL = "http://localhost:8083"
+CONVERSATION_SERVICE_URL = "http://localhost:8000"
 
 [agent]
 expertMode = true
@@ -93,12 +93,12 @@ localPort = 5000
 externalPort = 80
 
 [[ports]]
-localPort = 8080
-externalPort = 8080
-
-[[ports]]
 localPort = 8000
 externalPort = 8000
+
+[[ports]]
+localPort = 8080
+externalPort = 8080
 
 [nix]
 channel = "stable-25_05"
