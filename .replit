@@ -4,9 +4,10 @@ modules = ["nodejs-20", "python-3.11", "postgresql-16"]
 [userenv.shared]
 JWT_SECRET = "oral-ai-jwt-secret-key-2025"
 USER_SERVICE_URL = "http://localhost:3001"
-AI_SERVICE_URL = "http://localhost:8082"
+AI_SERVICE_URL = "http://localhost:8008"
 COMMS_SERVICE_URL = "http://localhost:3003"
 CONVERSATION_SERVICE_URL = "http://localhost:8000"
+AI_SERVICE_WS_URL = "ws://localhost:8008/stream"
 
 [agent]
 expertMode = true
@@ -39,6 +40,10 @@ args = "conversation-service"
 [[workflows.workflow.tasks]]
 task = "workflow.run"
 args = "comms-service"
+
+[[workflows.workflow.tasks]]
+task = "workflow.run"
+args = "ai-omni-service"
 
 [[workflows.workflow]]
 name = "frontend"
@@ -100,6 +105,18 @@ waitForPort = 3003
 [workflows.workflow.metadata]
 outputType = "console"
 
+[[workflows.workflow]]
+name = "ai-omni-service"
+author = "agent"
+
+[workflows.workflow.metadata]
+outputType = "console"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "cd services/ai-omni-service && DASHSCOPE_API_KEY=$DASHSCOPE_API_KEY USER_SERVICE_URL=http://localhost:3001 python -m uvicorn app.main:app --host 0.0.0.0 --port 8008"
+waitForPort = 8008
+
 [[ports]]
 localPort = 3001
 externalPort = 3001
@@ -117,8 +134,16 @@ localPort = 8000
 externalPort = 8000
 
 [[ports]]
+localPort = 8008
+externalPort = 8008
+
+[[ports]]
 localPort = 8080
 externalPort = 8080
+
+[[ports]]
+localPort = 8081
+externalPort = 8081
 
 [nix]
 channel = "stable-25_05"

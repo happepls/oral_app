@@ -53,7 +53,7 @@ async def fetch_user_context(user_id: str, token: str):
     async with httpx.AsyncClient() as client:
         try:
             # 1. Profile
-            base_url = "http://user-service:3000"
+            base_url = os.getenv("USER_SERVICE_URL", "http://localhost:3001")
 
             profile_resp = await client.get(f"{base_url}/profile", headers=headers)
             profile_data = profile_resp.json().get('data', {}).get('user', {})
@@ -73,7 +73,7 @@ async def execute_action_with_response(action: str, data: dict, token: str, user
 
 async def execute_action(action: str, data: dict, token: str, user_id: str = None, session_id: str = None, context: dict = None):
     headers = {"Authorization": f"Bearer {token}"}
-    base_url = "http://user-service:3000"
+    base_url = os.getenv("USER_SERVICE_URL", "http://localhost:3001")
     async with httpx.AsyncClient() as client:
         try:
             if action == "update_profile":
@@ -133,14 +133,14 @@ async def execute_action(action: str, data: dict, token: str, user_id: str = Non
                     "goalId": data.get("goalId")
                 }
                 logger.info(f"[Action] Trace: Saving Summary. Delta: {payload.get('proficiency_score_delta')}, Session: {session_id}")
-                history_url = "http://history-analytics-service:3004/api/history/summary"
+                history_url = os.getenv("HISTORY_SERVICE_URL", "http://localhost:3004") + "/api/history/summary"
                 resp = await client.post(history_url, json=payload)
                 logger.info(f"Summary generated & saved: {data}, Status: {resp.status_code}")
         except Exception as e:
             logger.error(f"Error executing action {action}: {e}")
 
 async def save_conversation_history(session_id: str, user_id: str, messages: list, topic: str = "General Practice"):
-    url = "http://history-analytics-service:3004/api/history/conversation"
+    url = os.getenv("HISTORY_SERVICE_URL", "http://localhost:3004") + "/api/history/conversation"
     payload = {
         "sessionId": session_id,
         "userId": user_id,
@@ -162,7 +162,7 @@ async def save_conversation_history(session_id: str, user_id: str, messages: lis
             traceback.print_exc()
 
 async def fetch_conversation_history(session_id: str):
-    url = f"http://history-analytics-service:3004/api/history/session/{session_id}"
+    url = os.getenv("HISTORY_SERVICE_URL", "http://localhost:3004") + f"/api/history/session/{session_id}"
     async with httpx.AsyncClient() as client:
         try:
             resp = await client.get(url)
@@ -355,7 +355,7 @@ class WebSocketCallback(OmniRealtimeCallback):
         if not audio_data:
             return None
         
-        url = "http://media-processing-service:3005/api/media/upload"
+        url = os.getenv("MEDIA_SERVICE_URL", "http://localhost:3005") + "/api/media/upload"
         filename = f"{self.session_id}_{int(time.time())}.pcm"
         files = {audio_type: (filename, audio_data, 'application/octet-stream')}
         
@@ -382,7 +382,7 @@ class WebSocketCallback(OmniRealtimeCallback):
         if not audio_data:
             return None
         
-        url = "http://media-processing-service:3005/api/media/upload"
+        url = os.getenv("MEDIA_SERVICE_URL", "http://localhost:3005") + "/api/media/upload"
         filename = f"{self.session_id}_{int(time.time())}.pcm"
         files = {audio_type: (filename, audio_data, 'application/octet-stream')}
         
