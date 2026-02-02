@@ -443,6 +443,106 @@ User.findByEmail = async (email) => {
     return user;
 };
 
+// ===== Daily Check-in Methods =====
+
+User.checkin = async (userId) => {
+    const today = new Date().toISOString().split('T')[0];
+    
+    // Check if already checked in today
+    const existingRes = await db.query(
+        'SELECT * FROM user_checkins WHERE user_id = $1 AND checkin_date = $2',
+        [userId, today]
+    );
+    
+    if (existingRes.rows.length > 0) {
+        return { alreadyCheckedIn: true, checkin: existingRes.rows[0] };
+    }
+    
+    // Calculate streak
+    const yesterday = new Date();
+    yesterday.setDate(yesterday.getDate() - 1);
+    const yesterdayStr = yesterday.toISOString().split('T')[0];
+    
+    const streakRes = await db.query(
+        'SELECT streak_count FROM user_checkins WHERE user_id = $1 AND checkin_date = $2',
+        [userId, yesterdayStr]
+    );
+    
+    let newStreak = 1;
+    if (streakRes.rows.length > 0) {
+        newStreak = streakRes.rows[0].streak_count + 1;
+    }
+    
+    // Calculate points based on streak (base 10 + streak bonus)
+    const basePoints = 10;
+    const streakBonus = Math.min(newStreak - 1, 20) * 2; // Max 40 bonus points
+    const pointsEarned = basePoints + streakBonus;
+    
+    // Insert checkin record
+    const checkinRes = await db.query(
+        `INSERT INTO user_checkins (user_id, checkin_date, points_earned, streak_count)
+         VALUES ($1, $2, $3, $4) RETURNING *`,
+        [userId, today, pointsEarned, newStreak]
+    );
+    
+    // Update user's total points
+    await db.query(
+        'UPDATE users SET points = COALESCE(points, 0) + $1, updated_at = NOW() WHERE id = $2',
+        [pointsEarned, userId]
+    );
+    
+    return { alreadyCheckedIn: false, checkin: checkinRes.rows[0] };
+};
+
+User.getCheckinHistory = async (userId, days = 30) => {
+    const res = await db.query(
+        `SELECT * FROM user_checkins 
+         WHERE user_id = $1 
+         ORDER BY checkin_date DESC 
+         LIMIT $2`,
+        [userId, days]
+    );
+    return res.rows;
+};
+
+User.getCheckinStats = async (userId) => {
+    // Get current streak
+    const today = new Date().toISOString().split('T')[0];
+    const yesterday = new Date();
+    yesterday.setDate(yesterday.getDate() - 1);
+    const yesterdayStr = yesterday.toISOString().split('T')[0];
+    
+    // Check today's or yesterday's streak
+    const streakRes = await db.query(
+        `SELECT streak_count, checkin_date FROM user_checkins 
+         WHERE user_id = $1 AND checkin_date IN ($2, $3) 
+         ORDER BY checkin_date DESC LIMIT 1`,
+        [userId, today, yesterdayStr]
+    );
+    
+    let currentStreak = 0;
+    let checkedInToday = false;
+    
+    if (streakRes.rows.length > 0) {
+        const lastCheckin = streakRes.rows[0];
+        currentStreak = lastCheckin.streak_count;
+        checkedInToday = lastCheckin.checkin_date.toISOString().split('T')[0] === today;
+    }
+    
+    // Get total checkins
+    const totalRes = await db.query(
+        'SELECT COUNT(*) as total, SUM(points_earned) as total_points FROM user_checkins WHERE user_id = $1',
+        [userId]
+    );
+    
+    return {
+        currentStreak,
+        checkedInToday,
+        totalCheckins: parseInt(totalRes.rows[0].total) || 0,
+        totalPointsFromCheckins: parseInt(totalRes.rows[0].total_points) || 0
+    };
+};
+
 User.findOrCreateFromGoogle = async ({ googleId, email, name }) => {
   try {
     // Check if user already exists via Google identity

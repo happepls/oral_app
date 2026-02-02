@@ -35,3 +35,17 @@ ALTER TABLE user_tasks ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT N
 
 -- Update existing completed tasks to have full score
 UPDATE user_tasks SET score = 100 WHERE status = 'completed' AND score = 0;
+
+-- Daily check-in table (added for checkin feature)
+CREATE TABLE IF NOT EXISTS user_checkins (
+    id SERIAL PRIMARY KEY,
+    user_id INT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    checkin_date DATE NOT NULL DEFAULT CURRENT_DATE,
+    points_earned INT DEFAULT 10,
+    streak_count INT DEFAULT 1,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    UNIQUE(user_id, checkin_date)
+);
+
+CREATE INDEX IF NOT EXISTS idx_user_checkins_user_id ON user_checkins(user_id);
+CREATE INDEX IF NOT EXISTS idx_user_checkins_date ON user_checkins(checkin_date);

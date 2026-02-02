@@ -58,6 +58,20 @@ CREATE TABLE IF NOT EXISTS user_tasks (
     updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 
+-- Create the user_checkins table (Daily Check-in Records)
+CREATE TABLE IF NOT EXISTS user_checkins (
+    id SERIAL PRIMARY KEY,
+    user_id INT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    checkin_date DATE NOT NULL DEFAULT CURRENT_DATE,
+    points_earned INT DEFAULT 10,
+    streak_count INT DEFAULT 1,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    UNIQUE(user_id, checkin_date)
+);
+
+CREATE INDEX IF NOT EXISTS idx_user_checkins_user_id ON user_checkins(user_id);
+CREATE INDEX IF NOT EXISTS idx_user_checkins_date ON user_checkins(checkin_date);
+
 -- Add indexes for better query performance
 CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);
 CREATE INDEX IF NOT EXISTS idx_user_identities_user_id ON user_identities(user_id);

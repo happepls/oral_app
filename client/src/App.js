@@ -10,6 +10,7 @@ import Profile from './pages/Profile';
 import History from './pages/History';
 import Onboarding from './pages/Onboarding';
 import GoalSetting from './pages/GoalSetting';
+import Checkin from './pages/Checkin';
 import SplashScreen from './components/SplashScreen';
 import './App.css';
 
@@ -27,6 +28,7 @@ const AppRoutes = () => {
             <Route path="/discovery" element={<Discovery />} />
             <Route path="/profile" element={<Profile />} />
             <Route path="/history" element={<History />} />
+            <Route path="/checkin" element={<Checkin />} />
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
         </div>

@@ -6,7 +6,7 @@ function BottomNav({ currentPage }) {
 
   const navItems = [
     { id: 'home', icon: 'home', label: '首页', path: '/discovery' },
-    { id: 'discovery', icon: 'explore', label: '发现', path: '/discovery' },
+    { id: 'checkin', icon: 'local_fire_department', label: '打卡', path: '/checkin' },
     { id: 'practice', icon: 'chat_bubble', label: '练习', path: '/conversation' },
     { id: 'profile', icon: 'person', label: '我的', path: '/profile' }
   ];
