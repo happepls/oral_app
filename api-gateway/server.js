@@ -12,7 +12,7 @@ app.use(cors());
 const USER_SERVICE_URL = process.env.USER_SERVICE_URL || 'http://localhost:3001';
 const AI_SERVICE_URL = process.env.AI_SERVICE_URL || 'http://localhost:8082';
 const COMMS_SERVICE_URL = process.env.COMMS_SERVICE_URL || 'http://localhost:3003';
-const CONVERSATION_SERVICE_URL = process.env.CONVERSATION_SERVICE_URL || 'http://localhost:8083';
+const CONVERSATION_SERVICE_URL = process.env.CONVERSATION_SERVICE_URL || 'http://localhost:8000';
 
 const openrouter = new OpenAI({
   baseURL: process.env.AI_INTEGRATIONS_OPENROUTER_BASE_URL,

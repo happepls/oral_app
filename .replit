@@ -32,6 +32,10 @@ args = "backend"
 task = "workflow.run"
 args = "user-service"
 
+[[workflows.workflow.tasks]]
+task = "workflow.run"
+args = "conversation-service"
+
 [[workflows.workflow]]
 name = "frontend"
 author = "agent"
@@ -68,6 +72,18 @@ waitForPort = 3001
 [workflows.workflow.metadata]
 outputType = "console"
 
+[[workflows.workflow]]
+name = "conversation-service"
+author = "agent"
+
+[workflows.workflow.metadata]
+outputType = "console"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "cd services/conversation-service && PORT=8000 node src/index.js"
+waitForPort = 8000
+
 [[ports]]
 localPort = 3001
 externalPort = 3001
@@ -79,6 +95,10 @@ externalPort = 80
 [[ports]]
 localPort = 8080
 externalPort = 8080
+
+[[ports]]
+localPort = 8000
+externalPort = 8000
 
 [nix]
 channel = "stable-25_05"
