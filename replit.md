@@ -10,11 +10,26 @@ Guaji AI是一款24/7全天候AI口语陪练应用，定位为"面向未来的�
 
 - ✅ 环境配置完成，所有服务正常运行
 - ✅ 用户注册/登录功能正常
-- 🔄 端到端业务流程重构中
+- ✅ 端到端业务流程完成（11步骤闭环验证）
+- ✅ 每日打卡功能实现
+- ✅ 多轮评分机制实现
 
 ## 用户偏好
 
 沟通风格：简单日常语言
+
+## 最近更新 (2026-02-02)
+
+### 新功能
+- **多轮评分机制**：每个任务需累计60分才能标记完成，支持2-4轮对话渐进评分
+- **场景完成模态框**：显示平均分、星级评价、导航选项（下一场景/继续练习/选择其他）
+- **每日打卡系统**：连续打卡奖励、周视图日历、积分统计
+- **底部导航栏更新**：添加"打卡"入口（火焰图标）
+
+### 技术改进
+- 修复updateTaskScore SQL参数类型不一致问题
+- 添加user_goals.updated_at列
+- 修复user_checkins.user_id类型匹配问题
 
 ## System Architecture
 
@@ -29,12 +44,19 @@ Guaji AI是一款24/7全天候AI口语陪练应用，定位为"面向未来的�
 The backend is decomposed into purpose-specific services:
 
 1. **api-gateway** (Port 8080): Express-based gateway using http-proxy-middleware for routing requests to downstream services
-2. **user-service** (Port 3001): Handles user authentication (JWT), registration, profile management, and goal tracking with PostgreSQL storage
+2. **user-service** (Port 3001): Handles user authentication (JWT), registration, profile management, goal tracking, check-in system with PostgreSQL storage
 3. **comms-service**: WebSocket server for real-time bidirectional audio streaming between client and AI service
 4. **ai-omni-service** (Port 8082): Python FastAPI service integrating with DashScope's Qwen3-Omni model for unified speech-to-speech AI interactions. Features a PromptManager for role-based AI personas (InfoCollector, OralTutor, GrammarGuide)
 5. **conversation-service** (Port 8083): Manages conversation state and session tracking with Redis
 6. **history-analytics-service** (Port 3004): Stores conversation history and provides analytics via MongoDB
 7. **media-processing-service** (Port 3005): Audio transcoding and storage with Tencent Cloud COS integration
+
+### Database Schema (PostgreSQL)
+- **users**: 用户基本信息（id INT, username, email, nickname, native_language, target_language, interests, points）
+- **user_identities**: 认证信息（provider, provider_uid, user_id, password_hash）
+- **user_goals**: 学习目标（id, user_id, type, target_language, target_level, current_proficiency, scenarios JSONB）
+- **user_tasks**: 任务跟踪（id, user_id, goal_id, scenario_title, task_description, status, score, interaction_count）
+- **user_checkins**: 打卡记录（id, user_id, checkin_date, points_earned, streak_count）
 
 ### Communication Patterns
 - **WebSocket**: Real-time audio streaming for voice conversations
@@ -43,8 +65,10 @@ The backend is decomposed into purpose-specific services:
 
 ### AI Integration
 - **Primary Engine**: Qwen3-Omni via DashScope SDK - provides end-to-end speech-to-speech capabilities
+- **Scenario Generation**: OpenRouter (LLama 3.3 70B) - generates personalized practice scenarios
 - **Role System**: PromptManager supports multiple AI personas with context-aware prompts
 - **Action Parsing**: AI responses can include JSON action blocks for triggering profile updates or session summaries
+- **Scoring System**: AI evaluates responses with tier-based scoring (+30/+15/+10/+5 points)
 
 ### Authentication
 - JWT-based authentication with 7-day token expiration
@@ -61,6 +85,7 @@ The backend is decomposed into purpose-specific services:
 ### Cloud Services
 - **Tencent Cloud COS**: Object storage for recorded audio files
 - **DashScope (Alibaba Cloud)**: Qwen3-Omni AI model API for real-time voice AI
+- **OpenRouter**: LLM API for scenario generation
 
 ### Key NPM/Python Packages
 - **Backend**: Express, ws (WebSocket), jsonwebtoken, pg (PostgreSQL), mongoose, ioredis
@@ -70,3 +95,38 @@ The backend is decomposed into purpose-specific services:
 ### Development Infrastructure
 - **Containerization**: Docker Compose for local development environment
 - **Process Management**: nodemon for development hot-reload
+
+## 技术债务
+
+### 高优先级
+- **init.sql类型不一致**：init.sql中users.id定义为UUID，但实际生产数据库使用INT类型。需要统一以避免新环境部署问题
+- **遗留字符串任务**：部分旧数据中tasks可能是字符串而非对象，需要数据迁移
+
+### 中优先级
+- **history-analytics-service端口配置**：内部调用user-service使用硬编码端口
+- **缺少自动化测试**：需要添加单元测试和集成测试
+
+## 后续开发计划 (TODO)
+
+### Phase 1 - 付费系统 (优先)
+- [ ] Stripe集成 - 订阅付费机制
+- [ ] 用户订阅状态管理
+- [ ] 免费用户使用限制
+- [ ] 付费功能解锁（高级场景、无限打卡奖励等）
+
+### Phase 2 - 用户体验优化
+- [ ] 语音对话实时流式传输优化（目标<2秒延迟）
+- [ ] 离线缓存支持（Service Worker）
+- [ ] 推送通知（打卡提醒、学习提醒）
+- [ ] 成就徽章系统
+
+### Phase 3 - 社交功能
+- [ ] 学习排行榜
+- [ ] 好友系统
+- [ ] 学习小组
+
+### Phase 4 - 上架推广
+- [ ] App Store / Google Play 上架
+- [ ] 域名配置和SEO优化
+- [ ] 落地页设计
+- [ ] 用户推荐奖励机制
