@@ -23,6 +23,7 @@ router.put('/goals/:id/complete', protect, userController.completeGoal);
 // Internal Routes (No auth middleware for simplicity in MVP, should use internal key in prod)
 router.post('/internal/users/:id/proficiency', userController.updateProficiencyInternal);
 router.post('/internal/users/:id/tasks/complete', userController.completeTaskInternal);
+router.post('/internal/users/:id/tasks/score', userController.updateTaskScoreInternal);
 router.get('/internal/users/:id', userController.getUserInternal);
 
 module.exports = router;

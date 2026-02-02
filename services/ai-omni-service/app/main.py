@@ -68,6 +68,9 @@ async def fetch_user_context(user_id: str, token: str):
             logger.error(f"Error fetching user context: {e}")
             return {}, {}
 
+async def execute_action_with_response(action: str, data: dict, token: str, user_id: str = None, session_id: str = None, context: dict = None):
+    return await execute_action(action, data, token, user_id, session_id, context)
+
 async def execute_action(action: str, data: dict, token: str, user_id: str = None, session_id: str = None, context: dict = None):
     headers = {"Authorization": f"Bearer {token}"}
     base_url = "http://user-service:3000"
@@ -88,18 +91,37 @@ async def execute_action(action: str, data: dict, token: str, user_id: str = Non
                 task_name = data.get('task')
                 scenario_title = context.get('custom_topic') if context else None
                 
-                # Robustly extract scenario title from "Title (Tasks: ...)" format
                 if scenario_title and " (Tasks:" in scenario_title:
                      scenario_title = scenario_title.split(" (Tasks:")[0].strip()
                 
                 if task_name:
                     payload = {
-                        "scenario": scenario_title or "Unknown", # Fallback, user-service might need to scan all
+                        "scenario": scenario_title or "Unknown",
                         "task": task_name
                     }
                     url = f"{base_url}/internal/users/{user_id}/tasks/complete"
                     resp = await client.post(url, json=payload)
                     logger.info(f"Task Completion Request: {payload}, Status: {resp.status_code}, Resp: {resp.text}")
+            elif action == "update_task_score":
+                task_name = data.get('task')
+                score_delta = data.get('scoreDelta', 20)
+                feedback = data.get('feedback', '')
+                scenario_title = context.get('custom_topic') if context else None
+                
+                if scenario_title and " (Tasks:" in scenario_title:
+                     scenario_title = scenario_title.split(" (Tasks:")[0].strip()
+                
+                if task_name:
+                    payload = {
+                        "scenario": scenario_title or "Unknown",
+                        "task": task_name,
+                        "scoreDelta": score_delta,
+                        "feedback": feedback
+                    }
+                    url = f"{base_url}/internal/users/{user_id}/tasks/score"
+                    resp = await client.post(url, json=payload)
+                    logger.info(f"Task Score Update: {payload}, Status: {resp.status_code}")
+                    return resp.json() if resp.status_code == 200 else None
             elif action == "save_summary":
                 # Prepare payload for history service
                 payload = {
@@ -604,36 +626,47 @@ class WebSocketCallback(OmniRealtimeCallback):
                         # Let's assume for this refactor that `task` = "Auto-Detect" or pass the scenario title.
                         # I will modify `execute_action` to handle `task=None` implies "Complete whatever is pending in this scenario".
                         
-                        # Let's pass the raw scenario title we have.
                         scenario_title = self.user_context.get('custom_topic', 'Unknown')
                         if " (Tasks:" in scenario_title:
                              scenario_title = scenario_title.split(" (Tasks:")[0].strip()
 
-                        # Trigger Action: We send a specific flag task name
-                        await execute_action("complete_task", {"task": "NEXT_PENDING_TASK"}, self.token, self.user_id, self.session_id, context=self.user_context)
+                        score_delta = 30
+                        feedback = "Task completed with AI confirmation"
+                        result = await execute_action_with_response("update_task_score", {
+                            "task": "NEXT_PENDING_TASK",
+                            "scoreDelta": score_delta,
+                            "feedback": feedback
+                        }, self.token, self.user_id, self.session_id, context=self.user_context)
                         
-                        # Notify Frontend (Generic Success)
-                        await self.websocket.send_json({
-                            "type": "task_completed",
-                            "payload": { "task": "Task Completed" } # Frontend will define what to cross out?
-                        })
+                        if result and result.get('taskCompleted'):
+                            await self.websocket.send_json({
+                                "type": "task_completed",
+                                "payload": { "task": "Task Completed" }
+                            })
+                        else:
+                            await self.websocket.send_json({
+                                "type": "task_progress",
+                                "payload": { "score": result.get('newScore', 0) if result else 0 }
+                            })
 
-                    # 2. Proficiency Scoring (Sentiment)
-                    delta = 0
-                    if is_completed:
-                        delta = 5 # Big boost for completion
-                    elif re.search(r"\b(good|nice|great|well done)\b", text_lower):
-                        delta = 1 # Small boost for encouragement
-                    elif re.search(r"\b(try again|not quite|almost)\b", text_lower):
-                        delta = -1 # Small penalty/learning opportunity
+                    score_delta = 0
+                    feedback = ""
+                    if not is_completed:
+                        if re.search(r"\b(good|nice|great|well done|excellent|perfect)\b", text_lower):
+                            score_delta = 15
+                            feedback = "Good response"
+                        elif re.search(r"\b(okay|not bad|better)\b", text_lower):
+                            score_delta = 10
+                            feedback = "Acceptable response"
+                        elif re.search(r"\b(try again|not quite|almost|incorrect)\b", text_lower):
+                            score_delta = 5
+                            feedback = "Needs improvement"
                     
-                    if delta != 0:
-                        # Send silent proficiency update
-                        await execute_action("save_summary", {
-                            "summary": "Auto-update via keyword spotting", 
-                            "proficiency_score_delta": delta,
-                            "feedback": "Keyword detected",
-                            "goalId": self.user_context.get('active_goal', {}).get('id')
+                    if score_delta > 0:
+                        await execute_action("update_task_score", {
+                            "task": "NEXT_PENDING_TASK",
+                            "scoreDelta": score_delta,
+                            "feedback": feedback
                         }, self.token, self.user_id, self.session_id, context=self.user_context)
 
                     self.full_response_text = "" # Reset

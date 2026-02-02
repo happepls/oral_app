@@ -329,6 +329,99 @@ User.updateProficiency = async (userId, delta) => {
     return rows[0];
 };
 
+User.updateTaskScore = async (userId, scenarioTitle, taskText, scoreDelta, feedback) => {
+    const COMPLETION_THRESHOLD = 60;
+    
+    const goalQuery = `SELECT id FROM user_goals WHERE user_id = $1 AND status = 'active' ORDER BY created_at DESC LIMIT 1`;
+    const goalRes = await db.query(goalQuery, [userId]);
+    const goalId = goalRes.rows[0]?.id;
+    if (!goalId) return null;
+
+    let findRes;
+    
+    if (taskText === 'NEXT_PENDING_TASK') {
+        let pendingQuery = `
+            SELECT * FROM user_tasks 
+            WHERE goal_id = $1 AND user_id = $2 
+              AND (scenario_title = $3 OR scenario_title ILIKE $4)
+              AND status != 'completed'
+            ORDER BY id ASC
+            LIMIT 1
+        `;
+        findRes = await db.query(pendingQuery, [goalId, userId, scenarioTitle, `%${scenarioTitle}%`]);
+        
+        if (findRes.rows.length === 0) {
+            pendingQuery = `
+                SELECT * FROM user_tasks 
+                WHERE goal_id = $1 AND user_id = $2 
+                  AND status != 'completed'
+                ORDER BY id ASC
+                LIMIT 1
+            `;
+            findRes = await db.query(pendingQuery, [goalId, userId]);
+        }
+    } else {
+        const findQuery = `
+            SELECT * FROM user_tasks 
+            WHERE goal_id = $1 AND user_id = $2
+              AND (scenario_title = $3 OR scenario_title ILIKE $4)
+              AND (task_description ILIKE $5 OR task_description ILIKE '%' || $5 || '%')
+            LIMIT 1
+        `;
+        findRes = await db.query(findQuery, [goalId, userId, scenarioTitle, `%${scenarioTitle}%`, taskText]);
+    }
+    
+    if (findRes.rows.length === 0) {
+        console.log(`[User] Task not found for score update: ${scenarioTitle} / ${taskText}`);
+        return null;
+    }
+
+    const task = findRes.rows[0];
+    const currentScore = parseInt(task.score || 0, 10);
+    const interactions = parseInt(task.interaction_count || 0, 10);
+    let newScore = Math.min(100, currentScore + parseInt(scoreDelta, 10));
+    const newInteractions = interactions + 1;
+    
+    const shouldComplete = newScore >= COMPLETION_THRESHOLD && task.status !== 'completed';
+    const newStatus = shouldComplete ? 'completed' : task.status;
+    
+    console.log(`[User] Task Score Update: ${task.scenario_title}/${task.task_description} | Score: ${currentScore} + ${scoreDelta} = ${newScore} | Interactions: ${newInteractions} | Complete: ${shouldComplete}`);
+
+    const updateQuery = `
+        UPDATE user_tasks 
+        SET score = $1, 
+            interaction_count = $2, 
+            status = $3, 
+            feedback = COALESCE($4, feedback),
+            completed_at = CASE WHEN $3 = 'completed' AND completed_at IS NULL THEN NOW() ELSE completed_at END,
+            updated_at = NOW()
+        WHERE id = $5
+        RETURNING *
+    `;
+    await db.query(updateQuery, [newScore, newInteractions, newStatus, feedback, task.id]);
+
+    if (shouldComplete) {
+        const statsQuery = `
+            SELECT COUNT(*) as total, COUNT(*) FILTER (WHERE status = 'completed') as completed
+            FROM user_tasks WHERE goal_id = $1
+        `;
+        const statsRes = await db.query(statsQuery, [goalId]);
+        const { total, completed } = statsRes.rows[0];
+        const newProficiency = parseInt(total) > 0 ? Math.round((parseInt(completed) / parseInt(total)) * 100) : 0;
+        
+        await db.query(`UPDATE user_goals SET current_proficiency = $1, updated_at = NOW() WHERE id = $2`, [newProficiency, goalId]);
+        console.log(`[User] Goal proficiency updated: ${completed}/${total} = ${newProficiency}%`);
+    }
+
+    const goal = await User.getActiveGoal(userId);
+    return {
+        goal,
+        taskCompleted: shouldComplete,
+        newScore: newScore,
+        taskName: task.task_description
+    };
+};
+
 
 User.findByEmail = async (email) => {
     const { rows } = await db.query('SELECT * FROM users WHERE email = $1', [email]);

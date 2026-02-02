@@ -51,9 +51,11 @@ CREATE TABLE IF NOT EXISTS user_tasks (
     task_description TEXT NOT NULL,
     status VARCHAR(50) DEFAULT 'pending', -- pending, completed
     score INT DEFAULT 0, -- 0-100 quality score for this specific task
+    interaction_count INT DEFAULT 0, -- Number of dialogue turns for this task
     feedback TEXT, -- AI feedback regarding this task
     completed_at TIMESTAMPTZ,
-    created_at TIMESTAMPTZ DEFAULT NOW()
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 
 -- Add indexes for better query performance

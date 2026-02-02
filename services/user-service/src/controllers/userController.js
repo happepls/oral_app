@@ -411,7 +411,6 @@ exports.completeTaskInternal = async (req, res) => {
         const updatedGoal = await User.completeTask(userId, scenario, task);
 
         if (!updatedGoal) {
-            // Task not found or goal not active, but return 200 to not break AI flow
             console.log('[User] Task completion skipped (not found or no active goal)');
             return res.json({ success: true, message: 'No update' }); 
         }
@@ -420,6 +419,38 @@ exports.completeTaskInternal = async (req, res) => {
 
     } catch (error) {
         console.error('Complete Task Error:', error);
+        res.status(500).json({ success: false, message: 'Server Error' });
+    }
+};
+
+exports.updateTaskScoreInternal = async (req, res) => {
+    try {
+        const userId = req.params.id;
+        const { scenario, task, scoreDelta, feedback } = req.body;
+
+        console.log(`[User] Internal Update Task Score: User=${userId}, Scenario=${scenario}, Task=${task}, Delta=${scoreDelta}`);
+
+        if (!scenario || !task || scoreDelta === undefined) {
+            return res.status(400).json({ success: false, message: 'Scenario, Task, and scoreDelta required' });
+        }
+
+        const result = await User.updateTaskScore(userId, scenario, task, scoreDelta, feedback);
+
+        if (!result) {
+            console.log('[User] Task score update skipped (not found or no active goal)');
+            return res.json({ success: true, message: 'No update', taskCompleted: false }); 
+        }
+
+        res.json({ 
+            success: true, 
+            data: { goal: result.goal },
+            taskCompleted: result.taskCompleted,
+            newScore: result.newScore,
+            taskName: result.taskName
+        });
+
+    } catch (error) {
+        console.error('Update Task Score Error:', error);
         res.status(500).json({ success: false, message: 'Server Error' });
     }
 };
