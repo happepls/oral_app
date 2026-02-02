@@ -80,6 +80,9 @@ function GoalSetting() {
   const [success, setSuccess] = useState('');
   const [isGenerating, setIsGenerating] = useState(false);
   const [useAI, setUseAI] = useState(true);
+  const [editingScenario, setEditingScenario] = useState(null);
+  const [showAddScenario, setShowAddScenario] = useState(false);
+  const [newScenario, setNewScenario] = useState({ title: '', tasks: ['', '', ''] });
 
   const targetLanguage = user?.target_language || 'English';
   const currentProficiency = user?.points || 30;
@@ -121,6 +124,82 @@ function GoalSetting() {
 
   const handleRemoveScenario = (id) => {
     setScenarios(scenarios.filter(s => s.id !== id));
+  };
+
+  const handleEditScenario = (scenario) => {
+    setEditingScenario({ ...scenario, tasks: [...scenario.tasks] });
+  };
+
+  const handleSaveEdit = () => {
+    if (!editingScenario.title.trim()) {
+      setError('Scenario title cannot be empty.');
+      return;
+    }
+    const validTasks = editingScenario.tasks.filter(t => t.trim());
+    if (validTasks.length === 0) {
+      setError('At least one task is required.');
+      return;
+    }
+    setScenarios(scenarios.map(s => 
+      s.id === editingScenario.id 
+        ? { ...editingScenario, tasks: validTasks }
+        : s
+    ));
+    setEditingScenario(null);
+    setError('');
+  };
+
+  const handleAddTask = () => {
+    if (editingScenario) {
+      setEditingScenario({
+        ...editingScenario,
+        tasks: [...editingScenario.tasks, '']
+      });
+    } else if (showAddScenario) {
+      setNewScenario({
+        ...newScenario,
+        tasks: [...newScenario.tasks, '']
+      });
+    }
+  };
+
+  const handleRemoveTask = (taskIndex) => {
+    if (editingScenario) {
+      if (editingScenario.tasks.length <= 1) {
+        setError('At least one task is required.');
+        return;
+      }
+      const newTasks = editingScenario.tasks.filter((_, idx) => idx !== taskIndex);
+      setEditingScenario({ ...editingScenario, tasks: newTasks });
+    } else if (showAddScenario) {
+      if (newScenario.tasks.length <= 1) {
+        setError('At least one task is required.');
+        return;
+      }
+      const newTasks = newScenario.tasks.filter((_, idx) => idx !== taskIndex);
+      setNewScenario({ ...newScenario, tasks: newTasks });
+    }
+  };
+
+  const handleAddNewScenario = () => {
+    if (!newScenario.title.trim()) {
+      setError('Scenario title cannot be empty.');
+      return;
+    }
+    const validTasks = newScenario.tasks.filter(t => t.trim());
+    if (validTasks.length === 0) {
+      setError('At least one task is required.');
+      return;
+    }
+    const maxId = scenarios.length > 0 ? Math.max(...scenarios.map(s => s.id)) : -1;
+    setScenarios([...scenarios, { 
+      id: maxId + 1, 
+      title: newScenario.title.trim(), 
+      tasks: validTasks 
+    }]);
+    setNewScenario({ title: '', tasks: ['', '', ''] });
+    setShowAddScenario(false);
+    setError('');
   };
 
   const handleSubmit = async () => {
@@ -266,7 +345,7 @@ function GoalSetting() {
             </>
           )}
 
-          {step === 2 && (
+          {step === 2 && !editingScenario && !showAddScenario && (
             <>
               <div className="flex items-center justify-between mb-6">
                 <h1 className="text-slate-900 dark:text-white text-2xl font-bold">Your Practice Scenarios</h1>
@@ -277,8 +356,8 @@ function GoalSetting() {
                   Back
                 </button>
               </div>
-              <p className="text-slate-600 dark:text-slate-400 mb-6">
-                {scenarios.length} scenarios tailored for your goal. You can remove any you don't need.
+              <p className="text-slate-600 dark:text-slate-400 mb-4">
+                {scenarios.length} scenarios tailored for your goal. Edit, add, or remove as needed.
               </p>
 
               {error && (
@@ -292,23 +371,41 @@ function GoalSetting() {
                 </div>
               )}
 
+              <button
+                onClick={() => setShowAddScenario(true)}
+                className="w-full mb-4 flex items-center justify-center gap-2 rounded-lg h-10 px-4 border-2 border-dashed border-slate-400 dark:border-slate-600 text-slate-600 dark:text-slate-400 hover:border-primary hover:text-primary transition-colors"
+              >
+                <span className="material-symbols-outlined text-xl">add</span>
+                Add New Scenario
+              </button>
+
               <div className="space-y-3 max-h-[50vh] overflow-y-auto mb-6">
                 {scenarios.map((scenario) => (
                   <div
                     key={scenario.id}
                     className="bg-slate-100 dark:bg-slate-800 rounded-lg p-4 relative group"
                   >
-                    <button
-                      onClick={() => handleRemoveScenario(scenario.id)}
-                      className="absolute top-2 right-2 text-slate-400 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-opacity"
-                    >
-                      <span className="material-symbols-outlined text-xl">close</span>
-                    </button>
-                    <h3 className="text-slate-900 dark:text-white font-medium mb-2">{scenario.title}</h3>
+                    <div className="absolute top-2 right-2 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                      <button
+                        onClick={() => handleEditScenario(scenario)}
+                        className="text-slate-400 hover:text-primary p-1"
+                        title="Edit scenario"
+                      >
+                        <span className="material-symbols-outlined text-xl">edit</span>
+                      </button>
+                      <button
+                        onClick={() => handleRemoveScenario(scenario.id)}
+                        className="text-slate-400 hover:text-red-500 p-1"
+                        title="Remove scenario"
+                      >
+                        <span className="material-symbols-outlined text-xl">close</span>
+                      </button>
+                    </div>
+                    <h3 className="text-slate-900 dark:text-white font-medium mb-2 pr-16">{scenario.title}</h3>
                     <ul className="text-slate-600 dark:text-slate-400 text-sm space-y-1">
                       {scenario.tasks.map((task, idx) => (
                         <li key={idx} className="flex items-start">
-                          <span className="text-primary mr-2">•</span>
+                          <span className="text-primary mr-2">{idx + 1}.</span>
                           {task}
                         </li>
                       ))}
@@ -324,6 +421,170 @@ function GoalSetting() {
                 className="w-full flex items-center justify-center rounded-lg h-12 px-5 bg-primary text-white text-base font-bold hover:bg-primary/90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
                 Confirm & Start Learning
               </button>
+            </>
+          )}
+
+          {step === 2 && editingScenario && (
+            <>
+              <div className="flex items-center justify-between mb-6">
+                <h1 className="text-slate-900 dark:text-white text-2xl font-bold">Edit Scenario</h1>
+                <button
+                  onClick={() => { setEditingScenario(null); setError(''); }}
+                  className="text-primary text-sm hover:underline"
+                >
+                  Cancel
+                </button>
+              </div>
+
+              {error && (
+                <div className="bg-red-500/10 border border-red-500/50 text-red-500 px-4 py-3 rounded-lg text-sm mb-4">
+                  {error}
+                </div>
+              )}
+
+              <div className="space-y-4">
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">
+                    Scenario Title
+                  </label>
+                  <input
+                    type="text"
+                    value={editingScenario.title}
+                    onChange={(e) => setEditingScenario({ ...editingScenario, title: e.target.value })}
+                    className="w-full px-4 py-3 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white focus:border-primary focus:ring-2 focus:ring-primary/50 outline-none"
+                    placeholder="Scenario title"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">
+                    Practice Tasks
+                  </label>
+                  <div className="space-y-2">
+                    {editingScenario.tasks.map((task, idx) => (
+                      <div key={idx} className="flex items-center gap-2">
+                        <span className="text-slate-500 text-sm w-6">{idx + 1}.</span>
+                        <input
+                          type="text"
+                          value={task}
+                          onChange={(e) => {
+                            const newTasks = [...editingScenario.tasks];
+                            newTasks[idx] = e.target.value;
+                            setEditingScenario({ ...editingScenario, tasks: newTasks });
+                          }}
+                          className="flex-1 px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white focus:border-primary outline-none text-sm"
+                          placeholder={`Task ${idx + 1}`}
+                        />
+                        {editingScenario.tasks.length > 1 && (
+                          <button
+                            onClick={() => handleRemoveTask(idx)}
+                            className="text-slate-400 hover:text-red-500"
+                          >
+                            <span className="material-symbols-outlined text-xl">remove_circle</span>
+                          </button>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                  <button
+                    onClick={handleAddTask}
+                    className="mt-2 text-primary text-sm flex items-center gap-1 hover:underline"
+                  >
+                    <span className="material-symbols-outlined text-lg">add</span>
+                    Add Task
+                  </button>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={handleSaveEdit}
+                  className="w-full mt-4 flex items-center justify-center rounded-lg h-12 px-5 bg-primary text-white text-base font-bold hover:bg-primary/90 transition-colors"
+                >
+                  Save Changes
+                </button>
+              </div>
+            </>
+          )}
+
+          {step === 2 && showAddScenario && (
+            <>
+              <div className="flex items-center justify-between mb-6">
+                <h1 className="text-slate-900 dark:text-white text-2xl font-bold">Add New Scenario</h1>
+                <button
+                  onClick={() => { setShowAddScenario(false); setNewScenario({ title: '', tasks: ['', '', ''] }); setError(''); }}
+                  className="text-primary text-sm hover:underline"
+                >
+                  Cancel
+                </button>
+              </div>
+
+              {error && (
+                <div className="bg-red-500/10 border border-red-500/50 text-red-500 px-4 py-3 rounded-lg text-sm mb-4">
+                  {error}
+                </div>
+              )}
+
+              <div className="space-y-4">
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">
+                    Scenario Title
+                  </label>
+                  <input
+                    type="text"
+                    value={newScenario.title}
+                    onChange={(e) => setNewScenario({ ...newScenario, title: e.target.value })}
+                    className="w-full px-4 py-3 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white focus:border-primary focus:ring-2 focus:ring-primary/50 outline-none"
+                    placeholder="e.g., Job Interview"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">
+                    Practice Tasks
+                  </label>
+                  <div className="space-y-2">
+                    {newScenario.tasks.map((task, idx) => (
+                      <div key={idx} className="flex items-center gap-2">
+                        <span className="text-slate-500 text-sm w-6">{idx + 1}.</span>
+                        <input
+                          type="text"
+                          value={task}
+                          onChange={(e) => {
+                            const newTasks = [...newScenario.tasks];
+                            newTasks[idx] = e.target.value;
+                            setNewScenario({ ...newScenario, tasks: newTasks });
+                          }}
+                          className="flex-1 px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white focus:border-primary outline-none text-sm"
+                          placeholder={`Task ${idx + 1}`}
+                        />
+                        {newScenario.tasks.length > 1 && (
+                          <button
+                            onClick={() => handleRemoveTask(idx)}
+                            className="text-slate-400 hover:text-red-500"
+                          >
+                            <span className="material-symbols-outlined text-xl">remove_circle</span>
+                          </button>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                  <button
+                    onClick={handleAddTask}
+                    className="mt-2 text-primary text-sm flex items-center gap-1 hover:underline"
+                  >
+                    <span className="material-symbols-outlined text-lg">add</span>
+                    Add Task
+                  </button>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={handleAddNewScenario}
+                  className="w-full mt-4 flex items-center justify-center rounded-lg h-12 px-5 bg-primary text-white text-base font-bold hover:bg-primary/90 transition-colors"
+                >
+                  Add Scenario
+                </button>
+              </div>
             </>
           )}
         </div>
