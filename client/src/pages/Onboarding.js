@@ -33,7 +33,7 @@ function Onboarding() {
           gender: genderMap[gender] !== undefined ? genderMap[gender] : null, 
           native_language: nativeLanguage, 
           target_language: targetLanguage,
-          proficiency: parseInt(proficiency), // Ensure it's a number
+          points: parseInt(proficiency),
           interests: interests
       });
 
