@@ -279,12 +279,15 @@ function Discovery() {
                              
                              {/* Tasks Preview */}
                              <div className="space-y-1">
-                                 {scenario.tasks && scenario.tasks.slice(0, 3).map((task, tIdx) => (
-                                     <div key={tIdx} className="flex items-center gap-2 text-xs text-slate-500">
-                                         <span className="w-1.5 h-1.5 rounded-full bg-slate-300"></span>
-                                         <span className="truncate">{task}</span>
-                                     </div>
-                                 ))}
+                                 {scenario.tasks && scenario.tasks.slice(0, 3).map((task, tIdx) => {
+                                     const taskText = typeof task === 'object' ? (task.text || task.description || JSON.stringify(task)) : task;
+                                     return (
+                                         <div key={tIdx} className="flex items-center gap-2 text-xs text-slate-500">
+                                             <span className="w-1.5 h-1.5 rounded-full bg-slate-300"></span>
+                                             <span className="truncate">{taskText}</span>
+                                         </div>
+                                     );
+                                 })}
                              </div>
                          </div>
                      );

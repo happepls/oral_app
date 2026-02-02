@@ -21,29 +21,40 @@ const openrouter = new OpenAI({
 
 app.use('/api/ai/generate-scenarios', express.json(), async (req, res) => {
   try {
-    const { type, target_language, target_level, interests, description } = req.body;
+    const { type, target_language, target_level, interests, description, native_language } = req.body;
+    
+    // Determine output language based on native_language
+    const outputLang = native_language || 'Chinese';
+    const outputLangInstruction = outputLang === 'Chinese' ? '用中文输出所有场景标题和任务描述' : 
+                                   outputLang === 'Japanese' ? '日本語で全てのシナリオタイトルとタスクを出力してください' :
+                                   outputLang === 'French' ? 'Générez tous les titres et tâches en français' :
+                                   'Output all scenario titles and tasks in English';
     
     const prompt = `You are an expert language learning curriculum designer. Generate exactly 10 practice scenarios for a ${target_language} learner.
+
+IMPORTANT: ${outputLangInstruction}
 
 User Profile:
 - Goal Type: ${type || 'daily_conversation'}
 - Target Level: ${target_level || 'Intermediate'}
 - Interests: ${interests || 'general topics'}
 - Additional Notes: ${description || 'none'}
+- Native Language: ${outputLang}
 
 Requirements:
 1. Create 10 unique, practical scenarios relevant to the goal type
 2. Each scenario must have a clear title and exactly 3 specific practice tasks
-3. Tasks should be conversational goals the learner can practice
+3. Tasks should be conversational goals the learner can practice in ${target_language}
 4. Include 1 scenario about cultural small talk in ${target_language}-speaking regions
 5. Order scenarios from easier to more challenging
+6. IMPORTANT: Write scenario titles and task descriptions in ${outputLang} so the learner can understand them easily
 
 Respond ONLY with valid JSON in this exact format:
 {
   "scenarios": [
     {
-      "title": "Scenario Title",
-      "tasks": ["Task 1 description", "Task 2 description", "Task 3 description"]
+      "title": "场景标题(用${outputLang})",
+      "tasks": ["任务1(用${outputLang})", "任务2(用${outputLang})", "任务3(用${outputLang})"]
     }
   ]
 }`;

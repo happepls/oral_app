@@ -85,7 +85,7 @@ function Register() {
 
             <div>
               <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">
-                姓名
+                用户名
               </label>
               <input
                 type="text"
@@ -95,7 +95,7 @@ function Register() {
                 required
                 disabled={loading}
                 className="w-full px-4 py-3 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white focus:border-primary focus:ring-2 focus:ring-primary/50 outline-none disabled:opacity-50"
-                placeholder="张三"
+                placeholder="输入用户名"
               />
             </div>
 

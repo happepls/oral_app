@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { userAPI, aiAPI } from '../services/api';
@@ -68,7 +68,7 @@ const PRESET_SCENARIOS = {
 
 function GoalSetting() {
   const navigate = useNavigate();
-  const { user, loading } = useAuth();
+  const { user, loading, updateProfile } = useAuth();
   
   const [step, setStep] = useState(1);
   const [type, setType] = useState('daily_conversation');
@@ -84,12 +84,26 @@ function GoalSetting() {
   const [showAddScenario, setShowAddScenario] = useState(false);
   const [newScenario, setNewScenario] = useState({ title: '', tasks: ['', '', ''] });
 
-  const targetLanguage = user?.target_language || 'English';
-  const currentProficiency = user?.points || 30;
+  // Fields moved from Onboarding
+  const [targetLanguage, setTargetLanguage] = useState(user?.target_language || 'English');
+  const [currentProficiency, setCurrentProficiency] = useState(user?.points || 30);
+  const [interests, setInterests] = useState(user?.interests || '');
+  const nativeLanguage = user?.native_language || 'Chinese';
 
   const handleGenerateScenarios = async () => {
     setIsGenerating(true);
     setError('');
+
+    // First update user profile with target_language, interests, points
+    try {
+      await updateProfile({
+        target_language: targetLanguage,
+        interests: interests,
+        points: parseInt(currentProficiency)
+      });
+    } catch (err) {
+      console.error('Failed to update profile:', err);
+    }
     
     if (useAI) {
       try {
@@ -97,8 +111,9 @@ function GoalSetting() {
           type,
           target_language: targetLanguage,
           target_level: targetLevel,
-          interests: user?.interests || '',
-          description
+          interests: interests,
+          description,
+          native_language: nativeLanguage  // Pass native language for localized output
         });
         
         if (result.scenarios && result.scenarios.length > 0) {
@@ -217,9 +232,9 @@ function GoalSetting() {
         description: description || `Practice ${targetLanguage} for ${type.replace(/_/g, ' ')}`,
         target_language: targetLanguage,
         target_level: targetLevel,
-        current_proficiency: currentProficiency,
+        current_proficiency: parseInt(currentProficiency),
         completion_time_days: completionDays,
-        interests: user?.interests || '',
+        interests: interests,
         scenarios: scenarios.map(s => ({
           title: s.title,
           tasks: s.tasks
@@ -229,12 +244,12 @@ function GoalSetting() {
       const result = await userAPI.createGoal(goalData);
 
       if (result) {
-        setSuccess('Your learning goal is set. Let\'s start practicing!');
+        setSuccess('目标设置成功！开始练习吧！');
         setTimeout(() => navigate('/discovery'), 1500);
       }
     } catch (err) {
       console.error(err);
-      setError(err.message || 'Failed to set goal. Please try again.');
+      setError(err.message || '设置目标失败，请重试。');
     }
   };
 
@@ -244,8 +259,8 @@ function GoalSetting() {
         <div className="w-full px-4">
           {step === 1 && (
             <>
-              <h1 className="text-slate-900 dark:text-white text-3xl font-bold mb-2">Set Your {targetLanguage} Goal</h1>
-              <p className="text-slate-600 dark:text-slate-400 mb-8">A clear goal is half the battle.</p>
+              <h1 className="text-slate-900 dark:text-white text-3xl font-bold mb-2">设定学习目标</h1>
+              <p className="text-slate-600 dark:text-slate-400 mb-8">明确目标是成功的一半</p>
 
               <div className="space-y-4">
                 {error && (
@@ -254,9 +269,47 @@ function GoalSetting() {
                   </div>
                 )}
 
+                {/* Target Language - moved from Onboarding */}
+                <div>
+                  <label htmlFor="targetLanguage" className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">
+                    学习语言
+                  </label>
+                  <select
+                    id="targetLanguage"
+                    value={targetLanguage}
+                    onChange={(e) => setTargetLanguage(e.target.value)}
+                    disabled={loading}
+                    className="w-full px-4 py-3 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white focus:border-primary focus:ring-2 focus:ring-primary/50 outline-none disabled:opacity-50"
+                  >
+                    <option value="English">英语</option>
+                    <option value="Japanese">日语</option>
+                    <option value="Chinese">中文</option>
+                    <option value="French">法语</option>
+                    <option value="Spanish">西班牙语</option>
+                    <option value="Korean">韩语</option>
+                  </select>
+                </div>
+
+                {/* Current Proficiency - moved from Onboarding */}
+                <div>
+                  <label htmlFor="currentProficiency" className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">
+                    当前水平 (0-100)
+                  </label>
+                  <input
+                    type="range"
+                    id="currentProficiency"
+                    min="0"
+                    max="100"
+                    value={currentProficiency}
+                    onChange={(e) => setCurrentProficiency(e.target.value)}
+                    className="w-full h-2 bg-slate-200 rounded-lg appearance-none cursor-pointer dark:bg-slate-700"
+                  />
+                  <div className="text-right text-sm text-slate-500">{currentProficiency}</div>
+                </div>
+
                 <div>
                   <label htmlFor="type" className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">
-                    Goal Type
+                    目标类型
                   </label>
                   <select
                     id="type"
@@ -265,17 +318,17 @@ function GoalSetting() {
                     disabled={loading}
                     className="w-full px-4 py-3 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white focus:border-primary focus:ring-2 focus:ring-primary/50 outline-none disabled:opacity-50"
                   >
-                    <option value="daily_conversation">Daily Conversation</option>
-                    <option value="business_meeting">Business Meeting</option>
-                    <option value="travel_survival">Travel Survival</option>
-                    <option value="exam_prep">Exam Preparation</option>
-                    <option value="presentation">Presentation Skills</option>
+                    <option value="daily_conversation">日常对话</option>
+                    <option value="business_meeting">商务会议</option>
+                    <option value="travel_survival">旅行生存</option>
+                    <option value="exam_prep">考试备考</option>
+                    <option value="presentation">演讲技巧</option>
                   </select>
                 </div>
 
                 <div>
                   <label htmlFor="targetLevel" className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">
-                    Target Level
+                    目标等级
                   </label>
                   <select
                     id="targetLevel"
@@ -284,16 +337,16 @@ function GoalSetting() {
                     disabled={loading}
                     className="w-full px-4 py-3 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white focus:border-primary focus:ring-2 focus:ring-primary/50 outline-none disabled:opacity-50"
                   >
-                    <option value="Beginner">Beginner</option>
-                    <option value="Intermediate">Intermediate</option>
-                    <option value="Advanced">Advanced</option>
-                    <option value="Native">Native-like</option>
+                    <option value="Beginner">初级</option>
+                    <option value="Intermediate">中级</option>
+                    <option value="Advanced">高级</option>
+                    <option value="Native">母语水平</option>
                   </select>
                 </div>
 
                 <div>
                   <label htmlFor="days" className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">
-                    Complete In (days)
+                    计划完成天数
                   </label>
                   <input
                     type="number"
@@ -306,18 +359,34 @@ function GoalSetting() {
                   />
                 </div>
 
+                {/* Interests - moved from Onboarding */}
+                <div>
+                  <label htmlFor="interests" className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">
+                    兴趣爱好 / 学习重点
+                  </label>
+                  <textarea
+                    id="interests"
+                    value={interests}
+                    onChange={(e) => setInterests(e.target.value)}
+                    rows="2"
+                    disabled={loading}
+                    className="w-full px-4 py-3 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white focus:border-primary focus:ring-2 focus:ring-primary/50 outline-none disabled:opacity-50"
+                    placeholder="例如：商务谈判, 旅游对话, 雅思口语..."
+                  ></textarea>
+                </div>
+
                 <div>
                   <label htmlFor="description" className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">
-                    Additional Notes (optional)
+                    补充说明 (可选)
                   </label>
                   <textarea
                     id="description"
                     value={description}
                     onChange={(e) => setDescription(e.target.value)}
-                    rows="3"
+                    rows="2"
                     disabled={loading}
                     className="w-full px-4 py-3 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white focus:border-primary focus:ring-2 focus:ring-primary/50 outline-none disabled:opacity-50"
-                    placeholder={`e.g., "I'm traveling to Japan next month..."`}
+                    placeholder="例如：下个月要去日本旅行..."
                   ></textarea>
                 </div>
 
@@ -330,7 +399,7 @@ function GoalSetting() {
                     className="w-4 h-4 rounded border-slate-300"
                   />
                   <label htmlFor="useAI" className="text-sm text-slate-600 dark:text-slate-400">
-                    Use AI to generate personalized scenarios
+                    使用AI生成个性化练习场景
                   </label>
                 </div>
 
@@ -339,7 +408,7 @@ function GoalSetting() {
                   onClick={handleGenerateScenarios}
                   disabled={loading || isGenerating}
                   className="w-full mt-6 flex items-center justify-center rounded-lg h-12 px-5 bg-primary text-white text-base font-bold hover:bg-primary/90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
-                  {isGenerating ? 'Generating Scenarios...' : 'Generate Practice Scenarios'}
+                  {isGenerating ? '正在生成场景...' : '生成练习场景'}
                 </button>
               </div>
             </>
@@ -403,12 +472,15 @@ function GoalSetting() {
                     </div>
                     <h3 className="text-slate-900 dark:text-white font-medium mb-2 pr-16">{scenario.title}</h3>
                     <ul className="text-slate-600 dark:text-slate-400 text-sm space-y-1">
-                      {scenario.tasks.map((task, idx) => (
-                        <li key={idx} className="flex items-start">
-                          <span className="text-primary mr-2">{idx + 1}.</span>
-                          {task}
-                        </li>
-                      ))}
+                      {scenario.tasks.map((task, idx) => {
+                        const taskText = typeof task === 'object' ? (task.text || task.description || JSON.stringify(task)) : task;
+                        return (
+                          <li key={idx} className="flex items-start">
+                            <span className="text-primary mr-2">{idx + 1}.</span>
+                            {taskText}
+                          </li>
+                        );
+                      })}
                     </ul>
                   </div>
                 ))}
