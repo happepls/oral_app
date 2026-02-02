@@ -29,44 +29,89 @@ function Conversation() {
   const [tasks, setTasks] = useState(location.state?.tasks || []);
   const [completedTasks, setCompletedTasks] = useState(new Set());
   const [showTasks, setShowTasks] = useState(false); // Can keep for toggle, but default to true if tasks exist
+  
+  // Scenario Completion State
+  const [showCompletionModal, setShowCompletionModal] = useState(false);
+  const [scenarioScore, setScenarioScore] = useState(0);
+  const [allScenarios, setAllScenarios] = useState([]);
+  const [currentScenarioIndex, setCurrentScenarioIndex] = useState(0);
+  const [currentScenarioTitle, setCurrentScenarioTitle] = useState('');
+  const completionCheckedRef = useRef(false); // Prevent duplicate modal triggers
 
-  // Initialize completed tasks set
+  // Initialize completed tasks set and check for scenario completion
   useEffect(() => {
       if (tasks.length > 0) {
           const completed = new Set();
+          let totalScore = 0;
+          let objectTaskCount = 0;
+          let completedCount = 0;
+          
           tasks.forEach(t => {
-              if (typeof t === 'object' && t.status === 'completed') {
-                  completed.add(t.text);
+              if (typeof t === 'object') {
+                  objectTaskCount++;
+                  if (t.status === 'completed') {
+                      completed.add(t.text);
+                      totalScore += (t.score || 100); // Default to 100 if score not set
+                      completedCount++;
+                  }
               }
           });
           setCompletedTasks(completed);
-          setShowTasks(true); // Auto-show when tasks loaded
+          setShowTasks(true);
+          
+          // Check if all object tasks are completed
+          const allCompleted = objectTaskCount > 0 && completedCount === objectTaskCount;
+          
+          // Trigger completion modal only once
+          if (allCompleted && !completionCheckedRef.current) {
+              completionCheckedRef.current = true;
+              const avgScore = Math.round(totalScore / objectTaskCount);
+              setScenarioScore(avgScore);
+              setShowCompletionModal(true);
+          }
       }
   }, [tasks]);
 
-  // Separate Effect: Fetch Tasks if missing (Page Refresh)
+  // Separate Effect: Fetch Tasks if missing (Page Refresh) + set scenario info
   useEffect(() => {
       const searchParams = new URLSearchParams(window.location.search);
       const scenarioParam = searchParams.get('scenario');
-      const decodedScenario = scenarioParam ? decodeURIComponent(scenarioParam) : null;
+      // Get scenario from URL or state
+      const scenarioName = scenarioParam 
+          ? decodeURIComponent(scenarioParam) 
+          : location.state?.scenario;
       
-      if (tasks.length === 0 && decodedScenario && user && token) {
-          console.log('Fetching tasks for scenario:', decodedScenario);
+      if (scenarioName) {
+          setCurrentScenarioTitle(scenarioName);
+      }
+      
+      if (scenarioName && user && token) {
           userAPI.getActiveGoal().then(res => {
               if (res && res.goal && res.goal.scenarios) {
-                  const activeScenario = res.goal.scenarios.find(s => 
-                      s.title.trim().toLowerCase() === decodedScenario.trim().toLowerCase()
+                  // Store all scenarios for navigation
+                  setAllScenarios(res.goal.scenarios);
+                  
+                  // Find current scenario index (case-insensitive)
+                  const scenarioIndex = res.goal.scenarios.findIndex(s => 
+                      s.title.trim().toLowerCase() === scenarioName.trim().toLowerCase()
                   );
-                  if (activeScenario && activeScenario.tasks) {
-                      setTasks(activeScenario.tasks);
-                      console.log('Tasks fetched:', activeScenario.tasks);
-                  } else {
-                      console.warn('Scenario not found in goal:', decodedScenario, 'Available:', res.goal.scenarios.map(s => s.title));
+                  if (scenarioIndex !== -1) {
+                      setCurrentScenarioIndex(scenarioIndex);
+                      setCurrentScenarioTitle(res.goal.scenarios[scenarioIndex].title);
+                  }
+                  
+                  // Fetch tasks if missing
+                  if (tasks.length === 0 && scenarioIndex !== -1) {
+                      const activeScenario = res.goal.scenarios[scenarioIndex];
+                      if (activeScenario && activeScenario.tasks) {
+                          setTasks(activeScenario.tasks);
+                          console.log('Tasks fetched:', activeScenario.tasks);
+                      }
                   }
               }
           }).catch(err => console.error('Task fetch error:', err));
       }
-  }, [user, token, tasks.length]); // Run when auth is ready or tasks empty
+  }, [user, token, location.state?.scenario]); // Run when auth is ready or state changes
   
   // Refs
   const socketRef = useRef(null);
@@ -85,6 +130,54 @@ function Conversation() {
       navigate('/login');
     }
   }, [user, loading, navigate]);
+  
+  // Scenario navigation functions
+  const handleRetryCurrentScenario = () => {
+      // Reset for same scenario practice
+      setShowCompletionModal(false);
+      completionCheckedRef.current = false;
+      localStorage.removeItem(`session_${currentScenarioTitle}`);
+      setMessages([{ type: 'system', content: '正在连接AI导师...' }]);
+      setSessionId(null);
+      setIsConnected(false);
+      // Note: Tasks won't reset here - they keep their completed status
+      // User can go to Discovery to select the same scenario again for a fresh start
+  };
+  
+  const handleSelectOtherScenario = () => {
+      setShowCompletionModal(false);
+      navigate('/discovery');
+  };
+  
+  const handleNextScenario = () => {
+      if (currentScenarioIndex < allScenarios.length - 1) {
+          const nextScenario = allScenarios[currentScenarioIndex + 1];
+          setShowCompletionModal(false);
+          completionCheckedRef.current = false;
+          // Clear session for current scenario
+          localStorage.removeItem(`session_${currentScenarioTitle}`);
+          // Navigate with state - init effect will handle session creation
+          navigate(`/conversation?scenario=${encodeURIComponent(nextScenario.title)}`, {
+              state: { scenario: nextScenario.title, tasks: nextScenario.tasks },
+              replace: true
+          });
+          // Reset local state for new scenario
+          setTasks(nextScenario.tasks || []);
+          setMessages([{ type: 'system', content: '正在连接AI导师...' }]);
+          setSessionId(null);
+          setIsConnected(false);
+          setCompletedTasks(new Set());
+          setCurrentScenarioIndex(currentScenarioIndex + 1);
+          setCurrentScenarioTitle(nextScenario.title);
+      } else {
+          navigate('/discovery');
+      }
+  };
+  
+  const handleBackToDiscovery = () => {
+      setShowCompletionModal(false);
+      navigate('/discovery');
+  };
 
   // Sync currentRoleRef with state
   useEffect(() => {
@@ -870,6 +963,73 @@ function Conversation() {
             </p>
         </div>
       </footer>
+      
+      {/* Scenario Completion Modal */}
+      {showCompletionModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm">
+          <div className="bg-white dark:bg-slate-800 rounded-2xl shadow-2xl max-w-sm w-full mx-4 overflow-hidden animate-in zoom-in duration-300">
+            <div className="bg-gradient-to-r from-green-500 to-emerald-600 p-6 text-white text-center">
+              <div className="w-16 h-16 bg-white/20 rounded-full flex items-center justify-center mx-auto mb-3">
+                <span className="material-symbols-outlined text-4xl">celebration</span>
+              </div>
+              <h2 className="text-xl font-bold">场景完成！</h2>
+              <p className="text-green-100 text-sm mt-1">{currentScenarioTitle}</p>
+            </div>
+            
+            <div className="p-6">
+              <div className="text-center mb-6">
+                <div className="text-4xl font-bold text-primary mb-1">{scenarioScore}</div>
+                <div className="text-sm text-slate-500">平均得分</div>
+                <div className="flex justify-center gap-1 mt-2">
+                  {[1,2,3,4,5].map(star => (
+                    <span 
+                      key={star} 
+                      className={`material-symbols-outlined text-xl ${star <= Math.ceil(scenarioScore / 20) ? 'text-yellow-400' : 'text-slate-300'}`}
+                    >
+                      star
+                    </span>
+                  ))}
+                </div>
+              </div>
+              
+              <div className="space-y-3">
+                {currentScenarioIndex < allScenarios.length - 1 && (
+                  <button 
+                    onClick={handleNextScenario}
+                    className="w-full py-3 bg-primary text-white rounded-xl font-medium flex items-center justify-center gap-2 hover:bg-primary/90 transition"
+                  >
+                    <span>下一个场景</span>
+                    <span className="material-symbols-outlined">arrow_forward</span>
+                  </button>
+                )}
+                
+                <button 
+                  onClick={handleRetryCurrentScenario}
+                  className="w-full py-3 bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-300 rounded-xl font-medium flex items-center justify-center gap-2 hover:bg-amber-200 dark:hover:bg-amber-900/50 transition"
+                >
+                  <span className="material-symbols-outlined">replay</span>
+                  <span>继续练习</span>
+                </button>
+                
+                <button 
+                  onClick={handleSelectOtherScenario}
+                  className="w-full py-3 bg-slate-100 dark:bg-slate-700 text-slate-700 dark:text-slate-200 rounded-xl font-medium flex items-center justify-center gap-2 hover:bg-slate-200 dark:hover:bg-slate-600 transition"
+                >
+                  <span className="material-symbols-outlined">grid_view</span>
+                  <span>选择其他场景</span>
+                </button>
+                
+                <button 
+                  onClick={handleBackToDiscovery}
+                  className="w-full py-2 text-slate-500 text-sm hover:text-slate-700 transition"
+                >
+                  返回主页
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
