@@ -293,7 +293,9 @@ class WebSocketCallback(OmniRealtimeCallback):
                 matched_scenario = next((s for s in scenarios if s.get('title') == self.scenario), None)
                 
                 if matched_scenario:
-                    tasks_str = ", ".join(matched_scenario.get('tasks', []))
+                    tasks = matched_scenario.get('tasks', [])
+                    # Handle both old format (strings) and new format (objects with 'text' field)
+                    tasks_str = ", ".join([t.get('text', str(t)) if isinstance(t, dict) else str(t) for t in tasks])
                     # Persist to self.user_context so execute_action can access it later
                     self.user_context['custom_topic'] = f"{self.scenario} (Tasks: {tasks_str})"
                     full_ctx['custom_topic'] = self.user_context['custom_topic']
