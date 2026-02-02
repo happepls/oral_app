@@ -104,6 +104,13 @@ app.use('/api/conversation', createProxyMiddleware({
   logLevel: 'debug'
 }));
 
+app.use('/api/history/session', createProxyMiddleware({
+  target: CONVERSATION_SERVICE_URL,
+  changeOrigin: true,
+  pathRewrite: { '^/api/history/session': '/history' },
+  logLevel: 'debug'
+}));
+
 app.use('/api/ws', createProxyMiddleware({
   target: COMMS_SERVICE_URL,
   changeOrigin: true,
