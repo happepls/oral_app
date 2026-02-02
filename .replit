@@ -10,6 +10,7 @@ CONVERSATION_SERVICE_URL = "http://localhost:8083"
 
 [agent]
 expertMode = true
+integrations = ["javascript_openrouter_ai_integrations:2.0.0"]
 
 [workflows]
 runButton = "Project"

@@ -1,6 +1,7 @@
 const express = require('express');
 const cors = require('cors');
 const { createProxyMiddleware } = require('http-proxy-middleware');
+const OpenAI = require('openai');
 require('dotenv').config();
 
 const app = express();
@@ -13,7 +14,64 @@ const AI_SERVICE_URL = process.env.AI_SERVICE_URL || 'http://localhost:8082';
 const COMMS_SERVICE_URL = process.env.COMMS_SERVICE_URL || 'http://localhost:3003';
 const CONVERSATION_SERVICE_URL = process.env.CONVERSATION_SERVICE_URL || 'http://localhost:8083';
 
-// 代理中间件必须在express.json()之前，以保持原始请求体
+const openrouter = new OpenAI({
+  baseURL: process.env.AI_INTEGRATIONS_OPENROUTER_BASE_URL,
+  apiKey: process.env.AI_INTEGRATIONS_OPENROUTER_API_KEY,
+});
+
+app.use('/api/ai/generate-scenarios', express.json(), async (req, res) => {
+  try {
+    const { type, target_language, target_level, interests, description } = req.body;
+    
+    const prompt = `You are an expert language learning curriculum designer. Generate exactly 10 practice scenarios for a ${target_language} learner.
+
+User Profile:
+- Goal Type: ${type || 'daily_conversation'}
+- Target Level: ${target_level || 'Intermediate'}
+- Interests: ${interests || 'general topics'}
+- Additional Notes: ${description || 'none'}
+
+Requirements:
+1. Create 10 unique, practical scenarios relevant to the goal type
+2. Each scenario must have a clear title and exactly 3 specific practice tasks
+3. Tasks should be conversational goals the learner can practice
+4. Include 1 scenario about cultural small talk in ${target_language}-speaking regions
+5. Order scenarios from easier to more challenging
+
+Respond ONLY with valid JSON in this exact format:
+{
+  "scenarios": [
+    {
+      "title": "Scenario Title",
+      "tasks": ["Task 1 description", "Task 2 description", "Task 3 description"]
+    }
+  ]
+}`;
+
+    const response = await openrouter.chat.completions.create({
+      model: 'meta-llama/llama-3.3-70b-instruct',
+      messages: [{ role: 'user', content: prompt }],
+      max_tokens: 2048,
+      response_format: { type: 'json_object' }
+    });
+
+    const content = response.choices[0]?.message?.content || '{}';
+    const parsed = JSON.parse(content);
+    
+    res.json({
+      success: true,
+      data: parsed
+    });
+  } catch (error) {
+    console.error('AI Scenario Generation Error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to generate scenarios',
+      error: error.message
+    });
+  }
+});
+
 app.use('/api/users', createProxyMiddleware({
   target: USER_SERVICE_URL,
   changeOrigin: true,
@@ -42,7 +100,6 @@ app.use('/api/ws', createProxyMiddleware({
   logLevel: 'debug'
 }));
 
-// express.json() 放在代理之后，用于非代理的API
 app.use(express.json());
 
 app.get('/health', (req, res) => {

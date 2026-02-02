@@ -87,6 +87,15 @@ export const aiAPI = {
     return handleResponse(response);
   },
 
+  async generateScenarios(goalParams) {
+    const response = await fetch(`${API_BASE_URL}/ai/generate-scenarios`, {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      body: JSON.stringify(goalParams)
+    });
+    return handleResponse(response);
+  },
+
   async tts(text, voice = null) {
     const body = { text };
     if (voice) {

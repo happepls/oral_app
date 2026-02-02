@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
-import { userAPI } from '../services/api';
+import { userAPI, aiAPI } from '../services/api';
 
 const PRESET_SCENARIOS = {
   daily_conversation: [
@@ -79,20 +79,44 @@ function GoalSetting() {
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
   const [isGenerating, setIsGenerating] = useState(false);
+  const [useAI, setUseAI] = useState(true);
 
   const targetLanguage = user?.target_language || 'English';
   const currentProficiency = user?.points || 30;
 
-  const handleGenerateScenarios = () => {
+  const handleGenerateScenarios = async () => {
     setIsGenerating(true);
     setError('');
     
-    setTimeout(() => {
+    if (useAI) {
+      try {
+        const result = await aiAPI.generateScenarios({
+          type,
+          target_language: targetLanguage,
+          target_level: targetLevel,
+          interests: user?.interests || '',
+          description
+        });
+        
+        if (result.scenarios && result.scenarios.length > 0) {
+          setScenarios(result.scenarios.map((s, idx) => ({ ...s, id: idx })));
+          setStep(2);
+        } else {
+          throw new Error('No scenarios returned');
+        }
+      } catch (err) {
+        console.error('AI generation failed, using presets:', err);
+        const presetList = PRESET_SCENARIOS[type] || PRESET_SCENARIOS.daily_conversation;
+        setScenarios(presetList.map((s, idx) => ({ ...s, id: idx })));
+        setStep(2);
+      }
+    } else {
       const presetList = PRESET_SCENARIOS[type] || PRESET_SCENARIOS.daily_conversation;
       setScenarios(presetList.map((s, idx) => ({ ...s, id: idx })));
-      setIsGenerating(false);
       setStep(2);
-    }, 1000);
+    }
+    
+    setIsGenerating(false);
   };
 
   const handleRemoveScenario = (id) => {
@@ -216,6 +240,19 @@ function GoalSetting() {
                     className="w-full px-4 py-3 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white focus:border-primary focus:ring-2 focus:ring-primary/50 outline-none disabled:opacity-50"
                     placeholder={`e.g., "I'm traveling to Japan next month..."`}
                   ></textarea>
+                </div>
+
+                <div className="flex items-center space-x-3">
+                  <input
+                    type="checkbox"
+                    id="useAI"
+                    checked={useAI}
+                    onChange={(e) => setUseAI(e.target.checked)}
+                    className="w-4 h-4 rounded border-slate-300"
+                  />
+                  <label htmlFor="useAI" className="text-sm text-slate-600 dark:text-slate-400">
+                    Use AI to generate personalized scenarios
+                  </label>
                 </div>
 
                 <button
