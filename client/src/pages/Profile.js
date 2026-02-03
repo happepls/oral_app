@@ -33,6 +33,7 @@ function Profile() {
   ];
 
   const menuItems = [
+    { icon: 'local_fire_department', label: '每日打卡', path: '/checkin' },
     { icon: 'history', label: '对话历史', path: '/history' },
     { icon: 'person', label: '账户设置', path: '/settings' },
     { icon: 'notifications', label: '通知', path: '/notifications' },

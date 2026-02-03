@@ -90,8 +90,7 @@ outputType = "console"
 
 [[workflows.workflow.tasks]]
 task = "shell.exec"
-args = "cd services/conversation-service && PORT=8000 node src/index.js"
-waitForPort = 8000
+args = "cd services/conversation-service && DATABASE_URL=$DATABASE_URL PORT=8000 node src/index.js"
 
 [[workflows.workflow]]
 name = "comms-service"

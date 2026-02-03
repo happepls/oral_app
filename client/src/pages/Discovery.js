@@ -295,41 +295,20 @@ function Discovery() {
              </div>
         </div>
 
-        {/* My Sessions Section (Compact) */}
-        <div className="px-4 py-2">
-             <div className="flex justify-between items-center mb-3">
-                 <h3 className="text-lg font-bold text-slate-900 dark:text-white">最近练习</h3>
-                 <button 
-                    onClick={handleStartNewSession}
-                    className="text-primary text-sm font-medium hover:underline">
-                    新建练习
-                 </button>
-             </div>
-             
-             {activeSessions.length > 0 ? (
-                 <div className="space-y-3">
-                     {activeSessions.slice(0, 3).map((session, index) => (
-                         <div 
-                             key={session.sessionId} 
-                             onClick={() => handleResumeSession(session.sessionId)}
-                             className="flex items-center gap-3 bg-white dark:bg-slate-800 p-3 rounded-lg border border-slate-100 dark:border-slate-700 cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-700/50">
-                             <div className="w-8 h-8 rounded-full bg-slate-100 text-slate-500 flex items-center justify-center shrink-0">
-                                 <span className="material-symbols-outlined text-lg">history</span>
-                             </div>
-                             <div className="flex-1 min-w-0">
-                                 <p className="text-sm font-medium text-slate-900 dark:text-white truncate">
-                                     {session.topic || `练习 #${index + 1}`}
-                                 </p>
-                                 <p className="text-xs text-slate-400 truncate font-mono">
-                                     {new Date(session.startTime).toLocaleDateString()} • {session.sessionId.slice(0, 8)}...
-                                 </p>
-                             </div>
-                         </div>
-                     ))}
+        {/* Free Chat Section */}
+        <div className="px-4 py-4">
+             <div 
+                onClick={() => navigate('/conversation?scenario=general')}
+                className="flex items-center gap-4 bg-gradient-to-r from-purple-500/10 to-pink-500/10 p-4 rounded-xl border-2 border-purple-200 dark:border-purple-900/50 cursor-pointer hover:shadow-lg transition-all">
+                 <div className="w-12 h-12 rounded-full bg-gradient-to-br from-purple-500 to-pink-500 text-white flex items-center justify-center shrink-0">
+                     <span className="material-symbols-outlined text-2xl">chat</span>
                  </div>
-             ) : (
-                 <p className="text-sm text-slate-400 text-center py-4">暂无历史记录</p>
-             )}
+                 <div className="flex-1">
+                     <h3 className="text-lg font-bold text-slate-900 dark:text-white">随便聊俩</h3>
+                     <p className="text-sm text-slate-500 dark:text-slate-400">自由对话模式，随心练习口语</p>
+                 </div>
+                 <span className="material-symbols-outlined text-purple-500">arrow_forward</span>
+             </div>
         </div>
       </main>
 

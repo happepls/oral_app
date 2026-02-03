@@ -140,35 +140,36 @@ async def execute_action(action: str, data: dict, token: str, user_id: str = Non
             logger.error(f"Error executing action {action}: {e}")
 
 async def save_conversation_history(session_id: str, user_id: str, messages: list, topic: str = "General Practice"):
-    url = os.getenv("HISTORY_SERVICE_URL", "http://localhost:3004") + "/api/history/conversation"
-    payload = {
-        "sessionId": session_id,
-        "userId": user_id,
-        "messages": messages,
-        "topic": topic,
-        "endTime": datetime.utcnow().isoformat()
-    }
-    logger.info(f"Saving history for session {session_id}, User: {user_id}, Topic: {topic}, Msgs: {len(messages)}")
+    conv_service_url = os.getenv("CONVERSATION_SERVICE_URL", "http://localhost:8000")
+    
     async with httpx.AsyncClient() as client:
-        try:
-            resp = await client.post(url, json=payload)
-            if resp.status_code != 200:
-                logger.error(f"Failed to save history: {resp.status_code} {resp.text}")
-            else:
-                logger.info(f"Saved {len(messages)} messages to history for session {session_id}")
-        except Exception as e:
-            logger.error(f"Error saving history: {e}")
-            import traceback
-            traceback.print_exc()
+        for msg in messages:
+            if msg.get('_saved'):
+                continue
+            try:
+                resp = await client.post(
+                    f"{conv_service_url}/history/{session_id}",
+                    json={
+                        "role": msg.get('role', 'user'),
+                        "content": msg.get('content', ''),
+                        "audioUrl": msg.get('audioUrl'),
+                        "userId": user_id
+                    }
+                )
+                if resp.status_code in [200, 201]:
+                    msg['_saved'] = True
+            except Exception as e:
+                logger.error(f"Error saving message to conversation-service: {e}")
+    
+    logger.info(f"Saved {len(messages)} messages to conversation-service for session {session_id}")
 
 async def fetch_conversation_history(session_id: str):
-    url = os.getenv("HISTORY_SERVICE_URL", "http://localhost:3004") + f"/api/history/session/{session_id}"
+    conv_service_url = os.getenv("CONVERSATION_SERVICE_URL", "http://localhost:8000")
     async with httpx.AsyncClient() as client:
         try:
-            resp = await client.get(url)
+            resp = await client.get(f"{conv_service_url}/history/{session_id}")
             if resp.status_code == 200:
                 data = resp.json().get('data', {})
-                # Extract messages list from the conversation object
                 return data.get('messages', [])
             else:
                 logger.warning(f"Failed to fetch history: {resp.status_code}")
@@ -322,7 +323,9 @@ class WebSocketCallback(OmniRealtimeCallback):
             # If we have history, append it to the system prompt to simulate multi-turn memory
             # for the new DashScope session.
             if self.messages:
-                history_text = "\n\n# Previous Conversation Context:\n"
+                history_text = "\n\n# Previous Conversation Context (READ-ONLY):\n"
+                history_text += "**CRITICAL**: This is HISTORY only. Do NOT auto-complete tasks. Wait for user to speak first.\n"
+                history_text += "**Do NOT say 'Perfect!' or 'Excellent!' until user attempts a NEW task in THIS session.**\n\n"
                 # Take last 10 messages to fit context window
                 recent_msgs = self.messages[-10:] 
                 for msg in recent_msgs:
@@ -330,6 +333,7 @@ class WebSocketCallback(OmniRealtimeCallback):
                     content = msg.get('content', '')
                     history_text += f"{role_label}: {content}\n"
                 
+                history_text += "\n**NOW**: Wait silently for user to speak. Greet briefly if needed, then listen.\n"
                 system_prompt += history_text
                 logger.info(f"Restored {len(recent_msgs)} messages to system prompt context.")
 

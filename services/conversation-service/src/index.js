@@ -1,25 +1,18 @@
 const express = require('express');
 const { v4: uuidv4 } = require('uuid');
+const db = require('./models/db');
 
 const app = express();
 const PORT = process.env.PORT || 8000;
 
 const sessions = new Map();
-const history = new Map();
-
 const SESSION_EXPIRATION_MS = 86400 * 7 * 1000;
-const HISTORY_EXPIRATION_MS = 86400 * 1000;
 
 function cleanupExpired() {
   const now = Date.now();
   for (const [key, value] of sessions.entries()) {
     if (value.expiresAt < now) {
       sessions.delete(key);
-    }
-  }
-  for (const [key, value] of history.entries()) {
-    if (value.expiresAt < now) {
-      history.delete(key);
     }
   }
 }
@@ -106,12 +99,27 @@ app.get('/sessions', async (req, res) => {
 
 app.get('/history/:sessionId', async (req, res) => {
   const { sessionId } = req.params;
-  const historyKey = `history:${sessionId}`;
 
   try {
-    const existing = history.get(historyKey);
-    const messages = existing && existing.expiresAt > Date.now() ? existing.messages : [];
-    res.status(200).json(messages);
+    const result = await db.query(
+      `SELECT role, content, audio_url, created_at 
+       FROM conversation_history 
+       WHERE session_id = $1 
+       ORDER BY created_at ASC`,
+      [sessionId]
+    );
+    
+    const messages = result.rows.map(row => ({
+      role: row.role,
+      content: row.content,
+      audioUrl: row.audio_url,
+      timestamp: row.created_at
+    }));
+
+    res.status(200).json({
+      success: true,
+      data: { messages }
+    });
   } catch (error) {
     console.error(`Failed to retrieve history for session ${sessionId}:`, error);
     res.status(500).json({ message: 'Internal server error.' });
@@ -120,27 +128,55 @@ app.get('/history/:sessionId', async (req, res) => {
 
 app.post('/history/:sessionId', async (req, res) => {
   const { sessionId } = req.params;
-  const message = req.body;
+  const { role, content, audioUrl, userId } = req.body;
   
-  if (!message || typeof message !== 'object') {
-    return res.status(400).json({ message: 'Invalid message format in request body.' });
+  if (!role || !content) {
+    return res.status(400).json({ message: 'role and content are required.' });
   }
 
-  const historyKey = `history:${sessionId}`;
-
   try {
-    const existing = history.get(historyKey);
-    const messages = existing ? existing.messages : [];
-    messages.push(message);
-    
-    history.set(historyKey, {
-      messages,
-      expiresAt: Date.now() + HISTORY_EXPIRATION_MS
-    });
+    await db.query(
+      `INSERT INTO conversation_history (session_id, user_id, role, content, audio_url)
+       VALUES ($1, $2, $3, $4, $5)`,
+      [sessionId, userId || null, role, content, audioUrl || null]
+    );
     
     res.status(201).json({ message: 'Message added to history.' });
   } catch (error) {
     console.error(`Failed to add message to history for session ${sessionId}:`, error);
+    res.status(500).json({ message: 'Internal server error.' });
+  }
+});
+
+app.put('/history/:sessionId/message', async (req, res) => {
+  const { sessionId } = req.params;
+  const { role, content, audioUrl, userId } = req.body;
+  
+  if (!role || !content) {
+    return res.status(400).json({ message: 'role and content are required.' });
+  }
+
+  try {
+    const result = await db.query(
+      `UPDATE conversation_history 
+       SET content = $1, audio_url = COALESCE($2, audio_url)
+       WHERE session_id = $3 AND role = $4 
+       AND id = (SELECT id FROM conversation_history WHERE session_id = $3 AND role = $4 ORDER BY created_at DESC LIMIT 1)
+       RETURNING id`,
+      [content, audioUrl, sessionId, role]
+    );
+    
+    if (result.rows.length === 0) {
+      await db.query(
+        `INSERT INTO conversation_history (session_id, user_id, role, content, audio_url)
+         VALUES ($1, $2, $3, $4, $5)`,
+        [sessionId, userId || null, role, content, audioUrl || null]
+      );
+    }
+    
+    res.status(200).json({ message: 'Message updated.' });
+  } catch (error) {
+    console.error(`Failed to update message for session ${sessionId}:`, error);
     res.status(500).json({ message: 'Internal server error.' });
   }
 });
