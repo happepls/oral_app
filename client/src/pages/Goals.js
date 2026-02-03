@@ -18,6 +18,7 @@ function Goals() {
   const [loading, setLoading] = useState(true);
   const [selectedVoice, setSelectedVoice] = useState('Cherry');
   const [saving, setSaving] = useState(false);
+  const [showCelebration, setShowCelebration] = useState(false);
 
   useEffect(() => {
     const fetchGoal = async () => {
@@ -25,6 +26,13 @@ function Goals() {
         const res = await userAPI.getActiveGoal();
         if (res && res.goal) {
           setActiveGoal(res.goal);
+          if (res.goal.current_proficiency >= 100) {
+            const celebratedKey = `goal_celebrated_${res.goal.id}`;
+            if (!localStorage.getItem(celebratedKey)) {
+              setShowCelebration(true);
+              localStorage.setItem(celebratedKey, 'true');
+            }
+          }
         }
         const savedVoice = localStorage.getItem('ai_voice') || 'Cherry';
         setSelectedVoice(savedVoice);
@@ -64,6 +72,33 @@ function Goals() {
 
   return (
     <div className="flex flex-col min-h-screen bg-background-light dark:bg-background-dark">
+      {showCelebration && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
+          <div className="bg-white dark:bg-slate-800 rounded-2xl p-6 max-w-sm w-full text-center animate-bounce-in">
+            <div className="text-6xl mb-4">🎉</div>
+            <h2 className="text-2xl font-bold text-slate-900 dark:text-white mb-2">恭喜你！</h2>
+            <p className="text-lg text-indigo-600 font-bold mb-2">目标达成！</p>
+            <p className="text-slate-600 dark:text-slate-400 mb-6">
+              你已完成所有场景练习，口语水平大幅提升！继续保持，挑战新的目标吧！
+            </p>
+            <div className="flex gap-3">
+              <button
+                onClick={() => setShowCelebration(false)}
+                className="flex-1 py-3 rounded-xl border border-slate-300 dark:border-slate-600 text-slate-700 dark:text-slate-300 font-medium"
+              >
+                知道了
+              </button>
+              <button
+                onClick={() => { setShowCelebration(false); navigate('/goal-setting'); }}
+                className="flex-1 py-3 rounded-xl bg-gradient-to-r from-indigo-500 to-purple-500 text-white font-medium"
+              >
+                设定新目标
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       <header className="sticky top-0 z-10 bg-background-light/95 dark:bg-background-dark/95 backdrop-blur-sm border-b border-slate-200 dark:border-slate-800">
         <div className="px-4 py-4 flex items-center justify-between">
           <h1 className="text-xl font-bold text-slate-900 dark:text-white">学习目标</h1>

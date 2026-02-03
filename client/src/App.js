@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { BrowserRouter as Router, Route, Routes, Navigate } from 'react-router-dom';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 import Welcome from './pages/Welcome';
+import Landing from './pages/Landing';
 import Login from './pages/Login';
 import Register from './pages/Register';
 import Conversation from './pages/Conversation';
@@ -21,7 +22,8 @@ const AppRoutes = () => {
     return (
         <div className="App">
           <Routes>
-            <Route path="/" element={<Welcome />} />
+            <Route path="/" element={<Landing />} />
+            <Route path="/welcome" element={<Welcome />} />
             <Route path="/login" element={<Login />} />
             <Route path="/register" element={<Register />} />
             <Route path="/onboarding" element={<Onboarding />} />
