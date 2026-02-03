@@ -37,6 +37,13 @@ function Conversation() {
   const [currentScenarioIndex, setCurrentScenarioIndex] = useState(0);
   const [currentScenarioTitle, setCurrentScenarioTitle] = useState('');
   const completionCheckedRef = useRef(false); // Prevent duplicate modal triggers
+  
+  const getScoreFeedback = (score) => {
+    if (score >= 90) return { emoji: '🌟', text: '表现出色！你的表达非常流利自然，继续保持！', level: 'excellent' };
+    if (score >= 75) return { emoji: '👍', text: '很棒！表达清晰准确，可以尝试更多复杂句型。', level: 'good' };
+    if (score >= 60) return { emoji: '💪', text: '不错的进步！建议多练习口语表达的流畅度。', level: 'fair' };
+    return { emoji: '📚', text: '继续努力！多听多说，熟能生巧。', level: 'needsWork' };
+  };
 
   // Initialize completed tasks set and check for scenario completion
   useEffect(() => {
@@ -977,7 +984,7 @@ function Conversation() {
             </div>
             
             <div className="p-6">
-              <div className="text-center mb-6">
+              <div className="text-center mb-4">
                 <div className="text-4xl font-bold text-primary mb-1">{scenarioScore}</div>
                 <div className="text-sm text-slate-500">平均得分</div>
                 <div className="flex justify-center gap-1 mt-2">
@@ -989,6 +996,18 @@ function Conversation() {
                       star
                     </span>
                   ))}
+                </div>
+              </div>
+              
+              <div className="bg-slate-50 dark:bg-slate-700/50 rounded-xl p-4 mb-6">
+                <div className="flex items-start gap-3">
+                  <span className="text-2xl">{getScoreFeedback(scenarioScore).emoji}</span>
+                  <div>
+                    <p className="text-sm font-medium text-slate-700 dark:text-slate-200">AI点评</p>
+                    <p className="text-sm text-slate-600 dark:text-slate-400 mt-1">
+                      {getScoreFeedback(scenarioScore).text}
+                    </p>
+                  </div>
                 </div>
               </div>
               
