@@ -118,6 +118,18 @@ app.use('/api/ws', createProxyMiddleware({
   logLevel: 'debug'
 }));
 
+app.use('/api/stripe/webhook', createProxyMiddleware({
+  target: USER_SERVICE_URL,
+  changeOrigin: true,
+  logLevel: 'debug'
+}));
+
+app.use('/api/stripe', createProxyMiddleware({
+  target: USER_SERVICE_URL,
+  changeOrigin: true,
+  logLevel: 'debug'
+}));
+
 app.use(express.json());
 
 app.get('/health', (req, res) => {
