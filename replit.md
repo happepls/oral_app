@@ -22,6 +22,9 @@ Guaji AI是一款24/7全天候AI口语陪练应用，定位为"面向未来的�
 ## 最近更新 (2026-02-03)
 
 ### 新功能
+- **官网Landing Page**：专业的营销着陆页，展示产品特性、用户评价和定价方案
+- **目标完成庆祝**：当所有场景任务完成时显示庆祝弹窗，引导设定新目标
+- **AI评分反馈**：场景完成后根据分数显示个性化AI点评和建议
 - **Stripe订阅系统**：完整的支付集成，支持周订阅($2.90/周)和年订阅($89.90/年)
 - **订阅页面**：显示免费版和付费版功能对比，一键跳转Stripe结账
 - **目标设置页面**：添加AI音色选择(Cherry, Serena, Ethan, Chelsie)
@@ -33,6 +36,7 @@ Guaji AI是一款24/7全天候AI口语陪练应用，定位为"面向未来的�
 - 添加users表Stripe相关字段(stripe_customer_id, stripe_subscription_id, subscription_status)
 - 创建Stripe webhook处理和数据同步机制
 - API网关添加Stripe路由代理
+- Landing页面作为根路由，Welcome页面移至/welcome
 
 ## 历史更新 (2026-02-02)
 
