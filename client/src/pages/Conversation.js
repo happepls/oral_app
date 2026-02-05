@@ -465,6 +465,12 @@ function Conversation() {
            setCurrentRole(data.payload.role);
            setMessages(prev => [...prev, { type: 'system', content: `当前角色切换为: ${data.payload.role}` }]);
            break;
+        case 'user_transcript':
+           // Display user's speech transcription in chat
+           if (data.payload && data.payload.text) {
+             setMessages(prev => [...prev, { type: 'user', content: data.payload.text }]);
+           }
+           break;
         case 'error':
            console.error('Server Error:', data.payload);
            break;

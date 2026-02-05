@@ -71,28 +71,28 @@ async def get_user_context(token: str):
         logger.error(f"Error fetching user context: {e}")
         return None
 
-async def save_conversation_history(session_id: str, user_id: str, messages: list, scenario: str):
-    """Persists conversation state to conversation-service."""
+async def save_single_message(session_id: str, user_id: str, role: str, content: str, audio_url: str = None):
+    """Saves a single message to conversation-service."""
     conv_service_url = os.getenv("CONVERSATION_SERVICE_URL", "http://localhost:8000")
     payload = {
-        "sessionId": session_id,
+        "role": role,
+        "content": content,
         "userId": int(user_id),
-        "messages": messages,
-        "scenario": scenario
+        "audioUrl": audio_url
     }
     try:
         async with httpx.AsyncClient() as client:
             resp = await client.post(
-                f"{conv_service_url}/history/save",
+                f"{conv_service_url}/history/{session_id}",
                 json=payload,
                 timeout=5.0
             )
-            if resp.status_code != 200:
-                logger.error(f"Failed to save history: {resp.status_code} {resp.text}")
+            if resp.status_code not in [200, 201]:
+                logger.error(f"Failed to save message: {resp.status_code} {resp.text}")
             else:
-                logger.info(f"Saved {len(messages)} messages to conversation-service for session {session_id}")
+                logger.info(f"Saved {role} message to session {session_id}")
     except Exception as e:
-        logger.error(f"Error saving history: {e}")
+        logger.error(f"Error saving message: {e}")
 
 async def execute_action_with_response(action_name: str, params: dict, token: str, user_id: str, session_id: str, context: dict = None):
     """Executes a system action (like updating goals) by calling the appropriate microservice."""
@@ -185,7 +185,8 @@ class WebSocketCallback(OmniRealtimeCallback):
         self.scenario = scenario
         self.conversation = None
         self.full_response_text = ""
-        self.role = self._determine_role(user_context)
+        # If scenario is provided, always use OralTutor role for practice
+        self.role = "OralTutor" if scenario else self._determine_role(user_context)
         self.is_connected = False
         self.interrupted_turn = False
         self.current_response_id = None
@@ -341,11 +342,17 @@ class WebSocketCallback(OmniRealtimeCallback):
                             url = await self.upload_audio_to_cos(d, 'ai_audio')
                             if url:
                                 await self.websocket.send_json({"type": "audio_url", "payload": {"url": url, "role": "assistant"}, "responseId": r})
-                                if self.messages and self.messages[-1]['role'] == 'assistant':
-                                    self.messages[-1]['audioUrl'] = url
-                                    await save_conversation_history(self.session_id, self.user_id, self.messages, self.scenario or "General Practice")
-                                else: self.last_ai_audio_url = url
+                                self.last_ai_audio_url = url
                         asyncio.create_task(upload_ai_task(data, self.current_response_id))
+                elif event_name == 'conversation.item.input_audio_transcription.completed':
+                    # Handle user audio transcription
+                    user_transcript = response.get('transcript', '')
+                    if user_transcript:
+                        await self.websocket.send_json({"type": "user_transcript", "payload": {"text": user_transcript}})
+                        msg = {"role": "user", "content": user_transcript, "timestamp": datetime.utcnow().isoformat()}
+                        if self.last_user_audio_url: msg['audioUrl'] = self.last_user_audio_url; self.last_user_audio_url = None
+                        self.messages.append(msg)
+                        await save_single_message(self.session_id, self.user_id, "user", user_transcript, msg.get('audioUrl'))
                 elif event_name in ['response.audio_transcript.done', 'response.text.done']:
                     if not self.full_response_text:
                         transcript = response.get('transcript') or response.get('text')
@@ -357,7 +364,7 @@ class WebSocketCallback(OmniRealtimeCallback):
                         msg = {"role": "assistant", "content": self.full_response_text, "timestamp": datetime.utcnow().isoformat()}
                         if self.last_ai_audio_url: msg['audioUrl'] = self.last_ai_audio_url; self.last_ai_audio_url = None
                         self.messages.append(msg)
-                        await save_conversation_history(self.session_id, self.user_id, self.messages, self.scenario or "General Practice")
+                        await save_single_message(self.session_id, self.user_id, "assistant", self.full_response_text, msg.get('audioUrl'))
                     text_lower = self.full_response_text.lower()
                     if any(re.search(p, text_lower) for p in [r"\bperfect\b", r"\bexcellent\b", r"\bmission accomplished\b", r"\byou nailed it\b", r"\bcorrect!\b"]):
                         scenario_title = self.user_context.get('custom_topic', 'Unknown').split(" (Tasks:")[0].strip()
@@ -440,9 +447,6 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query(None), ses
             await websocket.close(); return
             
         heartbeat_task = asyncio.create_task(heartbeat())
-        if not history_messages:
-            current_topic = scenario or user_context.get('custom_topic') or "General Practice"
-            await save_conversation_history(session_id, user_id, [], current_topic)
             
         while True:
             try:
