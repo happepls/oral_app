@@ -887,53 +887,23 @@ async def websocket_endpoint(client_ws: WebSocket):
                      if callback:
                          callback.user_audio_buffer.extend(base64.b64decode(audio_b64))
         
-        # Trigger Welcome Message for New Sessions (if no initial input)
+        # For new sessions, just save the topic and notify client that AI is ready
+        # The AI will respond naturally when user starts speaking (Manual VAD mode)
         elif not history_messages:
             current_topic = scenario or user_context.get('custom_topic') or "General Practice"
-            logger.info(f"New Session Detected (History: {len(history_messages)}). Triggering Welcome Message for Role: {callback.role}, Topic: {current_topic}")
+            logger.info(f"New Session Detected (History: 0). Waiting for user input. Role: {callback.role}, Topic: {current_topic}")
             
-            # FORCE INITIAL SAVE to ensure persistence of Topic/Scenario
-            # This allows Discovery page to find this session immediately even if the user leaves before the first message completes.
+            # Save the topic/scenario to DB for Discovery page
             await save_conversation_history(session_id, user_id, [], current_topic)
-
-            welcome_instruction = "This is the start of a new session. You MUST greet the user to initiate the interaction."
             
-            if callback.role == "InfoCollector":
-                welcome_instruction += " Introduce yourself as their personal language goal planner and ask for their nickname."
-            elif callback.role == "GoalPlanner":
-                welcome_instruction += " Welcome them and mention you are ready to design their learning scenarios."
-            elif callback.role == "OralTutor":
-                welcome_instruction += f" Greet the user for their {user_context.get('target_language', 'language')} practice session on {current_topic}."
-            
-            # Use send_raw to trigger the greeting with proper format
-            # First create a conversation item (text input), then request a response
-            await asyncio.sleep(0.5)
-            
-            # Step 1: Create a conversation item with a starter message
-            conversation_item_event = {
-                "type": "conversation.item.create",
-                "item": {
-                    "type": "message",
-                    "role": "user",
-                    "content": [
-                        {
-                            "type": "input_text",
-                            "text": "[SESSION_START] " + welcome_instruction
-                        }
-                    ]
+            # Send a ping to let client know AI is ready and waiting
+            await client_ws.send_json({
+                "type": "ping",
+                "payload": {
+                    "message": "AI is ready. Start speaking to begin the conversation.",
+                    "status": "waiting_for_input"
                 }
-            }
-            conversation.send_raw(json.dumps(conversation_item_event))
-            
-            # Step 2: Request a response from the AI
-            await asyncio.sleep(0.2)
-            response_create_event = {
-                "type": "response.create",
-                "response": {
-                    "modalities": ["text", "audio"]
-                }
-            }
-            conversation.send_raw(json.dumps(response_create_event))
+            })
 
         while True:
             try:
