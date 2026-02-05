@@ -905,10 +905,17 @@ async def websocket_endpoint(client_ws: WebSocket):
             elif callback.role == "OralTutor":
                 welcome_instruction += f" Greet the user for their {user_context.get('target_language', 'language')} practice session on {current_topic}."
             
-            # Use create_response to trigger the greeting
+            # Use send_raw to trigger the greeting with proper response.create format
             # We add a slight delay to ensure the connection is fully ready and stable
             await asyncio.sleep(0.5)
-            conversation.create_response(instructions=welcome_instruction)
+            response_create_event = {
+                "type": "response.create",
+                "response": {
+                    "modalities": ["text", "audio"],
+                    "instructions": welcome_instruction
+                }
+            }
+            conversation.send_raw(json.dumps(response_create_event))
 
         while True:
             try:

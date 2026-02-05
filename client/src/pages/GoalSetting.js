@@ -510,26 +510,6 @@ function GoalSetting() {
                 ))}
               </div>
 
-              <div className="mt-6 p-4 bg-slate-100 dark:bg-slate-800 rounded-xl">
-                <h3 className="text-base font-bold text-slate-900 dark:text-white mb-3">选择AI导师音色</h3>
-                <div className="grid grid-cols-2 gap-2">
-                  {VOICE_OPTIONS.map((voice) => (
-                    <button
-                      key={voice.id}
-                      onClick={() => handleVoiceSelect(voice.id)}
-                      className={`p-3 rounded-lg border-2 transition-all text-left ${
-                        selectedVoice === voice.id
-                          ? 'border-primary bg-primary/10'
-                          : 'border-slate-300 dark:border-slate-600 hover:border-primary/50'
-                      }`}
-                    >
-                      <p className="font-medium text-slate-900 dark:text-white text-sm">{voice.name}</p>
-                      <p className="text-xs text-slate-500">{voice.desc}</p>
-                    </button>
-                  ))}
-                </div>
-              </div>
-
               <button
                 type="button"
                 onClick={handleSubmit}
