@@ -394,7 +394,7 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query(None), ses
             resp = await client.get(f"{os.getenv('CONVERSATION_SERVICE_URL', 'http://localhost:8000')}/history/{session_id}")
             if resp.status_code == 200: history_messages = resp.json().get('data', {}).get('messages', [])
     except Exception as e: logger.warning(f"Failed to fetch history: {e}")
-    loop = asyncio.get_running_current_loop()
+    loop = asyncio.get_running_loop()
     callback = WebSocketCallback(websocket, loop, user_context, token, user_id, session_id, history_messages, scenario)
     
     def connect_dashscope():
@@ -471,7 +471,7 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query(None), ses
                     if callback.user_audio_buffer:
                         if callback.is_connected:
                             try:
-                                conversation.commit_audio()
+                                conversation.commit()
                             except Exception as e:
                                 logger.error(f"Error committing audio: {e}")
                         audio_data = bytes(callback.user_audio_buffer)

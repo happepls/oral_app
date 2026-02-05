@@ -58,6 +58,7 @@ wss.on('connection', async function connection(clientWs, req) {
     const userId = decoded.id;
     const sessionId = queryObject.sessionId;
     const scenario = queryObject.scenario;
+    const voice = queryObject.voice;
 
     if (!sessionId) {
       console.log('Connection rejected: No sessionId provided.');
@@ -100,18 +101,20 @@ wss.on('connection', async function connection(clientWs, req) {
     });
 
     try {
-      aiServiceWs = new WebSocket(AI_SERVICE_URL);
+      // Build connection URL with query parameters
+      const aiUrl = new URL(AI_SERVICE_URL);
+      aiUrl.searchParams.set('token', token);
+      aiUrl.searchParams.set('sessionId', sessionId);
+      if (scenario) aiUrl.searchParams.set('scenario', scenario);
+      if (voice) aiUrl.searchParams.set('voice', voice);
+      
+      console.log(`Connecting to AI service: ${aiUrl.toString()}`);
+      aiServiceWs = new WebSocket(aiUrl.toString());
 
       aiServiceWs.on('open', () => {
         console.log(`Successfully connected to AI Service for user ${userId} and session ${sessionId}`);
 
-        aiServiceWs.send(JSON.stringify({
-          type: 'session_start',
-          userId: userId,
-          sessionId: sessionId,
-          token: token,
-          scenario: scenario
-        }));
+        // Session is now initialized via query params, no need to send session_start
 
         bridgeReady = true;
         while (messageQueue.length > 0) {
