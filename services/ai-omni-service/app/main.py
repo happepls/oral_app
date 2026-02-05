@@ -279,16 +279,6 @@ class WebSocketCallback(OmniRealtimeCallback):
             self.loop
         )
         self._update_session_prompt()
-        
-        # Trigger welcome message immediately for new sessions (no history)
-        # Must be done right after update_session to prevent DashScope from closing connection
-        if not self.messages and not self.welcome_sent:
-            import threading
-            def delayed_welcome():
-                import time
-                time.sleep(0.3)  # Short delay to let update_session complete
-                self._trigger_welcome_message()
-            threading.Thread(target=delayed_welcome, daemon=True).start()
 
     def _update_session_prompt(self):
         if self.conversation:
@@ -403,7 +393,6 @@ class WebSocketCallback(OmniRealtimeCallback):
         self.welcome_sent = True
         
         # Determine the topic for greeting
-        topic = self.user_context.get('custom_topic') or self.scenario or "General Practice"
         target_lang = self.user_context.get('target_language', 'English')
         
         # Create a starter message to trigger AI response
@@ -414,11 +403,34 @@ class WebSocketCallback(OmniRealtimeCallback):
         else:
             starter_text = f"Hello, I'm ready to practice {target_lang}."
         
-        logger.info(f"Sending welcome trigger message via SDK: {starter_text}")
+        logger.info(f"Sending welcome trigger message: {starter_text}")
         
         try:
-            # Use SDK's built-in send_text method
-            self.conversation.send_text(starter_text)
+            # Send conversation.item.create with text input
+            conversation_item = {
+                "type": "conversation.item.create",
+                "item": {
+                    "type": "message",
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "input_text",
+                            "text": starter_text
+                        }
+                    ]
+                }
+            }
+            self.conversation.send_raw(json.dumps(conversation_item))
+            
+            # Request AI response
+            response_create = {
+                "type": "response.create",
+                "response": {
+                    "modalities": ["text", "audio"]
+                }
+            }
+            self.conversation.send_raw(json.dumps(response_create))
+            logger.info("Welcome message sent successfully")
         except Exception as e:
             logger.error(f"Failed to send welcome message: {e}")
 
@@ -434,10 +446,13 @@ class WebSocketCallback(OmniRealtimeCallback):
         if event_name not in ['response.audio.delta', 'response.audio_transcript.delta']: # Reduce noise for deltas
              logger.info(f"Event: {event_name}, RID: {rid}, Current: {self.current_response_id}")
         
-        # Handle session.created - mark session as ready
+        # Handle session.created - session is ready, trigger welcome message
         if event_name == 'session.created':
             self.session_ready = True
-            logger.info("Session created event received")
+            logger.info("Session created event received - triggering welcome message")
+            # Trigger welcome for new sessions (no history)
+            if not self.messages and not self.welcome_sent:
+                self._trigger_welcome_message()
         
         if rid:
             self.current_response_id = rid
