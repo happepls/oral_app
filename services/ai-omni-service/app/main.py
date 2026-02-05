@@ -45,7 +45,7 @@ dashscope.api_key = os.getenv("QWEN3_OMNI_API_KEY")
 
 class TTSRequest(BaseModel):
     text: str
-    voice: str = os.getenv("QWEN3_OMNI_VOICE", "Cherry")
+    voice: str = os.getenv("QWEN3_OMNI_VOICE", "Serena")
 
 # --- Helper Functions ---
 async def fetch_user_context(user_id: str, token: str):
@@ -750,7 +750,7 @@ async def websocket_endpoint(client_ws: WebSocket):
     token = query_params.get('token')
     scenario = query_params.get('scenario')
     topic = query_params.get('topic')
-    voice = query_params.get('voice') or os.getenv("QWEN3_OMNI_VOICE", "Cherry")
+    voice = query_params.get('voice') or os.getenv("QWEN3_OMNI_VOICE", "Serena")
     
     user_context = {}
     
