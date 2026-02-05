@@ -476,14 +476,20 @@ function Conversation() {
            // Display user's speech transcription in chat
            if (data.payload && data.payload.text) {
              setMessages(prev => {
-               // If last message is an in-progress AI message, mark it as final first
+               // Find any in-progress AI message and ensure user transcript is inserted BEFORE it
                const newMessages = [...prev];
-               const lastIdx = newMessages.length - 1;
-               if (lastIdx >= 0 && newMessages[lastIdx].type === 'ai' && !newMessages[lastIdx].isFinal) {
-                 newMessages[lastIdx] = { ...newMessages[lastIdx], isFinal: true };
+               let insertIdx = newMessages.length;
+               
+               // If the last message is an in-progress AI message, insert BEFORE it
+               for (let i = newMessages.length - 1; i >= 0; i--) {
+                 if (newMessages[i].type === 'ai' && !newMessages[i].isFinal) {
+                   insertIdx = i;
+                   break;
+                 }
                }
-               // Add user message
-               newMessages.push({ type: 'user', content: data.payload.text, isFinal: true });
+               
+               const userMsg = { type: 'user', content: data.payload.text, isFinal: true };
+               newMessages.splice(insertIdx, 0, userMsg);
                return newMessages;
              });
            }
