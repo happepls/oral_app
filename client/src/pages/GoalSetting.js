@@ -375,31 +375,16 @@ function GoalSetting() {
                 {/* Interests - moved from Onboarding */}
                 <div>
                   <label htmlFor="interests" className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">
-                    兴趣爱好 / 学习重点
+                    兴趣爱好 / 学习难点
                   </label>
                   <textarea
                     id="interests"
                     value={interests}
                     onChange={(e) => setInterests(e.target.value)}
-                    rows="2"
+                    rows="3"
                     disabled={loading}
                     className="w-full px-4 py-3 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white focus:border-primary focus:ring-2 focus:ring-primary/50 outline-none disabled:opacity-50"
                     placeholder="例如：商务谈判, 旅游对话, 雅思口语..."
-                  ></textarea>
-                </div>
-
-                <div>
-                  <label htmlFor="description" className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">
-                    补充说明 (可选)
-                  </label>
-                  <textarea
-                    id="description"
-                    value={description}
-                    onChange={(e) => setDescription(e.target.value)}
-                    rows="2"
-                    disabled={loading}
-                    className="w-full px-4 py-3 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white focus:border-primary focus:ring-2 focus:ring-primary/50 outline-none disabled:opacity-50"
-                    placeholder="例如：下个月要去日本旅行..."
                   ></textarea>
                 </div>
 
