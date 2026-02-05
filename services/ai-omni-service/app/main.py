@@ -237,6 +237,8 @@ class WebSocketCallback(OmniRealtimeCallback):
         self.ai_audio_buffer = bytearray()
         self.last_user_audio_url = None
         self.last_ai_audio_url = None
+        self.welcome_sent = False  # Flag to track if welcome message was sent
+        self.session_ready = False  # Flag to track if session is ready for messages
         logger.info(f"Assigned Role: {self.role}, Loaded History: {len(self.messages)} msgs")
 
     def _determine_role(self, context):
@@ -410,6 +412,52 @@ class WebSocketCallback(OmniRealtimeCallback):
                 return None
 
 
+    def _trigger_welcome_message(self):
+        """Send a text message to trigger AI welcome greeting."""
+        if self.welcome_sent or not self.conversation or not self.is_connected:
+            return
+        
+        self.welcome_sent = True
+        
+        # Determine the topic for greeting
+        topic = self.user_context.get('custom_topic') or self.scenario or "General Practice"
+        target_lang = self.user_context.get('target_language', 'English')
+        
+        # Create a starter message to trigger AI response
+        if self.role == "InfoCollector":
+            starter_text = "Hello, I'm ready to start."
+        elif self.role == "GoalPlanner":
+            starter_text = "Hi, I want to set up my learning goals."
+        else:
+            starter_text = f"Hello, I'm ready to practice {target_lang}."
+        
+        logger.info(f"Sending welcome trigger message: {starter_text}")
+        
+        # Send conversation.item.create with text input
+        conversation_item = {
+            "type": "conversation.item.create",
+            "item": {
+                "type": "message",
+                "role": "user",
+                "content": [
+                    {
+                        "type": "input_text",
+                        "text": starter_text
+                    }
+                ]
+            }
+        }
+        self.conversation.send_raw(json.dumps(conversation_item))
+        
+        # Request AI response
+        response_create = {
+            "type": "response.create",
+            "response": {
+                "modalities": ["text", "audio"]
+            }
+        }
+        self.conversation.send_raw(json.dumps(response_create))
+
     def on_event(self, response: dict) -> None:
         event_name = response.get('type')
         payload = response
@@ -421,6 +469,19 @@ class WebSocketCallback(OmniRealtimeCallback):
         # Debug Log for ID
         if event_name not in ['response.audio.delta', 'response.audio_transcript.delta']: # Reduce noise for deltas
              logger.info(f"Event: {event_name}, RID: {rid}, Current: {self.current_response_id}")
+        
+        # Handle session.created - session is ready, trigger welcome message
+        if event_name == 'session.created':
+            self.session_ready = True
+            # Trigger welcome message for new sessions (no history)
+            if not self.messages and not self.welcome_sent:
+                # Small delay to ensure session is fully initialized
+                import threading
+                def delayed_welcome():
+                    import time
+                    time.sleep(0.8)  # Wait for session.update to complete
+                    self._trigger_welcome_message()
+                threading.Thread(target=delayed_welcome, daemon=True).start()
         
         if rid:
             self.current_response_id = rid
@@ -887,23 +948,14 @@ async def websocket_endpoint(client_ws: WebSocket):
                      if callback:
                          callback.user_audio_buffer.extend(base64.b64decode(audio_b64))
         
-        # For new sessions, just save the topic and notify client that AI is ready
-        # The AI will respond naturally when user starts speaking (Manual VAD mode)
+        # For new sessions, save the topic for persistence
+        # Welcome message is triggered via on_event callback when session.created fires
         elif not history_messages:
             current_topic = scenario or user_context.get('custom_topic') or "General Practice"
-            logger.info(f"New Session Detected (History: 0). Waiting for user input. Role: {callback.role}, Topic: {current_topic}")
+            logger.info(f"New Session Detected (History: 0). Welcome will be triggered after session.created. Role: {callback.role}, Topic: {current_topic}")
             
             # Save the topic/scenario to DB for Discovery page
             await save_conversation_history(session_id, user_id, [], current_topic)
-            
-            # Send a ping to let client know AI is ready and waiting
-            await client_ws.send_json({
-                "type": "ping",
-                "payload": {
-                    "message": "AI is ready. Start speaking to begin the conversation.",
-                    "status": "waiting_for_input"
-                }
-            })
 
         while True:
             try:
