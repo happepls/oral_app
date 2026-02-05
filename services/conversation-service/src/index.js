@@ -181,6 +181,66 @@ app.put('/history/:sessionId/message', async (req, res) => {
   }
 });
 
+app.get('/history/user/:userId', async (req, res) => {
+  const { userId } = req.params;
+
+  try {
+    const result = await db.query(
+      `SELECT DISTINCT ON (session_id) session_id, role, content, created_at 
+       FROM conversation_history 
+       WHERE user_id = $1 
+       ORDER BY session_id, created_at DESC`,
+      [userId]
+    );
+    
+    const conversations = result.rows.map(row => ({
+      sessionId: row.session_id,
+      lastMessage: row.content,
+      timestamp: row.created_at
+    }));
+
+    res.status(200).json({
+      success: true,
+      data: conversations
+    });
+  } catch (error) {
+    console.error(`Failed to retrieve history for user ${userId}:`, error);
+    res.status(200).json({ success: true, data: [] });
+  }
+});
+
+app.get('/history/stats/:userId', async (req, res) => {
+  const { userId } = req.params;
+
+  try {
+    const sessionCount = await db.query(
+      `SELECT COUNT(DISTINCT session_id) as total_sessions FROM conversation_history WHERE user_id = $1`,
+      [userId]
+    );
+    
+    const messageCount = await db.query(
+      `SELECT COUNT(*) as total_messages FROM conversation_history WHERE user_id = $1`,
+      [userId]
+    );
+
+    res.status(200).json({
+      success: true,
+      data: {
+        totalSessions: parseInt(sessionCount.rows[0]?.total_sessions || 0),
+        totalMessages: parseInt(messageCount.rows[0]?.total_messages || 0),
+        learningDays: 0,
+        proficiency: 0
+      }
+    });
+  } catch (error) {
+    console.error(`Failed to retrieve stats for user ${userId}:`, error);
+    res.status(200).json({ 
+      success: true, 
+      data: { totalSessions: 0, totalMessages: 0, learningDays: 0, proficiency: 0 }
+    });
+  }
+});
+
 app.listen(PORT, () => {
   console.log(`Conversation Service listening on port ${PORT}`);
 });

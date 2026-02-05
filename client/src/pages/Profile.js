@@ -6,13 +6,17 @@ import { historyAPI } from '../services/api';
 
 function Profile() {
   const navigate = useNavigate();
-  const { user, logout } = useAuth();
+  const { user, logout, refreshProfile } = useAuth();
   const [stats, setStats] = useState({
     vocab: '0',
     days: '0',
     hours: '0'
   });
   const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    if (refreshProfile) refreshProfile();
+  }, []);
 
   const achievements = [
     { name: '词汇大师', icon: '🏆', unlocked: true },
@@ -97,6 +101,27 @@ function Profile() {
       </div>
 
       <main className="flex-grow pb-28">
+        {/* Subscription Badge */}
+        {user?.subscription_status === 'active' && (
+          <div className="mx-4 mt-4 p-3 bg-gradient-to-r from-indigo-500 to-purple-500 rounded-xl">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <span className="text-xl">👑</span>
+                <div>
+                  <p className="text-white font-bold text-sm">会员已激活</p>
+                  <p className="text-indigo-200 text-xs">享受全部高级功能</p>
+                </div>
+              </div>
+              <button 
+                onClick={() => navigate('/subscription')}
+                className="px-3 py-1 bg-white/20 text-white text-xs rounded-lg"
+              >
+                管理
+              </button>
+            </div>
+          </div>
+        )}
+
         {/* Profile Header */}
         <div className="flex p-4 pt-8">
           <div className="flex w-full flex-col gap-4 items-center">

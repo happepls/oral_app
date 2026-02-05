@@ -83,6 +83,19 @@ function GoalSetting() {
   const [editingScenario, setEditingScenario] = useState(null);
   const [showAddScenario, setShowAddScenario] = useState(false);
   const [newScenario, setNewScenario] = useState({ title: '', tasks: ['', '', ''] });
+  const [selectedVoice, setSelectedVoice] = useState(localStorage.getItem('ai_voice') || 'Cherry');
+
+  const VOICE_OPTIONS = [
+    { id: 'Cherry', name: 'Cherry', desc: '温柔女声' },
+    { id: 'Serena', name: 'Serena', desc: '活泼女声' },
+    { id: 'Ethan', name: 'Ethan', desc: '稳重男声' },
+    { id: 'Chelsie', name: 'Chelsie', desc: '甜美女声' }
+  ];
+
+  const handleVoiceSelect = (voiceId) => {
+    setSelectedVoice(voiceId);
+    localStorage.setItem('ai_voice', voiceId);
+  };
 
   // Fields moved from Onboarding
   const [targetLanguage, setTargetLanguage] = useState(user?.target_language || 'English');
@@ -486,12 +499,32 @@ function GoalSetting() {
                 ))}
               </div>
 
+              <div className="mt-6 p-4 bg-slate-100 dark:bg-slate-800 rounded-xl">
+                <h3 className="text-base font-bold text-slate-900 dark:text-white mb-3">选择AI导师音色</h3>
+                <div className="grid grid-cols-2 gap-2">
+                  {VOICE_OPTIONS.map((voice) => (
+                    <button
+                      key={voice.id}
+                      onClick={() => handleVoiceSelect(voice.id)}
+                      className={`p-3 rounded-lg border-2 transition-all text-left ${
+                        selectedVoice === voice.id
+                          ? 'border-primary bg-primary/10'
+                          : 'border-slate-300 dark:border-slate-600 hover:border-primary/50'
+                      }`}
+                    >
+                      <p className="font-medium text-slate-900 dark:text-white text-sm">{voice.name}</p>
+                      <p className="text-xs text-slate-500">{voice.desc}</p>
+                    </button>
+                  ))}
+                </div>
+              </div>
+
               <button
                 type="button"
                 onClick={handleSubmit}
                 disabled={loading || scenarios.length === 0}
-                className="w-full flex items-center justify-center rounded-lg h-12 px-5 bg-primary text-white text-base font-bold hover:bg-primary/90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
-                Confirm & Start Learning
+                className="w-full mt-6 flex items-center justify-center rounded-lg h-12 px-5 bg-primary text-white text-base font-bold hover:bg-primary/90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
+                确认并开始学习
               </button>
             </>
           )}
