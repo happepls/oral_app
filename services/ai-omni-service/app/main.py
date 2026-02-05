@@ -52,7 +52,10 @@ async def get_user_context(token: str):
                 timeout=5.0
             )
             if resp.status_code == 200:
-                data = resp.json().get('data', {})
+                response_data = resp.json().get('data', {})
+                # Handle both {data: user} and {data: {user: user}} formats
+                data = response_data.get('user', response_data) if isinstance(response_data, dict) else response_data
+                logger.info(f"User profile fetched: id={data.get('id')}, nickname={data.get('nickname')}")
                 goal_resp = await client.get(
                     f"{user_service_url}/goals/active",
                     headers={"Authorization": f"Bearer {token}"},
@@ -386,7 +389,12 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query(None), ses
     if not user_context:
         await websocket.send_json({"type": "error", "payload": {"message": "Invalid token"}})
         await websocket.close(); return
-    user_id, session_id = str(user_context.get('id')), sessionId
+    user_id_raw = user_context.get('id')
+    if not user_id_raw:
+        logger.error(f"User context missing 'id': {user_context}")
+        await websocket.send_json({"type": "error", "payload": {"message": "Invalid user context"}})
+        await websocket.close(); return
+    user_id, session_id = str(user_id_raw), sessionId
     if voice: user_context['voice'] = voice
     history_messages = []
     try:
