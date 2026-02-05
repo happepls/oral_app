@@ -20,7 +20,7 @@ const wss = new WebSocketServer({ server });
 
 const JWT_SECRET = process.env.JWT_SECRET || 'oral-ai-jwt-secret-key-2025';
 
-const AI_SERVICE_URL = process.env.AI_SERVICE_WS_URL || 'ws://localhost:8082/stream';
+const AI_SERVICE_URL = process.env.AI_SERVICE_WS_URL || 'ws://localhost:8008/stream';
 
 console.log('WebSocket server initializing...');
 console.log(`AI Service URL: ${AI_SERVICE_URL}`);

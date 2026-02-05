@@ -289,7 +289,12 @@ class WebSocketCallback(OmniRealtimeCallback):
     def on_event(self, response: dict) -> None:
         event_name = response.get('type')
         rid = response.get('header', {}).get('response_id') or response.get('response_id') or response.get('request_id')
-        if event_name not in ['response.audio.delta', 'response.audio_transcript.delta']: logger.info(f"Event: {event_name}, RID: {rid}")
+        
+        # Log all events for debugging
+        logger.info(f"DashScope Event: {event_name}, RID: {rid}")
+        
+        if event_name not in ['response.audio.delta', 'response.audio_transcript.delta']: 
+            logger.info(f"Detailed Event Data: {json.dumps(response)[:500]}")
         
         if event_name == 'session.created':
             self.session_ready = True
