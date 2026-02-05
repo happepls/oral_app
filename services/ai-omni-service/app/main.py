@@ -363,7 +363,7 @@ class WebSocketCallback(OmniRealtimeCallback):
         logger.error(f"DashScope Error: {error}")
         asyncio.run_coroutine_threadsafe(self.websocket.send_json({"type": "error", "payload": {"message": str(error)}}), self.loop)
 
-@app.websocket("/ws")
+@app.websocket("/stream")
 async def websocket_endpoint(websocket: WebSocket, token: str = Query(None), sessionId: str = Query(None), scenario: str = Query(None), voice: str = Query(None)):
     await websocket.accept()
     if not token or not sessionId:
