@@ -205,7 +205,7 @@ app.get('/history/user/:userId', async (req, res) => {
     });
   } catch (error) {
     console.error(`Failed to retrieve history for user ${userId}:`, error);
-    res.status(200).json({ success: true, data: [] });
+    res.status(500).json({ success: false, message: 'Failed to retrieve history', data: [] });
   }
 });
 
@@ -227,16 +227,15 @@ app.get('/history/stats/:userId', async (req, res) => {
       success: true,
       data: {
         totalSessions: parseInt(sessionCount.rows[0]?.total_sessions || 0),
-        totalMessages: parseInt(messageCount.rows[0]?.total_messages || 0),
-        learningDays: 0,
-        proficiency: 0
+        totalMessages: parseInt(messageCount.rows[0]?.total_messages || 0)
       }
     });
   } catch (error) {
     console.error(`Failed to retrieve stats for user ${userId}:`, error);
-    res.status(200).json({ 
-      success: true, 
-      data: { totalSessions: 0, totalMessages: 0, learningDays: 0, proficiency: 0 }
+    res.status(500).json({ 
+      success: false,
+      message: 'Failed to retrieve stats',
+      data: { totalSessions: 0, totalMessages: 0 }
     });
   }
 });
