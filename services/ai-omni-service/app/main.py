@@ -905,14 +905,32 @@ async def websocket_endpoint(client_ws: WebSocket):
             elif callback.role == "OralTutor":
                 welcome_instruction += f" Greet the user for their {user_context.get('target_language', 'language')} practice session on {current_topic}."
             
-            # Use send_raw to trigger the greeting with proper response.create format
-            # We add a slight delay to ensure the connection is fully ready and stable
+            # Use send_raw to trigger the greeting with proper format
+            # First create a conversation item (text input), then request a response
             await asyncio.sleep(0.5)
+            
+            # Step 1: Create a conversation item with a starter message
+            conversation_item_event = {
+                "type": "conversation.item.create",
+                "item": {
+                    "type": "message",
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "input_text",
+                            "text": "[SESSION_START] " + welcome_instruction
+                        }
+                    ]
+                }
+            }
+            conversation.send_raw(json.dumps(conversation_item_event))
+            
+            # Step 2: Request a response from the AI
+            await asyncio.sleep(0.2)
             response_create_event = {
                 "type": "response.create",
                 "response": {
-                    "modalities": ["text", "audio"],
-                    "instructions": welcome_instruction
+                    "modalities": ["text", "audio"]
                 }
             }
             conversation.send_raw(json.dumps(response_create_event))
