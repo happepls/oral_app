@@ -279,6 +279,16 @@ class WebSocketCallback(OmniRealtimeCallback):
             self.loop
         )
         self._update_session_prompt()
+        
+        # Trigger welcome message immediately for new sessions (no history)
+        # Must be done right after update_session to prevent DashScope from closing connection
+        if not self.messages and not self.welcome_sent:
+            import threading
+            def delayed_welcome():
+                import time
+                time.sleep(0.3)  # Short delay to let update_session complete
+                self._trigger_welcome_message()
+            threading.Thread(target=delayed_welcome, daemon=True).start()
 
     def _update_session_prompt(self):
         if self.conversation:
@@ -443,18 +453,10 @@ class WebSocketCallback(OmniRealtimeCallback):
         if event_name not in ['response.audio.delta', 'response.audio_transcript.delta']: # Reduce noise for deltas
              logger.info(f"Event: {event_name}, RID: {rid}, Current: {self.current_response_id}")
         
-        # Handle session.created - session is ready, trigger welcome message
+        # Handle session.created - mark session as ready
         if event_name == 'session.created':
             self.session_ready = True
-            # Trigger welcome message for new sessions (no history)
-            if not self.messages and not self.welcome_sent:
-                # Small delay to ensure session is fully initialized
-                import threading
-                def delayed_welcome():
-                    import time
-                    time.sleep(0.8)  # Wait for session.update to complete
-                    self._trigger_welcome_message()
-                threading.Thread(target=delayed_welcome, daemon=True).start()
+            logger.info("Session created event received")
         
         if rid:
             self.current_response_id = rid
