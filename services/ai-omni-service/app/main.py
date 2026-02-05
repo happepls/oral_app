@@ -414,32 +414,13 @@ class WebSocketCallback(OmniRealtimeCallback):
         else:
             starter_text = f"Hello, I'm ready to practice {target_lang}."
         
-        logger.info(f"Sending welcome trigger message: {starter_text}")
+        logger.info(f"Sending welcome trigger message via SDK: {starter_text}")
         
-        # Send conversation.item.create with text input
-        conversation_item = {
-            "type": "conversation.item.create",
-            "item": {
-                "type": "message",
-                "role": "user",
-                "content": [
-                    {
-                        "type": "input_text",
-                        "text": starter_text
-                    }
-                ]
-            }
-        }
-        self.conversation.send_raw(json.dumps(conversation_item))
-        
-        # Request AI response
-        response_create = {
-            "type": "response.create",
-            "response": {
-                "modalities": ["text", "audio"]
-            }
-        }
-        self.conversation.send_raw(json.dumps(response_create))
+        try:
+            # Use SDK's built-in send_text method
+            self.conversation.send_text(starter_text)
+        except Exception as e:
+            logger.error(f"Failed to send welcome message: {e}")
 
     def on_event(self, response: dict) -> None:
         event_name = response.get('type')
