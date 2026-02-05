@@ -6,6 +6,7 @@ import logging
 import httpx
 import time
 import re
+import traceback
 from datetime import datetime
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Query
 from fastapi.middleware.cors import CORSMiddleware
@@ -252,13 +253,17 @@ class WebSocketCallback(OmniRealtimeCallback):
                 system_prompt += history_text
 
             logger.info(f"Sending System Prompt ({self.role}): {system_prompt[:100]}...")
-            self.conversation.update_session(
-                instructions=system_prompt,
-                voice=selected_voice,
-                output_modalities=[MultiModality.TEXT, MultiModality.AUDIO],
-                input_audio_transcription={"model": os.getenv("QWEN3_OMNI_MODEL", "qwen3-omni-flash-realtime"), "enabled": True},
-                enable_turn_detection=False,
-            )
+            try:
+                self.conversation.update_session(
+                    instructions=system_prompt,
+                    voice=selected_voice,
+                    output_modalities=[MultiModality.TEXT, MultiModality.AUDIO],
+                    input_audio_transcription={"model": os.getenv("QWEN3_OMNI_MODEL", "qwen3-omni-flash-realtime"), "enabled": True},
+                    enable_turn_detection=False,
+                )
+            except Exception as e:
+                logger.error(f"Failed to update session prompt: {e}")
+                logger.error(traceback.format_exc())
 
     async def upload_audio_to_cos(self, audio_data: bytes, audio_type: str) -> str:
         if not audio_data: return None
@@ -291,9 +296,8 @@ class WebSocketCallback(OmniRealtimeCallback):
         rid = response.get('header', {}).get('response_id') or response.get('response_id') or response.get('request_id')
         
         # Log all events for debugging
-        logger.info(f"DashScope Event: {event_name}, RID: {rid}")
-        
-        if event_name not in ['response.audio.delta', 'response.audio_transcript.delta']: 
+        if event_name not in ['response.audio.delta', 'response.audio_transcript.delta']:
+            logger.info(f"DashScope Event: {event_name}, RID: {rid}")
             logger.info(f"Detailed Event Data: {json.dumps(response)[:500]}")
         
         if event_name == 'session.created':
@@ -374,6 +378,7 @@ class WebSocketCallback(OmniRealtimeCallback):
 @app.websocket("/stream")
 async def websocket_endpoint(websocket: WebSocket, token: str = Query(None), sessionId: str = Query(None), scenario: str = Query(None), voice: str = Query(None)):
     await websocket.accept()
+    logger.info(f"New connection attempt for session {sessionId}")
     if not token or not sessionId:
         await websocket.send_json({"type": "error", "payload": {"message": "Unauthorized"}})
         await websocket.close(); return
@@ -391,49 +396,84 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query(None), ses
     except Exception as e: logger.warning(f"Failed to fetch history: {e}")
     loop = asyncio.get_running_current_loop()
     callback = WebSocketCallback(websocket, loop, user_context, token, user_id, session_id, history_messages, scenario)
+    
     def connect_dashscope():
-        conversation = OmniRealtimeConversation(model=os.getenv("QWEN3_OMNI_MODEL", "qwen3-omni-flash-realtime"), callback=callback)
-        callback.conversation = conversation
-        conversation.connect(); return conversation
+        try:
+            logger.info(f"Connecting to DashScope for session {session_id}")
+            conversation = OmniRealtimeConversation(model=os.getenv("QWEN3_OMNI_MODEL", "qwen3-omni-flash-realtime"), callback=callback)
+            callback.conversation = conversation
+            conversation.connect()
+            logger.info(f"DashScope connected call initiated for session {session_id}")
+            return conversation
+        except Exception as e:
+            logger.error(f"Error connecting to DashScope: {e}")
+            logger.error(traceback.format_exc())
+            raise e
+
     async def heartbeat():
         while True:
             try:
                 await asyncio.sleep(15)
                 await websocket.send_json({"type": "ping", "payload": {"timestamp": int(time.time())}})
-                if conversation and callback and callback.is_connected: conversation.append_audio(base64.b64encode(b'\x00'*320).decode('utf-8'))
+                if conversation and callback and callback.is_connected:
+                    try:
+                        conversation.append_audio(base64.b64encode(b'\x00'*320).decode('utf-8'))
+                    except Exception as e:
+                        logger.error(f"Heartbeat audio append failed: {e}")
             except: break
+            
     heartbeat_task = None
     conversation = None
     try:
-        try: conversation = connect_dashscope()
+        try:
+            conversation = connect_dashscope()
         except Exception as e:
             await websocket.send_json({"type": "error", "payload": {"error": str(e)}})
             await websocket.close(); return
+            
         heartbeat_task = asyncio.create_task(heartbeat())
         if not history_messages:
             current_topic = scenario or user_context.get('custom_topic') or "General Practice"
             await save_conversation_history(session_id, user_id, [], current_topic)
+            
         while True:
             try:
                 message = await websocket.receive_text()
                 data = json.loads(message)
                 msg_type, payload = data.get('type'), data.get('payload', {})
+                
+                if msg_type == 'session_start':
+                    logger.info(f"Received session_start for user {payload.get('userId')}")
+                    continue
+
                 if (not conversation or not callback.is_connected) and msg_type in ['audio_stream', 'text_message', 'input_text', 'user_audio_ended']:
+                    logger.warning("Attempting to reconnect DashScope due to inactive connection")
                     if conversation:
                         try: conversation.close()
                         except: pass
-                    conversation = connect_dashscope()
-                    await asyncio.sleep(0.5)
+                    try:
+                        conversation = connect_dashscope()
+                        await asyncio.sleep(0.5)
+                    except Exception as e:
+                        logger.error(f"Reconnection failed: {e}")
+                        continue
+                        
                 if msg_type == 'audio_stream':
                     audio_b64 = payload.get('audioBuffer')
                     if audio_b64:
                         if callback.is_connected:
-                            conversation.append_audio(audio_b64)
+                            try:
+                                conversation.append_audio(audio_b64)
+                            except Exception as e:
+                                logger.error(f"Error appending audio: {e}")
                         callback.user_audio_buffer.extend(base64.b64decode(audio_b64))
                 elif msg_type == 'user_audio_ended':
                     if callback.user_audio_buffer:
                         if callback.is_connected:
-                            conversation.commit_audio()
+                            try:
+                                conversation.commit_audio()
+                            except Exception as e:
+                                logger.error(f"Error committing audio: {e}")
                         audio_data = bytes(callback.user_audio_buffer)
                         callback.user_audio_buffer = bytearray()
                         async def upload_user_task(d):
@@ -441,21 +481,35 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query(None), ses
                             if url: callback.last_user_audio_url = url
                         asyncio.create_task(upload_user_task(audio_data))
                     if callback.is_connected:
-                        conversation.create_response()
+                        try:
+                            conversation.create_response()
+                        except Exception as e:
+                            logger.error(f"Error creating response for audio: {e}")
                 elif msg_type in ['text_message', 'input_text']:
                     text = payload.get('text')
                     if text:
                         callback.messages.append({"role": "user", "content": text, "timestamp": datetime.utcnow().isoformat()})
                         if callback.is_connected:
-                            conversation.send_raw(json.dumps({"type": "conversation.item.create", "item": {"type": "message", "role": "user", "content": [{"type": "input_text", "text": text}]}}))
-                            conversation.create_response()
+                            try:
+                                conversation.send_raw(json.dumps({"type": "conversation.item.create", "item": {"type": "message", "role": "user", "content": [{"type": "input_text", "text": text}]}}))
+                                conversation.create_response()
+                            except Exception as e:
+                                logger.error(f"Error creating response for text: {e}")
                 elif msg_type == 'interrupt':
                     callback.interrupted_turn = True
                     if callback.current_response_id: callback.ignored_response_ids.add(callback.current_response_id)
                     if callback.is_connected:
-                        conversation.cancel_response()
-            except WebSocketDisconnect: break
-            except Exception as e: logger.error(f"WS error: {e}"); break
+                        try:
+                            conversation.cancel_response()
+                        except Exception as e:
+                            logger.error(f"Error cancelling response: {e}")
+            except WebSocketDisconnect:
+                logger.info(f"WebSocket disconnected for session {session_id}")
+                break
+            except Exception as e:
+                logger.error(f"WS error: {e}")
+                logger.error(traceback.format_exc())
+                break
     finally:
         if heartbeat_task: heartbeat_task.cancel()
         if conversation:
