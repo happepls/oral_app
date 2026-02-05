@@ -22,7 +22,10 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("app.main")
 
 # DashScope API Key
-dashscope.api_key = os.getenv("DASHSCOPE_API_KEY")
+api_key = os.getenv("DASHSCOPE_API_KEY")
+if not api_key:
+    logger.error("DASHSCOPE_API_KEY not found in environment")
+dashscope.api_key = api_key
 
 app = FastAPI()
 
@@ -394,6 +397,8 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query(None), ses
                 await websocket.send_json({"type": "ping", "payload": {"timestamp": int(time.time())}})
                 if conversation and callback and callback.is_connected: conversation.append_audio(base64.b64encode(b'\x00'*320).decode('utf-8'))
             except: break
+    heartbeat_task = None
+    conversation = None
     try:
         try: conversation = connect_dashscope()
         except Exception as e:
@@ -409,45 +414,52 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query(None), ses
                 data = json.loads(message)
                 msg_type, payload = data.get('type'), data.get('payload', {})
                 if (not conversation or not callback.is_connected) and msg_type in ['audio_stream', 'text_message', 'input_text', 'user_audio_ended']:
-                    if conversation: conversation.close()
+                    if conversation:
+                        try: conversation.close()
+                        except: pass
                     conversation = connect_dashscope()
                     await asyncio.sleep(0.5)
                 if msg_type == 'audio_stream':
                     audio_b64 = payload.get('audioBuffer')
                     if audio_b64:
-                        conversation.append_audio(audio_b64)
+                        if callback.is_connected:
+                            conversation.append_audio(audio_b64)
                         callback.user_audio_buffer.extend(base64.b64decode(audio_b64))
                 elif msg_type == 'user_audio_ended':
                     if callback.user_audio_buffer:
-                        conversation.commit_audio()
+                        if callback.is_connected:
+                            conversation.commit_audio()
                         audio_data = bytes(callback.user_audio_buffer)
                         callback.user_audio_buffer = bytearray()
                         async def upload_user_task(d):
                             url = await callback.upload_audio_to_cos(d, 'user_audio')
                             if url: callback.last_user_audio_url = url
                         asyncio.create_task(upload_user_task(audio_data))
-                    conversation.create_response()
+                    if callback.is_connected:
+                        conversation.create_response()
                 elif msg_type in ['text_message', 'input_text']:
                     text = payload.get('text')
                     if text:
                         callback.messages.append({"role": "user", "content": text, "timestamp": datetime.utcnow().isoformat()})
-                        conversation.send_raw(json.dumps({"type": "conversation.item.create", "item": {"type": "message", "role": "user", "content": [{"type": "input_text", "text": text}]}}))
-                        conversation.create_response()
+                        if callback.is_connected:
+                            conversation.send_raw(json.dumps({"type": "conversation.item.create", "item": {"type": "message", "role": "user", "content": [{"type": "input_text", "text": text}]}}))
+                            conversation.create_response()
                 elif msg_type == 'interrupt':
                     callback.interrupted_turn = True
                     if callback.current_response_id: callback.ignored_response_ids.add(callback.current_response_id)
-                    conversation.cancel_response()
+                    if callback.is_connected:
+                        conversation.cancel_response()
             except WebSocketDisconnect: break
             except Exception as e: logger.error(f"WS error: {e}"); break
     finally:
         if heartbeat_task: heartbeat_task.cancel()
-        if conversation: conversation.close()
+        if conversation:
+            try: conversation.close()
+            except: pass
 
 @app.get("/health")
 async def health_check(): return {"status": "ok"}
 
 if __name__ == "__main__":
     import uvicorn
-    import threading
-    threading.Thread(target=lambda: uvicorn.run(app, host="0.0.0.0", port=8081), daemon=True).start()
     uvicorn.run(app, host="0.0.0.0", port=8008)
