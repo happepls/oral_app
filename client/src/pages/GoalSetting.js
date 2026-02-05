@@ -403,6 +403,32 @@ function GoalSetting() {
                   ></textarea>
                 </div>
 
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-4">
+                    AI 导师音色
+                  </label>
+                  <div className="grid grid-cols-2 gap-3 mb-8">
+                    {VOICE_OPTIONS.map((voice) => (
+                      <button
+                        key={voice.id}
+                        type="button"
+                        onClick={() => handleVoiceSelect(voice.id)}
+                        className={`flex flex-col items-center p-3 rounded-xl border-2 transition-all ${
+                          selectedVoice === voice.id
+                            ? 'border-primary bg-primary/5 dark:bg-primary/10'
+                            : 'border-slate-200 dark:border-slate-800 hover:border-slate-300 dark:hover:border-slate-700'
+                        }`}
+                      >
+                        <span className="text-2xl mb-1">
+                          {voice.id === 'Ethan' ? '👨‍💼' : '👩‍💼'}
+                        </span>
+                        <span className="font-bold text-slate-900 dark:text-white">{voice.name}</span>
+                        <span className="text-xs text-slate-500">{voice.desc}</span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
                 <div className="flex items-center space-x-3">
                   <input
                     type="checkbox"

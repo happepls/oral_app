@@ -319,6 +319,10 @@ class WebSocketCallback(OmniRealtimeCallback):
 
             system_prompt = prompt_manager.generate_system_prompt(full_ctx, role=self.role)
             
+            # --- Voice Configuration ---
+            selected_voice = self.user_context.get('voice') or os.getenv("QWEN3_OMNI_VOICE", "Cherry")
+            logger.info(f"Using AI Voice: {selected_voice}")
+
             # --- Context Restoration: Append History ---
             # If we have history, append it to the system prompt to simulate multi-turn memory
             # for the new DashScope session.
@@ -342,7 +346,7 @@ class WebSocketCallback(OmniRealtimeCallback):
             self.conversation.update_session(
                 output_modalities=[MultiModality.TEXT, MultiModality.AUDIO],
                 instructions=system_prompt,
-                voice=os.getenv("QWEN3_OMNI_VOICE", "Cherry"),
+                voice=selected_voice,
                 # Enable input transcription - Official Doc style
                 input_audio_transcription={
                     "model": os.getenv("QWEN3_OMNI_MODEL", "qwen3-omni-flash-realtime"),
@@ -746,11 +750,12 @@ async def websocket_endpoint(client_ws: WebSocket):
     token = query_params.get('token')
     scenario = query_params.get('scenario')
     topic = query_params.get('topic')
+    voice = query_params.get('voice') or os.getenv("QWEN3_OMNI_VOICE", "Cherry")
     
     user_context = {}
     
     # Log initial connection info
-    logger.info(f"WS Connect: User={user_id}, Session={session_id}, Scenario={scenario}")
+    logger.info(f"WS Connect: User={user_id}, Session={session_id}, Scenario={scenario}, Voice={voice}")
 
     # 2. Wait for optional session_start (Non-blocking check effectively)
     # We'll peek at the first message. If it's session_start, we update context.
@@ -761,10 +766,15 @@ async def websocket_endpoint(client_ws: WebSocket):
         
         # Strategy: We'll try to fetch context using defaults first to be safe
         if user_id and token:
-             user_context, active_goal = await fetch_user_context(user_id, token)
-             if user_context is None: user_context = {}
-             user_context['active_goal'] = active_goal
+             profile_data, active_goal = await fetch_user_context(user_id, token)
+             user_context = {
+                 "user": profile_data,
+                 "active_goal": active_goal,
+                 "voice": voice
+             }
              if topic: user_context['custom_topic'] = topic
+        else:
+             user_context = {"voice": voice}
         
         # Now wait for first message
         message = await client_ws.receive()
