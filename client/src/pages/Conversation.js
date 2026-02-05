@@ -330,18 +330,25 @@ function Conversation() {
           
           if (content) {
               setMessages(prev => {
-                  const last = prev[prev.length - 1];
-                  
-                  // Match by responseId if available, otherwise fallback to "last AI message" logic
-                  // Note: responseId might be undefined for legacy or initial system messages
-                  if (last && last.type === 'ai' && !last.isFinal) {
-                      // Check ID match if possible
-                      if (responseId && last.responseId && last.responseId !== responseId) {
-                          // Different ID -> New Message (shouldn't happen if isFinal logic works, but safe check)
-                          return [...prev, { type: 'ai', content: content, speaker: currentRoleRef.current, isFinal: false, responseId }];
+                  // Find the matching AI message by responseId (search from end)
+                  if (responseId) {
+                      for (let i = prev.length - 1; i >= 0; i--) {
+                          if (prev[i].type === 'ai' && prev[i].responseId === responseId && !prev[i].isFinal) {
+                              // Found matching message, append to it
+                              const updated = [...prev];
+                              updated[i] = { ...updated[i], content: updated[i].content + content };
+                              return updated;
+                          }
                       }
-                      return [...prev.slice(0, -1), { ...last, content: last.content + content }];
                   }
+                  
+                  // Fallback: check if last message is an in-progress AI message without responseId
+                  const last = prev[prev.length - 1];
+                  if (last && last.type === 'ai' && !last.isFinal && !last.responseId) {
+                      return [...prev.slice(0, -1), { ...last, content: last.content + content, responseId }];
+                  }
+                  
+                  // Create new AI message
                   return [...prev, { type: 'ai', content: content, speaker: currentRoleRef.current, isFinal: false, responseId }];
               });
           }
@@ -468,7 +475,17 @@ function Conversation() {
         case 'user_transcript':
            // Display user's speech transcription in chat
            if (data.payload && data.payload.text) {
-             setMessages(prev => [...prev, { type: 'user', content: data.payload.text }]);
+             setMessages(prev => {
+               // If last message is an in-progress AI message, mark it as final first
+               const newMessages = [...prev];
+               const lastIdx = newMessages.length - 1;
+               if (lastIdx >= 0 && newMessages[lastIdx].type === 'ai' && !newMessages[lastIdx].isFinal) {
+                 newMessages[lastIdx] = { ...newMessages[lastIdx], isFinal: true };
+               }
+               // Add user message
+               newMessages.push({ type: 'user', content: data.payload.text, isFinal: true });
+               return newMessages;
+             });
            }
            break;
         case 'error':

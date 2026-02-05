@@ -198,6 +198,8 @@ class WebSocketCallback(OmniRealtimeCallback):
         self.last_ai_audio_url = None
         self.welcome_sent = False
         self.session_ready = False
+        self.pending_user_transcript = None  # Buffer user transcript until AI response completes
+        self.ai_responding = False  # Track if AI is currently responding
         logger.info(f"Assigned Role: {self.role}, Loaded History: {len(self.messages)} msgs")
 
     def _determine_role(self, context):
@@ -329,6 +331,7 @@ class WebSocketCallback(OmniRealtimeCallback):
                 elif event_name == 'response.audio_transcript.delta':
                     text = response.get('delta')
                     if text:
+                        self.ai_responding = True  # Mark AI as actively responding
                         self.full_response_text += text
                         if not hasattr(self, '_sent_role_for_turn'):
                             await self.websocket.send_json({"type": "role_switch", "payload": {"role": self.role}})
@@ -345,14 +348,19 @@ class WebSocketCallback(OmniRealtimeCallback):
                                 self.last_ai_audio_url = url
                         asyncio.create_task(upload_ai_task(data, self.current_response_id))
                 elif event_name == 'conversation.item.input_audio_transcription.completed':
-                    # Handle user audio transcription
+                    # Handle user audio transcription - buffer if AI is responding to avoid message interleaving
                     user_transcript = response.get('transcript', '')
                     if user_transcript:
-                        await self.websocket.send_json({"type": "user_transcript", "payload": {"text": user_transcript}})
-                        msg = {"role": "user", "content": user_transcript, "timestamp": datetime.utcnow().isoformat()}
-                        if self.last_user_audio_url: msg['audioUrl'] = self.last_user_audio_url; self.last_user_audio_url = None
-                        self.messages.append(msg)
-                        await save_single_message(self.session_id, self.user_id, "user", user_transcript, msg.get('audioUrl'))
+                        if self.ai_responding:
+                            # Buffer the transcript to send after AI response completes
+                            self.pending_user_transcript = user_transcript
+                        else:
+                            # AI not responding, send immediately
+                            await self.websocket.send_json({"type": "user_transcript", "payload": {"text": user_transcript}})
+                            msg = {"role": "user", "content": user_transcript, "timestamp": datetime.utcnow().isoformat()}
+                            if self.last_user_audio_url: msg['audioUrl'] = self.last_user_audio_url; self.last_user_audio_url = None
+                            self.messages.append(msg)
+                            await save_single_message(self.session_id, self.user_id, "user", user_transcript, msg.get('audioUrl'))
                 elif event_name in ['response.audio_transcript.done', 'response.text.done']:
                     if not self.full_response_text:
                         transcript = response.get('transcript') or response.get('text')
@@ -372,7 +380,16 @@ class WebSocketCallback(OmniRealtimeCallback):
                         if result and result.get('taskCompleted'): await self.websocket.send_json({"type": "task_completed", "payload": {"task": "Task Completed"}})
                         else: await self.websocket.send_json({"type": "task_progress", "payload": {"score": result.get('newScore', 0) if result else 0}})
                     self.full_response_text = ""
+                    self.ai_responding = False  # AI finished responding
                     if hasattr(self, '_sent_role_for_turn'): delattr(self, '_sent_role_for_turn')
+                    # Flush any pending user transcript now that AI response is complete
+                    if self.pending_user_transcript:
+                        await self.websocket.send_json({"type": "user_transcript", "payload": {"text": self.pending_user_transcript}})
+                        msg = {"role": "user", "content": self.pending_user_transcript, "timestamp": datetime.utcnow().isoformat()}
+                        if self.last_user_audio_url: msg['audioUrl'] = self.last_user_audio_url; self.last_user_audio_url = None
+                        self.messages.append(msg)
+                        await save_single_message(self.session_id, self.user_id, "user", self.pending_user_transcript, msg.get('audioUrl'))
+                        self.pending_user_transcript = None
                 elif event_name == 'error': await self.websocket.send_json({"type": "error", "payload": response})
             except Exception as e: logger.error(f"Error processing event: {e}")
         asyncio.run_coroutine_threadsafe(process_event(), self.loop)
