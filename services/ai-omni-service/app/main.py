@@ -346,9 +346,9 @@ class WebSocketCallback(OmniRealtimeCallback):
             logger.info(f"Sending System Prompt ({self.role}): {system_prompt[:100]}...")
 
             self.conversation.update_session(
-                output_modalities=[MultiModality.TEXT, MultiModality.AUDIO],
                 instructions=system_prompt,
                 voice=selected_voice,
+                output_modalities=[MultiModality.TEXT, MultiModality.AUDIO],
                 # Enable input transcription - Official Doc style
                 input_audio_transcription={
                     "model": os.getenv("QWEN3_OMNI_MODEL", "qwen3-omni-flash-realtime"),
@@ -357,33 +357,6 @@ class WebSocketCallback(OmniRealtimeCallback):
                 # Manual Mode: Disable turn detection
                 enable_turn_detection=False,
             )
-
-    async def upload_audio_to_cos(self, audio_data: bytes, audio_type: str) -> str:
-        """
-        Uploads audio data to media-processing-service.
-        audio_type: 'user_audio' or 'ai_audio'
-        Returns: Public URL of the uploaded file or None.
-        """
-        if not audio_data:
-            return None
-        
-        url = os.getenv("MEDIA_SERVICE_URL", "http://localhost:3005") + "/api/media/upload"
-        filename = f"{self.session_id}_{int(time.time())}.pcm"
-        files = {audio_type: (filename, audio_data, 'application/octet-stream')}
-        
-        async with httpx.AsyncClient() as client:
-            try:
-                resp = await client.post(url, files=files, timeout=10.0)
-                if resp.status_code == 200:
-                    data = resp.json().get('data', {})
-                    return data.get(f'{audio_type}Url')
-                else:
-                    logger.error(f"Failed to upload audio: {resp.status_code} {resp.text}")
-                    return None
-            except Exception as e:
-                logger.error(f"Error uploading audio to COS: {e}")
-                return None
-
 
     async def upload_audio_to_cos(self, audio_data: bytes, audio_type: str) -> str:
         """
