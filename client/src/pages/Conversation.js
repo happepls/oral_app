@@ -355,11 +355,14 @@ function Conversation() {
           break;
         case 'response.audio.done':
           setMessages(prev => {
-              const last = prev[prev.length - 1];
-              if (last && last.type === 'ai') {
-                  return [...prev.slice(0, -1), { ...last, isFinal: true }];
+              const updated = [...prev];
+              for (let i = updated.length - 1; i >= 0; i--) {
+                  if (updated[i].type === 'ai' && !updated[i].isFinal) {
+                      updated[i] = { ...updated[i], isFinal: true };
+                      break;
+                  }
               }
-              return prev;
+              return updated;
           });
           setIsAISpeaking(false);
           break;
@@ -470,7 +473,6 @@ function Conversation() {
            break;
         case 'role_switch':
            setCurrentRole(data.payload.role);
-           setMessages(prev => [...prev, { type: 'system', content: `当前角色切换为: ${data.payload.role}` }]);
            break;
         case 'user_transcript':
            // Display user's speech transcription in chat
