@@ -86,10 +86,10 @@ function GoalSetting() {
   const [selectedVoice, setSelectedVoice] = useState(localStorage.getItem('ai_voice') || 'Cherry');
 
   const VOICE_OPTIONS = [
-    { id: 'Cherry', name: 'Cherry', desc: '温柔女声' },
-    { id: 'Serena', name: 'Serena', desc: '活泼女声' },
-    { id: 'Ethan', name: 'Ethan', desc: '稳重男声' },
-    { id: 'Chelsie', name: 'Chelsie', desc: '甜美女声' }
+    { id: 'Serena', name: 'Serena', desc: '温柔女声' },
+    { id: 'Momo', name: 'Momo', desc: '活泼女声' },
+    { id: 'Ryan', name: 'Ryan', desc: '活力男声' },
+    { id: 'Nofish', name: 'Nofish', desc: '稳重男声' }
   ];
 
   const handleVoiceSelect = (voiceId) => {
@@ -405,7 +405,7 @@ function GoalSetting() {
                         }`}
                       >
                         <span className="text-2xl mb-1">
-                          {['Ethan'].includes(voice.id) ? '👨‍💼' : '👩‍💼'}
+                          {['Ryan', 'Nofish'].includes(voice.id) ? '👨‍💼' : '👩‍💼'}
                         </span>
                         <span className="font-bold text-slate-900 dark:text-white">{voice.name}</span>
                         <span className="text-xs text-slate-500">{voice.desc}</span>

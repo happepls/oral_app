@@ -581,7 +581,7 @@ function Conversation() {
     const host = `${window.location.hostname}:8080`;
     const searchParams = new URLSearchParams(window.location.search);
     const scenario = searchParams.get('scenario');
-    const voice = localStorage.getItem('ai_voice') || 'Cherry';
+    const voice = localStorage.getItem('ai_voice') || 'Serena';
     const wsUrl = `${protocol}//${host}/api/ws/?token=${token}&sessionId=${sessionId}${scenario ? `&scenario=${scenario}` : ''}&voice=${voice}`;
 
     socketRef.current = new WebSocket(wsUrl);

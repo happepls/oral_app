@@ -5,10 +5,10 @@ import { useAuth } from '../contexts/AuthContext';
 import { userAPI } from '../services/api';
 
 const VOICE_OPTIONS = [
-  { id: 'Cherry', name: 'Cherry', description: '温柔女声' },
-  { id: 'Serena', name: 'Serena', description: '活泼女声' },
-  { id: 'Ethan', name: 'Ethan', description: '稳重男声' },
-  { id: 'Chelsie', name: 'Chelsie', description: '甜美女声' }
+  { id: 'Serena', name: 'Serena', description: '温柔女声' },
+  { id: 'Momo', name: 'Momo', description: '活泼女声' },
+  { id: 'Ryan', name: 'Ryan', description: '活力男声' },
+  { id: 'Nofish', name: 'Nofish', description: '稳重男声' }
 ];
 
 function Goals() {
@@ -16,7 +16,7 @@ function Goals() {
   const { user } = useAuth();
   const [activeGoal, setActiveGoal] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [selectedVoice, setSelectedVoice] = useState('Cherry');
+  const [selectedVoice, setSelectedVoice] = useState('Serena');
   const [saving, setSaving] = useState(false);
   const [showCelebration, setShowCelebration] = useState(false);
 
@@ -34,7 +34,7 @@ function Goals() {
             }
           }
         }
-        const savedVoice = localStorage.getItem('ai_voice') || 'Cherry';
+        const savedVoice = localStorage.getItem('ai_voice') || 'Serena';
         setSelectedVoice(savedVoice);
       } catch (error) {
         console.error('Failed to fetch goal:', error);
