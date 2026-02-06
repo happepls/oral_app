@@ -501,6 +501,9 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query(None), ses
                             conversation.create_response()
                         except Exception as e:
                             logger.error(f"Error creating response for audio: {e}")
+                elif msg_type == 'user_audio_cancelled':
+                    callback.user_audio_buffer = bytearray()
+                    logger.info("User cancelled audio input, buffer cleared")
                 elif msg_type in ['text_message', 'input_text']:
                     text = payload.get('text')
                     if text:

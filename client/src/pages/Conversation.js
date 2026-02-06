@@ -837,7 +837,15 @@ function Conversation() {
         console.log('Sending user_audio_ended');
         socketRef.current.send(JSON.stringify({ type: 'user_audio_ended' }));
     }
-    // Allow AI to speak again after user is done
+    isInterruptedRef.current = false;
+  };
+
+  const handleRecordingCancel = () => {
+    if (socketRef.current?.readyState === WebSocket.OPEN) {
+        socketRef.current.send(JSON.stringify({ type: 'user_audio_cancelled' }));
+    }
+    const cancelId = currentUserMessageIdRef.current;
+    setMessages(prev => prev.filter(m => !(m.type === 'user' && m.id === cancelId)));
     isInterruptedRef.current = false;
   };
 
@@ -978,22 +986,20 @@ function Conversation() {
       </main>
 
       {/* Footer / Controls */}
-      <footer className="p-6 bg-white dark:bg-slate-900 border-t border-slate-100 dark:border-slate-800 shrink-0 shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.05)]">
-        <div className="flex flex-col items-center gap-4">
+      <footer className="pb-6 pt-4 px-4 bg-white dark:bg-slate-900 border-t border-slate-100 dark:border-slate-800 shrink-0 shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.05)]">
+        <div className="flex flex-col items-center gap-2">
             <RealTimeRecorder 
               onAudioData={handleAudioData}
               isConnected={isConnected}
               onStart={handleRecordingStart}
               onStop={handleRecordingStop}
+              onCancel={handleRecordingCancel}
             />
             {webSocketError && (
                 <p className="text-xs text-red-500 bg-red-50 dark:bg-red-900/20 px-3 py-1 rounded-full animate-pulse">
                     {webSocketError}
                 </p>
             )}
-            <p className="text-xs text-slate-400 dark:text-slate-500 text-center max-w-xs">
-               提示：{isAISpeaking ? 'AI说话时点击按钮可直接打断' : '点击按钮开始说话，再次点击发送'}
-            </p>
         </div>
       </footer>
       
