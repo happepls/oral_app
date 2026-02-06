@@ -968,14 +968,14 @@ function Conversation() {
             </div>
           );
         })}
-        {isAISpeaking && (
+        {isAISpeaking && !messages.some(m => m.type === 'ai' && !m.isFinal) && (
             <div className="flex items-center gap-2 text-slate-400 text-sm ml-12">
                 <span className="flex gap-1">
                     <span className="w-1.5 h-1.5 bg-blue-400 rounded-full animate-bounce"></span>
                     <span className="w-1.5 h-1.5 bg-blue-400 rounded-full animate-bounce delay-100"></span>
                     <span className="w-1.5 h-1.5 bg-blue-400 rounded-full animate-bounce delay-200"></span>
                 </span>
-                AI正在说话... (点击麦克风打断)
+                AI正在思考...
             </div>
         )}
         <div ref={messagesEndRef} className="h-4" />
