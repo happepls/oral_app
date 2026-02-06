@@ -940,6 +940,15 @@ function Conversation() {
           }
           
           const isAI = msg.type === 'ai';
+          const displayContent = msg.content ? msg.content.replace(/```json[\s\S]*?```/g, '').trim() : '';
+
+          if (!isAI && (!displayContent || displayContent === '...')) {
+            return null;
+          }
+          if (isAI && !displayContent) {
+            return null;
+          }
+
           return (
             <div key={index} className={`flex items-start gap-3 ${isAI ? '' : 'flex-row-reverse'}`}>
               <div className={`w-8 h-8 rounded-full flex items-center justify-center shrink-0 ${isAI ? 'bg-blue-100 text-blue-600' : 'bg-green-100 text-green-600'}`}>
@@ -950,17 +959,12 @@ function Conversation() {
                   ? 'bg-white dark:bg-slate-800 text-slate-800 dark:text-slate-200 rounded-tl-none border border-slate-100 dark:border-slate-700 select-text' 
                   : 'bg-primary text-white rounded-tr-none'
               }`}>
-                 {msg.content === '...' ? (
-                     /* Placeholder: Render nothing for text, only AudioBar below if valid */
-                     null
-                 ) : (
-                     <p className="whitespace-pre-wrap leading-relaxed">{msg.content.replace(/```json[\s\S]*?```/g, '').trim()}</p>
-                 )}
+                 <p className="whitespace-pre-wrap leading-relaxed">{displayContent}</p>
                  {msg.audioUrl && (
                    <div className="mt-2">
                      <AudioBar 
                        audioUrl={msg.audioUrl}
-                       duration={0} // Initial duration, will be updated by component when metadata loads
+                       duration={0}
                        onClick={() => playFullAudio(msg.audioUrl)}
                        isOwnMessage={!isAI}
                      />
@@ -970,16 +974,6 @@ function Conversation() {
             </div>
           );
         })}
-        {isAISpeaking && !messages.some(m => m.type === 'ai' && !m.isFinal) && (
-            <div className="flex items-center gap-2 text-slate-400 text-sm ml-12">
-                <span className="flex gap-1">
-                    <span className="w-1.5 h-1.5 bg-blue-400 rounded-full animate-bounce"></span>
-                    <span className="w-1.5 h-1.5 bg-blue-400 rounded-full animate-bounce delay-100"></span>
-                    <span className="w-1.5 h-1.5 bg-blue-400 rounded-full animate-bounce delay-200"></span>
-                </span>
-                AI正在思考...
-            </div>
-        )}
         <div ref={messagesEndRef} className="h-4" />
       </main>
 
