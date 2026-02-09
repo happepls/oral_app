@@ -1,7 +1,7 @@
 # Oral AI 实时口语练习应用 - 项目记忆
 
 ## 项目地址
-- git@github.com:sjx1943/oral_app.git  #master 为默认推送分支
+- git@github.com:happepls/oral_app.git  #master 为默认推送分支
 
 ## 项目概述
 打造一款可以24小时在线的AI口语陪练应用。应用的核心定位是“面向未来的私人语言导师”，专注于为用户提供“深度个性化”和“实时反馈”的练习体验。项目旨在通过融合“人机协同”的理念，在Duolingo和Babbel等主流应用之间，开拓一个高价值的细分市场。
