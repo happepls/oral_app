@@ -576,13 +576,31 @@ function Conversation() {
         socketRef.current.close();
     }
 
-    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    // Connect directly to API Gateway (Nginx) on port 8080 to bypass frontend proxy issues
-    const host = `${window.location.hostname}:8080`;
-    const searchParams = new URLSearchParams(window.location.search);
-    const scenario = searchParams.get('scenario');
-    const voice = localStorage.getItem('ai_voice') || 'Serena';
-    const wsUrl = `${protocol}//${host}/api/ws/?token=${token}&sessionId=${sessionId}${scenario ? `&scenario=${scenario}` : ''}&voice=${voice}`;
+    // Determine WebSocket URL based on environment
+    // The client runs in a Docker container but is accessed from the host browser
+    // WebSocket connections need to go directly to the API Gateway
+    let wsUrl;
+    
+    // When accessed from localhost:5001, connect directly to API Gateway on localhost:8080
+    if (window.location.hostname === 'localhost' && (window.location.port === '5001' || window.location.port === '')) {
+      const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+      const searchParams = new URLSearchParams(window.location.search);
+      const scenario = searchParams.get('scenario');
+      const topic = searchParams.get('topic');
+      const voice = localStorage.getItem('ai_voice') || 'Serena';
+      wsUrl = `${protocol}//localhost:8080/api/ws/?token=${token}&sessionId=${sessionId}${scenario ? `&scenario=${scenario}` : ''}${topic ? `&topic=${topic}` : ''}&voice=${voice}`;
+    } else {
+      // Fallback for other configurations
+      const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+      wsUrl = `${protocol}//${window.location.host}/api/ws/?token=${token}&sessionId=${sessionId}&voice=${localStorage.getItem('ai_voice') || 'Serena'}`;
+      
+      // Add scenario and topic if available
+      const searchParams = new URLSearchParams(window.location.search);
+      const scenario = searchParams.get('scenario');
+      const topic = searchParams.get('topic');
+      if (scenario) wsUrl += `&scenario=${scenario}`;
+      if (topic) wsUrl += `&topic=${topic}`;
+    }
 
     socketRef.current = new WebSocket(wsUrl);
 
@@ -628,16 +646,23 @@ function Conversation() {
       }
     };
 
-    socketRef.current.onerror = () => {
+    socketRef.current.onerror = (error) => {
+        console.error('WebSocket Error:', error);
         setWebSocketError('连接异常');
         setIsConnected(false);
     };
 
-    socketRef.current.onclose = () => {
+    socketRef.current.onclose = (event) => {
+        console.log('WebSocket Closed:', event.code, event.reason);
         setIsConnected(false);
+        
+        // Only show error if it wasn't a clean close
+        if (event.code !== 1000) { // 1000 means normal closure
+            setWebSocketError('连接已关闭');
+        }
     };
 
-  }, [token, sessionId, playAudioChunk, handleJsonMessage]);
+  }, [token, sessionId, playAudioChunk, handleJsonMessage, user]);
 
   // Init Session
   useEffect(() => {
@@ -727,7 +752,49 @@ function Conversation() {
               }
           } catch (err) {
               console.error('Failed to restore history:', err);
-              setWebSocketError('无法加载历史记录');
+              // If conversation not found, clear the invalid session ID from localStorage and start fresh
+              if (err.message.includes('Conversation not found') && scenario) {
+                  localStorage.removeItem(`session_${scenario}`);
+                  console.log('Cleared invalid session from localStorage');
+                  
+                  // Start a new session instead of failing
+                  try {
+                      const res = await conversationAPI.startSession({
+                          userId: user.id,
+                          goalId: 'general', // Default goal ID
+                          scenario: scenario, // Pass scenario if exists
+                          topic: topic,       // Pass topic if exists
+                          forceNew: true
+                      });
+
+                      if (res && res.sessionId) {
+                          setSessionId(res.sessionId);
+
+                          // Store session ID in localStorage for future persistence
+                          if (scenario) {
+                              localStorage.setItem(`session_${scenario}`, res.sessionId);
+                          }
+
+                          // Update URL to include sessionId, preventing "No History" error on refresh
+                          const newParams = new URLSearchParams(window.location.search);
+                          newParams.set('sessionId', res.sessionId);
+                          if (scenario) newParams.set('scenario', scenario);
+                          if (topic) newParams.set('topic', topic);
+                          const newUrl = `${window.location.pathname}?${newParams.toString()}`;
+                          window.history.replaceState({ path: newUrl }, '', newUrl);
+                          
+                          // Set initial message
+                          setMessages([{ type: 'system', content: '正在连接AI导师...' }]);
+                      } else {
+                          setWebSocketError('无法创建会话');
+                      }
+                  } catch (sessionErr) {
+                      console.error('Error starting new session:', sessionErr);
+                      setWebSocketError('网络错误');
+                  }
+              } else {
+                  setWebSocketError('无法加载历史记录');
+              }
           }
       } else {
           // Start New Session
@@ -780,7 +847,7 @@ function Conversation() {
   }, [user, token]); // Added token dependency
   // Connect WS when SessionId ready
   useEffect(() => {
-    if (sessionId) {
+    if (sessionId && user) {
         connectWebSocket();
     }
     return () => {
@@ -788,7 +855,7 @@ function Conversation() {
         stopAudioPlayback();
         if (audioContextRef.current) audioContextRef.current.close();
     };
-  }, [sessionId, connectWebSocket]);
+  }, [sessionId, user, connectWebSocket]);
 
 
   // --- Recorder Callbacks ---

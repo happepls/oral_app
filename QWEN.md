@@ -32,6 +32,12 @@ Repository: `git@github.com:sjx1943/oral_app.git` (master branch)
 - **AI Integration**: Qwen3-Omni with streaming ASR/TTS.
 - **Recent Fixes**: Scoring loop, Scenario logic, Interruption handling (barge-in), Bilingual strategy.
 
+## Recent Issues and Solutions
+- **WebSocket Connection Issue**: Fixed by updating the API Gateway WebSocket configuration and ensuring proper routing from frontend to comms-service to ai-omni-service
+- **JWT Token Validation Issue**: Resolved by standardizing JWT_SECRET across all services and ensuring consistent token validation
+- **Service Communication Issue**: Fixed by configuring correct USER_SERVICE_URL in ai-omni-service to allow proper user context fetching
+- **Environment Configuration**: Ensured all services use consistent environment variables and network configurations
+
 ## MCP Tools Configuration
 - **Filesystem**: Configured for project root access.
 - **Postgres**: Configured for local docker instance (`postgresql://user:password@localhost:5432/oral_app`).

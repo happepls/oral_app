@@ -23,9 +23,9 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("app.main")
 
 # DashScope API Key
-api_key = os.getenv("DASHSCOPE_API_KEY")
+api_key = os.getenv("QWEN3_OMNI_API_KEY") or os.getenv("DASHSCOPE_API_KEY")
 if not api_key:
-    logger.error("DASHSCOPE_API_KEY not found in environment")
+    logger.error("QWEN3_OMNI_API_KEY not found in environment")
 dashscope.api_key = api_key
 
 app = FastAPI()

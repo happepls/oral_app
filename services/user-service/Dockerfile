@@ -7,6 +7,9 @@ WORKDIR /usr/src/app
 # Copy package.json and package-lock.json to the working directory
 COPY package*.json ./
 
+# Install dependencies
+RUN npm install
+
 # Copy the rest of the application's source code from the host to the image's filesystem
 COPY . .
 
