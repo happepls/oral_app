@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { BrowserRouter as Router, Route, Routes, Navigate } from 'react-router-dom';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 import Welcome from './pages/Welcome';
+import Landing from './pages/Landing';
 import Login from './pages/Login';
 import Register from './pages/Register';
 import Conversation from './pages/Conversation';
@@ -10,6 +11,9 @@ import Profile from './pages/Profile';
 import History from './pages/History';
 import Onboarding from './pages/Onboarding';
 import GoalSetting from './pages/GoalSetting';
+import Checkin from './pages/Checkin';
+import Goals from './pages/Goals';
+import Subscription from './pages/Subscription';
 import SplashScreen from './components/SplashScreen';
 import './App.css';
 
@@ -18,7 +22,8 @@ const AppRoutes = () => {
     return (
         <div className="App">
           <Routes>
-            <Route path="/" element={<Welcome />} />
+            <Route path="/" element={<Landing />} />
+            <Route path="/welcome" element={<Welcome />} />
             <Route path="/login" element={<Login />} />
             <Route path="/register" element={<Register />} />
             <Route path="/onboarding" element={<Onboarding />} />
@@ -27,6 +32,11 @@ const AppRoutes = () => {
             <Route path="/discovery" element={<Discovery />} />
             <Route path="/profile" element={<Profile />} />
             <Route path="/history" element={<History />} />
+            <Route path="/checkin" element={<Checkin />} />
+            <Route path="/goals" element={<Goals />} />
+            <Route path="/subscription" element={<Subscription />} />
+            <Route path="/subscription/success" element={<Subscription />} />
+            <Route path="/subscription/cancel" element={<Subscription />} />
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
         </div>

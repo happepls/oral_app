@@ -6,14 +6,13 @@ function BottomNav({ currentPage }) {
 
   const navItems = [
     { id: 'home', icon: 'home', label: '首页', path: '/discovery' },
-    { id: 'discovery', icon: 'explore', label: '发现', path: '/discovery' },
-    { id: 'practice', icon: 'chat_bubble', label: '练习', path: '/conversation' },
+    { id: 'goals', icon: 'target', label: '目标', path: '/goals' },
     { id: 'profile', icon: 'person', label: '我的', path: '/profile' }
   ];
 
   return (
     <div className="fixed bottom-0 left-0 right-0 border-t border-slate-200 dark:border-slate-800 bg-background-light/95 dark:bg-background-dark/95 backdrop-blur-sm">
-      <div className="grid h-20 grid-cols-4 items-center justify-items-center px-4 max-w-lg mx-auto">
+      <div className="grid h-20 grid-cols-3 items-center justify-items-center px-4 max-w-lg mx-auto">
         {navItems.map((item) => (
           <button
             key={item.id}

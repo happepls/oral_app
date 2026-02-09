@@ -606,3 +606,55 @@ Refined AI Role logic (`OralTutor`, `SummaryExpert`) and fixed stability issues 
     - : Replaced static level cards with dynamic scenario-based mission cards.
     - : Integrated a mission task sidebar with real-time feedback for task completion ( action).
 - **Core Role Hardening**: Enhanced  to handle scenario task injection and reinforced 'STOP' command adherence via  overrides.
+# 2026-01-27 工作记录：修复语音交互与UI优化
+
+## 1. 核心修复：语音交互全链路打通
+- **后端 (AI Service)**:
+  - 修复 `ai-omni-service` 中 `user_audio_ended` 的处理逻辑，增加空音频检测，并在生成回复前强制重置会话状态，防止状态死锁导致无响应。
+  - 增强 DashScope 连接的错误处理，捕获初始化失败（如 API Key 无效）并向客户端发送带有详细 `init_error` 的错误 payload。
+  - 确认并解决 401 Unauthorized 问题，协助排查 Docker 容器环境变量未刷新的运维细节。
+- **中间件 (Comms Service)**:
+  - 修复 WebSocket 桥接中的“竞态条件” (Race Condition)，增加消息队列机制，确保在 AI 服务连接就绪前收到的音频和握手消息不会丢失。
+  - 修正了 `index.js` 中的语法错误。
+- **客户端 (Flutter)**:
+  - 优化 `ConversationController`，增加对 404 历史记录错误的静默处理（视为新会话），避免红屏报错中断流程。
+  - 完善错误日志打印，直接输出后端返回的 JSON Error Payload，极大提升了调试效率。
+  - 增加 WebSocket 自动重连逻辑。
+
+## 2. UI/UX 重构与优化
+- **对话页面 (ConversationScreen)**:
+  - 重构页面布局，引入 `CustomScrollView` 和 `SliverAppBar`，与“发现页”风格保持一致。
+  - **任务栏悬浮窗优化**: 将侧边任务列表按钮改为**可拖拽** (Draggable)，解决遮挡聊天内容的问题。
+  - 新增“重置会话”功能，允许用户手动清理上下文。
+- **认证与配置**:
+  - 优化 Onboarding 页面 UI，采用卡片式设计。
+  - 实现了 `Base URL` 配置的**同步预加载**机制，修复了应用启动时因异步读取配置导致的 API 请求异常。
+- **导航精简**:
+  - 移除底部导航栏的“对话”入口，强化从“任务卡片”进入会话的路径。
+
+## 3. 本地化与策略调整
+- **Prompt Engineering**:
+  - 更新 AI 提示词策略 (`prompt_manager.py`)。
+  - 针对中文练习场景，强制启用“Native Chinese Tutor”模式。
+  - 优化“桥接模式” (Bridge Mode)，允许 AI 在用户主动使用母语时灵活回应，提升对话亲和力。
+
+## 2026-02-01 Debugging Transcription & AI Response
+
+### Issues Resolved
+1. **Missing Transcription (Backend)**: 
+   - Root Cause: DashScope Qwen-Omni Realtime model requires explicit `input_audio_transcription.enabled = True` configuration.
+   - Root Cause 2: In Manual VAD mode (non-server VAD), explicit `conversation.commit()` is required to trigger transcription after user audio ends.
+   - Fix: Updated `ai-omni-service/app/main.py` to enable transcription and call commit.
+
+2. **Missing AI Response Bubble (Frontend/Backend)**:
+   - Root Cause: Backend was sending `response.audio_transcript.done` but the Frontend relies on `text_response` (deltas). In some manual Commit flows, deltas were skipped/empty.
+   - Fix: Added fallback logic in Backend (`main.py`) to send the final transcript as a `text_response` event if no deltas were streamed.
+
+3. **Frontend Race Condition**:
+   - Root Cause: Frontend `ConversationController` assumed the last message was always the user placeholder. If AI responded fast, the placeholder was lost.
+   - Fix: Updated `conversation_controller.dart` to search backwards for the placeholder.
+
+### Status
+- ✅ Transcription working.
+- ✅ AI Response Bubble working.
+- ✅ Code cleaned (debug logs removed).

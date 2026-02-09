@@ -1,3 +1,5 @@
 websockets>=13.0
 sounddevice
 numpy
+requests
+websocket

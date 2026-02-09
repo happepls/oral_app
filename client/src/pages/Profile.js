@@ -6,13 +6,17 @@ import { historyAPI } from '../services/api';
 
 function Profile() {
   const navigate = useNavigate();
-  const { user, logout } = useAuth();
+  const { user, logout, refreshProfile } = useAuth();
   const [stats, setStats] = useState({
     vocab: '0',
-    days: '0',
-    hours: '0'
+    sessions: '0 次',
+    messages: '0 条'
   });
   const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    if (refreshProfile) refreshProfile();
+  }, []);
 
   const achievements = [
     { name: '词汇大师', icon: '🏆', unlocked: true },
@@ -33,6 +37,7 @@ function Profile() {
   ];
 
   const menuItems = [
+    { icon: 'local_fire_department', label: '每日打卡', path: '/checkin' },
     { icon: 'history', label: '对话历史', path: '/history' },
     { icon: 'person', label: '账户设置', path: '/settings' },
     { icon: 'notifications', label: '通知', path: '/notifications' },
@@ -45,12 +50,10 @@ function Profile() {
       if (user?.id) {
         try {
           const data = await historyAPI.getStats(user.id);
-          // Assuming the API returns { totalSessions, totalDurationMinutes, averageScore, learningDays }
-          // Mapping to the UI's stats. Vocabulary is mocked or estimated for now since we don't track words yet.
           setStats({
-            vocab: (data.totalSessions * 50).toString(), // Estimate: 50 words per session
-            days: `${data.learningDays || 0} 天`,
-            hours: `${Math.round((data.totalDurationMinutes || 0) / 60)} 小时`
+            vocab: ((data.totalSessions || 0) * 50).toString(),
+            sessions: `${data.totalSessions || 0} 次`,
+            messages: `${data.totalMessages || 0} 条`
           });
         } catch (error) {
           console.error('Failed to fetch stats:', error);
@@ -76,8 +79,8 @@ function Profile() {
 
   const statItems = [
     { label: '估计词汇', value: stats.vocab },
-    { label: '学习天数', value: stats.days },
-    { label: '练习时长', value: stats.hours }
+    { label: '对话次数', value: stats.sessions },
+    { label: '消息数量', value: stats.messages }
   ];
 
   return (
@@ -96,6 +99,27 @@ function Profile() {
       </div>
 
       <main className="flex-grow pb-28">
+        {/* Subscription Badge */}
+        {user?.subscription_status === 'active' && (
+          <div className="mx-4 mt-4 p-3 bg-gradient-to-r from-indigo-500 to-purple-500 rounded-xl">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <span className="text-xl">👑</span>
+                <div>
+                  <p className="text-white font-bold text-sm">会员已激活</p>
+                  <p className="text-indigo-200 text-xs">享受全部高级功能</p>
+                </div>
+              </div>
+              <button 
+                onClick={() => navigate('/subscription')}
+                className="px-3 py-1 bg-white/20 text-white text-xs rounded-lg"
+              >
+                管理
+              </button>
+            </div>
+          </div>
+        )}
+
         {/* Profile Header */}
         <div className="flex p-4 pt-8">
           <div className="flex w-full flex-col gap-4 items-center">
@@ -131,10 +155,9 @@ function Profile() {
           <div className="flex w-full flex-1 flex-col gap-4 rounded-xl bg-white dark:bg-slate-800 p-6 shadow-sm">
             <p className="text-lg font-bold text-slate-900 dark:text-white">每周进度</p>
             <div className="flex items-baseline gap-2">
-              <p className="text-3xl font-bold text-slate-900 dark:text-white">{stats.hours}</p>
-              {/* <p className="text-base font-medium text-green-500">+15%</p> */}
+              <p className="text-3xl font-bold text-slate-900 dark:text-white">{stats.sessions}</p>
             </div>
-            <p className="text-base text-slate-600 dark:text-slate-400 -mt-2">总练习时长</p>
+            <p className="text-base text-slate-600 dark:text-slate-400 -mt-2">对话次数</p>
             
             <div className="grid grid-flow-col gap-4 h-[180px] items-end pt-4">
               {weeklyData.map((item, index) => (

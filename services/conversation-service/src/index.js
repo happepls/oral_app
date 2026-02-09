@@ -1,33 +1,30 @@
-
 const express = require('express');
-const Redis = require('ioredis');
 const { v4: uuidv4 } = require('uuid');
+const db = require('./models/db');
 
 const app = express();
-const PORT = process.env.PORT || 8083;
+const PORT = process.env.PORT || 8000;
 
-// Connect to Redis. The hostname 'redis' is resolvable thanks to Docker's networking.
-const redis = new Redis({
-  host: 'redis',
-  port: 6379,
-});
+const sessions = new Map();
+const SESSION_EXPIRATION_MS = 86400 * 7 * 1000;
 
-redis.on('connect', () => {
-  console.log('Successfully connected to Redis.');
-});
-redis.on('error', (err) => {
-  console.error('Could not connect to Redis:', err);
-});
+function cleanupExpired() {
+  const now = Date.now();
+  for (const [key, value] of sessions.entries()) {
+    if (value.expiresAt < now) {
+      sessions.delete(key);
+    }
+  }
+}
 
+setInterval(cleanupExpired, 60000);
 
 app.use(express.json());
 
-// Health check endpoint
 app.get('/', (req, res) => {
   res.status(200).send('Conversation Service is running.');
 });
 
-// Endpoint to start a new conversation session
 app.post('/start', async (req, res) => {
   const { userId, goalId, forceNew } = req.body;
 
@@ -35,45 +32,32 @@ app.post('/start', async (req, res) => {
     return res.status(400).json({ message: 'userId is required.' });
   }
 
-  // Use goalId to separate sessions, default to 'general' if not provided
   const effectiveGoalId = goalId || 'general';
   const sessionListKey = `user:${userId}:goal:${effectiveGoalId}:sessions`;
-  const legacyUserSessionKey = `user_session:${userId}`; // Keep for backward compat
-  
-  const SESSION_EXPIRATION_SECONDS = 86400 * 7; // 7 days retention for the list
 
   try {
     let sessionId;
+    const existing = sessions.get(sessionListKey);
 
-    // 1. If NOT forcing new, try to get the most recent session
-    if (!forceNew) {
-      const sessions = await redis.lrange(sessionListKey, 0, 0);
-      if (sessions && sessions.length > 0) {
-        sessionId = sessions[0];
-        console.log(`Found active session for user ${userId}, goal ${effectiveGoalId}: ${sessionId}`);
-        
-        // Refresh expiration of the list
-        await redis.expire(sessionListKey, SESSION_EXPIRATION_SECONDS);
-        
-        return res.status(200).json({ 
-          success: true,
-          message: 'Existing session retrieved.',
-          data: { sessionId }
-        });
-      }
+    if (!forceNew && existing && existing.expiresAt > Date.now()) {
+      sessionId = existing.list[0];
+      console.log(`Found active session for user ${userId}, goal ${effectiveGoalId}: ${sessionId}`);
+      existing.expiresAt = Date.now() + SESSION_EXPIRATION_MS;
+      return res.status(200).json({ 
+        success: true,
+        message: 'Existing session retrieved.',
+        data: { sessionId }
+      });
     }
 
-    // 2. Create new session
     sessionId = uuidv4();
     console.log(`Creating new session for user ${userId}, goal ${effectiveGoalId}: ${sessionId}`);
 
-    // 3. Push to Redis List and Trim to Max 3
-    await redis.lpush(sessionListKey, sessionId);
-    await redis.ltrim(sessionListKey, 0, 2); // Keep only top 3
-    await redis.expire(sessionListKey, SESSION_EXPIRATION_SECONDS);
-
-    // Update legacy key for backward compatibility
-    await redis.set(legacyUserSessionKey, sessionId, 'EX', 86400);
+    const list = existing ? [sessionId, ...existing.list].slice(0, 3) : [sessionId];
+    sessions.set(sessionListKey, {
+      list,
+      expiresAt: Date.now() + SESSION_EXPIRATION_MS
+    });
 
     res.status(201).json({ 
       success: true,
@@ -84,13 +68,12 @@ app.post('/start', async (req, res) => {
   } catch (error) {
     console.error(`Failed to manage session for user ${userId}:`, error);
     res.status(500).json({ 
-        success: false,
-        message: 'Internal server error while managing session.' 
+      success: false,
+      message: 'Internal server error while managing session.' 
     });
   }
 });
 
-// Endpoint to get active sessions for a goal
 app.get('/sessions', async (req, res) => {
   const { userId, goalId } = req.query;
   
@@ -102,10 +85,11 @@ app.get('/sessions', async (req, res) => {
   const sessionListKey = `user:${userId}:goal:${effectiveGoalId}:sessions`;
 
   try {
-    const sessions = await redis.lrange(sessionListKey, 0, -1);
+    const existing = sessions.get(sessionListKey);
+    const list = existing && existing.expiresAt > Date.now() ? existing.list : [];
     res.status(200).json({ 
       success: true, 
-      data: { sessions } 
+      data: { sessions: list } 
     });
   } catch (error) {
     console.error(`Failed to retrieve sessions:`, error);
@@ -113,37 +97,49 @@ app.get('/sessions', async (req, res) => {
   }
 });
 
-// Endpoint to retrieve conversation history
 app.get('/history/:sessionId', async (req, res) => {
   const { sessionId } = req.params;
-  const historyKey = `history:${sessionId}`;
 
   try {
-    const history = await redis.lrange(historyKey, 0, -1);
-    res.status(200).json(history.map(JSON.parse)); // Parse each message from JSON string
+    const result = await db.query(
+      `SELECT role, content, audio_url, created_at 
+       FROM conversation_history 
+       WHERE session_id = $1 
+       ORDER BY created_at ASC`,
+      [sessionId]
+    );
+    
+    const messages = result.rows.map(row => ({
+      role: row.role,
+      content: row.content,
+      audioUrl: row.audio_url,
+      timestamp: row.created_at
+    }));
+
+    res.status(200).json({
+      success: true,
+      data: { messages }
+    });
   } catch (error) {
     console.error(`Failed to retrieve history for session ${sessionId}:`, error);
     res.status(500).json({ message: 'Internal server error.' });
   }
 });
 
-// Endpoint to add a message to the history
 app.post('/history/:sessionId', async (req, res) => {
   const { sessionId } = req.params;
-  const message = req.body;
+  const { role, content, audioUrl, userId } = req.body;
   
-  if (!message || typeof message !== 'object') {
-    return res.status(400).json({ message: 'Invalid message format in request body.' });
+  if (!role || !content) {
+    return res.status(400).json({ message: 'role and content are required.' });
   }
 
-  const historyKey = `history:${sessionId}`;
-  const HISTORY_EXPIRATION_SECONDS = 86400; // 24 hours
-
   try {
-    // Add the new message to the end of the list
-    await redis.rpush(historyKey, JSON.stringify(message));
-    // Reset the expiration on the history every time a message is added
-    await redis.expire(historyKey, HISTORY_EXPIRATION_SECONDS);
+    await db.query(
+      `INSERT INTO conversation_history (session_id, user_id, role, content, audio_url)
+       VALUES ($1, $2, $3, $4, $5)`,
+      [sessionId, userId || null, role, content, audioUrl || null]
+    );
     
     res.status(201).json({ message: 'Message added to history.' });
   } catch (error) {
@@ -152,6 +148,97 @@ app.post('/history/:sessionId', async (req, res) => {
   }
 });
 
+app.put('/history/:sessionId/message', async (req, res) => {
+  const { sessionId } = req.params;
+  const { role, content, audioUrl, userId } = req.body;
+  
+  if (!role || !content) {
+    return res.status(400).json({ message: 'role and content are required.' });
+  }
+
+  try {
+    const result = await db.query(
+      `UPDATE conversation_history 
+       SET content = $1, audio_url = COALESCE($2, audio_url)
+       WHERE session_id = $3 AND role = $4 
+       AND id = (SELECT id FROM conversation_history WHERE session_id = $3 AND role = $4 ORDER BY created_at DESC LIMIT 1)
+       RETURNING id`,
+      [content, audioUrl, sessionId, role]
+    );
+    
+    if (result.rows.length === 0) {
+      await db.query(
+        `INSERT INTO conversation_history (session_id, user_id, role, content, audio_url)
+         VALUES ($1, $2, $3, $4, $5)`,
+        [sessionId, userId || null, role, content, audioUrl || null]
+      );
+    }
+    
+    res.status(200).json({ message: 'Message updated.' });
+  } catch (error) {
+    console.error(`Failed to update message for session ${sessionId}:`, error);
+    res.status(500).json({ message: 'Internal server error.' });
+  }
+});
+
+app.get('/history/user/:userId', async (req, res) => {
+  const { userId } = req.params;
+
+  try {
+    const result = await db.query(
+      `SELECT DISTINCT ON (session_id) session_id, role, content, created_at 
+       FROM conversation_history 
+       WHERE user_id = $1 
+       ORDER BY session_id, created_at DESC`,
+      [userId]
+    );
+    
+    const conversations = result.rows.map(row => ({
+      sessionId: row.session_id,
+      lastMessage: row.content,
+      timestamp: row.created_at
+    }));
+
+    res.status(200).json({
+      success: true,
+      data: conversations
+    });
+  } catch (error) {
+    console.error(`Failed to retrieve history for user ${userId}:`, error);
+    res.status(500).json({ success: false, message: 'Failed to retrieve history', data: [] });
+  }
+});
+
+app.get('/history/stats/:userId', async (req, res) => {
+  const { userId } = req.params;
+
+  try {
+    const sessionCount = await db.query(
+      `SELECT COUNT(DISTINCT session_id) as total_sessions FROM conversation_history WHERE user_id = $1`,
+      [userId]
+    );
+    
+    const messageCount = await db.query(
+      `SELECT COUNT(*) as total_messages FROM conversation_history WHERE user_id = $1`,
+      [userId]
+    );
+
+    res.status(200).json({
+      success: true,
+      data: {
+        totalSessions: parseInt(sessionCount.rows[0]?.total_sessions || 0),
+        totalMessages: parseInt(messageCount.rows[0]?.total_messages || 0)
+      }
+    });
+  } catch (error) {
+    console.error(`Failed to retrieve stats for user ${userId}:`, error);
+    res.status(500).json({ 
+      success: false,
+      message: 'Failed to retrieve stats',
+      data: { totalSessions: 0, totalMessages: 0 }
+    });
+  }
+});
 
 app.listen(PORT, () => {
   console.log(`Conversation Service listening on port ${PORT}`);

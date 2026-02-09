@@ -16,27 +16,21 @@ function Welcome() {
   const [selectedLang, setSelectedLang] = useState('zh');
 
   useEffect(() => {
-    if (user && user.native_language) {
-      // Map common language names to codes if necessary, or assume codes are stored
-      const langMap = {
-        'Chinese': 'zh', 'Mandarin': 'zh', 'English': 'en', 
-        'Spanish': 'es', 'French': 'fr', 'Japanese': 'ja'
-      };
-      // Simple check if it's a known code or name
-      const userLang = user.native_language;
-      if (quotes[userLang]) {
-        setSelectedLang(userLang);
-      } else if (langMap[userLang]) {
-        setSelectedLang(langMap[userLang]);
+    if (user) {
+      if (user.native_language) {
+        navigate('/discovery');
+        return;
+      } else {
+        navigate('/onboarding');
+        return;
       }
-    } else {
-       // Fallback to browser language
-       const browserLang = navigator.language.split('-')[0];
-       if (quotes[browserLang]) {
-           setSelectedLang(browserLang);
-       }
     }
-  }, [user]);
+    
+    const browserLang = navigator.language.split('-')[0];
+    if (quotes[browserLang]) {
+      setSelectedLang(browserLang);
+    }
+  }, [user, navigate]);
 
   return (
     <div className="relative flex min-h-screen w-full flex-col items-center bg-background-light dark:bg-background-dark p-4">

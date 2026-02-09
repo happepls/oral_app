@@ -28,3 +28,24 @@ CREATE INDEX IF NOT EXISTS idx_user_goals_status ON user_goals(status);
 -- Migration for existing tables
 ALTER TABLE user_goals ADD COLUMN IF NOT EXISTS scenarios JSONB;
 ALTER TABLE user_goals ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT NOW();
+
+-- Multi-turn scoring migration (added for task scoring feature)
+ALTER TABLE user_tasks ADD COLUMN IF NOT EXISTS interaction_count INT DEFAULT 0;
+ALTER TABLE user_tasks ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT NOW();
+
+-- Update existing completed tasks to have full score
+UPDATE user_tasks SET score = 100 WHERE status = 'completed' AND score = 0;
+
+-- Daily check-in table (added for checkin feature)
+CREATE TABLE IF NOT EXISTS user_checkins (
+    id SERIAL PRIMARY KEY,
+    user_id INT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    checkin_date DATE NOT NULL DEFAULT CURRENT_DATE,
+    points_earned INT DEFAULT 10,
+    streak_count INT DEFAULT 1,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    UNIQUE(user_id, checkin_date)
+);
+
+CREATE INDEX IF NOT EXISTS idx_user_checkins_user_id ON user_checkins(user_id);
+CREATE INDEX IF NOT EXISTS idx_user_checkins_date ON user_checkins(checkin_date);

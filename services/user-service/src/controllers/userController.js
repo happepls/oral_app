@@ -411,7 +411,6 @@ exports.completeTaskInternal = async (req, res) => {
         const updatedGoal = await User.completeTask(userId, scenario, task);
 
         if (!updatedGoal) {
-            // Task not found or goal not active, but return 200 to not break AI flow
             console.log('[User] Task completion skipped (not found or no active goal)');
             return res.json({ success: true, message: 'No update' }); 
         }
@@ -420,6 +419,38 @@ exports.completeTaskInternal = async (req, res) => {
 
     } catch (error) {
         console.error('Complete Task Error:', error);
+        res.status(500).json({ success: false, message: 'Server Error' });
+    }
+};
+
+exports.updateTaskScoreInternal = async (req, res) => {
+    try {
+        const userId = req.params.id;
+        const { scenario, task, scoreDelta, feedback } = req.body;
+
+        console.log(`[User] Internal Update Task Score: User=${userId}, Scenario=${scenario}, Task=${task}, Delta=${scoreDelta}`);
+
+        if (!scenario || !task || scoreDelta === undefined) {
+            return res.status(400).json({ success: false, message: 'Scenario, Task, and scoreDelta required' });
+        }
+
+        const result = await User.updateTaskScore(userId, scenario, task, scoreDelta, feedback);
+
+        if (!result) {
+            console.log('[User] Task score update skipped (not found or no active goal)');
+            return res.json({ success: true, message: 'No update', taskCompleted: false }); 
+        }
+
+        res.json({ 
+            success: true, 
+            data: { goal: result.goal },
+            taskCompleted: result.taskCompleted,
+            newScore: result.newScore,
+            taskName: result.taskName
+        });
+
+    } catch (error) {
+        console.error('Update Task Score Error:', error);
         res.status(500).json({ success: false, message: 'Server Error' });
     }
 };
@@ -458,4 +489,61 @@ exports.getUserInternal = async (req, res) => {
 
     }
 
+};
+
+// ===== Daily Check-in APIs =====
+
+exports.checkin = async (req, res) => {
+    try {
+        const userId = req.user.id;
+        const result = await User.checkin(userId);
+        
+        if (result.alreadyCheckedIn) {
+            return res.json({
+                success: true,
+                message: '今日已打卡',
+                alreadyCheckedIn: true,
+                checkin: result.checkin
+            });
+        }
+        
+        res.json({
+            success: true,
+            message: '打卡成功！',
+            alreadyCheckedIn: false,
+            checkin: result.checkin,
+            pointsEarned: result.checkin.points_earned,
+            streak: result.checkin.streak_count
+        });
+    } catch (error) {
+        console.error('Checkin Error:', error);
+        res.status(500).json({ success: false, message: 'Server Error' });
+    }
+};
+
+exports.getCheckinHistory = async (req, res) => {
+    try {
+        const userId = req.user.id;
+        const days = parseInt(req.query.days) || 30;
+        
+        const history = await User.getCheckinHistory(userId, days);
+        
+        res.json({ success: true, data: history });
+    } catch (error) {
+        console.error('Get Checkin History Error:', error);
+        res.status(500).json({ success: false, message: 'Server Error' });
+    }
+};
+
+exports.getCheckinStats = async (req, res) => {
+    try {
+        const userId = req.user.id;
+        
+        const stats = await User.getCheckinStats(userId);
+        
+        res.json({ success: true, data: stats });
+    } catch (error) {
+        console.error('Get Checkin Stats Error:', error);
+        res.status(500).json({ success: false, message: 'Server Error' });
+    }
 };

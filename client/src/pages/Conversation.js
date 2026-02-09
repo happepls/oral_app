@@ -29,41 +29,96 @@ function Conversation() {
   const [tasks, setTasks] = useState(location.state?.tasks || []);
   const [completedTasks, setCompletedTasks] = useState(new Set());
   const [showTasks, setShowTasks] = useState(false); // Can keep for toggle, but default to true if tasks exist
+  
+  // Scenario Completion State
+  const [showCompletionModal, setShowCompletionModal] = useState(false);
+  const [scenarioScore, setScenarioScore] = useState(0);
+  const [allScenarios, setAllScenarios] = useState([]);
+  const [currentScenarioIndex, setCurrentScenarioIndex] = useState(0);
+  const [currentScenarioTitle, setCurrentScenarioTitle] = useState('');
+  const completionCheckedRef = useRef(false); // Prevent duplicate modal triggers
+  
+  const getScoreFeedback = (score) => {
+    if (score >= 90) return { emoji: '🌟', text: '表现出色！你的表达非常流利自然，继续保持！', level: 'excellent' };
+    if (score >= 75) return { emoji: '👍', text: '很棒！表达清晰准确，可以尝试更多复杂句型。', level: 'good' };
+    if (score >= 60) return { emoji: '💪', text: '不错的进步！建议多练习口语表达的流畅度。', level: 'fair' };
+    return { emoji: '📚', text: '继续努力！多听多说，熟能生巧。', level: 'needsWork' };
+  };
 
-  // Initialize completed tasks set
+  // Initialize completed tasks set and check for scenario completion
   useEffect(() => {
       if (tasks.length > 0) {
           const completed = new Set();
+          let totalScore = 0;
+          let objectTaskCount = 0;
+          let completedCount = 0;
+          
           tasks.forEach(t => {
-              if (typeof t === 'object' && t.status === 'completed') {
-                  completed.add(t.text);
+              if (typeof t === 'object') {
+                  objectTaskCount++;
+                  if (t.status === 'completed') {
+                      completed.add(t.text);
+                      totalScore += (t.score || 100); // Default to 100 if score not set
+                      completedCount++;
+                  }
               }
           });
           setCompletedTasks(completed);
-          setShowTasks(true); // Auto-show when tasks loaded
+          setShowTasks(true);
+          
+          // Check if all object tasks are completed
+          const allCompleted = objectTaskCount > 0 && completedCount === objectTaskCount;
+          
+          // Trigger completion modal only once
+          if (allCompleted && !completionCheckedRef.current) {
+              completionCheckedRef.current = true;
+              const avgScore = Math.round(totalScore / objectTaskCount);
+              setScenarioScore(avgScore);
+              setShowCompletionModal(true);
+          }
       }
   }, [tasks]);
 
-  // Separate Effect: Fetch Tasks if missing (Page Refresh)
+  // Separate Effect: Fetch Tasks if missing (Page Refresh) + set scenario info
   useEffect(() => {
       const searchParams = new URLSearchParams(window.location.search);
       const scenarioParam = searchParams.get('scenario');
+      // Get scenario from URL or state
+      const scenarioName = scenarioParam 
+          ? decodeURIComponent(scenarioParam) 
+          : location.state?.scenario;
       
-      if (tasks.length === 0 && scenarioParam && user && token) {
-          console.log('Fetching tasks for scenario:', scenarioParam);
+      if (scenarioName) {
+          setCurrentScenarioTitle(scenarioName);
+      }
+      
+      if (scenarioName && user && token) {
           userAPI.getActiveGoal().then(res => {
               if (res && res.goal && res.goal.scenarios) {
-                  const activeScenario = res.goal.scenarios.find(s => s.title.trim() === scenarioParam.trim());
-                  if (activeScenario && activeScenario.tasks) {
-                      setTasks(activeScenario.tasks);
-                      console.log('Tasks fetched:', activeScenario.tasks);
-                  } else {
-                      console.warn('Scenario not found in goal:', scenarioParam);
+                  // Store all scenarios for navigation
+                  setAllScenarios(res.goal.scenarios);
+                  
+                  // Find current scenario index (case-insensitive)
+                  const scenarioIndex = res.goal.scenarios.findIndex(s => 
+                      s.title.trim().toLowerCase() === scenarioName.trim().toLowerCase()
+                  );
+                  if (scenarioIndex !== -1) {
+                      setCurrentScenarioIndex(scenarioIndex);
+                      setCurrentScenarioTitle(res.goal.scenarios[scenarioIndex].title);
+                  }
+                  
+                  // Fetch tasks if missing
+                  if (tasks.length === 0 && scenarioIndex !== -1) {
+                      const activeScenario = res.goal.scenarios[scenarioIndex];
+                      if (activeScenario && activeScenario.tasks) {
+                          setTasks(activeScenario.tasks);
+                          console.log('Tasks fetched:', activeScenario.tasks);
+                      }
                   }
               }
           }).catch(err => console.error('Task fetch error:', err));
       }
-  }, [user, token, tasks.length]); // Run when auth is ready or tasks empty
+  }, [user, token, location.state?.scenario]); // Run when auth is ready or state changes
   
   // Refs
   const socketRef = useRef(null);
@@ -82,6 +137,54 @@ function Conversation() {
       navigate('/login');
     }
   }, [user, loading, navigate]);
+  
+  // Scenario navigation functions
+  const handleRetryCurrentScenario = () => {
+      // Reset for same scenario practice
+      setShowCompletionModal(false);
+      completionCheckedRef.current = false;
+      localStorage.removeItem(`session_${currentScenarioTitle}`);
+      setMessages([{ type: 'system', content: '正在连接AI导师...' }]);
+      setSessionId(null);
+      setIsConnected(false);
+      // Note: Tasks won't reset here - they keep their completed status
+      // User can go to Discovery to select the same scenario again for a fresh start
+  };
+  
+  const handleSelectOtherScenario = () => {
+      setShowCompletionModal(false);
+      navigate('/discovery');
+  };
+  
+  const handleNextScenario = () => {
+      if (currentScenarioIndex < allScenarios.length - 1) {
+          const nextScenario = allScenarios[currentScenarioIndex + 1];
+          setShowCompletionModal(false);
+          completionCheckedRef.current = false;
+          // Clear session for current scenario
+          localStorage.removeItem(`session_${currentScenarioTitle}`);
+          // Navigate with state - init effect will handle session creation
+          navigate(`/conversation?scenario=${encodeURIComponent(nextScenario.title)}`, {
+              state: { scenario: nextScenario.title, tasks: nextScenario.tasks },
+              replace: true
+          });
+          // Reset local state for new scenario
+          setTasks(nextScenario.tasks || []);
+          setMessages([{ type: 'system', content: '正在连接AI导师...' }]);
+          setSessionId(null);
+          setIsConnected(false);
+          setCompletedTasks(new Set());
+          setCurrentScenarioIndex(currentScenarioIndex + 1);
+          setCurrentScenarioTitle(nextScenario.title);
+      } else {
+          navigate('/discovery');
+      }
+  };
+  
+  const handleBackToDiscovery = () => {
+      setShowCompletionModal(false);
+      navigate('/discovery');
+  };
 
   // Sync currentRoleRef with state
   useEffect(() => {
@@ -227,29 +330,39 @@ function Conversation() {
           
           if (content) {
               setMessages(prev => {
-                  const last = prev[prev.length - 1];
-                  
-                  // Match by responseId if available, otherwise fallback to "last AI message" logic
-                  // Note: responseId might be undefined for legacy or initial system messages
-                  if (last && last.type === 'ai' && !last.isFinal) {
-                      // Check ID match if possible
-                      if (responseId && last.responseId && last.responseId !== responseId) {
-                          // Different ID -> New Message (shouldn't happen if isFinal logic works, but safe check)
-                          return [...prev, { type: 'ai', content: content, speaker: currentRoleRef.current, isFinal: false, responseId }];
+                  // Find the matching AI message by responseId (search from end)
+                  if (responseId) {
+                      for (let i = prev.length - 1; i >= 0; i--) {
+                          if (prev[i].type === 'ai' && prev[i].responseId === responseId && !prev[i].isFinal) {
+                              // Found matching message, append to it
+                              const updated = [...prev];
+                              updated[i] = { ...updated[i], content: updated[i].content + content };
+                              return updated;
+                          }
                       }
-                      return [...prev.slice(0, -1), { ...last, content: last.content + content }];
                   }
+                  
+                  // Fallback: check if last message is an in-progress AI message without responseId
+                  const last = prev[prev.length - 1];
+                  if (last && last.type === 'ai' && !last.isFinal && !last.responseId) {
+                      return [...prev.slice(0, -1), { ...last, content: last.content + content, responseId }];
+                  }
+                  
+                  // Create new AI message
                   return [...prev, { type: 'ai', content: content, speaker: currentRoleRef.current, isFinal: false, responseId }];
               });
           }
           break;
         case 'response.audio.done':
           setMessages(prev => {
-              const last = prev[prev.length - 1];
-              if (last && last.type === 'ai') {
-                  return [...prev.slice(0, -1), { ...last, isFinal: true }];
+              const updated = [...prev];
+              for (let i = updated.length - 1; i >= 0; i--) {
+                  if (updated[i].type === 'ai' && !updated[i].isFinal) {
+                      updated[i] = { ...updated[i], isFinal: true };
+                      break;
+                  }
               }
-              return prev;
+              return updated;
           });
           setIsAISpeaking(false);
           break;
@@ -360,7 +473,28 @@ function Conversation() {
            break;
         case 'role_switch':
            setCurrentRole(data.payload.role);
-           setMessages(prev => [...prev, { type: 'system', content: `当前角色切换为: ${data.payload.role}` }]);
+           break;
+        case 'user_transcript':
+           // Display user's speech transcription in chat
+           if (data.payload && data.payload.text) {
+             setMessages(prev => {
+               // Find any in-progress AI message and ensure user transcript is inserted BEFORE it
+               const newMessages = [...prev];
+               let insertIdx = newMessages.length;
+               
+               // If the last message is an in-progress AI message, insert BEFORE it
+               for (let i = newMessages.length - 1; i >= 0; i--) {
+                 if (newMessages[i].type === 'ai' && !newMessages[i].isFinal) {
+                   insertIdx = i;
+                   break;
+                 }
+               }
+               
+               const userMsg = { type: 'user', content: data.payload.text, isFinal: true };
+               newMessages.splice(insertIdx, 0, userMsg);
+               return newMessages;
+             });
+           }
            break;
         case 'error':
            console.error('Server Error:', data.payload);
@@ -447,7 +581,8 @@ function Conversation() {
     const host = `${window.location.hostname}:8080`;
     const searchParams = new URLSearchParams(window.location.search);
     const scenario = searchParams.get('scenario');
-    const wsUrl = `${protocol}//${host}/api/ws/?token=${token}&sessionId=${sessionId}${scenario ? `&scenario=${scenario}` : ''}`;
+    const voice = localStorage.getItem('ai_voice') || 'Serena';
+    const wsUrl = `${protocol}//${host}/api/ws/?token=${token}&sessionId=${sessionId}${scenario ? `&scenario=${scenario}` : ''}&voice=${voice}`;
 
     socketRef.current = new WebSocket(wsUrl);
 
@@ -702,7 +837,15 @@ function Conversation() {
         console.log('Sending user_audio_ended');
         socketRef.current.send(JSON.stringify({ type: 'user_audio_ended' }));
     }
-    // Allow AI to speak again after user is done
+    isInterruptedRef.current = false;
+  };
+
+  const handleRecordingCancel = () => {
+    if (socketRef.current?.readyState === WebSocket.OPEN) {
+        socketRef.current.send(JSON.stringify({ type: 'user_audio_cancelled' }));
+    }
+    const cancelId = currentUserMessageIdRef.current;
+    setMessages(prev => prev.filter(m => !(m.type === 'user' && m.id === cancelId)));
     isInterruptedRef.current = false;
   };
 
@@ -805,6 +948,15 @@ function Conversation() {
           }
           
           const isAI = msg.type === 'ai';
+          const displayContent = msg.content ? msg.content.replace(/```json[\s\S]*?```/g, '').trim() : '';
+
+          if (!isAI && (!displayContent || displayContent === '...')) {
+            return null;
+          }
+          if (isAI && !displayContent) {
+            return null;
+          }
+
           return (
             <div key={index} className={`flex items-start gap-3 ${isAI ? '' : 'flex-row-reverse'}`}>
               <div className={`w-8 h-8 rounded-full flex items-center justify-center shrink-0 ${isAI ? 'bg-blue-100 text-blue-600' : 'bg-green-100 text-green-600'}`}>
@@ -815,17 +967,12 @@ function Conversation() {
                   ? 'bg-white dark:bg-slate-800 text-slate-800 dark:text-slate-200 rounded-tl-none border border-slate-100 dark:border-slate-700 select-text' 
                   : 'bg-primary text-white rounded-tr-none'
               }`}>
-                 {msg.content === '...' ? (
-                     /* Placeholder: Render nothing for text, only AudioBar below if valid */
-                     null
-                 ) : (
-                     <p className="whitespace-pre-wrap leading-relaxed">{msg.content.replace(/```json[\s\S]*?```/g, '').trim()}</p>
-                 )}
+                 <p className="whitespace-pre-wrap leading-relaxed">{displayContent}</p>
                  {msg.audioUrl && (
                    <div className="mt-2">
                      <AudioBar 
                        audioUrl={msg.audioUrl}
-                       duration={0} // Initial duration, will be updated by component when metadata loads
+                       duration={0}
                        onClick={() => playFullAudio(msg.audioUrl)}
                        isOwnMessage={!isAI}
                      />
@@ -835,38 +982,105 @@ function Conversation() {
             </div>
           );
         })}
-        {isAISpeaking && (
-            <div className="flex items-center gap-2 text-slate-400 text-sm ml-12">
-                <span className="flex gap-1">
-                    <span className="w-1.5 h-1.5 bg-blue-400 rounded-full animate-bounce"></span>
-                    <span className="w-1.5 h-1.5 bg-blue-400 rounded-full animate-bounce delay-100"></span>
-                    <span className="w-1.5 h-1.5 bg-blue-400 rounded-full animate-bounce delay-200"></span>
-                </span>
-                AI正在说话... (点击麦克风打断)
-            </div>
-        )}
         <div ref={messagesEndRef} className="h-4" />
       </main>
 
       {/* Footer / Controls */}
-      <footer className="p-6 bg-white dark:bg-slate-900 border-t border-slate-100 dark:border-slate-800 shrink-0 shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.05)]">
-        <div className="flex flex-col items-center gap-4">
+      <footer className="pb-6 pt-4 px-4 bg-white dark:bg-slate-900 border-t border-slate-100 dark:border-slate-800 shrink-0 shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.05)]">
+        <div className="flex flex-col items-center gap-2">
             <RealTimeRecorder 
               onAudioData={handleAudioData}
               isConnected={isConnected}
               onStart={handleRecordingStart}
               onStop={handleRecordingStop}
+              onCancel={handleRecordingCancel}
             />
             {webSocketError && (
                 <p className="text-xs text-red-500 bg-red-50 dark:bg-red-900/20 px-3 py-1 rounded-full animate-pulse">
                     {webSocketError}
                 </p>
             )}
-            <p className="text-xs text-slate-400 dark:text-slate-500 text-center max-w-xs">
-               提示：{isAISpeaking ? 'AI说话时点击按钮可直接打断' : '点击按钮开始说话，再次点击发送'}
-            </p>
         </div>
       </footer>
+      
+      {/* Scenario Completion Modal */}
+      {showCompletionModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm">
+          <div className="bg-white dark:bg-slate-800 rounded-2xl shadow-2xl max-w-sm w-full mx-4 overflow-hidden animate-in zoom-in duration-300">
+            <div className="bg-gradient-to-r from-green-500 to-emerald-600 p-6 text-white text-center">
+              <div className="w-16 h-16 bg-white/20 rounded-full flex items-center justify-center mx-auto mb-3">
+                <span className="material-symbols-outlined text-4xl">celebration</span>
+              </div>
+              <h2 className="text-xl font-bold">场景完成！</h2>
+              <p className="text-green-100 text-sm mt-1">{currentScenarioTitle}</p>
+            </div>
+            
+            <div className="p-6">
+              <div className="text-center mb-4">
+                <div className="text-4xl font-bold text-primary mb-1">{scenarioScore}</div>
+                <div className="text-sm text-slate-500">平均得分</div>
+                <div className="flex justify-center gap-1 mt-2">
+                  {[1,2,3,4,5].map(star => (
+                    <span 
+                      key={star} 
+                      className={`material-symbols-outlined text-xl ${star <= Math.ceil(scenarioScore / 20) ? 'text-yellow-400' : 'text-slate-300'}`}
+                    >
+                      star
+                    </span>
+                  ))}
+                </div>
+              </div>
+              
+              <div className="bg-slate-50 dark:bg-slate-700/50 rounded-xl p-4 mb-6">
+                <div className="flex items-start gap-3">
+                  <span className="text-2xl">{getScoreFeedback(scenarioScore).emoji}</span>
+                  <div>
+                    <p className="text-sm font-medium text-slate-700 dark:text-slate-200">AI点评</p>
+                    <p className="text-sm text-slate-600 dark:text-slate-400 mt-1">
+                      {getScoreFeedback(scenarioScore).text}
+                    </p>
+                  </div>
+                </div>
+              </div>
+              
+              <div className="space-y-3">
+                {currentScenarioIndex < allScenarios.length - 1 && (
+                  <button 
+                    onClick={handleNextScenario}
+                    className="w-full py-3 bg-primary text-white rounded-xl font-medium flex items-center justify-center gap-2 hover:bg-primary/90 transition"
+                  >
+                    <span>下一个场景</span>
+                    <span className="material-symbols-outlined">arrow_forward</span>
+                  </button>
+                )}
+                
+                <button 
+                  onClick={handleRetryCurrentScenario}
+                  className="w-full py-3 bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-300 rounded-xl font-medium flex items-center justify-center gap-2 hover:bg-amber-200 dark:hover:bg-amber-900/50 transition"
+                >
+                  <span className="material-symbols-outlined">replay</span>
+                  <span>继续练习</span>
+                </button>
+                
+                <button 
+                  onClick={handleSelectOtherScenario}
+                  className="w-full py-3 bg-slate-100 dark:bg-slate-700 text-slate-700 dark:text-slate-200 rounded-xl font-medium flex items-center justify-center gap-2 hover:bg-slate-200 dark:hover:bg-slate-600 transition"
+                >
+                  <span className="material-symbols-outlined">grid_view</span>
+                  <span>选择其他场景</span>
+                </button>
+                
+                <button 
+                  onClick={handleBackToDiscovery}
+                  className="w-full py-2 text-slate-500 text-sm hover:text-slate-700 transition"
+                >
+                  返回主页
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

@@ -39,6 +39,7 @@ CREATE TABLE IF NOT EXISTS user_goals (
     scenarios JSONB, -- List of 10 scenarios + tasks
     status VARCHAR(20) DEFAULT 'active', -- active, completed, abandoned
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     completed_at TIMESTAMPTZ
 );
 
@@ -51,10 +52,26 @@ CREATE TABLE IF NOT EXISTS user_tasks (
     task_description TEXT NOT NULL,
     status VARCHAR(50) DEFAULT 'pending', -- pending, completed
     score INT DEFAULT 0, -- 0-100 quality score for this specific task
+    interaction_count INT DEFAULT 0, -- Number of dialogue turns for this task
     feedback TEXT, -- AI feedback regarding this task
     completed_at TIMESTAMPTZ,
-    created_at TIMESTAMPTZ DEFAULT NOW()
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW()
 );
+
+-- Create the user_checkins table (Daily Check-in Records)
+CREATE TABLE IF NOT EXISTS user_checkins (
+    id SERIAL PRIMARY KEY,
+    user_id INT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    checkin_date DATE NOT NULL DEFAULT CURRENT_DATE,
+    points_earned INT DEFAULT 10,
+    streak_count INT DEFAULT 1,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    UNIQUE(user_id, checkin_date)
+);
+
+CREATE INDEX IF NOT EXISTS idx_user_checkins_user_id ON user_checkins(user_id);
+CREATE INDEX IF NOT EXISTS idx_user_checkins_date ON user_checkins(checkin_date);
 
 -- Add indexes for better query performance
 CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);

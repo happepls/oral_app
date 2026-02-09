@@ -74,6 +74,29 @@ export const userAPI = {
       headers: getAuthHeaders()
     });
     return handleResponse(response);
+  },
+
+  // Check-in APIs
+  async checkin() {
+    const response = await fetch(`${API_BASE_URL}/users/checkin`, {
+      method: 'POST',
+      headers: getAuthHeaders()
+    });
+    return handleResponse(response);
+  },
+
+  async getCheckinHistory(days = 30) {
+    const response = await fetch(`${API_BASE_URL}/users/checkin/history?days=${days}`, {
+      headers: getAuthHeaders()
+    });
+    return handleResponse(response);
+  },
+
+  async getCheckinStats() {
+    const response = await fetch(`${API_BASE_URL}/users/checkin/stats`, {
+      headers: getAuthHeaders()
+    });
+    return handleResponse(response);
   }
 };
 
@@ -83,6 +106,15 @@ export const aiAPI = {
       method: 'POST',
       headers: getAuthHeaders(),
       body: JSON.stringify({ messages, scenario })
+    });
+    return handleResponse(response);
+  },
+
+  async generateScenarios(goalParams) {
+    const response = await fetch(`${API_BASE_URL}/ai/generate-scenarios`, {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      body: JSON.stringify(goalParams)
     });
     return handleResponse(response);
   },

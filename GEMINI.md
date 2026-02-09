@@ -185,6 +185,9 @@ oral_app/
 - **Frontend Proxy**: Fixed Create React App proxy configuration by moving `setupProxy.js` to `client/src/` and removing conflicting `package.json` proxy setting.
 - **Frontend Flow**: Implemented forced redirection in `Discovery.js` to ensure users complete Onboarding and Goal Setting.
 - **Audio Processing**: Resolved `ai-omni-service` crash ("Object of type bytes is not JSON serializable") by correctly handling base64 audio strings for DashScope SDK.
+- **Transcription Fix**: Fixed missing user transcription by enabling `input_audio_transcription.enabled=True` and calling `commit()` in Manual VAD mode for DashScope Qwen-Omni.
+- **AI Bubble Fix**: Implemented fallback text push in backend to resolve missing AI response bubble when deltas are dropped/skipped.
+- **Frontend Race Condition**: Fixed `ConversationController` to correctly update user placeholder message even if AI response arrives early.
 - **Test Scenarios**: Extended `test_client_scenario.py` with `xintong_service` for verifying custom prompt injection and cross-domain role switching.
 - **Frontend Adaptation**: Adapted `Conversation.js` for new Role Switching (InfoCollector -> GoalPlanner -> OralTutor) and Interruption (Barge-in) logic.
 - **Requirement Collection**: Implemented `Onboarding.js` and `GoalSetting.js` to collect structured user needs (interests, target level, etc.).
