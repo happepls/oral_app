@@ -1,4 +1,4 @@
-const { getUncachableStripeClient } = require('./stripeClient');
+const { getUncachableStripeClient, getStripeSecretKey } = require('./stripeClient');
 const { Pool } = require('pg');
 
 const pool = new Pool({
@@ -7,6 +7,11 @@ const pool = new Pool({
 
 class StripeService {
   async createCustomer(email, userId) {
+    const secretKey = await getStripeSecretKey();
+    if (!secretKey) {
+      throw new Error('Stripe is not configured');
+    }
+    
     const stripe = await getUncachableStripeClient();
     return await stripe.customers.create({
       email,
@@ -15,6 +20,11 @@ class StripeService {
   }
 
   async createCheckoutSession(customerId, priceId, successUrl, cancelUrl) {
+    const secretKey = await getStripeSecretKey();
+    if (!secretKey) {
+      throw new Error('Stripe is not configured');
+    }
+    
     const stripe = await getUncachableStripeClient();
     return await stripe.checkout.sessions.create({
       customer: customerId,
@@ -27,6 +37,11 @@ class StripeService {
   }
 
   async createCustomerPortalSession(customerId, returnUrl) {
+    const secretKey = await getStripeSecretKey();
+    if (!secretKey) {
+      throw new Error('Stripe is not configured');
+    }
+    
     const stripe = await getUncachableStripeClient();
     return await stripe.billingPortal.sessions.create({
       customer: customerId,

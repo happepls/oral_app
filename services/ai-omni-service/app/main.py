@@ -77,7 +77,7 @@ async def save_single_message(session_id: str, user_id: str, role: str, content:
     payload = {
         "role": role,
         "content": content,
-        "userId": int(user_id),
+        "userId": user_id,  # Keep as string since user IDs are UUIDs
         "audioUrl": audio_url
     }
     try:
@@ -411,8 +411,15 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query(None), ses
     try:
         async with httpx.AsyncClient() as client:
             resp = await client.get(f"{os.getenv('CONVERSATION_SERVICE_URL', 'http://localhost:8000')}/history/{session_id}")
-            if resp.status_code == 200: history_messages = resp.json().get('data', {}).get('messages', [])
-    except Exception as e: logger.warning(f"Failed to fetch history: {e}")
+            if resp.status_code == 200: 
+                data = resp.json()
+                history_messages = data.get('data', {}).get('messages', [])
+                logger.info(f"Successfully loaded {len(history_messages)} history messages for session {session_id}")
+            else:
+                logger.warning(f"Failed to fetch history: status code {resp.status_code}")
+    except Exception as e: 
+        logger.warning(f"Failed to fetch history: {e}")
+        logger.error(f"Error details: {str(e)}")
     loop = asyncio.get_running_loop()
     callback = WebSocketCallback(websocket, loop, user_context, token, user_id, session_id, history_messages, scenario)
     

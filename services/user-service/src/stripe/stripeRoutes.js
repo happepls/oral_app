@@ -7,6 +7,9 @@ const { protect } = require('../middleware/authMiddleware');
 router.get('/config', async (req, res) => {
   try {
     const publishableKey = await getStripePublishableKey();
+    if (!publishableKey) {
+      return res.json({ publishableKey: null }); // Return null if not configured
+    }
     res.json({ publishableKey });
   } catch (error) {
     console.error('Error getting Stripe config:', error);
@@ -98,22 +101,32 @@ router.post('/checkout', protect, async (req, res) => {
 
     let customerId = user.stripe_customer_id;
     if (!customerId) {
-      const customer = await stripeService.createCustomer(user.email, user.id);
-      await stripeService.updateUserStripeInfo(user.id, { 
-        stripeCustomerId: customer.id 
-      });
-      customerId = customer.id;
+      try {
+        const customer = await stripeService.createCustomer(user.email, user.id);
+        await stripeService.updateUserStripeInfo(user.id, {
+          stripeCustomerId: customer.id
+        });
+        customerId = customer.id;
+      } catch (customerError) {
+        console.error('Error creating customer:', customerError);
+        return res.status(500).json({ error: 'Failed to create customer' });
+      }
     }
 
     const baseUrl = req.headers.origin || `${req.protocol}://${req.get('host')}`;
-    const session = await stripeService.createCheckoutSession(
-      customerId,
-      priceId,
-      `${baseUrl}/subscription/success?session_id={CHECKOUT_SESSION_ID}`,
-      `${baseUrl}/subscription/cancel`
-    );
+    try {
+      const session = await stripeService.createCheckoutSession(
+        customerId,
+        priceId,
+        `${baseUrl}/subscription/success?session_id={CHECKOUT_SESSION_ID}`,
+        `${baseUrl}/subscription/cancel`
+      );
 
-    res.json({ url: session.url });
+      res.json({ url: session.url });
+    } catch (sessionError) {
+      console.error('Error creating checkout session:', sessionError);
+      res.status(500).json({ error: 'Failed to create checkout session' });
+    }
   } catch (error) {
     console.error('Error creating checkout session:', error);
     res.status(500).json({ error: 'Failed to create checkout session' });
@@ -123,18 +136,23 @@ router.post('/checkout', protect, async (req, res) => {
 router.post('/portal', protect, async (req, res) => {
   try {
     const user = await stripeService.getUserById(req.user.id);
-    
+
     if (!user.stripe_customer_id) {
       return res.status(400).json({ error: 'No Stripe customer found' });
     }
 
     const baseUrl = req.headers.origin || `${req.protocol}://${req.get('host')}`;
-    const session = await stripeService.createCustomerPortalSession(
-      user.stripe_customer_id,
-      `${baseUrl}/profile`
-    );
+    try {
+      const session = await stripeService.createCustomerPortalSession(
+        user.stripe_customer_id,
+        `${baseUrl}/profile`
+      );
 
-    res.json({ url: session.url });
+      res.json({ url: session.url });
+    } catch (sessionError) {
+      console.error('Error creating portal session:', sessionError);
+      res.status(500).json({ error: 'Failed to create portal session' });
+    }
   } catch (error) {
     console.error('Error creating portal session:', error);
     res.status(500).json({ error: 'Failed to create portal session' });

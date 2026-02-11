@@ -37,6 +37,7 @@ Repository: `git@github.com:sjx1943/oral_app.git` (master branch)
 - **JWT Token Validation Issue**: Resolved by standardizing JWT_SECRET across all services and ensuring consistent token validation
 - **Service Communication Issue**: Fixed by configuring correct USER_SERVICE_URL in ai-omni-service to allow proper user context fetching
 - **Environment Configuration**: Ensured all services use consistent environment variables and network configurations
+- **AI Response Persistence**: Fixed issue where AI responses disappeared after page refresh by modifying save logic in `Conversation.js` to include non-final AI messages in conversation history
 
 ## MCP Tools Configuration
 - **Filesystem**: Configured for project root access.

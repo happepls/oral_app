@@ -1,6 +1,7 @@
 const express = require('express');
 const { v4: uuidv4 } = require('uuid');
 const Redis = require('ioredis');
+const fetch = require('node-fetch');
 
 const app = express();
 const PORT = process.env.PORT || 8083;
@@ -126,7 +127,31 @@ app.get('/history/:sessionId', async (req, res) => {
   const { sessionId } = req.params;
 
   try {
-    // For now, return an empty history since conversation history is handled by history-analytics-service
+    // Try to get history from history-analytics-service first
+    try {
+      const historyResponse = await fetch(`http://history-analytics-service:3004/api/history/session/${sessionId}`, {
+        method: 'GET',
+        headers: { 'Content-Type': 'application/json' }
+      });
+      
+      if (historyResponse.ok) {
+        const historyData = await historyResponse.json();
+        console.log(`Retrieved history for session ${sessionId} from history-analytics-service`);
+        console.log(`History data structure:`, JSON.stringify(historyData, null, 2));
+        console.log(`Messages count:`, historyData.data?.messages?.length || 0);
+        if (historyData.data?.messages) {
+          console.log(`Last few messages:`, historyData.data.messages.slice(-3).map(m => ({role: m.role, content: m.content?.substring(0, 50)})));
+        }
+        return res.status(200).json({
+          success: true,
+          data: historyData.data || { messages: [] }
+        });
+      }
+    } catch (fetchError) {
+      console.log(`Failed to fetch from history-analytics-service, using fallback: ${fetchError.message}`);
+    }
+    
+    // Fallback: Return empty history if history-analytics-service is not available
     res.status(200).json({
       success: true,
       data: { messages: [] }
@@ -139,18 +164,121 @@ app.get('/history/:sessionId', async (req, res) => {
 
 app.post('/history/:sessionId', async (req, res) => {
   const { sessionId } = req.params;
-  const { role, content, audioUrl, userId } = req.body;
+  const { role, content, audioUrl, userId, messages } = req.body;
 
-  if (!role || !content) {
-    return res.status(400).json({ message: 'role and content are required.' });
-  }
+  console.log(`POST /history/${sessionId} received request`);
+  console.log(`Request body keys: ${Object.keys(req.body)}`);
+  console.log(`Has messages array: ${messages && Array.isArray(messages)}`);
+  console.log(`Has userId: ${userId}`);
 
-  try {
-    // For now, just acknowledge the request since conversation history is handled by history-analytics-service
-    res.status(201).json({ message: 'Message acknowledged (history stored by history-analytics-service).' });
-  } catch (error) {
-    console.error(`Failed to acknowledge message for session ${sessionId}:`, error);
-    res.status(500).json({ message: 'Internal server error.' });
+  // Handle both single message and array of messages
+  if (messages && Array.isArray(messages)) {
+    // Process array of messages
+    if (!userId) {
+      console.log(`Error: userId is required when saving messages array.`);
+      return res.status(400).json({ message: 'userId is required when saving messages array.' });
+    }
+    
+    try {
+      // Forward to history-analytics-service - try different endpoint paths
+      let historyResponse;
+      
+      // First try the conversation endpoint
+      const conversationUrl = `http://history-analytics-service:3004/api/history/conversation`;
+      console.log(`Attempting to save messages via conversation endpoint: ${conversationUrl}`);
+      console.log(`Request body:`, { sessionId, userId, messagesCount: messages.length });
+      
+      historyResponse = await fetch(conversationUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          sessionId,
+          userId,
+          messages
+        })
+      });
+      
+      if (historyResponse.ok) {
+        console.log(`Saved ${messages.length} messages to session ${sessionId} via history-analytics-service conversation endpoint`);
+        return res.status(201).json({ message: 'Messages saved successfully.' });
+      } else {
+        console.error(`Failed to save messages via history-analytics-service conversation endpoint: ${historyResponse.status}`);
+        
+        // Try fallback to the session messages endpoint
+        const sessionMessagesUrl = `http://history-analytics-service:3004/api/history/session/${sessionId}/messages`;
+        console.log(`Attempting to save messages via session messages endpoint: ${sessionMessagesUrl}`);
+        console.log(`Request body:`, { userId, messagesCount: messages.length });
+        
+        const fallbackResponse = await fetch(sessionMessagesUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            userId,
+            messages
+          })
+        });
+        
+        if (fallbackResponse.ok) {
+          console.log(`Saved ${messages.length} messages to session ${sessionId} via history-analytics-service history endpoint`);
+          return res.status(201).json({ message: 'Messages saved successfully.' });
+        } else {
+          console.error(`Failed to save messages via history-analytics-service history endpoint: ${fallbackResponse.status}`);
+          return res.status(500).json({ message: 'Failed to save messages via any endpoint.' });
+        }
+      }
+    } catch (error) {
+      console.error(`Error saving messages to history-analytics-service: ${error}`);
+      return res.status(500).json({ message: 'Internal server error.' });
+    }
+  } else {
+    // Handle single message (legacy format)
+    if (!role || !content) {
+      return res.status(400).json({ message: 'role and content are required.' });
+    }
+
+    try {
+      // Forward single message to history-analytics-service - try different endpoint paths
+      let historyResponse;
+      
+      // First try the conversation endpoint
+      historyResponse = await fetch(`http://history-analytics-service:3004/api/history/conversation`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          sessionId,
+          userId,
+          messages: [{ role, content, audioUrl }]
+        })
+      });
+      
+      if (historyResponse.ok) {
+        console.log(`Saved single message to session ${sessionId} via history-analytics-service conversation endpoint`);
+        return res.status(201).json({ message: 'Message saved successfully.' });
+      } else {
+        console.error(`Failed to save message via history-analytics-service conversation endpoint: ${historyResponse.status}`);
+        
+        // Try fallback to the history session endpoint
+        const fallbackResponse = await fetch(`http://history-analytics-service:3004/api/history/session/${sessionId}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            userId,
+            messages: [{ role, content, audioUrl }]
+          })
+        });
+        
+        if (fallbackResponse.ok) {
+          console.log(`Saved single message to session ${sessionId} via history-analytics-service history endpoint`);
+          return res.status(201).json({ message: 'Message saved successfully.' });
+        } else {
+          console.error(`Failed to save message via history-analytics-service history endpoint: ${fallbackResponse.status}`);
+          return res.status(500).json({ message: 'Failed to save message via any endpoint.' });
+        }
+      }
+    } catch (error) {
+      console.error(`Error saving message to history-analytics-service: ${error}`);
+      return res.status(500).json({ message: 'Internal server error.' });
+    }
   }
 });
 

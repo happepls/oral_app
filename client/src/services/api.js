@@ -249,6 +249,8 @@ export const historyAPI = {
   }
 };
 
+export { getAuthHeaders };
+
 export default {
   auth: authAPI,
   user: userAPI,

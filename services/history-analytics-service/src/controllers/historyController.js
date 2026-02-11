@@ -2,7 +2,24 @@ const Conversation = require('../models/Conversation');
 
 exports.saveConversation = async (req, res) => {
   try {
+    console.log('saveConversation endpoint called');
+    console.log('Request body:', JSON.stringify(req.body, null, 2));
+    
     const { sessionId, userId, messages, topic, metrics, startTime, endTime } = req.body;
+    
+    // Validate required fields
+    if (!sessionId) {
+      console.log('Error: sessionId is required');
+      return res.status(400).json({ success: false, message: 'sessionId is required' });
+    }
+    if (!userId) {
+      console.log('Error: userId is required');
+      return res.status(400).json({ success: false, message: 'userId is required' });
+    }
+    if (!messages || !Array.isArray(messages)) {
+      console.log('Error: messages must be an array');
+      return res.status(400).json({ success: false, message: 'messages must be an array' });
+    }
 
     // Filter out empty messages (must have content OR audioUrl)
     // Relaxed check: allow '...' placeholders if they have audio, or just audio
@@ -33,10 +50,83 @@ exports.saveConversation = async (req, res) => {
       await conversation.save();
     }
 
+    console.log(`Successfully saved conversation for session ${sessionId}`);
     res.status(200).json({ success: true, data: conversation });
   } catch (error) {
     console.error('Save Conversation Error:', error);
-    res.status(500).json({ success: false, message: 'Server Error' });
+    console.error('Error details:', error.message);
+    console.error('Error stack:', error.stack);
+    res.status(500).json({ success: false, message: 'Server Error', error: error.message });
+  }
+};
+
+exports.saveSessionMessages = async (req, res) => {
+  try {
+    console.log('saveSessionMessages endpoint called');
+    console.log('Request params:', JSON.stringify(req.params, null, 2));
+    console.log('Request body:', JSON.stringify(req.body, null, 2));
+    
+    const { sessionId } = req.params;
+    const { userId, messages } = req.body;
+
+    console.log(`saveSessionMessages called with sessionId: ${sessionId}, userId: ${userId}`);
+    console.log(`Messages count: ${messages ? messages.length : 0}`);
+
+    if (!userId || !messages) {
+      console.log(`Missing required fields - userId: ${userId}, messages: ${messages}`);
+      return res.status(400).json({ 
+        success: false, 
+        message: 'userId and messages are required' 
+      });
+    }
+
+    // Filter out empty messages
+    const validMessages = messages.filter(msg => 
+        (msg.content && msg.content.trim().length > 0) || msg.audioUrl
+    );
+
+    if (validMessages.length === 0) {
+      return res.status(200).json({ 
+        success: true, 
+        message: 'No valid messages to save' 
+      });
+    }
+
+    let conversation = await Conversation.findOne({ sessionId });
+
+    if (conversation) {
+      // Append new messages to existing conversation
+      conversation.messages.push(...validMessages);
+      conversation.endTime = new Date();
+      await conversation.save();
+      console.log(`Appended ${validMessages.length} messages to existing session ${sessionId}`);
+    } else {
+      // Create new conversation
+      conversation = new Conversation({
+        sessionId,
+        userId,
+        messages: validMessages,
+        startTime: new Date(),
+        endTime: new Date()
+      });
+      await conversation.save();
+      console.log(`Created new session ${sessionId} with ${validMessages.length} messages`);
+    }
+
+    res.status(201).json({ 
+      success: true, 
+      message: 'Messages saved successfully',
+      data: { 
+        sessionId,
+        messageCount: conversation.messages.length
+      }
+    });
+  } catch (error) {
+    console.error('Save Session Messages Error:', error);
+    res.status(500).json({ 
+      success: false, 
+      message: 'Server Error' 
+    });
   }
 };
 
@@ -68,15 +158,41 @@ exports.getUserHistory = async (req, res) => {
 exports.getConversationDetail = async (req, res) => {
   try {
     const { sessionId } = req.params;
-    const conversation = await Conversation.findOne({ sessionId });
+    console.log(`Looking for conversation with sessionId: ${sessionId}`);
+    const conversation = await Conversation.findOne({ sessionId: sessionId });
 
     if (!conversation) {
+      console.log(`Conversation not found for sessionId: ${sessionId}`);
       return res.status(404).json({ success: false, message: 'Conversation not found' });
     }
 
+    console.log(`Found conversation with ${conversation.messages ? conversation.messages.length : 0} messages`);
     res.status(200).json({ success: true, data: conversation });
   } catch (error) {
     console.error('Get Detail Error:', error);
+    res.status(500).json({ success: false, message: 'Server Error' });
+  }
+};
+
+exports.getSessionHistory = async (req, res) => {
+  try {
+    const { sessionId } = req.params;
+    console.log(`Looking for session history with sessionId: ${sessionId}`);
+    const conversation = await Conversation.findOne({ sessionId: sessionId });
+
+    if (!conversation) {
+      console.log(`No conversation found for sessionId: ${sessionId}, returning empty messages`);
+      return res.status(200).json({ 
+        success: true, 
+        data: { messages: [] } 
+      });
+    }
+
+    console.log(`Found conversation with ${conversation.messages ? conversation.messages.length : 0} messages for session ${sessionId}`);
+    console.log(`First few messages:`, conversation.messages ? conversation.messages.slice(0, 3).map(m => ({role: m.role, content: m.content?.substring(0, 50)})) : 'No messages');
+    res.status(200).json({ success: true, data: { messages: conversation.messages || [] } });
+  } catch (error) {
+    console.error('Get Session History Error:', error);
     res.status(500).json({ success: false, message: 'Server Error' });
   }
 };
@@ -216,6 +332,3 @@ exports.getStats = async (req, res) => {
     res.status(500).json({ success: false, message: 'Server Error' });
   }
 };
-
-
-

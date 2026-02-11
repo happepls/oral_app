@@ -12,6 +12,11 @@ class WebhookHandlers {
     }
 
     const sync = await getStripeSync();
+    if (!sync) {
+      console.warn('Stripe sync not available, skipping webhook processing');
+      return;
+    }
+    
     await sync.processWebhook(payload, signature);
   }
 }

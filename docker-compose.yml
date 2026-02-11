@@ -110,6 +110,8 @@ services:
       - DB_DATABASE=oral_app
       - DB_PORT=5432
       - JWT_SECRET=your_jwt_secret_key_change_in_production
+      - STRIPE_PUBLISHABLE_KEY=${STRIPE_PUBLISHABLE_KEY:-}
+      - STRIPE_SECRET_KEY=${STRIPE_SECRET_KEY:-}
     env_file:
       - ./.env
       - ./services/user-service/.env
@@ -157,6 +159,8 @@ services:
     environment:
       - QWEN3_OMNI_MODEL=qwen3-omni-flash-realtime-2025-12-01
       - USER_SERVICE_URL=http://user-service:3000
+      - CONVERSATION_SERVICE_URL=http://conversation-service:8083
+      - MEDIA_SERVICE_URL=http://media-processing-service:3005
     networks:
       - oral_app_net
 

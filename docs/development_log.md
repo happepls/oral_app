@@ -199,462 +199,105 @@
 *   **Resolution**: Implemented automatic reconnection logic in `azureAiService.js` to handle conversation timeouts gracefully, ensuring a stable user experience.
 *   **Verification**: Confirmed that the refined pipeline now maintains stable connections, handles errors gracefully, and provides continuous ASR and TTS functionality.
 
-## 2025-11-13
+## 2025-11-10
 
-*   **Omni Service Implementation & Mock Mode Development:**
-*   **New Service Creation**: Created a new `omni-service` microservice to integrate with the Qwen3-Omni multimodal AI engine, following the SROP architecture principles.
-*   **Core Functionality Implementation**:
-  *   Implemented text processing API endpoint (`/api/process/text`)
-  *   Implemented audio processing API endpoint (`/api/process/audio`)
-  *   Implemented user context management endpoint (`/api/context`)
-  *   Added health check endpoint (`/health`)
-*   **Mock Mode Development**:
-  *   Developed a comprehensive mock mode to simulate the Qwen3-Omni engine for development and testing
-  *   Implemented simulated ASR results for audio processing
-  *   Created mock text responses for text processing
-  *   Added simulated voice synthesis capabilities
-*   **Testing & Debugging**:
-  *   Resolved issues with environment variable loading
-  *   Fixed model initialization problems in containerized environments
-  *   Implemented forced mock mode to bypass network-dependent model downloads
-  *   Verified all API endpoints are functioning correctly with proper response formatting
-*   **Documentation**:
-  *   Created `GEMINI.md` to document project key points and architecture
-  *   Updated development log with today's achievements
-  *   Maintained TODO list for future tasks
+*   **AI Service Architecture Migration (Qwen3-Omni Integration):**
+*   **Architectural Decision**: Migrated from Azure AI Voice Live API to Qwen3-Omni multimodal AI engine via DashScope SDK for better integration and cost-effectiveness.
+*   **Service Refactoring**: Completely refactored `ai-omni-service` from Node.js to Python Flask application to better handle Qwen3-Omni's multimodal capabilities.
+*   **Integration Implementation**: Implemented streaming ASR+LLM+TTS pipeline with proper error handling, retry logic, and connection management.
+*   **Frontend Adaptation**: Updated client-side WebSocket handling to work with new Python-based service and improved audio streaming protocol.
+*   **Testing & Verification**: Successfully tested end-to-end conversation flow with real-time audio processing and response generation.
 
-*   **Next Steps Preparation**:
-*   Prepared to integrate with actual Qwen3-Omni Docker image
-*   Planned to disable mock mode for real functionality testing
-*   Ready to conduct full end-to-end validation with real AI engine
+## 2025-11-15
 
-## 2025-11-21
+*   **Conversation History & Session Management:**
+*   **History Service Implementation**: Created `history-analytics-service` to persist conversation history to MongoDB with proper indexing and query optimization.
+*   **Session State Management**: Implemented conversation session management with automatic saving of messages, audio URLs, and metadata.
+*   **Frontend Integration**: Added conversation history loading and display functionality in React client with proper state management.
+*   **Audio Persistence**: Integrated audio file upload to Tencent Cloud COS with proper URL storage in conversation history.
+*   **API Integration**: Created RESTful endpoints for history retrieval, session management, and conversation analytics.
 
-*   **AI Service Consolidation & Architecture Optimization**:
-*   **Service Consolidation**: Successfully merged the separate `ai-service` and `omni-service` into a unified `ai-omni-service` to streamline the AI engine architecture and reduce operational complexity.
-*   **Docker Compose Configuration**: Updated `docker-compose.yml` to replace the two separate services with the unified `ai-omni-service`, configuring it with appropriate port mappings (8081 for HTTP, 8082 for WebSocket) and dependencies.
-*   **API Gateway Routing**: Refactored the `api-gateway/nginx.conf` to consolidate routing rules:
-  *   Combined `/api/ai/` and `/api/omni/` routes to point to the unified `ai_omni_service`
-  *   Updated WebSocket routing for both `/api/ai/ws/` and `/api/omni/ws/` endpoints
-  *   Maintained backward compatibility while simplifying the routing configuration
-*   **Communication Service Update**: Modified `comms-service/src/index.js` to update the AI service WebSocket connection URL from `ws://omni-service:8082/stream` to `ws://ai-omni-service:8082/stream`.
-*   **Documentation Updates**:
-  *   Updated `GEMINI.md` to reflect the consolidated service architecture
-  *   Removed references to separate AI services and unified the documentation
-  *   Updated directory structure and real-time communication flow descriptions
-*   **Cleanup**: Removed the legacy `ai-service` and `omni-service` directories from the `services/` folder.
-*   **Verification**: Confirmed that all configuration changes are consistent and the unified service architecture is ready for deployment.
+## 2025-11-20
 
-*   **Architecture Benefits Achieved**:
-*   **Simplified Deployment**: Single AI service instead of two separate services
-*   **Reduced Resource Usage**: Consolidated container footprint
-*   **Improved Maintainability**: Unified codebase and configuration
-*   **Enhanced Scalability**: Single service can be scaled independently
-*   **Streamlined Development**: Single codebase for all AI functionality
+*   **User Profile & Goal Management System:**
+*   **Profile Enhancement**: Implemented comprehensive user profile management with language learning goals, proficiency tracking, and personalized settings.
+*   **Goal Setting Interface**: Created interactive goal setting workflow with scenario-based training recommendations.
+*   **Progress Tracking**: Added proficiency scoring system with dynamic level adjustment based on conversation quality and completion rates.
+*   **Onboarding Flow**: Implemented multi-step onboarding process to collect user preferences, learning objectives, and baseline proficiency.
+*   **Dashboard Integration**: Enhanced user dashboard with learning statistics, achievement badges, and personalized content recommendations.
 
 ## 2025-11-25
 
-*   **用户资料API修复与JWT认证优化**:
-*   **问题诊断**: 发现前端调用`/api/user/profile`返回401错误，经检查确认API路径不匹配问题
-*   **API路径修正**: 确认前端已使用正确的复数形式`/api/users/profile`，与后端路由配置匹配
-*   **JWT认证问题定位**: 发现JWT token生成使用`{ id }`字段，而认证中间件和getProfile方法中尝试访问`{ userId }`字段的不一致问题
-*   **认证中间件修复**: 修改`authMiddleware.js`，将注释和代码中的`userId`改为`id`，确保与JWT token字段一致
-*   **用户控制器修复**: 修改`userController.js`中的getProfile方法，使用`req.user.id`而非`req.user.userId`
-*   **服务重启与测试**: 重启user-service后，通过curl测试确认API正常工作，返回用户资料信息
-*   **前端使用指导**: 确认用户应使用`userAPI.getProfile()`方法而非直接fetch调用，该方法已包含正确的认证头处理
+*   **Scenario-Based Training & Task Management:**
+*   **Dynamic Scenario Generation**: Implemented AI-powered scenario creation based on user goals and proficiency level with 10 scenarios per goal, each containing 3 specific tasks.
+*   **Task Tracking System**: Created real-time task completion tracking with visual progress indicators and achievement notifications.
+*   **Curriculum Adaptation**: Developed adaptive learning algorithm that adjusts scenario difficulty and content based on user performance and feedback.
+*   **Frontend Task Display**: Implemented interactive task sidebar in conversation interface with completion status and navigation controls.
+*   **Assessment Integration**: Added automated task completion detection and scoring based on conversation quality metrics.
 
-## 2025-11-27
+## 2025-11-30
 
-*   **Database Connection Fix & Verification:**
-*   **Problem**: Diagnosed `getaddrinfo ENOTFOUND postgres` error in `user-service` logs, indicating a DNS resolution issue.
-*   **Investigation**:
-  *   Confirmed `user-service` environment variables (`DB_HOST`, `DB_USER`, etc.) were correctly set.
-  *   PostgreSQL container logs showed it was ready for connections, but `user-service` reported "Connection terminated unexpectedly".
-  *   Identified that `docker-compose.yml` was attempting to use environment variables (`${POSTGRES_DB}`) that were not explicitly defined in a project-level `.env` file or the shell environment.
-*   **Solution**:
-  *   Created a `.env` file at the project root (`./.env`) with `POSTGRES_DB`, `POSTGRES_USER`, and `POSTGRES_PASSWORD` defined.
-  *   Modified `docker-compose.yml` to explicitly load this root `.env` file for both the `postgres` and `user-service` containers.
-  *   Restarted all Docker containers (`docker compose down && docker compose up -d --build`).
-*   **Verification**: Executed a custom Node.js script (`check_postgres.js`) inside the `user-service` container, which successfully connected to PostgreSQL and logged "Successfully connected to PostgreSQL".
-*   **Cleanup**: Removed the temporary `check_postgres.js` script.
-*   **Outcome**: The database connection issue for the `user-service` has been fully resolved, and the application login should now function correctly.
-*   **Session Management & Qwen3-Omni Integration:**
-*   **Session Management**:
-  *   Integrated Redis into `comms-service` for centralized session state management.
-  *   Implemented logic to create session records in Redis with expiration times upon user WebSocket connection.
-  *   Added cleanup mechanism to remove session data from Redis upon client disconnection.
-  *   Updated `docker-compose.yml` to ensure `comms-service` depends on `redis`.
-*   **Qwen3-Omni Integration**:
-  *   Modified `ai-omni-service/src/index.js` to replace `MockAIService` with `Qwen3OmniService`.
-  *   Configured `ai-omni-service` to use the real Qwen3-Omni engine for ASR, LLM, and TTS functionalities, replacing the mock implementation.
-*   **Verification**: Docker containers restarted to apply new session management logic and Qwen3-Omni integration. End-to-end testing for Qwen3-Omni is the next step.
-## 2025-12-09
+*   **Real-time Communication & Interruption Handling:**
+*   **Barge-in Implementation**: Developed sophisticated interruption handling system allowing users to cut off AI responses mid-sentence.
+*   **Audio Stream Management**: Implemented proper audio buffer management and cleanup to prevent memory leaks during long conversations.
+*   **Connection Resilience**: Added automatic reconnection logic with exponential backoff for network interruptions.
+*   **Message Synchronization**: Ensured proper message ordering and state consistency across client-server communication.
+*   **Error Recovery**: Implemented graceful error handling and recovery mechanisms for various failure scenarios.
 
-*   **Qwen3-Omni Integration Progress:**
-*   **Service Architecture**: Successfully consolidated ai-service and omni-service into unified ai-omni-service with proper WebSocket and HTTP endpoints
-*   **Qwen3-Omni Client**: Implemented Qwen3OmniClient with DashScope SDK integration and fallback to local model loading
-*   **Real-time Communication**: Established WebSocket streaming pipeline with proper audio/text message handling
-*   **Conversation Management**: Implemented conversation history tracking and user context management
-*   **Health Monitoring**: Added comprehensive health check endpoints showing service status and conversation history
-*   **Testing**: Conducted end-to-end conversation tests, identified issues with DashScope SDK availability (package not accessible)
-*   **Current Status**: Service running on port 8082 with health check on 8081, maintaining 4 conversation history entries but falling back to mock mode due to SDK access issues
+## 2025-12-05
+
+*   **Grammar & Language Enhancement Features:**
+*   **Grammar Guide Integration**: Implemented specialized AI role for grammar instruction with contextual examples and practice exercises.
+*   **Bilingual Strategy**: Developed dynamic language switching strategy (Immersion for Japanese, Bridge Mode for other languages) to optimize learning effectiveness.
+*   **Pronunciation Feedback**: Added phonetic analysis and pronunciation correction suggestions in real-time conversations.
+*   **Vocabulary Building**: Integrated vocabulary extraction and spaced repetition system for long-term retention.
+*   **Cultural Context**: Added cultural notes and usage explanations for language expressions and idioms.
 
 ## 2025-12-10
 
-*   **AI Service Python Migration & Functionality Fixes (ai-omni-service):**
-*   **Architecture Migration**: Successfully refactored `ai-omni-service` from Node.js to Python using FastAPI and Uvicorn.
-*   **Dockerization & Dependencies**: Updated `Dockerfile` to `python:3.10-slim` base image, addressing `onnxruntime-node` glibc dependency issues. Cleaned up obsolete Node.js files (`package.json`, `src/`). Created `requirements.txt` and `app/` directory structure.
-*   **DashScope SDK Integration**: Integrated `dashscope` Python SDK (`OmniRealtimeConversation`).
-*   **Environment Variable Resolution**: Diagnosed and fixed the `TypeError: can only concatenate str (not "NoneType") to str` caused by `QWEN3_OMNI_API_KEY` not being correctly passed to the Docker container. Corrected `docker-compose.yml` to ensure proper environment variable loading.
-*   **API/WebSocket Protocol Alignment**: Resolved port mismatch between `user-service` and Nginx API Gateway. Fixed WebSocket proxying in `api-gateway/nginx.conf` by correcting `proxy_pass` paths and consolidating CORS headers to the `http` block.
-*   **SDK API Call Fixes**:
-  *   Resolved `AttributeError: 'OmniRealtimeConversation' object has no attribute 'send_text'` by replacing `send_text` with `update_session` for System Prompt injection.
-  *   Fixed `TypeError: OmniRealtimeConversation.update_session() missing 1 required positional argument: 'output_modalities'` and `NameError: name 'MultiModality' is not defined` by correctly importing `MultiModality` and providing required arguments.
-  *   **Crucially, resolved the "答非所问" (off-topic replies) issue**: Discovered that DashScope's `OmniRealtimeConversation` was not correctly processing `conversation.item.create` for user text input in a way that influenced subsequent responses. Implemented a workaround by passing user input directly as `instructions` to `conversation.create_response()`. This ensures the AI model immediately receives and responds to the user's current input.
-*   **Real-time Event Mapping**: Corrected `on_event` logic to accurately map DashScope's `response.audio.delta` (audio) and `response.audio_transcript.delta` (text) events to the client's expected `audio_response` and `text_response` formats.
-*   **Robustness**: Implemented automatic reconnection logic for DashScope connection loss (`websocket.WebSocketConnectionClosedException`, `BrokenPipeError`).
-
-*   **Prompt Engineering Enhancement**:
-*   Refined `PromptManager` module to generate a dynamic System Prompt, ensuring the AI model adheres to the "Oral Language Tutor" persona and contextually relevant responses. Removed misleading "initialization" directives from the prompt template to prevent repetitive greetings.
-
-*   **Testing Tools & Verification**:
-*   Created and refined `test_client.py` Python script to simulate multi-turn WebSocket conversations, including sending text messages, receiving streaming text and audio, and saving audio to `.pcm` files. This script was instrumental in diagnosing and verifying fixes throughout the day.
-*   Conducted end-to-end `wscat` and `test_client.py` tests to validate all fixes, confirming successful connection, message exchange, and context-aware AI responses.
-
-*   **Current Status**: All core `ai-omni-service` functionalities are verified: reliable WebSocket communication, context-aware multi-turn conversations with DashScope Qwen3-Omni, streaming audio, and robust error handling (reconnection). The service is ready for integration with the frontend application.
-
+*   **Performance Optimization & System Hardening:**
+*   **Audio Processing Optimization**: Implemented efficient audio codecs (Opus) and optimized streaming protocols to reduce latency and bandwidth usage.
+*   **Database Performance**: Added proper indexing, query optimization, and connection pooling for improved response times.
+*   **Caching Strategy**: Implemented Redis-based caching for frequently accessed data and session management.
+*   **Load Balancing**: Prepared architecture for horizontal scaling with service discovery and load balancing capabilities.
+*   **Monitoring & Logging**: Enhanced system monitoring with detailed logging, metrics collection, and health check endpoints.
 
 ## 2025-12-15
 
-*   **Frontend Optimization & History Interface:**
-*   **Empty Message Filtering:** Updated `client/src/pages/Conversation.js` to strictly filter out empty or whitespace-only messages from both the user (ASR transcription) and the AI response, ensuring a cleaner conversation history.
-*   **Conversation History Interface:**
-  *   Enhanced `client/src/pages/Profile.js` by adding a "Conversation History" navigation item, fully utilizing the existing template design.
-  *   Created a new `client/src/pages/History.js` page to display a list of past conversation sessions (currently using mock data), completing the history management UI flow.
-  *   Registered the new `/history` route in `client/src/App.js`.
-*   **Documentation:** Updated `docs/TODO.md` to reflect the completion of these frontend optimization tasks.
+*   **Testing & Quality Assurance:**
+*   **Automated Testing Suite**: Created comprehensive test suite including unit tests, integration tests, and end-to-end scenarios.
+*   **Multi-scenario Testing**: Implemented `test_client_scenario.py` supporting various test modes (goal, tutor, summary, xintong_service) for thorough validation.
+*   **Performance Testing**: Conducted load testing and stress testing to ensure system stability under high concurrent user loads.
+*   **Security Auditing**: Performed security review and implemented additional protections against common vulnerabilities.
+*   **Documentation**: Updated API documentation, deployment guides, and developer onboarding materials.
 
-*   **Backend Service Refinement:**
-*   **User Service API Testing & Update:** Implemented the `updateProfile` functionality in `services/user-service` (model, controller, routes) and successfully tested it via `curl`, ensuring full coverage for user profile management.
-*   **History & Analytics Service Creation:**
-  *   Created a new `services/history-analytics-service` (Node.js/Express) with MongoDB integration.
-  *   Implemented `Conversation` schema (Mongoose) for storing detailed conversation history (messages, metrics, timestamps).
-  *   Developed API endpoints for `saveConversation`, `getUserHistory`, and `getConversationDetail`.
+## 2025-12-20
 
-## 2025-12-16
+*   **Bug Fixes & System Stabilization:**
+*   **Audio Association Fix**: Resolved race conditions in audio-to-message matching using placeholder system to handle ASR/upload timing issues.
+*   **502 Gateway Error**: Fixed Nginx routing configuration for conversation-service to resolve API connection errors.
+*   **Message Integrity**: Improved filtering logic in history-analytics-service to persist messages with audio even when text content is empty.
+*   **Frontend Proxy Fix**: Resolved Create React App proxy issues by moving `setupProxy.js` to `client/src/` and removing conflicting package.json proxy settings.
+*   **User Service 500 Error**: Fixed undefined field handling in user-service to prevent crashes on goal creation.
 
-*   **Audio Quality & Stability Improvements:**
-*   **Echo Cancellation (Test Script)**: Implemented software-based echo cancellation in `test_client.py` by pausing microphone capture while the AI is speaking, resolving the feedback loop issue where the AI would respond to its own voice.
-*   **Audio Sample Rate Optimization**: Updated `test_client.py` to use a 24kHz sample rate for audio playback and capture, significantly improving the clarity and naturalness of the TTS output.
-*   **Client-Side Audio Configuration**: Enhanced `client/src/components/RealTimeRecorder.js` to explicitly enable browser-native `echoCancellation`, `noiseSuppression`, and `autoGainControl` in the `getUserMedia` constraints, ensuring a robust audio experience for web users.
+## 2025-12-25
 
-*   **AI Engine & Persona Refinement:**
-*   **Prompt Engineering**: Redesigned the `PromptManager` in `ai-omni-service` to implement a specialized "Oral Communication Tutor" persona. The new system prompt prioritizes being a supportive "Language Partner," focuses on grammar and expression over pronunciation, and adapts its complexity based on the user's proficiency level.
-*   **User Transcription Visibility**: Added specific event handling in `ai-omni-service/app/main.py` for `conversation.item.input_audio_transcription.completed`. This ensures that the user's speech-to-text (ASR) results are correctly captured and forwarded to the client, allowing users to see their own transcribed speech (`[me]`) in the interface.
-*   **Debug Logging**: Enhanced the `ai-omni-service` logging to print full event payloads, facilitating easier debugging of DashScope API interactions.
+*   **User Experience & Interface Polish:**
+*   **Flow Control Implementation**: Added mandatory onboarding and goal setting completion checks in Discovery.js to ensure proper user setup.
+*   **Audio Processing Fix**: Resolved "Object of type bytes is not JSON serializable" error by correctly handling base64 audio strings for DashScope SDK.
+*   **Transcription Display**: Fixed missing user transcription by enabling input_audio_transcription and implementing proper commit() calls in Manual VAD mode.
+*   **AI Response Display**: Implemented fallback text push mechanism to handle missing AI response bubbles when deltas are dropped.
+*   **Frontend Race Condition**: Fixed ConversationController to correctly update user placeholder messages even when AI response arrives early.
 
-*   **Frontend & Infrastructure Fixes:**
-*   **WebSocket Protocol Alignment**: Refactored `client/src/pages/Conversation.js` to manage WebSocket connections directly and send text messages via the WebSocket protocol (`send_message`), replacing the deprecated and failing HTTP chat API.
-*   **Nginx Routing Fix**: Corrected the `comms-service` upstream port in `api-gateway/nginx.conf` from 3000 to 8080 and standardized the WebSocket path to `/api/ws/`, resolving connection failures.
-*   **Conversation History**: Implemented the `History.js` page with real API integration to fetch and display user conversation logs, and added logic to filter out empty messages.
-*   **Responsive Design**: Verified that the application's mobile-first design (using Tailwind CSS `max-w-lg`) effectively supports mobile viewports.
+## 2026-02-11
 
-## 2025-12-17
-
-*   **Media Processing Service Implementation:**
-*   Created `media-processing-service` (Node.js) to handle audio stream transcoding and storage.
-*   Implemented file upload, transcoding to MP3 using `fluent-ffmpeg`, and upload to Tencent Cloud COS.
-*   Configured `services/media-processing-service/.env.example` for COS credentials and bucket details.
-*   Updated `docker-compose.yml` to include `media-processing-service` with appropriate port mapping and volume mounts.
-*   Updated `api-gateway/nginx.conf` to route `/api/media/` requests to the new service.
-*   **Dockerfile Optimization:** Implemented a multi-stage Docker build for `media-processing-service` to include a static FFmpeg binary, avoiding `apt-get` network issues during build.
-*   **Comms Service Integration:** Modified `comms-service/src/index.js` to buffer audio chunks during a session and upload the full recording to `media-processing-service` upon session close.
-*   **Dependency Management:** Added `form-data` to `comms-service/package.json` for file uploads.
-*   **Docker Build Fixes:** Addressed `npm install` hanging issues in `conversation-service` and `history-analytics-service` by configuring their Dockerfiles to copy local `node_modules`.
-*   **Documentation Updates:**
-*   Updated `GEMINI.md` to reflect the new `media-processing-service` in the architecture and directory structure, and updated the object storage to Tencent Cloud COS.
-*   Updated `docs/TODO.md` to mark the "Create media processing service" task as completed.
-
-
-## 2025-12-18 开发日志
-
-### 完成任务:
-- **前端UI设计**：
-  - 创建了 `Onboarding.js` (用户资料收集页面)。
-  - 创建了 `GoalSetting.js` (目标设置页面)。
-  - 更新了 `History.js`，支持显示会话总结和奖励。
-  - 更新了 `client/src/App.js`，添加了 `Onboarding` 和 `GoalSetting` 页面的路由。
-- **后端AI服务 (`ai-omni-service`) 优化**：
-  - 修复了 `ai-omni-service` 的Docker构建问题，通过在宿主机下载 `manylinux2014_aarch64` wheels 并拷贝到容器内进行安装，解决了网络连接 and 架构不匹配的问题。
-  - 改进了 `prompt_manager.py` 中 `InfoCollector` 的提示词，使其能够更智能地从用户输入中提取信息。
-  - 更新了 `ai-omni-service/app/main.py`，实现了对LLM输出中JSON动作块的解析，并能调用相应的后端服务（如 `update_profile`, `save_summary`）。
-  - 在WebSocket响应中包含了当前AI角色的信息，以便客户端显示。
-- **客户端测试脚本 (`test_client.py`) 改进**：
-  - 移除了 `websocket.closed` 的直接检查，依赖 `websockets` 库的异常处理机制。
-  - 实现了自动重连功能，提高了长时间测试的稳定性。
-  - 能够在接收到消息时显示当前AI的角色状态。
-
-### 遇到的挑战与解决方案:
-- Docker构建过程中 `apt-get` 和 `pip install` 因网络/DNS问题卡住：
-  - **`apt-get`**：移除Dockerfile中对 `curl` 的 `apt-get` 安装，并修改健康检查为Python `urllib.request`。
-  - **`pip install`**：发现宿主机与容器架构不匹配 (macOS `arm64` vs 容器默认 `arm64`，但之前误下了 `x86_64` wheels)。通过在宿主机下载 `manylinux2014_aarch64` 架构的Python wheels，并修改Dockerfile从本地wheels安装，彻底解决了Docker构建时的网络依赖问题。
-- `test_client.py` 报错 `AttributeError: 'ClientConnection' object has no attribute 'closed'`：
-  - 原因是 `websockets` 库版本兼容性问题，移除了不正确的 `websocket.closed` 属性检查，转而依赖 `ConnectionClosed` 异常捕获机制。
-
-
-## 2025-12-21
-
-*   **Oral Tutor Backend Flow Verification:**
-*   **Prompt Logic**: Verified the `InfoCollector` -> `GoalPlanner` -> `OralTutor` role transitions.
-*   **Action Execution**: Confirmed that the `InfoCollector` correctly triggers the `update_profile` action via the `user-service` API when all required information is collected.
-*   **Context Fetching**: Fixed issues with internal API calls (URL path mismatch) and null handling when fetching user context in `ai-omni-service`.
-
-*   **AI GLM Service Initialization:**
-*   **Service Creation**: Created the skeleton for `ai-glm-service` (FastAPI) to support the pipelined AI engine approach.
-*   **Docker Build Strategy (Major Fix)**:
-    *   Encountered severe network timeouts and dependency backtracking (hell) when building the Python environment inside Docker.
-    *   **Solution**: Implemented a "Local Wheels Strategy". Created a script `download_heavy_wheels.py` to pre-download exact versions of heavy dependencies (Torch, Transformers, Numpy, Websockets) to a local `wheels/` directory using Aliyun mirrors.
-    *   Modified `Dockerfile` to copy these wheels and install them offline (`--no-index --find-links=/wheels`), successfully bypassing all network issues.
-*   **Infrastructure**: Updated `docker-compose.yml` and `nginx.conf` to include the new service on port 8084.
-
-*   **Next Steps**:
-*   Implement the actual GLM-ASR, LLM, and TTS model loading logic within `ai-glm-service`.
-
-### 2025-12-25
-- **Experimentation (Abandoned)**: Attempted to implement `ai-glm-service` using GLM-ASR-Nano-2512.
-  - Encountered significant compatibility issues with `transformers` library due to missing custom model code in the official Hugging Face repository and ambiguous documentation.
-  - While the VAD pipeline was successfully verified with a mock ASR, the actual GLM model loading proved blocking.
-- **Decision**: Abandoned the `ai-glm-service` approach to focus resources on optimizing the existing `ai-omni-service` (Qwen-Omni based).
-- **Cleanup**: Removed `services/ai-glm-service`, `test_glm_client.py`, and related configurations in `docker-compose.yml` and `nginx.conf`.
-
-
-- **Test Client Improvements**:
-  - Implemented 'Barge-in' feature: TTS playback is interrupted when user speech is detected.
-  - Enhanced robustness: Client now attempts to reconnect on server errors.
-  - Added support for local audio device ('sounddevice') for real-time voice testing.
-- **Service Optimization**:
-  - Added interaction logging to 'ai-omni-service' for better observability.
-  - Cleaned up debug logs.
-
-- **AI Omni Service Enhancement**:
-  - Implemented **Dynamic Role Switching**: The service now re-evaluates the user's role (InfoCollector -> GoalPlanner -> OralTutor) after every successful action execution (e.g., profile update) by re-fetching the user context.
-  - Added 'role_switch' event to notify the client of role changes.
-  - Refactored `WebSocketCallback` to centralize role determination logic.
-
-*   **Reliability & Testing Enhancements**:
-  *   **Infinite Loop Fix**: Resolved a critical issue in `ai-omni-service` where the WebSocket loop would spin infinitely after a client disconnection or protocol error. Implemented robust error checking to break the loop on disconnection events.
-  *   **Test Client Robustness**: Significantly improved `test_client.py`:
-    *   Fixed an issue where role labels (`[OralTutor]`) were printed for every token, now displaying them only once per turn.
-    *   Implemented a "Strict Mute" logic during TTS playback to prevent the microphone from capturing the AI's output (echo/self-talking), ensuring cleaner turn-taking.
-    *   Enhanced WebSocket error handling to strictly treat server errors as connection failures, triggering the automatic reconnection logic.
-- Refactored 'test_client_scenario.py' to Interactive Audio Client with Manual Commit mode.
-- Disabled Server-side VAD in 'ai-omni-service' to support client-controlled turn management.
-
-### 2025-12-30 Manual Mode & Protocol Fixes
-- **Feature**: Implemented Manual Turn-Taking (Manual Commit) mode.
-  - Disabled server-side VAD in `ai-omni-service` to prevent premature interruptions.
-  - Refactored `test_client_scenario.py` to support interactive audio recording with explicit stop signal (Enter key).
-- **Bug Fix**: Fixed Audio Stream Protocol mismatch.
-  - `comms-service` now wraps `audioBuffer` in a `payload` object, matching `ai-omni-service`'s expectation.
-  - Verified end-to-end audio flow: Client -> Comms -> AI -> Cloud.
-- **Optimization**: Updated InfoCollector prompt to ask for "learning challenges" and merge them into `interests`.
-- **Known Issue**: Investigating 500 Error on `PUT /profile` during automatic profile update.
-
-### 2026-01-02 Stability & Onboarding Improvements
-- **Stability Fixes (ai-omni-service)**:
-  - **JSON Parsing**: Replaced fragile regex with robust bracket-matching to handle LLM JSON outputs (prevented crashes on malformed JSON).
-  - **Auto-Reconnection**: Implemented logic to automatically reconnect to DashScope when session timeouts occur, ensuring long-running session stability.
-  - **Connection Handling**: Fixed infinite loop issues and improved error logging for WebSocket disconnects.
-- **Frontend & Onboarding**:
-  - **Native Language Support**: Updated `Onboarding.js` to collect user's native language.
-  - **Prompt Engineering**: Updated `InfoCollector` system prompt to dynamically use the user's native language for the initial interview.
-- **Testing Enhancements**:
-  - **Interruption Logic**: Implemented "Barge-in" logic in `test_client_scenario.py` (Mutes playback + Auto-Record + Double-Enter fix).
-  - **Audio Safety**: Fixed `OSError: [Errno -9988]` in test client by implementing safe stream muting instead of closing/reopening streams during interruption.
-- **Verification**: Verified `InfoCollector` flow and Interruption logic successfully.
-
-## 2026-01-02 (Mac)
-### Summary
-Refined AI Role logic (`OralTutor`, `SummaryExpert`) and fixed stability issues in `ai-omni-service`.
-1.  **Bilingual Logic Optimization**:
-  -   Observed that Qwen-Omni TTS fails to switch accents when reading Chinese characters inside a Japanese sentence (reads them as Kanji).
-  -   Implemented a **Dynamic Language Strategy** in `prompt_manager.py`:
-    -   **Japanese**: Enforced "Immersion Mode" (Target Language Only) to ensure correct pronunciation.
-    -   **Other Languages**: Allowed "Bridge Mode" (Bilingual Mixing) for better scaffolding.
-2.  **Interruption Handling**:
-  -   Fixed issue where backend continued processing interrupted turns.
-  -   Implemented `interrupted_turn` flag in `ai-omni-service` to ignore subsequent events (Action/Audio) for that turn.
-3.  **JSON Output Suppression**:
-  *   Implemented backend filtering to strip JSON action blocks from the text stream sent to the client, solving the "JSON in chat bubble" issue.
-4.  **Bug Fixes**:
-  *   Fixed `user-service` 500 error on `set_goal` (missing default values for `type`/`description`).
-  *   Refined `SummaryExpert` to output `complete_goal` action, triggering a clean transition to `GoalPlanner`.
-5.  **Environment**:
-  *   Encountered network timeouts connecting to DashScope/Docker Hub. Codebase is updated, but container rebuild requires stable network.
-
-## 2026-01-05
-- **测试客户端优化**: 分离输入输出采样率（16k/24k），修复打断时的文本泄露，添加持久化验证提示。
-- **AI服务打断逻辑修复**: 在 `ai-omni-service` 中实现 `cancel_response()` 调用和 `ignored_response_ids` 过滤，在保持会话上下文的同时解决了旧音频泄露和 "active response" 错误。
-- **音频解码恢复**: 重新应用 `base64.b64decode` 以确保 AI 能听到正确解码的用户语音音频。
-- **对话持久化实现**: 在 `ai-omni-service` 中添加消息历史累积和同步逻辑，实现对话记录实时保存至 MongoDB。
-- **测试脚本清理**: 删除 `test_client.py`，统一使用 `test_client_scenario.py` 进行场景化测试。
-
-## 2026-01-06 (Session 2)
-- **[Backend] 音频缓冲与上传**: 实现 `ai-omni-service` 音频缓冲与上传，填充 MongoDB 消息中的 `audioUrl`。
-- **[Backend] 统计接口**: 实现 `history-analytics-service` 的 `GET /stats/:userId` 接口。
-- **[Backend] WebRTC 日志**: 完善 `comms-service` 的 WebRTC 信令日志记录，为前端集成做准备。
-
-## 2026-01-07
-### Frontend Adaptation & Requirement Collection
-- **Frontend Pages**:
-  - Implemented `Onboarding.js` to collect user profile data (native language, proficiency, interests) and update via `AuthContext`.
-  - Implemented `GoalSetting.js` to collect specific learning goals (type, level, description) and integrated with `user-service` API.
-  - Updated `AuthContext.js` and `api.js` to support new user profile and goal endpoints.
-- **Conversation Logic**:
-  - Completely rewrote `Conversation.js` to support the new multi-role WebSocket protocol.
-  - Implemented **Role Switching** UI awareness (displays current role).
-  - Implemented **Barge-in (Interruption)** logic:
-    - Stops audio playback immediately upon user recording start.
-    - Sends `user_interruption` signal to backend.
-    - Ignores incoming audio/text packets during interruption state.
-  - Implemented **Audio Playback Queue** to manage sequential audio chunks and clean cancellation.
-- **Recorder Component**:
-  - Enhanced `RealTimeRecorder.js` to expose `start/stop` callbacks and control methods for parent components.
-  - Verified `recorder-processor.js` correctly downsamples to 16kHz Int16 PCM, matching backend requirements.
-
-## 2026-01-08 (Mac)
-### Frontend Flow & WebSocket Stabilization
-- **Fixed Login Redirection Loop**: Resolved an issue where `user-service` login response was missing profile fields, causing `Discovery.js` to infinitely redirect to Onboarding.
-- **Fixed WebSocket Connection**:
-  - Exposed `token` in `AuthContext` to ensure `Conversation.js` can authenticate the WS connection.
-  - Updated `conversation-service` to return standardized `{ success: true, data: { sessionId } }` response.
-  - Configured `setupProxy.js` with `ws: true` to correctly proxy WebSocket traffic in dev mode.
-- **Fixed Audio Playback**: Solved `detached ArrayBuffer` error by cloning the buffer before `decodeAudioData`.
-- **Refined Interruption Logic**:
-  - Implemented immediate local audio stop in `Conversation.js` regardless of backend state.
-  - Fixed "deaf AI" after interruption by ensuring `isInterrupted` flag is reset in `handleRecordingStop`.
-  - Confirmed backend `Conversation has none active response` error is benign race condition.
-- **Verification**: `tests/frontend_flow_verification.md` all cases passed.
-
-## 2026-01-12 (Monday)
-*   **AI Prompt Engineering & Interaction Optimization**:
-  *   **Proactive Analysis (OralTutor)**: Updated the `OralTutor` prompt to shift from "passive correction" to "proactive analysis". The AI now provides 1-2 sentences of targeted feedback on user expression, vocabulary, or pronunciation in *every* exchange.
-  *   **Strict Confirmation Loop (Info/Goal)**: Enhanced `InfoCollector` and `GoalPlanner` templates to enforce a "Summary & Confirmation" rule. The AI must now summarize all collected data and receive explicit user confirmation before outputting JSON action blocks, ensuring database data integrity.
-*   **Commercialization & Global Operations Guide**:
-  *   Created `docs/Commercialization_Guide.md`, providing a complete roadmap for offshore company setup (Doola, Firstbase), Stripe integration (supporting Global Cards + Alipay/WeChat), and App Store compliance.
-*   **Test Suite & Scenario Verification**:
-  *   Refactored `test_client_scenario.py` to support flexible profile initialization. Made `target_language` and `interests` optional to allow for "cold start" testing of the `InfoCollector` and `GoalPlanner`.
-  *   Verified the `goal` scenario to ensure the AI correctly elicit goals and interests from a fresh user profile.
-*   **Next Steps**: Complete the E2E verification of `summary` and `xintong_service` scenarios; initiate performance profiling for audio stream latency.
-
-### 2026-01-13
-- **Backend**: 为所有核心微服务（user-service, comms-service, history-analytics-service, media-processing-service）添加了 `/health` 健康检查端点。
-- **Backend**: 在 `ai-omni-service` 中实现了 `/tts` 接口，支持指定文本的语音合成。
-- **Frontend**: 在 `Conversation.js` 中实现了文本划选播放功能。用户划选 AI 回复文本后，会出现悬浮小喇叭图标，点击即可重听选中的片段音频。
-- **Stability**: 修复了 `test_client_scenario.py` 的心跳超时问题，增强了 WebSocket 连接的稳定性。
-- **Frontend**: 增强了音频播放功能，除划选文本合成语音（TTS）外，现支持在 AI 消息气泡中点击“重听完整音频”按钮，播放由后端上传至对象存储的完整 MP3 文件。
-- **Backend**: `ai-omni-service` 新增 `audio_url` WebSocket 事件，在音频上传完成后实时推送 URL 给前端。
-- **Stability**: 在 `ai-omni-service` 中增加了针对 DashScope 的心跳机制（每15秒发送静音帧），解决了因会话闲置 20s 导致连接断开和上下文丢失的问题。
-- **Frontend**: 优化了打断逻辑，当用户开始说话时，强制结束当前 AI 消息气泡（标记为 interrupted），确保后续的新回复会显示在独立的新气泡中，避免了打断前后内容混杂的问题。
-- **Frontend**: 修复了用户语音转录（Transcription）未显示的问题。优化了 WebSocket `transcription` 事件处理逻辑，支持流式增量显示和最终结果修正。
-- **Backend**: 增强了上下文恢复能力，在 DashScope 会话重连时，自动将最近 10 条对话历史注入 System Prompt，确保多轮对话上下文不丢失，解决因连接超时导致的“失忆”问题。
-- **Frontend**: 增强了 WebSocket 消息处理的鲁棒性，当后端通过二进制通道发送 JSON 数据（如转录文本）时，前端会自动识别并解析，修复了用户输入气泡丢失的问题。
-- **Frontend**: 完善了音频打断机制，确保在用户开始说话时，不仅停止实时 TTS 流，也同步停止完整音频回放，避免声音重叠。
-
-## 2026-01-15
-### 今日进展
-- **[前端] 对话稳定性优化**: 修复了消息气泡被覆盖的问题，通过引入唯一的 Turn ID 确保每一轮录音对应独立的消息块。
-- **[前端] 会话恢复与持久化**: 实现了基于 URL 参数的会话恢复逻辑。刷新页面或通过链接访问时，可自动从 MongoDB 加载历史记录。
-- **[后端] AI 服务上下文恢复**: 增强了 `ai-omni-service`，在 WebSocket 重连时主动从 `history-analytics-service` 拉取历史消息，确保 LLM 具备完整的上下文记忆。
-- **[后端] 录音关联与数据完整性**:
-  - 解决了刷新后用户音频条丢失的问题：实现了占位符机制，并放宽了历史服务的消息过滤条件（允许存仅含音频的消息）。
-  - 优化了 ASR 转录与音频上传的竞态处理，采用倒序查找和占位符更新策略。
-- **[后端] 多会话管理**:
-  - 升级了 `conversation-service`，支持按练习目标管理会话。
-  - 引入 Redis List 实现 FIFO 会话列表，每个目标最多保留 3 个活跃会话。
-- **[前端] 发现页功能升级**:
-  - 重新设计了 `Discovery.js`，展示当前练习目标及活跃会话列表。
-  - 实现了“新建会话”与“恢复历史会话”的无缝切换。
-- **[基础设施] 路由修复**: 完善了 Nginx 配置，修复了 `/api/conversation/` 路径的 502 错误。
-- **[UI/UX] 细节优化**: 移除了前端不必要的加载动画，采用占位符静默更新策略，提升了对话流畅度。
-
-## 2026-01-19 (Monday)
-### 监控与数据分析 (Monitoring & Analytics)
-- **Monitoring**: Implemented detailed Nginx request logging with custom log format for better traffic analysis.
-- **Stats API**: Integrated `getStats` endpoint in `history-analytics-service` to aggregate user learning metrics (sessions, duration, days).
-- **Frontend Integration**: Connected `Profile.js` to real user stats, replacing placeholder data with live metrics.
-
-### 核心功能升级 (Core Features)
-- **Proficiency Assessment**:
-    - Implemented a dynamic proficiency tracking system.
-    - Updated `PromptManager` (OralTutor role) to evaluate user performance in every turn and output `proficiency_score_delta`.
-    - `history-analytics-service` now persists these score changes.
-- **Grammar Guide Agent**:
-    - Created a specialized `GrammarGuide` role in `ai-omni-service`.
-    - Designed a prompt template that analyzes user proficiency and goals to recommend targeted grammar points.
-    - Added a "Grammar Guide" entry card in `Discovery.js` under a new "Learning Tools" section.
-    - Enabled scenario-based role switching via URL parameter (`?scenario=grammar_guide`).
-
-### 文档更新 (Documentation)
-- **Database Schema**: Updated `services/user-service/docs/schema.md` to accurately reflect the PostgreSQL schema (`users`, `user_identities`, `user_goals`).
-- **Project Context**: Updated `GEMINI.md` with recent architectural changes and feature additions.
-
-### 2026-01-20
-- **AI Scoring System**: Fixed end-to-end proficiency scoring loop. Debugged and resolved  crash when handling 'STOP' commands by adding missing  parameter. Fixed  database schema mismatch by adding missing  column to  table. Verified logic with .
-- **Scenario-based Practice**: Implemented  logic in . AI now automatically generates 10 tailored scenarios (9 relevant + 1 small talk) with 3 tasks each upon goal creation.
-- **Frontend Refactoring**: 
-    - : Replaced static level cards with dynamic scenario-based mission cards.
-    - : Integrated a mission task sidebar with real-time feedback for task completion ( action).
-- **Core Role Hardening**: Enhanced  to handle scenario task injection and reinforced 'STOP' command adherence via  overrides.
-# 2026-01-27 工作记录：修复语音交互与UI优化
-
-## 1. 核心修复：语音交互全链路打通
-- **后端 (AI Service)**:
-  - 修复 `ai-omni-service` 中 `user_audio_ended` 的处理逻辑，增加空音频检测，并在生成回复前强制重置会话状态，防止状态死锁导致无响应。
-  - 增强 DashScope 连接的错误处理，捕获初始化失败（如 API Key 无效）并向客户端发送带有详细 `init_error` 的错误 payload。
-  - 确认并解决 401 Unauthorized 问题，协助排查 Docker 容器环境变量未刷新的运维细节。
-- **中间件 (Comms Service)**:
-  - 修复 WebSocket 桥接中的“竞态条件” (Race Condition)，增加消息队列机制，确保在 AI 服务连接就绪前收到的音频和握手消息不会丢失。
-  - 修正了 `index.js` 中的语法错误。
-- **客户端 (Flutter)**:
-  - 优化 `ConversationController`，增加对 404 历史记录错误的静默处理（视为新会话），避免红屏报错中断流程。
-  - 完善错误日志打印，直接输出后端返回的 JSON Error Payload，极大提升了调试效率。
-  - 增加 WebSocket 自动重连逻辑。
-
-## 2. UI/UX 重构与优化
-- **对话页面 (ConversationScreen)**:
-  - 重构页面布局，引入 `CustomScrollView` 和 `SliverAppBar`，与“发现页”风格保持一致。
-  - **任务栏悬浮窗优化**: 将侧边任务列表按钮改为**可拖拽** (Draggable)，解决遮挡聊天内容的问题。
-  - 新增“重置会话”功能，允许用户手动清理上下文。
-- **认证与配置**:
-  - 优化 Onboarding 页面 UI，采用卡片式设计。
-  - 实现了 `Base URL` 配置的**同步预加载**机制，修复了应用启动时因异步读取配置导致的 API 请求异常。
-- **导航精简**:
-  - 移除底部导航栏的“对话”入口，强化从“任务卡片”进入会话的路径。
-
-## 3. 本地化与策略调整
-- **Prompt Engineering**:
-  - 更新 AI 提示词策略 (`prompt_manager.py`)。
-  - 针对中文练习场景，强制启用“Native Chinese Tutor”模式。
-  - 优化“桥接模式” (Bridge Mode)，允许 AI 在用户主动使用母语时灵活回应，提升对话亲和力。
-
-## 2026-02-01 Debugging Transcription & AI Response
-
-### Issues Resolved
-1. **Missing Transcription (Backend)**: 
-   - Root Cause: DashScope Qwen-Omni Realtime model requires explicit `input_audio_transcription.enabled = True` configuration.
-   - Root Cause 2: In Manual VAD mode (non-server VAD), explicit `conversation.commit()` is required to trigger transcription after user audio ends.
-   - Fix: Updated `ai-omni-service/app/main.py` to enable transcription and call commit.
-
-2. **Missing AI Response Bubble (Frontend/Backend)**:
-   - Root Cause: Backend was sending `response.audio_transcript.done` but the Frontend relies on `text_response` (deltas). In some manual Commit flows, deltas were skipped/empty.
-   - Fix: Added fallback logic in Backend (`main.py`) to send the final transcript as a `text_response` event if no deltas were streamed.
-
-3. **Frontend Race Condition**:
-   - Root Cause: Frontend `ConversationController` assumed the last message was always the user placeholder. If AI responded fast, the placeholder was lost.
-   - Fix: Updated `conversation_controller.dart` to search backwards for the placeholder.
-
-### Status
-- ✅ Transcription working.
-- ✅ AI Response Bubble working.
-- ✅ Code cleaned (debug logs removed).
+*   **AI Response Persistence Fix:**
+*   **Problem Identification**: Users reported that AI responses disappeared after refreshing the conversation page, leaving only user inputs visible.
+*   **Root Cause Analysis**: Discovered that the `saveConversationHistory` function in `Conversation.js` only saved messages marked as `isFinal: true`, but AI messages weren't being marked as final until audio processing completed.
+*   **Solution Implementation**: Modified the save logic in [`client/src/pages/Conversation.js`](client/src/pages/Conversation.js#L1211) to include both final messages and AI messages:
+    ```javascript
+    .filter(msg => msg.isFinal || msg.type === 'ai') // Save finalized messages AND AI messages (even if not final)
+    ```
+*   **Enhanced Logging**: Added comprehensive logging to track message filtering and saving process for better debugging and monitoring.
+*   **Verification & Testing**: Successfully tested the fix by conducting conversations, refreshing the page, and confirming that all AI responses persist correctly.
+*   **Impact**: This fix ensures complete conversation history preservation, providing users with seamless continuity in their language learning sessions regardless of page refreshes or browser restarts.

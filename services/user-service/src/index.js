@@ -19,6 +19,12 @@ async function initStripe() {
     console.log('Stripe schema ready');
 
     const stripeSync = await getStripeSync();
+    
+    // If stripeSync is null, it means Stripe keys were not available
+    if (!stripeSync) {
+      console.log('Stripe not configured, skipping webhook and sync setup');
+      return;
+    }
 
     const replitDomains = process.env.REPLIT_DOMAINS;
     if (replitDomains) {

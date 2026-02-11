@@ -1,6 +1,7 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { conversationAPI, aiAPI, userAPI } from '../services/api';
+import { getAuthHeaders } from '../services/api';
 import RealTimeRecorder from '../components/RealTimeRecorder';
 import { useAuth } from '../contexts/AuthContext';
 import AudioBar from '../components/AudioBar'; // Import the new AudioBar component
@@ -24,11 +25,86 @@ function Conversation() {
   const [sessionId, setSessionId] = useState(null);
   const [selection, setSelection] = useState({ text: '', x: 0, y: 0, visible: false });
   const [isSynthesizing, setIsSynthesizing] = useState(false);
+  const [welcomeMessageShown, setWelcomeMessageShown] = useState(false); // Track if welcome message has been shown
+
+  // Default scenario templates
+  const DEFAULT_SCENARIOS = {
+    daily_conversation: [
+      { title: "Casual Greetings", tasks: ["Greet someone you just met", "Ask how someone is doing", "Make small talk about the weather"] },
+      { title: "Coffee Shop Order", tasks: ["Order your favorite drink", "Ask about menu items", "Request modifications"] },
+      { title: "Grocery Shopping", tasks: ["Ask for item locations", "Request quantity and price", "Handle checkout conversation"] },
+      { title: "Directions", tasks: ["Ask for directions to a location", "Clarify route details", "Thank for help"] },
+      { title: "Phone Call Basics", tasks: ["Answer a phone call properly", "Ask who is calling", "End a call politely"] },
+      { title: "Restaurant Dining", tasks: ["Make a reservation", "Order food from menu", "Ask for the bill"] },
+      { title: "Public Transport", tasks: ["Ask about schedules", "Buy a ticket", "Confirm your stop"] },
+      { title: "Weekend Plans", tasks: ["Discuss weekend activities", "Make suggestions", "Accept or decline invitations"] },
+      { title: "Hobbies Discussion", tasks: ["Share your hobbies", "Ask about others' interests", "Make related plans"] },
+      { title: "Small Talk (Culture)", tasks: ["Discuss local customs", "Share interesting facts", "Express opinions politely"] }
+    ],
+    business_meeting: [
+      { title: "Self Introduction", tasks: ["Introduce yourself professionally", "Share your role and company", "Exchange contact information"] },
+      { title: "Meeting Scheduling", tasks: ["Propose meeting times", "Confirm availability", "Send meeting invites"] },
+      { title: "Project Status Update", tasks: ["Summarize current progress", "Discuss blockers", "Plan next steps"] },
+      { title: "Client Presentation", tasks: ["Open a presentation", "Explain key points", "Handle Q&A"] },
+      { title: "Negotiation Basics", tasks: ["State your position", "Listen to counteroffers", "Reach a compromise"] },
+      { title: "Email Discussion", tasks: ["Reference an important email", "Clarify email contents", "Agree on follow-up actions"] },
+      { title: "Team Collaboration", tasks: ["Assign tasks to team members", "Check on task progress", "Provide feedback"] },
+      { title: "Conference Call", tasks: ["Join a video call", "Share your screen", "Wrap up the call"] },
+      { title: "Deadline Management", tasks: ["Discuss timeline constraints", "Request deadline extension", "Commit to new dates"] },
+      { title: "Professional Small Talk", tasks: ["Chat about industry news", "Discuss career journeys", "Build rapport"] }
+    ],
+    travel_survival: [
+      { title: "Airport Check-in", tasks: ["Check in for your flight", "Ask about seat preferences", "Handle baggage check"] },
+      { title: "Immigration Control", tasks: ["Answer officer questions", "Explain your trip purpose", "Provide required documents"] },
+      { title: "Hotel Reservation", tasks: ["Book a room", "Ask about amenities", "Request early check-in"] },
+      { title: "Taxi & Rideshare", tasks: ["Request a ride", "Give your destination", "Handle payment"] },
+      { title: "Asking Directions", tasks: ["Ask how to get somewhere", "Understand landmark references", "Confirm the route"] },
+      { title: "Restaurant Ordering", tasks: ["Ask for recommendations", "Order local cuisine", "Handle dietary requirements"] },
+      { title: "Shopping Abroad", tasks: ["Ask prices", "Negotiate or bargain", "Request tax refund info"] },
+      { title: "Emergency Situations", tasks: ["Ask for help", "Explain your situation", "Contact emergency services"] },
+      { title: "Sightseeing Tours", tasks: ["Book a tour", "Ask tour guide questions", "Express interest or concerns"] },
+      { title: "Cultural Small Talk", tasks: ["Discuss local culture", "Share your impressions", "Learn local expressions"] }
+    ],
+    exam_prep: [
+      { title: "Self Introduction (Exam)", tasks: ["Introduce yourself clearly", "Mention your background", "State your goals"] },
+      { title: "Describing Pictures", tasks: ["Describe a photo in detail", "Compare two images", "Express your opinion"] },
+      { title: "Opinion Questions", tasks: ["State your opinion clearly", "Give supporting reasons", "Conclude your answer"] },
+      { title: "Problem Solving", tasks: ["Identify the problem", "Suggest solutions", "Evaluate options"] },
+      { title: "Role-play Scenarios", tasks: ["Understand the situation", "Respond appropriately", "Handle follow-ups"] },
+      { title: "Discussion & Debate", tasks: ["Express agreement/disagreement", "Build on others' points", "Summarize the discussion"] },
+      { title: "Long Turn Speaking", tasks: ["Speak for 1-2 minutes fluently", "Structure your answer", "Manage your time"] },
+      { title: "Pronunciation Practice", tasks: ["Practice difficult sounds", "Work on intonation", "Reduce accent interference"] },
+      { title: "Vocabulary Expansion", tasks: ["Use academic vocabulary", "Explain complex terms", "Paraphrase effectively"] },
+      { title: "Mock Exam Practice", tasks: ["Complete a timed practice", "Self-evaluate performance", "Identify improvement areas"] }
+    ],
+    presentation: [
+      { title: "Opening Strong", tasks: ["Grab audience attention", "Introduce your topic", "Preview main points"] },
+      { title: "Explaining Data", tasks: ["Present statistics clearly", "Interpret chart information", "Draw conclusions"] },
+      { title: "Storytelling", tasks: ["Share a relevant story", "Connect to your message", "Engage emotionally"] },
+      { title: "Handling Q&A", tasks: ["Listen carefully to questions", "Provide clear answers", "Handle difficult questions"] },
+      { title: "Visual Aid Description", tasks: ["Reference your slides", "Explain diagrams", "Guide audience attention"] },
+      { title: "Transitions", tasks: ["Move between topics smoothly", "Recap previous points", "Preview next sections"] },
+      { title: "Persuasion Techniques", tasks: ["Present your argument", "Address counter-arguments", "Call to action"] },
+      { title: "Closing Impact", tasks: ["Summarize key takeaways", "End with a memorable statement", "Thank your audience"] },
+      { title: "Team Presentation", tasks: ["Coordinate with co-presenters", "Handle handoffs", "Support each other"] },
+      { title: "Impromptu Speaking", tasks: ["Speak on unexpected topics", "Organize thoughts quickly", "Deliver confidently"] }
+    ]
+  };
 
   // Scenario Tasks State
   const [tasks, setTasks] = useState(location.state?.tasks || []);
   const [completedTasks, setCompletedTasks] = useState(new Set());
-  const [showTasks, setShowTasks] = useState(false); // Can keep for toggle, but default to true if tasks exist
+  // Initialize showTasks based on whether we have tasks or scenario info
+  const [showTasks, setShowTasks] = useState(() => {
+    const searchParams = new URLSearchParams(window.location.search);
+    const scenarioFromUrl = searchParams.get('scenario');
+    const scenarioFromState = location.state?.scenario;
+    // Show tasks if we have tasks or if we have scenario info (meaning tasks might load later)
+    return tasks.length > 0 || !!scenarioFromUrl || !!scenarioFromState;
+  });
+  
+  // Track if tasks are loading to prevent showing "Loading tasks" when we know tasks exist
+  const [tasksLoading, setTasksLoading] = useState(false);
   
   // Scenario Completion State
   const [showCompletionModal, setShowCompletionModal] = useState(false);
@@ -47,12 +123,16 @@ function Conversation() {
 
   // Initialize completed tasks set and check for scenario completion
   useEffect(() => {
+      console.log('Initializing tasks state:', tasks); // Debug log
+      console.log('All scenarios length:', allScenarios.length); // Debug log
+      console.log('Tasks array details:', JSON.stringify(tasks)); // Debug log
+      
       if (tasks.length > 0) {
           const completed = new Set();
           let totalScore = 0;
           let objectTaskCount = 0;
           let completedCount = 0;
-          
+
           tasks.forEach(t => {
               if (typeof t === 'object') {
                   objectTaskCount++;
@@ -64,11 +144,17 @@ function Conversation() {
               }
           });
           setCompletedTasks(completed);
-          setShowTasks(true);
           
+          // Only show tasks if there are tasks and they haven't been completed yet
+          const hasIncompleteTasks = objectTaskCount > 0 && completedCount < objectTaskCount;
+          // Show tasks if we have tasks AND they're not all completed, OR if scenarios haven't loaded yet
+          const shouldShowTasks = tasks.length > 0 && (hasIncompleteTasks || allScenarios.length === 0);
+          setShowTasks(shouldShowTasks);
+          console.log('Set showTasks to:', shouldShowTasks, 'hasIncompleteTasks:', hasIncompleteTasks, 'allScenarios.length:', allScenarios.length);
+
           // Check if all object tasks are completed
           const allCompleted = objectTaskCount > 0 && completedCount === objectTaskCount;
-          
+
           // Trigger completion modal only once
           if (allCompleted && !completionCheckedRef.current) {
               completionCheckedRef.current = true;
@@ -76,49 +162,161 @@ function Conversation() {
               setScenarioScore(avgScore);
               setShowCompletionModal(true);
           }
+      } else {
+          console.log('No tasks to initialize'); // Debug log
+          // If no tasks but we Have scenario info, we might get tasks later
+          const searchParams = new URLSearchParams(window.location.search);
+          const scenarioFromUrl = searchParams.get('scenario');
+          const scenarioFromState = location.state?.scenario;
+          // Show tasks panel if we have scenario info (tasks might load later)
+          const shouldShowTasks = !!(scenarioFromUrl || scenarioFromState);
+          setShowTasks(shouldShowTasks);
+          console.log('Set showTasks based on scenario info:', shouldShowTasks, 'scenarioFromUrl:', scenarioFromUrl, 'scenarioFromState:', scenarioFromState);
       }
-  }, [tasks]);
+  }, [tasks, allScenarios.length, location.state?.scenario]);
 
   // Separate Effect: Fetch Tasks if missing (Page Refresh) + set scenario info
   useEffect(() => {
+      console.log('Checking for tasks on page load/refresh'); // Debug log
       const searchParams = new URLSearchParams(window.location.search);
       const scenarioParam = searchParams.get('scenario');
       // Get scenario from URL or state
-      const scenarioName = scenarioParam 
-          ? decodeURIComponent(scenarioParam) 
+      const scenarioName = scenarioParam
+          ? decodeURIComponent(scenarioParam)
           : location.state?.scenario;
-      
+
+      console.log('Scenario name from URL or state:', scenarioName); // Debug log
+      console.log('Current tasks state:', tasks); // Debug log
+
       if (scenarioName) {
           setCurrentScenarioTitle(scenarioName);
       }
-      
+
       if (scenarioName && user && token) {
+          setTasksLoading(true); // Set loading state
+          console.log('Fetching active goal to get tasks for scenario:', scenarioName); // Debug log
+          
+          // Always fetch from API to ensure we have the latest data
           userAPI.getActiveGoal().then(res => {
+              console.log('Active goal response:', res); // Debug log
+              console.log('Goal data structure:', JSON.stringify(res.goal, null, 2)); // Debug log
+              
+              let scenarios = [];
+              let goalData = null;
+              
               if (res && res.goal && res.goal.scenarios) {
-                  // Store all scenarios for navigation
-                  setAllScenarios(res.goal.scenarios);
+                  goalData = res.goal;
+                  scenarios = res.goal.scenarios;
+                  console.log('Using goal scenarios from API');
+              } else {
+                  // Fallback to default scenarios if no goal found
+                  console.log('No goal found, using default scenarios');
                   
-                  // Find current scenario index (case-insensitive)
-                  const scenarioIndex = res.goal.scenarios.findIndex(s => 
-                      s.title.trim().toLowerCase() === scenarioName.trim().toLowerCase()
-                  );
-                  if (scenarioIndex !== -1) {
-                      setCurrentScenarioIndex(scenarioIndex);
-                      setCurrentScenarioTitle(res.goal.scenarios[scenarioIndex].title);
+                  // Try to determine goal type from scenario name
+                  let goalType = 'daily_conversation'; // default
+                  if (scenarioName.toLowerCase().includes('business') || scenarioName.toLowerCase().includes('meeting')) {
+                      goalType = 'business_meeting';
+                  } else if (scenarioName.toLowerCase().includes('travel') || scenarioName.toLowerCase().includes('airport')) {
+                      goalType = 'travel_survival';
+                  } else if (scenarioName.toLowerCase().includes('exam') || scenarioName.toLowerCase().includes('test')) {
+                      goalType = 'exam_prep';
+                  } else if (scenarioName.toLowerCase().includes('presentation') || scenarioName.toLowerCase().includes('speech')) {
+                      goalType = 'presentation';
                   }
                   
-                  // Fetch tasks if missing
-                  if (tasks.length === 0 && scenarioIndex !== -1) {
-                      const activeScenario = res.goal.scenarios[scenarioIndex];
-                      if (activeScenario && activeScenario.tasks) {
-                          setTasks(activeScenario.tasks);
-                          console.log('Tasks fetched:', activeScenario.tasks);
-                      }
+                  goalData = {
+                      type: goalType,
+                      target_language: 'English',
+                      target_level: 'Intermediate',
+                      scenarios: DEFAULT_SCENARIOS[goalType] || DEFAULT_SCENARIOS.daily_conversation
+                  };
+                  scenarios = goalData.scenarios;
+              }
+              
+              // Store all scenarios for navigation
+              setAllScenarios(scenarios);
+
+              // Find current scenario index (case-insensitive)
+              const scenarioIndex = scenarios.findIndex(s =>
+                  s.title.trim().toLowerCase() === scenarioName.trim().toLowerCase()
+              );
+              console.log('Found scenario index:', scenarioIndex); // Debug log
+              if (scenarioIndex !== -1) {
+                  setCurrentScenarioIndex(scenarioIndex);
+                  setCurrentScenarioTitle(scenarios[scenarioIndex].title);
+              }
+
+              // Always set tasks from API response or default to ensure consistency
+              if (scenarioIndex !== -1) {
+                  const activeScenario = scenarios[scenarioIndex];
+                  if (activeScenario && activeScenario.tasks) {
+                      setTasks(activeScenario.tasks);
+                      console.log('Tasks fetched and set:', activeScenario.tasks);
+                      // Update showTasks to true since we now have tasks
+                      setShowTasks(true);
+                  } else {
+                      console.log('No tasks found for scenario');
+                      // Still show the task panel even if no tasks, so user knows what scenario they're in
+                      setShowTasks(true);
+                  }
+              } else {
+                  console.log('Scenario not found in available scenarios');
+                  // Try to find a similar scenario or use first one
+                  const similarScenario = scenarios.find(s => 
+                      s.title.toLowerCase().includes(scenarioName.toLowerCase()) ||
+                      scenarioName.toLowerCase().includes(s.title.toLowerCase())
+                  );
+                  if (similarScenario && similarScenario.tasks) {
+                      setTasks(similarScenario.tasks);
+                      setCurrentScenarioTitle(similarScenario.title);
+                      setShowTasks(true);
+                      console.log('Using similar scenario:', similarScenario.title);
+                  } else if (scenarios.length > 0 && scenarios[0].tasks) {
+                      // Use first scenario as fallback
+                      setTasks(scenarios[0].tasks);
+                      setCurrentScenarioTitle(scenarios[0].title);
+                      setShowTasks(true);
+                      console.log('Using first scenario as fallback:', scenarios[0].title);
+                  } else {
+                      setShowTasks(true);
                   }
               }
-          }).catch(err => console.error('Task fetch error:', err));
+          }).catch(err => {
+              console.error('Task fetch error:', err);
+              console.log('Error details:', err.message, err.stack);
+              
+              // Even if fetch fails, use default scenarios
+              console.log('Using default scenarios due to API error');
+              const defaultScenarios = DEFAULT_SCENARIOS.daily_conversation;
+              setAllScenarios(defaultScenarios);
+              
+              // Try to find matching scenario
+              const scenarioIndex = defaultScenarios.findIndex(s =>
+                  s.title.trim().toLowerCase() === scenarioName.trim().toLowerCase()
+              );
+              
+              if (scenarioIndex !== -1) {
+                  setTasks(defaultScenarios[scenarioIndex].tasks);
+                  setCurrentScenarioTitle(defaultScenarios[scenarioIndex].title);
+              } else {
+                  // Use first scenario as fallback
+                  setTasks(defaultScenarios[0].tasks);
+                  setCurrentScenarioTitle(defaultScenarios[0].title);
+              }
+              
+              setShowTasks(true);
+          }).finally(() => {
+              setTasksLoading(false); // Clear loading state
+          });
+      } else {
+          console.log('Missing scenarioName, user, or token - conditions not met for fetching tasks');
+          setTasksLoading(false); // Clear loading state if conditions aren't met
+          // Still show tasks if we have them from state
+          if (tasks.length > 0) {
+              setShowTasks(true);
+          }
       }
-  }, [user, token, location.state?.scenario]); // Run when auth is ready or state changes
+  }, [user, token, location.state?.scenario, location.search]); // Run when auth is ready, state changes, or URL search params change
   
   // Refs
   const socketRef = useRef(null);
@@ -318,8 +516,9 @@ function Conversation() {
 
   // --- Message Handler ---
   const handleJsonMessage = useCallback((data) => {
+      console.log('Received message from AI service:', data); // Debug log
       if (isInterruptedRef.current && data.type !== 'role_switch') {
-         return; 
+         return;
       }
 
       switch (data.type) {
@@ -327,9 +526,32 @@ function Conversation() {
         case 'ai_response':
           const content = data.payload || data.text;
           const responseId = data.responseId; // Capture ID
-          
+
           if (content) {
               setMessages(prev => {
+                  // Check if this is a welcome message that duplicates the initial system message
+                  const lowerContent = content.toLowerCase();
+                  const isWelcomeMessage = lowerContent.includes('hello') || 
+                                          lowerContent.includes('hi ') || 
+                                          lowerContent.includes('ready') ||
+                                          lowerContent.includes('welcome') ||
+                                          lowerContent.includes('连接成功') ||  // Chinese for "connection successful"
+                                          lowerContent.includes('开始说话') ||  // Chinese for "start speaking"
+                                          lowerContent.includes('导师') ||     // Chinese for "tutor"
+                                          lowerContent.includes('practice');
+                  
+                  // Skip duplicate welcome messages if we have conversation history
+                  // Only skip if we have other messages in the conversation (not the first message)
+                  const hasConversationHistory = prev.some(msg =>
+                    (msg.type === 'ai' && !msg.content.includes('连接AI导师') && !msg.content.includes('新会话开始')) ||
+                    msg.type === 'user'
+                  );
+                  
+                  if (isWelcomeMessage && hasConversationHistory) {
+                      console.log('Skipping duplicate welcome message:', content);
+                      return prev;
+                  }
+
                   // Find the matching AI message by responseId (search from end)
                   if (responseId) {
                       for (let i = prev.length - 1; i >= 0; i--) {
@@ -337,19 +559,24 @@ function Conversation() {
                               // Found matching message, append to it
                               const updated = [...prev];
                               updated[i] = { ...updated[i], content: updated[i].content + content };
+                              console.log('Updated existing AI message with responseId:', responseId, 'New content:', updated[i].content);
                               return updated;
                           }
                       }
                   }
-                  
+
                   // Fallback: check if last message is an in-progress AI message without responseId
                   const last = prev[prev.length - 1];
                   if (last && last.type === 'ai' && !last.isFinal && !last.responseId) {
-                      return [...prev.slice(0, -1), { ...last, content: last.content + content, responseId }];
+                      const updated = [...prev.slice(0, -1), { ...last, content: last.content + content, responseId }];
+                      console.log('Updated last AI message without responseId:', last.content + content);
+                      return updated;
                   }
-                  
+
                   // Create new AI message
-                  return [...prev, { type: 'ai', content: content, speaker: currentRoleRef.current, isFinal: false, responseId }];
+                  const newMessage = { type: 'ai', content: content, speaker: currentRoleRef.current, isFinal: false, responseId };
+                  console.log('Created new AI message:', newMessage);
+                  return [...prev, newMessage];
               });
           }
           break;
@@ -359,6 +586,7 @@ function Conversation() {
               for (let i = updated.length - 1; i >= 0; i--) {
                   if (updated[i].type === 'ai' && !updated[i].isFinal) {
                       updated[i] = { ...updated[i], isFinal: true };
+                      console.log('Marked AI message as final:', updated[i]);
                       break;
                   }
               }
@@ -368,20 +596,21 @@ function Conversation() {
           break;
         case 'task_completed':
            playSuccessSound();
-           
+
            // Re-fetch the latest goal state from DB to sync task progress
            userAPI.getActiveGoal().then(res => {
                if (res && res.goal && res.goal.scenarios) {
                    const searchParams = new URLSearchParams(window.location.search);
                    const currentScenarioTitle = searchParams.get('scenario') || location.state?.scenario;
-                   
+
                    if (!currentScenarioTitle) return;
 
                    const activeScenario = res.goal.scenarios.find(s => s.title.trim() === currentScenarioTitle.trim());
-                   
+
                    if (activeScenario && activeScenario.tasks) {
                        setTasks(activeScenario.tasks);
-                       
+                       console.log('Updated tasks from backend:', activeScenario.tasks);
+
                        // Re-calculate completed set
                        const newCompleted = new Set();
                        activeScenario.tasks.forEach(t => {
@@ -390,7 +619,7 @@ function Conversation() {
                            }
                        });
                        setCompletedTasks(newCompleted);
-                       
+
                        // Show toast
                        const completedTask = activeScenario.tasks.find(t => t.status === 'completed' && !completedTasks.has(t.text));
                        const toastMsg = completedTask ? `✅ 完成任务: ${completedTask.text}` : '✅ 进度已保存';
@@ -405,27 +634,31 @@ function Conversation() {
            setMessages(prev => {
                const last = prev[prev.length - 1];
                const currentId = currentUserMessageIdRef.current;
-               
+
                // STRICT CHECK: Update ONLY if the last message matches the current turn ID
                if (last && last.type === 'user' && last.id === currentId && !last.isFinal) {
-                   return [
-                       ...prev.slice(0, -1), 
-                       { 
-                           ...last, 
+                   const updated = [
+                       ...prev.slice(0, -1),
+                       {
+                           ...last,
                            content: data.isFinal ? data.text : last.content + data.text,
-                           isFinal: !!data.isFinal 
+                           isFinal: !!data.isFinal
                        }
                    ];
+                   console.log('Updated existing user message:', updated[updated.length - 1]);
+                   return updated;
                }
-               
+
                // Otherwise, append a NEW message for this turn
                // This prevents overwriting previous turns if they weren't finalized correctly
-               return [...prev, { 
-                   type: 'user', 
-                   content: data.text, 
+               const newMessage = {
+                   type: 'user',
+                   content: data.text,
                    isFinal: !!data.isFinal,
                    id: currentId // Bind this message to the current turn
-               }];
+               };
+               console.log('Created new user message:', newMessage);
+               return [...prev, newMessage];
            });
            break;
         case 'audio_url':
@@ -435,7 +668,7 @@ function Conversation() {
            if (role === 'assistant') {
                setMessages(prev => {
                    const newMessages = [...prev];
-                   
+
                    // 1. Try Strict Match by Response ID
                    if (targetResponseId) {
                        const index = newMessages.findIndex(m => m.type === 'ai' && m.responseId === targetResponseId);
@@ -464,6 +697,7 @@ function Conversation() {
                    for (let i = newMessages.length - 1; i >= 0; i--) {
                        if (newMessages[i].type === 'user' && newMessages[i].id === currentId) {
                            newMessages[i] = { ...newMessages[i], audioUrl: url };
+                           console.log(`[AudioURL] Attached to user message with ID ${currentId}`);
                            break;
                        }
                    }
@@ -473,6 +707,7 @@ function Conversation() {
            break;
         case 'role_switch':
            setCurrentRole(data.payload.role);
+           console.log('Role switched to:', data.payload.role);
            break;
         case 'user_transcript':
            // Display user's speech transcription in chat
@@ -481,7 +716,7 @@ function Conversation() {
                // Find any in-progress AI message and ensure user transcript is inserted BEFORE it
                const newMessages = [...prev];
                let insertIdx = newMessages.length;
-               
+
                // If the last message is an in-progress AI message, insert BEFORE it
                for (let i = newMessages.length - 1; i >= 0; i--) {
                  if (newMessages[i].type === 'ai' && !newMessages[i].isFinal) {
@@ -489,9 +724,10 @@ function Conversation() {
                    break;
                  }
                }
-               
+
                const userMsg = { type: 'user', content: data.payload.text, isFinal: true };
                newMessages.splice(insertIdx, 0, userMsg);
+               console.log('Inserted user transcript:', userMsg);
                return newMessages;
              });
            }
@@ -500,6 +736,7 @@ function Conversation() {
            console.error('Server Error:', data.payload);
            break;
         default:
+           console.log('Unhandled message type:', data.type);
            break;
       }
   }, []); // Removed currentRole dependency
@@ -607,7 +844,20 @@ function Conversation() {
     socketRef.current.onopen = () => {
       console.log('WS Open');
       setIsConnected(true);
-      setMessages(prev => [...prev, { type: 'system', content: '连接成功！请按住麦克风开始说话。' }]);
+      // Only show connection success message if we don't have any conversation history yet
+      // This prevents showing duplicate welcome messages when reconnecting to an existing session
+      setMessages(prev => {
+        // Check if we already have user or AI messages (not counting initial system messages)
+        const hasConversationHistory = prev.some(msg =>
+          msg.type === 'user' ||
+          (msg.type === 'ai' && !msg.content.includes('连接AI导师') && !msg.content.includes('新会话开始'))
+        );
+
+        if (!hasConversationHistory) {
+          return [...prev, { type: 'system', content: '连接成功！请按住麦克风开始说话。' }];
+        }
+        return prev;
+      });
       setWebSocketError(null);
 
       // Send session_start handshake
@@ -618,7 +868,9 @@ function Conversation() {
           sessionId: sessionId,
           token: token,
           scenario: searchParams.get('scenario'),
-          topic: searchParams.get('topic')
+          topic: searchParams.get('topic'),
+          // Indicate that this is a restoration of an existing session, not a new one
+          isRestoration: true
       };
       socketRef.current.send(JSON.stringify(payload));
     };
@@ -652,10 +904,13 @@ function Conversation() {
         setIsConnected(false);
     };
 
-    socketRef.current.onclose = (event) => {
+    socketRef.current.onclose = async (event) => {
         console.log('WebSocket Closed:', event.code, event.reason);
         setIsConnected(false);
-        
+
+        // Save conversation history when connection closes
+        await saveConversationHistory();
+
         // Only show error if it wasn't a clean close
         if (event.code !== 1000) { // 1000 means normal closure
             setWebSocketError('连接已关闭');
@@ -678,22 +933,77 @@ function Conversation() {
       // Refresh Tasks if missing (Page Refresh)
       if (!location.state?.tasks && scenario) {
           try {
+              console.log('Attempting to restore tasks for scenario:', scenario);
+              console.log('Current location.state:', location.state);
+              
               const goalRes = await userAPI.getActiveGoal();
+              console.log('getActiveGoal response:', goalRes);
+              
+              let scenarios = [];
+              let activeScenario = null;
+              
               if (goalRes && goalRes.goal && goalRes.goal.scenarios) {
                   console.log('Available Scenarios:', goalRes.goal.scenarios.map(s => s.title));
                   console.log('Requested Scenario:', scenario);
+                  scenarios = goalRes.goal.scenarios;
+                  activeScenario = goalRes.goal.scenarios.find(s => s.title.trim() === scenario.trim());
+                  console.log('Found active scenario:', activeScenario);
+              } else {
+                  console.log('No goal found, using default scenarios');
                   
-                  const activeScenario = goalRes.goal.scenarios.find(s => s.title.trim() === scenario.trim());
-                  if (activeScenario && activeScenario.tasks) {
-                      setTasks(activeScenario.tasks);
-                      console.log('Restored tasks from active goal:', activeScenario.tasks);
-                  } else {
-                      console.warn('Scenario not found in active goal');
+                  // Determine goal type from scenario name
+                  let goalType = 'daily_conversation'; // default
+                  if (scenario.toLowerCase().includes('business') || scenario.toLowerCase().includes('meeting')) {
+                      goalType = 'business_meeting';
+                  } else if (scenario.toLowerCase().includes('travel') || scenario.toLowerCase().includes('airport')) {
+                      goalType = 'travel_survival';
+                  } else if (scenario.toLowerCase().includes('exam') || scenario.toLowerCase().includes('test')) {
+                      goalType = 'exam_prep';
+                  } else if (scenario.toLowerCase().includes('presentation') || scenario.toLowerCase().includes('speech')) {
+                      goalType = 'presentation';
+                  }
+                  
+                  scenarios = DEFAULT_SCENARIOS[goalType] || DEFAULT_SCENARIOS.daily_conversation;
+                  activeScenario = scenarios.find(s => s.title.trim() === scenario.trim());
+                  
+                  if (!activeScenario) {
+                      // Try to find a similar scenario
+                      activeScenario = scenarios.find(s => 
+                          s.title.toLowerCase().includes(scenario.toLowerCase()) ||
+                          scenario.toLowerCase().includes(s.title.toLowerCase())
+                      );
+                  }
+                  
+                  if (!activeScenario && scenarios.length > 0) {
+                      // Use first scenario as fallback
+                      activeScenario = scenarios[0];
                   }
               }
+              
+              if (activeScenario && activeScenario.tasks) {
+                  console.log('Setting tasks from active scenario:', activeScenario.tasks);
+                  setTasks(activeScenario.tasks);
+                  console.log('Restored tasks from active goal:', activeScenario.tasks);
+              } else {
+                  console.warn('Scenario not found in active goal or no tasks');
+                  console.log('All scenarios:', scenarios);
+              }
           } catch (e) {
-              console.warn('Failed to restore tasks from goal:', e);
+              console.error('Failed to restore tasks from goal:', e);
+              console.error('Error details:', e.message, e.stack);
+              
+              // Final fallback - use default scenarios
+              console.log('Using default scenarios due to error');
+              const defaultScenarios = DEFAULT_SCENARIOS.daily_conversation;
+              const activeScenario = defaultScenarios.find(s => s.title.trim() === scenario.trim()) || defaultScenarios[0];
+              
+              if (activeScenario && activeScenario.tasks) {
+                  setTasks(activeScenario.tasks);
+                  console.log('Restored tasks from default scenarios:', activeScenario.tasks);
+              }
           }
+      } else {
+          console.log('Tasks refresh skipped - location.state.tasks:', location.state?.tasks, 'scenario:', scenario);
       }
 
       // Determine session ID priority: URL > localStorage > new session
@@ -731,24 +1041,43 @@ function Conversation() {
 
           try {
               // Fetch History
+              console.log('Fetching history for session:', effectiveSessionId);
               const historyRes = await conversationAPI.getHistory(effectiveSessionId);
+              console.log('History response:', historyRes);
+              
               // handleResponse returns `data.data` (the conversation object)
               if (historyRes && historyRes.messages) {
-                  const restoredMessages = historyRes.messages.map(m => ({
-                      type: m.role === 'user' ? 'user' : 'ai',
-                      content: m.content,
-                      isFinal: true, // History is always final
-                      audioUrl: m.audioUrl || null,
-                      speaker: m.role === 'user' ? 'Me' : 'OralTutor' // Basic mapping
-                  }));
+                  console.log('Found messages in history:', historyRes.messages.length);
+                  console.log('Last few messages:', historyRes.messages.slice(-3).map(m => ({role: m.role, content: m.content?.substring(0, 50)})));
+                  
+                  const restoredMessages = historyRes.messages.map((m, index) => {
+                      console.log(`Processing message ${index}: role=${m.role}, content='${m.content?.substring(0, 100)}...'`);
+                      const mappedMessage = {
+                          type: m.role === 'user' ? 'user' : 'ai',
+                          content: m.content,
+                          isFinal: true, // History is always final
+                          audioUrl: m.audioUrl || null,
+                          speaker: m.role === 'user' ? 'Me' : 'OralTutor' // Basic mapping
+                      };
+                      console.log(`Mapped message ${index}:`, mappedMessage);
+                      return mappedMessage;
+                  });
 
                   // Just show history. If empty, show welcome.
                   if (restoredMessages.length > 0) {
+                      console.log('Setting restored messages:', restoredMessages.length);
+                      console.log('Last few restored messages:', restoredMessages.slice(-3).map((m, i) => ({index: restoredMessages.length - 3 + i, type: m.type, content: m.content?.substring(0, 50)})));
                       setMessages(restoredMessages);
+                      // Mark that we have history, so no need to show welcome message
+                      setWelcomeMessageShown(true);
                   } else {
                       // Keep or set default system message
+                      console.log('No messages found, setting default welcome message');
                       setMessages([{ type: 'system', content: '新会话开始，请点击麦克风说话。' }]);
+                      setWelcomeMessageShown(false);
                   }
+              } else {
+                  console.log('No history found or invalid response:', historyRes);
               }
           } catch (err) {
               console.error('Failed to restore history:', err);
@@ -756,7 +1085,7 @@ function Conversation() {
               if (err.message.includes('Conversation not found') && scenario) {
                   localStorage.removeItem(`session_${scenario}`);
                   console.log('Cleared invalid session from localStorage');
-                  
+
                   // Start a new session instead of failing
                   try {
                       const res = await conversationAPI.startSession({
@@ -782,9 +1111,10 @@ function Conversation() {
                           if (topic) newParams.set('topic', topic);
                           const newUrl = `${window.location.pathname}?${newParams.toString()}`;
                           window.history.replaceState({ path: newUrl }, '', newUrl);
-                          
+
                           // Set initial message
                           setMessages([{ type: 'system', content: '正在连接AI导师...' }]);
+                          setWelcomeMessageShown(false);
                       } else {
                           setWebSocketError('无法创建会话');
                       }
@@ -834,6 +1164,9 @@ function Conversation() {
                 if (topic) newParams.set('topic', topic);
                 const newUrl = `${window.location.pathname}?${newParams.toString()}`;
                 window.history.replaceState({ path: newUrl }, '', newUrl);
+                
+                // For new sessions, set initial message
+                setMessages([{ type: 'system', content: '正在连接AI导师...' }]);
             } else {
                 setWebSocketError('无法创建会话');
             }
@@ -857,40 +1190,149 @@ function Conversation() {
     };
   }, [sessionId, user, connectWebSocket]);
 
+  // Save conversation history when component unmounts
+  useEffect(() => {
+    return () => {
+      saveConversationHistory();
+    };
+  }, [sessionId, messages, user]);
+
+
+  // Function to save conversation history to backend
+  const saveConversationHistory = async () => {
+    if (!sessionId || messages.length === 0) {
+      console.log('No session ID or messages to save');
+      return;
+    }
+
+    try {
+      console.log('Saving conversation history. Total messages:', messages.length);
+      console.log('Messages before filtering:', messages.map((m, i) => ({index: i, type: m.type, isFinal: m.isFinal, content: m.content?.substring(0, 50)})));
+      
+      // Prepare messages for saving - save final messages and non-final AI messages
+      const messagesToSave = messages
+        .filter(msg => msg.isFinal || msg.type === 'ai') // Save finalized messages AND AI messages (even if not final)
+        .map(msg => ({
+          role: msg.type === 'user' ? 'user' : 'assistant',
+          content: msg.content,
+          audioUrl: msg.audioUrl || null
+        }));
+      
+      console.log('Messages after filtering:', messagesToSave.map((m, i) => ({index: i, role: m.role, content: m.content?.substring(0, 50)})));
+
+      if (messagesToSave.length === 0) {
+        console.log('No finalized messages to save');
+        return;
+      }
+
+      console.log(`Saving ${messagesToSave.length} messages to session ${sessionId}`);
+      
+      // Save to history-analytics-service via conversationAPI
+      // Using POST /conversation endpoint which handles both new and existing sessions
+      const response = await fetch(`${process.env.REACT_APP_API_URL || '/api'}/conversation/history/${sessionId}`, {
+        method: 'POST',
+        headers: getAuthHeaders(),
+        body: JSON.stringify({
+          userId: user?.id,
+          messages: messagesToSave
+        })
+      });
+      
+      if (!response.ok) {
+        console.error('Failed to save conversation history:', response.status, response.statusText);
+        // Attempt to read response body for more details
+        const errorText = await response.text();
+        console.error('Error details:', errorText);
+        
+        // If service is unavailable, try to save using the conversation service instead
+        if (response.status === 503) {
+          console.log('History service unavailable, attempting to save via conversation service');
+          try {
+            // Try to save via conversation service which might route to history service
+            const convResponse = await fetch(`${process.env.REACT_APP_API_URL || '/api'}/conversation/history/${sessionId}`, {
+              method: 'POST',
+              headers: getAuthHeaders(),
+              body: JSON.stringify({
+                messages: messagesToSave
+              })
+            });
+            
+            if (!convResponse.ok) {
+              console.error('Failed to save via conversation service:', convResponse.status, convResponse.statusText);
+              const convErrorText = await convResponse.text();
+              console.error('Conversation service error details:', convErrorText);
+            } else {
+              console.log('Conversation history saved via conversation service successfully');
+            }
+          } catch (convError) {
+            console.error('Network error saving via conversation service:', convError);
+          }
+        }
+      } else {
+        console.log('Conversation history saved successfully');
+      }
+    } catch (error) {
+      console.error('Error saving conversation history:', error);
+      // Attempt fallback save method
+      try {
+        // Try to save via conversation service which might route to history service
+        const convResponse = await fetch(`${process.env.REACT_APP_API_URL || '/api'}/conversation/history/${sessionId}`, {
+          method: 'POST',
+          headers: getAuthHeaders(),
+          body: JSON.stringify({
+            userId: user?.id,
+            messages: messages.map(msg => ({
+              role: msg.type === 'user' ? 'user' : 'assistant',
+              content: msg.content,
+              audioUrl: msg.audioUrl || null
+            })).filter(msg => msg.content) // Only save messages with content
+          })
+        });
+        
+        if (convResponse.ok) {
+          console.log('Conversation history saved via fallback method successfully');
+        } else {
+          console.error('Fallback save also failed:', convResponse.status, convResponse.statusText);
+        }
+      } catch (fallbackError) {
+        console.error('Fallback save failed with network error:', fallbackError);
+      }
+    }
+  };
 
   // --- Recorder Callbacks ---
-  
+
   const handleRecordingStart = () => {
     isInterruptedRef.current = false; // Reset flag for new turn
     const newId = Date.now().toString();
     currentUserMessageIdRef.current = newId; // New turn ID
-    
+
     // Check if we need to interrupt backend streaming
     const wasBackendStreaming = isAISpeaking;
-    
+
     // Always stop local audio playback immediately
     stopAudioPlayback();
-    
+
     // 1. Force finalize ALL previous messages
     // 2. Immediately create a placeholder for the NEW user turn
     setMessages(prev => {
-        const newMessages = prev.map(msg => 
+        const newMessages = prev.map(msg =>
             (!msg.isFinal) ? { ...msg, isFinal: true, isInterrupted: true } : msg
         );
-        return [...newMessages, { 
-            type: 'user', 
+        return [...newMessages, {
+            type: 'user',
             content: '...', // Placeholder content
-            isFinal: false, 
+            isFinal: false,
             id: newId,
-            audioUrl: null 
+            audioUrl: null
         }];
     });
-    
+
     // If backend was streaming, send interruption signal
     if (wasBackendStreaming) {
         console.log('Interruption triggered (Backend Streaming)!');
         isInterruptedRef.current = true;
-        
+
         if (socketRef.current?.readyState === WebSocket.OPEN) {
             socketRef.current.send(JSON.stringify({ type: 'user_interruption' }));
         }
@@ -925,7 +1367,7 @@ function Conversation() {
   return (
     <div className="flex flex-col h-screen max-w-lg mx-auto bg-background-light dark:bg-background-dark relative">
       {/* Task Sidebar/Overlay */}
-      {tasks.length > 0 && (
+      {showTasks && ( // Show if showTasks is true (controlled by state)
           <div className={`fixed top-20 right-4 z-20 w-48 bg-white/90 dark:bg-slate-800/90 backdrop-blur rounded-xl shadow-lg border border-slate-100 dark:border-slate-700 p-4 transition-transform duration-300 ${showTasks ? 'translate-x-0' : 'translate-x-[110%]'}`}>
               <div className="flex justify-between items-center mb-2">
                   <h3 className="font-bold text-xs uppercase tracking-wide text-slate-500">Mission Tasks</h3>
@@ -934,25 +1376,30 @@ function Conversation() {
                   </button>
               </div>
               <ul className="space-y-2">
-                  {tasks.map((task, idx) => {
-                      const taskText = typeof task === 'string' ? task : task.text;
-                      const isCompleted = completedTasks.has(taskText);
-                      return (
-                          <li key={idx} className={`text-xs flex items-start gap-2 ${isCompleted ? 'text-green-600 dark:text-green-400 line-through opacity-70' : 'text-slate-700 dark:text-slate-200'}`}>
-                              <span className={`w-3 h-3 rounded-full border flex items-center justify-center shrink-0 mt-0.5 ${isCompleted ? 'bg-green-100 border-green-200' : 'border-slate-300'}`}>
-                                  {isCompleted && <span className="material-symbols-outlined text-[8px] font-bold">check</span>}
-                              </span>
-                              <span>{taskText}</span>
-                          </li>
-                      );
-                  })}
+                  {tasks.length > 0 ? (
+                      tasks.map((task, idx) => {
+                          const taskText = typeof task === 'string' ? task : task.text;
+                          const isCompleted = completedTasks.has(taskText);
+                          return (
+                              <li key={idx} className={`text-xs flex items-start gap-2 ${isCompleted ? 'text-green-600 dark:text-green-400 line-through opacity-70' : 'text-slate-700 dark:text-slate-200'}`}>
+                                  <span className={`w-3 h-3 rounded-full border flex items-center justify-center shrink-0 mt-0.5 ${isCompleted ? 'bg-green-100 border-green-200' : 'border-slate-300'}`}>
+                                      {isCompleted && <span className="material-symbols-outlined text-[8px] font-bold">check</span>}
+                                  </span>
+                                  <span>{taskText}</span>
+                              </li>
+                          );
+                      })
+                  ) : tasksLoading ? (
+                      // Show loading state if tasks are expected but not loaded yet
+                      <li key="loading" className="text-xs text-slate-500">Loading tasks...</li>
+                  ) : null}
               </ul>
           </div>
       )}
       
       {/* Toggle Tasks Button */}
-      {tasks.length > 0 && !showTasks && (
-          <button 
+      {(tasks.length > 0 || location.state?.scenario || new URLSearchParams(window.location.search).get('scenario')) && !showTasks && (
+          <button
             onClick={() => setShowTasks(true)}
             className="fixed top-20 right-4 z-20 bg-white dark:bg-slate-800 p-2 rounded-full shadow-md border border-slate-200 dark:border-slate-700 text-primary">
               <span className="material-symbols-outlined">assignment</span>
@@ -1004,6 +1451,8 @@ function Conversation() {
       {/* Messages Area */}
       <main className="flex-1 overflow-y-auto p-4 space-y-6 scroll-smooth">
         {messages.map((msg, index) => {
+          console.log(`Rendering message ${index}: type=${msg.type}, content='${msg.content?.substring(0, 50)}...'`);
+          
           if (msg.type === 'system') {
               return (
                 <div key={index} className="flex justify-center my-4">
@@ -1017,10 +1466,14 @@ function Conversation() {
           const isAI = msg.type === 'ai';
           const displayContent = msg.content ? msg.content.replace(/```json[\s\S]*?```/g, '').trim() : '';
 
+          console.log(`Message ${index} displayContent: '${displayContent}'`);
+
           if (!isAI && (!displayContent || displayContent === '...')) {
+            console.log(`Filtering out user message ${index} due to empty content`);
             return null;
           }
           if (isAI && !displayContent) {
+            console.log(`Filtering out AI message ${index} due to empty content`);
             return null;
           }
 
