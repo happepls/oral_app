@@ -1,5 +1,6 @@
 # Use an official Node.js runtime as a parent image
-FROM node:18-slim
+FROM node:18
+RUN groupadd -r appuser && useradd -r -g appuser appuser-slim
 
 # Set the working directory in the container
 WORKDIR /usr/src/app
@@ -18,3 +19,4 @@ EXPOSE 3000
 
 # Define the command to run your app
 CMD [ "npm", "start" ]
+USER appuser

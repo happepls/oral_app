@@ -1,0 +1,241 @@
+{
+  "timestamp": "2026-02-13T09:03:15.017Z",
+  "summary": {
+    "filesScanned": 72,
+    "findings": 30,
+    "critical": 1,
+    "high": 0,
+    "medium": 10,
+    "low": 0,
+    "info": 14
+  },
+  "findings": [
+    {
+      "severity": "warning",
+      "message": "Missing required environment variable: JWT_SECRET",
+      "file": ".env",
+      "match": null,
+      "timestamp": "2026-02-13T09:03:14.905Z"
+    },
+    {
+      "severity": "warning",
+      "message": "Missing required environment variable: JWT_REFRESH_SECRET",
+      "file": ".env",
+      "match": null,
+      "timestamp": "2026-02-13T09:03:14.907Z"
+    },
+    {
+      "severity": "warning",
+      "message": "Missing required environment variable: DATABASE_URL",
+      "file": ".env",
+      "match": null,
+      "timestamp": "2026-02-13T09:03:14.907Z"
+    },
+    {
+      "severity": "warning",
+      "message": "Missing required environment variable: REDIS_URL",
+      "file": ".env",
+      "match": null,
+      "timestamp": "2026-02-13T09:03:14.907Z"
+    },
+    {
+      "severity": "warning",
+      "message": "Missing required environment variable: NODE_ENV",
+      "file": ".env",
+      "match": null,
+      "timestamp": "2026-02-13T09:03:14.907Z"
+    },
+    {
+      "severity": "critical",
+      "message": "Use of eval() detected",
+      "file": "./security-audit.js",
+      "match": "eval(",
+      "timestamp": "2026-02-13T09:03:15.006Z"
+    },
+    {
+      "severity": "medium",
+      "message": "Permissive CORS configuration (allows all origins)",
+      "file": "./security-audit.js",
+      "match": null,
+      "timestamp": "2026-02-13T09:03:15.006Z"
+    },
+    {
+      "severity": "medium",
+      "message": "Missing security dependency: helmet",
+      "file": "package.json",
+      "match": null,
+      "timestamp": "2026-02-13T09:03:15.016Z"
+    },
+    {
+      "severity": "medium",
+      "message": "Missing security dependency: express-rate-limit",
+      "file": "package.json",
+      "match": null,
+      "timestamp": "2026-02-13T09:03:15.016Z"
+    },
+    {
+      "severity": "medium",
+      "message": "Missing security dependency: express-validator",
+      "file": "package.json",
+      "match": null,
+      "timestamp": "2026-02-13T09:03:15.016Z"
+    },
+    {
+      "severity": "medium",
+      "message": "Missing security dependency: bcrypt",
+      "file": "package.json",
+      "match": null,
+      "timestamp": "2026-02-13T09:03:15.016Z"
+    },
+    {
+      "severity": "medium",
+      "message": "Missing security dependency: jsonwebtoken",
+      "file": "package.json",
+      "match": null,
+      "timestamp": "2026-02-13T09:03:15.016Z"
+    },
+    {
+      "severity": "medium",
+      "message": "Missing security dependency: cors",
+      "file": "package.json",
+      "match": null,
+      "timestamp": "2026-02-13T09:03:15.016Z"
+    },
+    {
+      "severity": "medium",
+      "message": "Missing security dependency: express-mongo-sanitize",
+      "file": "package.json",
+      "match": null,
+      "timestamp": "2026-02-13T09:03:15.016Z"
+    },
+    {
+      "severity": "medium",
+      "message": "Missing security dependency: xss-clean",
+      "file": "package.json",
+      "match": null,
+      "timestamp": "2026-02-13T09:03:15.016Z"
+    },
+    {
+      "severity": "medium",
+      "message": "Missing security dependency: hpp",
+      "file": "package.json",
+      "match": null,
+      "timestamp": "2026-02-13T09:03:15.016Z"
+    },
+    {
+      "severity": "info",
+      "message": "Helmet security headers detected",
+      "file": "./api-gateway/securityMiddleware.js",
+      "match": null,
+      "timestamp": "2026-02-13T09:03:14.994Z"
+    },
+    {
+      "severity": "info",
+      "message": "Rate limiting detected",
+      "file": "./api-gateway/securityMiddleware.js",
+      "match": null,
+      "timestamp": "2026-02-13T09:03:14.994Z"
+    },
+    {
+      "severity": "info",
+      "message": "JWT verification detected",
+      "file": "./api-gateway/securityMiddleware.js",
+      "match": null,
+      "timestamp": "2026-02-13T09:03:14.994Z"
+    },
+    {
+      "severity": "info",
+      "message": "Input validation detected",
+      "file": "./security-audit.js",
+      "match": null,
+      "timestamp": "2026-02-13T09:03:15.006Z"
+    },
+    {
+      "severity": "info",
+      "message": "Secure cookie configuration detected",
+      "file": "./security-audit.js",
+      "match": null,
+      "timestamp": "2026-02-13T09:03:15.006Z"
+    },
+    {
+      "severity": "info",
+      "message": "JWT verification detected",
+      "file": "./services/comms-service/src/index.js",
+      "match": null,
+      "timestamp": "2026-02-13T09:03:15.008Z"
+    },
+    {
+      "severity": "info",
+      "message": "Secure password comparison detected",
+      "file": "./services/user-service/src/controllers/userController.js",
+      "match": null,
+      "timestamp": "2026-02-13T09:03:15.012Z"
+    },
+    {
+      "severity": "info",
+      "message": "JWT verification detected",
+      "file": "./services/user-service/src/controllers/userController.js",
+      "match": null,
+      "timestamp": "2026-02-13T09:03:15.012Z"
+    },
+    {
+      "severity": "info",
+      "message": "JWT verification detected",
+      "file": "./services/user-service/src/middleware/authMiddleware.js",
+      "match": null,
+      "timestamp": "2026-02-13T09:03:15.012Z"
+    },
+    {
+      "severity": "info",
+      "message": "Secure password comparison detected",
+      "file": "./services/user-service/src/middleware/enhancedAuthMiddleware.js",
+      "match": null,
+      "timestamp": "2026-02-13T09:03:15.012Z"
+    },
+    {
+      "severity": "info",
+      "message": "JWT verification detected",
+      "file": "./services/user-service/src/middleware/enhancedAuthMiddleware.js",
+      "match": null,
+      "timestamp": "2026-02-13T09:03:15.012Z"
+    },
+    {
+      "severity": "info",
+      "message": "Helmet security headers detected",
+      "file": "./services/user-service/src/middleware/securityMiddleware.js",
+      "match": null,
+      "timestamp": "2026-02-13T09:03:15.012Z"
+    },
+    {
+      "severity": "info",
+      "message": "Rate limiting detected",
+      "file": "./services/user-service/src/middleware/securityMiddleware.js",
+      "match": null,
+      "timestamp": "2026-02-13T09:03:15.012Z"
+    },
+    {
+      "severity": "info",
+      "message": "Input validation detected",
+      "file": "./services/user-service/src/middleware/securityMiddleware.js",
+      "match": null,
+      "timestamp": "2026-02-13T09:03:15.012Z"
+    }
+  ],
+  "recommendations": [
+    {
+      "priority": "critical",
+      "action": "Remove all hardcoded secrets and passwords",
+      "timeframe": "immediate"
+    },
+    {
+      "priority": "medium",
+      "action": "Add missing security dependencies and configure CORS",
+      "timeframe": "1 month"
+    },
+    {
+      "priority": "ongoing",
+      "action": "Regular dependency updates and security monitoring",
+      "timeframe": "continuous"
+    }
+  ]
+}

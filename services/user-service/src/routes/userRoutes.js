@@ -1,11 +1,17 @@
 const express = require('express');
 const router = express.Router();
 const userController = require('../controllers/userController');
-const { protect } = require('../middleware/authMiddleware'); // Import protect middleware
+const { protect } = require('../middleware/enhancedAuthMiddleware'); // Updated to enhanced auth
+const { 
+  authRateLimiter, 
+  validateRegistration, 
+  validateLogin, 
+  handleValidationErrors 
+} = require('../middleware/securityMiddleware');
 
-// Register and login routes
-router.post('/register', userController.register);
-router.post('/login', userController.login);
+// Register and login routes with rate limiting and validation
+router.post('/register', authRateLimiter, validateRegistration, handleValidationErrors, userController.register);
+router.post('/login', authRateLimiter, validateLogin, handleValidationErrors, userController.login);
 
 // Google auth route
 router.post('/google', userController.googleSignIn);

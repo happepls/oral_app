@@ -1,6 +1,18 @@
 require('dotenv').config();
 const express = require('express');
+const cookieParser = require('cookie-parser');
 const app = express();
+
+// Import security middleware
+const {
+  securityHeaders,
+  generalRateLimiter,
+  mongoSanitize,
+  xss,
+  hpp,
+  validateContentType,
+  requestSizeLimiter
+} = require('./middleware/securityMiddleware');
 
 const { runMigrations } = require('stripe-replit-sync');
 const { getStripeSync } = require('./stripe/stripeClient');
@@ -81,6 +93,42 @@ app.post(
 );
 
 app.use(express.json());
+
+// Apply security middleware
+app.use(securityHeaders); // Security headers
+app.use(cookieParser()); // Cookie parser for JWT cookies
+app.use(generalRateLimiter); // Rate limiting
+app.use(mongoSanitize()); // Prevent NoSQL injection
+app.use(xss()); // Prevent XSS attacks
+app.use(hpp()); // Prevent HTTP Parameter Pollution
+app.use(validateContentType); // Validate content type
+app.use(requestSizeLimiter('10mb')); // Limit request size
+
+// Custom security middleware
+app.use((req, res, next) => {
+  // Remove sensitive headers
+  res.removeHeader('X-Powered-By');
+  
+  // Security headers
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('X-Frame-Options', 'DENY');
+  res.setHeader('X-XSS-Protection', '1; mode=block');
+  res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains; preload');
+  
+  next();
+});
+
+// Error handling for malformed JSON
+app.use((err, req, res, next) => {
+  if (err instanceof SyntaxError && err.status === 400 && 'body' in err) {
+    return res.status(400).json({
+      code: 400,
+      message: 'Invalid JSON format',
+      data: null
+    });
+  }
+  next(err);
+});
 
 const userRoutes = require('./routes/userRoutes');
 const stripeRoutes = require('./stripe/stripeRoutes');

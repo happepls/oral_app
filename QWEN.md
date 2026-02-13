@@ -48,3 +48,15 @@ Repository: `git@github.com:sjx1943/oral_app.git` (master branch)
 - Use `docker compose` (not `docker-compose`).
 - Follow "Service-Oriented & Decoupled" architecture.
 - Frontend uses WebSocket for both text and audio streaming.
+
+## Security Enhancements (Feb 2026)
+- **API Security**: Implemented comprehensive security middleware including rate limiting, JWT validation, input sanitization, CORS protection, and security headers
+- **User Data Protection**: Added data encryption utilities for sensitive user information, password security enhancements, and session management
+- **Authentication**: Enhanced JWT authentication with refresh tokens, token blacklisting, and role-based authorization
+- **Input Validation**: Comprehensive input validation using express-validator with strict validation rules for registration, login, and API endpoints
+- **Rate Limiting**: Multi-tier rate limiting for different endpoints (auth: 5/15min, general: 100/15min, API: 1000/15min)
+- **Security Headers**: Implemented security headers including CSP, HSTS, X-Frame-Options, X-Content-Type-Options
+- **Data Encryption**: AES-256-GCM encryption for sensitive user data with secure key management
+- **Security Monitoring**: Request tracking, security logging, and automated security event detection
+- **Docker Security**: Updated Docker configurations to use non-root users and secure defaults
+- **Security Audit**: Created automated security audit script to identify vulnerabilities and track security improvements
