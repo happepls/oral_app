@@ -2,17 +2,18 @@
 
 ## Project Overview
 Oral AI is a 24/7 AI oral practice application aiming to provide deep personalization and real-time feedback.
-Repository: `git@github.com:sjx1943/oral_app.git` (master branch)
+Repository: `git@github.com:happepls/oral_app.git` (master branch)
 
 ## Architecture: SROP (Scalable Real-time Oral Practice)
 - **Frontend**: React 19.2.0, Tailwind CSS, Material Symbols.
-- **Backend**: Node.js Microservices (Express).
-  - `api-gateway`: Nginx/Express (Port 8080)
-  - `user-service`: User Auth/Management (Port 3002, Postgres)
-  - `comms-service`: WebSocket Real-time comms (Port 3001 internal, 8080 external via WS)
-  - `ai-omni-service`: Python Qwen3-Omni integration (Port 8082)
-  - `history-analytics-service`: History storage (MongoDB) & Analytics
-  - `media-processing-service`: Audio transcoding/storage (COS)
+- **Backend**: Node.js Microservices (Express) + Python FastAPI.
+  - `api-gateway`: Nginx/Express (Port 8080:80)
+  - `user-service`: User Auth/Management (Port 3002:3000, Postgres)
+  - `comms-service`: WebSocket Real-time comms (Port 3001:8080)
+  - `ai-omni-service`: Python Qwen3-Omni integration (Port 8082:8082)
+  - `history-analytics-service`: History storage (MongoDB) & Analytics (Port 3004:3004)
+  - `media-processing-service`: Audio transcoding/storage (COS) (Port 3005:3005)
+  - `workflow-service`: Workflow orchestration (Port 3006:3006, FastAPI)
 - **Database**: PostgreSQL (User data), MongoDB (Chat history), Redis (Cache).
 - **AI**: Qwen3-Omni via DashScope SDK.
 
@@ -24,8 +25,22 @@ Repository: `git@github.com:sjx1943/oral_app.git` (master branch)
 
 ## Development Setup
 - **Start Services**: `docker compose up -d --build`
-- **Frontend Dev**: `cd client && npm start` (Port 5001)
+- **Frontend Dev**: `cd client && npm start` (Port 5001:5000)
 - **Test Scenarios**: `source .venv/bin/activate && python test_client_scenario.py`
+
+## Service Port Mapping
+- **Client App**: 5001:5000 (React frontend)
+- **API Gateway**: 8080:80 (Nginx proxy)
+- **User Service**: 3002:3000 (JWT authentication)
+- **Comms Service**: 3001:8080 (WebSocket real-time communication)
+- **AI Omni Service**: 8082:8082 (Qwen3-omni integration)
+- **Conversation Service**: 8083:8083 (Conversation management)
+- **History Analytics Service**: 3004:3004 (History & analytics)
+- **Media Processing Service**: 3005:3005 (Audio processing)
+- **Workflow Service**: 3006:3006 (Workflow orchestration - Proficiency Scoring, Scenario Review, Goal Planning)
+- **PostgreSQL**: 5432:5432 (User data)
+- **MongoDB**: 27017:27017 (Conversation history)
+- **Redis**: 6379:6379 (Caching & sessions)
 
 ## Current Status (Feb 2026)
 - **Features**: Proficiency Scoring, Scenario-based Training, Dynamic Curriculum, Real-time Task Tracking.
@@ -38,6 +53,99 @@ Repository: `git@github.com:sjx1943/oral_app.git` (master branch)
 - **Service Communication Issue**: Fixed by configuring correct USER_SERVICE_URL in ai-omni-service to allow proper user context fetching
 - **Environment Configuration**: Ensured all services use consistent environment variables and network configurations
 - **AI Response Persistence**: Fixed issue where AI responses disappeared after page refresh by modifying save logic in `Conversation.js` to include non-final AI messages in conversation history
+- **Client App Port Configuration**: Fixed nginx configuration in client-app to listen on correct port (5000) matching docker-compose.yml mapping, resolving 502 Bad Gateway errors
+- **Rate Limiting for Internal Services**: Fixed 429 errors by skipping rate limiting for internal service communication (Docker network 172.x.x.x)
+- **Workflow Integration**: Successfully integrated 4 workflows for oral practice orchestration
+
+## Workflow Integration (Feb 2026)
+
+### 4 Workflows Implemented
+
+1. **Workflow 1: Oral Tutor (口语导师)** - `services/workflow-service/src/workflows/oral_tutor.py`
+   - Real-time conversation interaction
+   - Micro-corrections (one error at a time)
+   - Question-driven dialogue
+   - API: `POST /api/workflows/oral-tutor/analyze`
+
+2. **Workflow 2: Proficiency Scoring (熟练度打分)** - `services/workflow-service/src/workflows/proficiency_scoring.py`
+   - Analyzes last 3-5 conversation turns
+   - Scoring dimensions: Fluency, Vocabulary, Grammar, Task Completion (0-10 each)
+   - Proficiency delta: avg≥8 → +3, avg≥6 → +2, avg≥4 → +1
+   - Task completion: score >= 3 → mark as completed
+   - API: `POST /api/workflows/proficiency-scoring/update`
+   - **Integrated in ai-omni-service**: Called after `response.audio.done` event
+   - **Frontend notifications**: `proficiency_update` (+X 熟练度 | 总分：Y), `task_completed` (✅ 任务完成！)
+
+3. **Workflow 3: Scenario Review (场景练习总结)** - `services/workflow-service/src/workflows/scenario_review.py`
+   - Triggered when 3 tasks in a scenario are completed
+   - Generates comprehensive review report
+   - Provides specific recommendations
+   - API: `POST /api/workflows/scenario-review/generate`
+
+4. **Workflow 4: Goal Planning (新目标规划)** - `services/workflow-service/src/workflows/goal_planning.py`
+   - Detects goal completion (all 10 scenarios or time expired)
+   - Generates new goal suggestions based on user interests
+   - Pre-built templates: Business English, Travel Fluency, Academic English, Advanced Conversation
+   - API: `POST /api/workflows/goal-planning/check-completion`, `GET /api/workflows/goal-planning/suggestions`, `POST /api/workflows/goal-planning/create`
+
+### Database Schema (PostgreSQL)
+
+**user_goals table**:
+- `id` (integer), `user_id` (uuid), `type` (varchar), `description` (text)
+- `target_language`, `target_level` (A1-C2), `current_proficiency` (integer 0-100)
+- `completion_time_days`, `scenarios` (jsonb), `status` (active/completed)
+
+**user_tasks table**:
+- `id` (integer), `user_id` (uuid), `goal_id` (integer)
+- `scenario_title`, `task_description`, `status` (pending/completed)
+- `score` (integer 0-10), `interaction_count`, `feedback` (text)
+- `completed_at`, `created_at`, `updated_at`
+
+### Business Logic: Proficiency → Task Completion
+
+```
+User speaks → AI responds → Audio upload complete → Workflow 2 called
+                                                        ↓
+                                          Analyze last 3-5 turns
+                                                        ↓
+                                          Score dimensions (0-10):
+                                          - Fluency (length, connectors, complete sentences)
+                                          - Vocabulary (diversity, advanced words)
+                                          - Grammar (tense, subject-verb agreement)
+                                          - Task Completion (keyword matches)
+                                                        ↓
+                                          Calculate proficiency delta:
+                                          - avg ≥ 8: +3 points (excellent)
+                                          - avg ≥ 6: +2 points (good)
+                                          - avg ≥ 4: +1 point (fair)
+                                          - avg < 4: +0 points (needs work)
+                                                        ↓
+                                          Update database:
+                                          - user_tasks.score += delta
+                                          - user_tasks.interaction_count++
+                                          - user_goals.current_proficiency += delta
+                                                        ↓
+                                          Check task completion:
+                                          - if score >= 3: status='completed'
+                                                        ↓
+                                          Send notifications to frontend:
+                                          - proficiency_update: "+X 熟练度 | 总分：Y"
+                                          - task_completed: "✅ 任务完成！{message}"
+```
+
+### Frontend Integration (Conversation.js)
+
+**Message types handled**:
+- `proficiency_update`: Shows temporary notification (disappears after 3s)
+- `task_completed`: Shows system message, updates completedTasks Set, refreshes MISSION TASKS UI
+
+### Key Files
+- `services/workflow-service/`: Workflow service (FastAPI)
+- `services/ai-omni-service/app/main.py`: Integrated Workflow 2 in `response.audio.done` handler
+- `client/src/pages/Conversation.js`: Handles `proficiency_update` and `task_completed` messages
+- `docker-compose.yml`: Added workflow-service configuration
+- `docs/workflow_refactoring_summary.md`: Complete workflow documentation
+- `docs/workflow_integration_summary.md`: Integration details and testing guide
 
 ## MCP Tools Configuration
 - **Filesystem**: Configured for project root access.
@@ -48,6 +156,32 @@ Repository: `git@github.com:sjx1943/oral_app.git` (master branch)
 - Use `docker compose` (not `docker-compose`).
 - Follow "Service-Oriented & Decoupled" architecture.
 - Frontend uses WebSocket for both text and audio streaming.
+- **Workflow Service**: All proficiency scoring, scenario review, and goal planning logic is in workflow-service (FastAPI).
+- **Internal Service Communication**: Skip rate limiting for Docker internal network (172.x.x.x).
+
+## Testing Commands
+```bash
+# Check workflow-service health
+curl http://localhost:3006/health
+
+# Test proficiency scoring API
+curl -X POST http://localhost:3006/api/workflows/proficiency-scoring/update \
+  -H "Content-Type: application/json" \
+  -d '{
+    "user_id": "test-user",
+    "goal_id": 1,
+    "task_id": 1,
+    "conversation_history": [...]
+  }'
+
+# Check service logs
+docker compose logs workflow-service
+docker compose logs ai-omni-service | grep -i "proficiency\|task_completed"
+
+# Verify database updates
+docker compose exec postgres psql -U user -d oral_app -c \
+  "SELECT id, scenario_title, score, status FROM user_tasks ORDER BY created_at DESC LIMIT 5;"
+```
 
 ## Security Enhancements (Feb 2026)
 - **API Security**: Implemented comprehensive security middleware including rate limiting, JWT validation, input sanitization, CORS protection, and security headers
@@ -60,3 +194,6 @@ Repository: `git@github.com:sjx1943/oral_app.git` (master branch)
 - **Security Monitoring**: Request tracking, security logging, and automated security event detection
 - **Docker Security**: Updated Docker configurations to use non-root users and secure defaults
 - **Security Audit**: Created automated security audit script to identify vulnerabilities and track security improvements
+
+## Important
+在完成容器镜像的构建或更新部署后，应利用 `docker exec` 命令进入运行中的容器环境，执行必要的验证操作，以确认容器内应用程序的代码已成功更新至最新版本，并避免继续执行旧代码逻辑。

@@ -209,7 +209,26 @@ Respond ONLY with valid JSON in this exact format:
   }
 );
 
-// Protected routes (require authentication)
+// Public user routes (no authentication required) - MUST be before protected routes
+app.use('/api/users/register', 
+  authRateLimiter,
+  createSecureProxy(USER_SERVICE_URL, { '^/api/users/register': '/register' })
+);
+
+app.use('/api/users/login', 
+  authRateLimiter,
+  createSecureProxy(USER_SERVICE_URL, { '^/api/users/login': '/login' })
+);
+
+app.use('/api/users/google', 
+  createSecureProxy(USER_SERVICE_URL, { '^/api/users/google': '/google' })
+);
+
+app.use('/api/users/verify', 
+  createSecureProxy(USER_SERVICE_URL, { '^/api/users/verify': '/verify' })
+);
+
+// Protected user routes (require authentication) - MUST be after public routes
 app.use('/api/users', 
   validateJWT,
   createSecureProxy(USER_SERVICE_URL, { '^/api/users': '' })
@@ -257,7 +276,7 @@ app.use('/api/stripe',
   createSecureProxy(USER_SERVICE_URL, {})
 );
 
-// Health check endpoint (no auth required)
+// Health check endpoints (no auth required)
 app.get('/health', (req, res) => {
   res.json({ 
     status: 'ok', 
@@ -267,6 +286,21 @@ app.get('/health', (req, res) => {
     memory: process.memoryUsage()
   });
 });
+
+app.get('/api/health', (req, res) => {
+  res.json({ 
+    status: 'ok', 
+    service: 'api-gateway',
+    timestamp: new Date().toISOString(),
+    uptime: process.uptime(),
+    memory: process.memoryUsage()
+  });
+});
+
+// User service health check
+app.get('/api/users/health', 
+  createSecureProxy(USER_SERVICE_URL, { '^/api/users/health': '/api/health' })
+);
 
 // 404 handler
 app.use((req, res) => {

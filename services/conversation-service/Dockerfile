@@ -7,8 +7,8 @@ WORKDIR /usr/src/app
 # Copy package.json and package-lock.json to the working directory
 COPY package*.json ./
 
-# Copy node_modules from host to avoid npm install network issues
-COPY node_modules ./node_modules
+# Install dependencies
+RUN npm install
 
 # Copy the rest of the application's source code from the host to the image's filesystem
 COPY . .

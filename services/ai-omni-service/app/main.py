@@ -183,6 +183,15 @@ class WebSocketCallback(OmniRealtimeCallback):
         self.ai_responding = False  # Track if AI is currently responding
         self.connection_established_sent = False  # Track if we've sent connection_established
 
+    async def _safe_send(self, message: dict):
+        """Safely send a WebSocket message, ignoring errors if client is disconnected."""
+        if not self.is_connected:
+            return
+        try:
+            await self.websocket.send_json(message)
+        except (WebSocketDisconnect, Exception):
+            pass  # Ignore errors if WebSocket is already closed
+
     def _determine_role(self, context):
         if not context or isinstance(context, str): return "InfoCollector"
         if not context.get('native_language'): return "InfoCollector"
@@ -194,13 +203,46 @@ class WebSocketCallback(OmniRealtimeCallback):
     def on_open(self) -> None:
         logger.info("DashScope Connection Open")
         self.is_connected = True
-        asyncio.run_coroutine_threadsafe(
-            self.websocket.send_json({
-                "type": "connection_established",
-                "payload": {"connectionId": "python-session", "message": f"Connected to Qwen3-Omni (Role: {self.role})", "role": self.role}
-            }),
-            self.loop
-        )
+        logger.info(f"on_open called, connection_established_sent={self.connection_established_sent}")
+        # Only send connection_established once per WebSocket session
+        if not self.connection_established_sent:
+            self.connection_established_sent = True
+            logger.info("Sending connection_established message to frontend")
+
+            def log_callback(task):
+                try:
+                    task.result()
+                    logger.info("Connection established message sent to frontend")
+                except Exception as e:
+                    logger.error(f"Failed to send connection established message: {e}")
+
+            # CRITICAL FIX: Add a small delay to ensure frontend WebSocket is fully ready
+            # This prevents the "WebSocket was closed before the connection was established" error
+            async def send_connection_established():
+                # Wait 100ms to ensure the WebSocket bridge (comms-service) is fully established
+                await asyncio.sleep(0.1)
+                
+                # Double-check if WebSocket is still connected before sending
+                if self.websocket.client_state.name == 'CONNECTED':
+                    try:
+                        await self.websocket.send_json({
+                            "type": "connection_established",
+                            "payload": {
+                                "connectionId": "python-session", 
+                                "message": f"Connected to Qwen3-Omni (Role: {self.role})", 
+                                "role": self.role
+                            }
+                        })
+                        logger.info("connection_established sent successfully after delay")
+                    except Exception as e:
+                        logger.error(f"Failed to send connection established after delay: {e}")
+                else:
+                    logger.warning(f"WebSocket disconnected during delay, skipping. State: {self.websocket.client_state.name}")
+
+            # Schedule the delayed send
+            asyncio.run_coroutine_threadsafe(send_connection_established(), self.loop)
+        else:
+            logger.warning("connection_established already sent, skipping")
         self._update_session_prompt()
 
     def _update_session_prompt(self):
@@ -316,7 +358,7 @@ class WebSocketCallback(OmniRealtimeCallback):
                     if audio_data:
                         try: self.ai_audio_buffer.extend(base64.b64decode(audio_data))
                         except: pass
-                        await self.websocket.send_json({"type": "audio_response", "payload": audio_data, "role": self.role, "responseId": self.current_response_id})
+                        await self._safe_send({"type": "audio_response", "payload": audio_data, "role": self.role, "responseId": self.current_response_id})
                 elif event_name == 'response.audio_transcript.delta':
                     text = response.get('delta')
                     if text:
@@ -325,7 +367,7 @@ class WebSocketCallback(OmniRealtimeCallback):
                         self.full_response_text += text
                         if not hasattr(self, '_sent_role_for_turn'):
                             # Send role switch signal once
-                            await self.websocket.send_json({"type": "role_switch", "payload": {"role": self.role}})
+                            await self._safe_send({"type": "role_switch", "payload": {"role": self.role}})
                             self._sent_role_for_turn = True
                         # Don't send text chunks - wait for complete message
                 elif event_name == 'response.audio.done':
@@ -335,7 +377,7 @@ class WebSocketCallback(OmniRealtimeCallback):
                         async def upload_ai_task(d, r):
                             url = await self.upload_audio_to_cos(d, 'ai_audio')
                             if url:
-                                await self.websocket.send_json({"type": "audio_url", "payload": {"url": url, "role": "assistant"}, "responseId": r})
+                                await self._safe_send({"type": "audio_url", "payload": {"url": url, "role": "assistant"}, "responseId": r})
                                 # Store audio URL by response ID to ensure correct pairing
                                 if not hasattr(self, 'audio_urls_by_response'):
                                     self.audio_urls_by_response = {}
@@ -355,7 +397,7 @@ class WebSocketCallback(OmniRealtimeCallback):
                     # Handle user audio transcription - send immediately to ensure correct UI order
                     user_transcript = response.get('transcript', '')
                     if user_transcript:
-                        await self.websocket.send_json({"type": "user_transcript", "payload": {"text": user_transcript}})
+                        await self._safe_send({"type": "user_transcript", "payload": {"text": user_transcript}})
                         msg = {"role": "user", "content": user_transcript, "timestamp": datetime.utcnow().isoformat()}
                         if self.last_user_audio_url: msg['audioUrl'] = self.last_user_audio_url; self.last_user_audio_url = None
                         self.messages.append(msg)
@@ -376,7 +418,7 @@ class WebSocketCallback(OmniRealtimeCallback):
                         await save_single_message(self.session_id, self.user_id, "assistant", self.full_response_text, msg.get('audioUrl'))
                         
                         # Send complete message to frontend with responseId
-                        await self.websocket.send_json({
+                        await self._safe_send({
                             "type": "ai_message",
                             "payload": {
                                 "content": self.full_response_text,
@@ -401,17 +443,35 @@ class WebSocketCallback(OmniRealtimeCallback):
                     self.full_response_text = ""
                     self.ai_responding = False  # AI finished responding
                     if hasattr(self, '_sent_role_for_turn'): delattr(self, '_sent_role_for_turn')
-                elif event_name == 'error': await self.websocket.send_json({"type": "error", "payload": response})
-            except Exception as e: logger.error(f"Error processing event: {e}")
+                elif event_name == 'error':
+                    await self._safe_send({"type": "error", "payload": response})
+            except Exception as e:
+                logger.error(f"Error processing event: {e}")
         asyncio.run_coroutine_threadsafe(process_event(), self.loop)
 
     def on_close(self, code: int, message: str) -> None:
         self.is_connected = False
-        asyncio.run_coroutine_threadsafe(self.websocket.send_json({"type": "connection_closed", "payload": {"code": code, "message": message}}), self.loop)
+        logger.info(f"DashScope connection closed for session {self.session_id}, code={code}, message={message}")
+        # Don't try to send message if WebSocket is already closed
+        if self.websocket.client_state.name == 'CONNECTED':
+            try:
+                asyncio.run_coroutine_threadsafe(
+                    self.websocket.send_json({"type": "connection_closed", "payload": {"code": code, "message": message}}),
+                    self.loop
+                )
+            except Exception:
+                pass  # Ignore errors if WebSocket is already closed
 
     def on_error(self, error: Exception) -> None:
         logger.error(f"DashScope Error: {error}")
-        asyncio.run_coroutine_threadsafe(self.websocket.send_json({"type": "error", "payload": {"message": str(error)}}), self.loop)
+        # Don't try to send message if WebSocket is already closed
+        try:
+            asyncio.run_coroutine_threadsafe(
+                self.websocket.send_json({"type": "error", "payload": {"message": str(error)}}),
+                self.loop
+            )
+        except Exception:
+            pass  # Ignore errors if WebSocket is already closed
 
 @app.websocket("/stream")
 async def websocket_endpoint(websocket: WebSocket, token: str = Query(None), sessionId: str = Query(None), scenario: str = Query(None), voice: str = Query(None)):

@@ -1,5 +1,6 @@
 # Qwen-Omni-Realtime 模型可通过 WebSocket 协议接入，也可通过以下 Python 示例代码建立连接。也可通过DashScope SDK 建立连接。
 # SDK 版本不低于1.23.9
+# SDK 版本不低于1.23.9
 import os
 import json
 from dashscope.audio.qwen_omni import OmniRealtimeConversation,OmniRealtimeCallback
@@ -20,7 +21,7 @@ callback = PrintCallback()
 conversation = OmniRealtimeConversation(
     model="qwen3-omni-flash-realtime",
     callback=callback,
-    # 以下为北京地域url，若使用新加坡地域的模型，需将url替换为：wss://dashscope-intl.aliyuncs.com/api-ws/v1/realtime
+    # 以下为北京地域url
     url="wss://dashscope.aliyuncs.com/api-ws/v1/realtime"
 )
 try:

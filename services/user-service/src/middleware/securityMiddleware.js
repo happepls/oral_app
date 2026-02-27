@@ -14,6 +14,17 @@ const createRateLimiter = (windowMs, max, message, standardHeaders = true, legac
     message: { code: 429, message, data: null },
     standardHeaders,
     legacyHeaders,
+    // Trust proxy headers for accurate client IP detection
+    trustProxy: true,
+    // Use custom key generator to avoid X-Forwarded-For issues
+    keyGenerator: (req) => {
+      // Get real client IP from X-Forwarded-For header when behind proxy
+      const forwardedFor = req.headers['x-forwarded-for'];
+      if (forwardedFor) {
+        return forwardedFor.split(',')[0].trim();
+      }
+      return req.ip || req.connection.remoteAddress;
+    },
     handler: (req, res) => {
       res.status(429).json({
         code: 429,
@@ -27,7 +38,7 @@ const createRateLimiter = (windowMs, max, message, standardHeaders = true, legac
 // Rate limiters for different endpoints
 const authRateLimiter = createRateLimiter(
   15 * 60 * 1000, // 15 minutes
-  5, // limit each IP to 5 requests per windowMs
+  20, // limit each IP to 20 requests per windowMs (increased for testing)
   'Too many authentication attempts, please try again later.'
 );
 

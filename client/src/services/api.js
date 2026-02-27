@@ -1,10 +1,35 @@
 const API_BASE_URL = process.env.REACT_APP_API_URL || '/api';
 
 const handleResponse = async (response) => {
-  const data = await response.json();
+  let data;
+  
+  try {
+    // 首先尝试解析为JSON
+    data = await response.json();
+  } catch (jsonError) {
+    // 如果JSON解析失败，可能是HTML错误页面
+    try {
+      const text = await response.text();
+      console.error('Non-JSON response:', text.substring(0, 200));
+      
+      // 如果是404错误，返回一个模拟的错误响应
+      if (response.status === 404) {
+        return {
+          success: false,
+          message: '资源未找到 (404)',
+          data: null
+        };
+      }
+      
+      // 其他错误情况
+      throw new Error(`服务器返回了非JSON响应 (状态码: ${response.status}): ${text.substring(0, 100)}...`);
+    } catch (textError) {
+      throw new Error(`无法解析服务器响应 (状态码: ${response.status})`);
+    }
+  }
   
   if (!response.ok) {
-    throw new Error(data.message || '请求失败');
+    throw new Error(data.message || `请求失败 (状态码: ${response.status})`);
   }
   
   // Extract data from the new response format
@@ -210,6 +235,16 @@ export const conversationAPI = {
     return handleResponse(response);
   },
 
+  async saveHistory(sessionId, messages, userId) {
+    // Use conversation-service for saving history (history-analytics-service is for GET only)
+    const response = await fetch(`${API_BASE_URL}/conversation/history/${sessionId}`, {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      body: JSON.stringify({ messages, userId })
+    });
+    return handleResponse(response);
+  },
+
   async getHistory(sessionId) {
     const response = await fetch(`${API_BASE_URL}/history/session/${sessionId}`, {
       headers: getAuthHeaders()
@@ -235,7 +270,7 @@ export const historyAPI = {
   },
 
   async getConversationDetail(sessionId) {
-    const response = await fetch(`${API_BASE_URL}/history/session/${sessionId}`, {
+    const response = await fetch(`${API_BASE_URL}/history/session/${sessionId}/messages`, {
       headers: getAuthHeaders()
     });
     return handleResponse(response);
@@ -243,6 +278,22 @@ export const historyAPI = {
 
   async getStats(userId) {
     const response = await fetch(`${API_BASE_URL}/history/stats/${userId}`, {
+      headers: getAuthHeaders()
+    });
+    return handleResponse(response);
+  },
+
+  async saveProficiencyMetrics(userId, metrics) {
+    const response = await fetch(`${API_BASE_URL}/history/proficiency/${userId}`, {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      body: JSON.stringify(metrics)
+    });
+    return handleResponse(response);
+  },
+
+  async getProficiencyMetrics(userId) {
+    const response = await fetch(`${API_BASE_URL}/history/proficiency/${userId}`, {
       headers: getAuthHeaders()
     });
     return handleResponse(response);

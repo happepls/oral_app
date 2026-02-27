@@ -67,8 +67,11 @@ class OptimizedWebSocket {
     this.connectionPromise = null;
     this.connectionResolve = null;
     this.connectionReject = null;
-    
+
     this.log('info', 'OptimizedWebSocket initialized', { url: url });
+
+    // Don't auto-connect - let the application control when to connect
+    // This prevents race conditions and duplicate connections
   }
   
   // Logging utility
@@ -93,46 +96,59 @@ class OptimizedWebSocket {
     }
   }
   
-  // Connect to WebSocket
+  // Connect to WebSocket (for backward compatibility)
   connect() {
+    // If already connected, return resolved promise
+    if (this.readyState === WebSocket.OPEN) {
+      return Promise.resolve(this);
+    }
+
+    // If already connecting, return existing promise
     if (this.connectionPromise) {
       return this.connectionPromise;
     }
-    
+
+    // Start new connection
     this.connectionPromise = new Promise((resolve, reject) => {
       this.connectionResolve = resolve;
       this.connectionReject = reject;
-      
+
       this._connect();
     });
-    
+
     return this.connectionPromise;
   }
   
   // Internal connection method
   _connect() {
+    // Prevent duplicate connections
+    if (this.ws && (this.ws.readyState === WebSocket.OPEN || this.ws.readyState === WebSocket.CONNECTING)) {
+      this.log('info', 'WebSocket already exists, skipping duplicate creation');
+      return;
+    }
+
     try {
-      this.log('info', 'Connecting to WebSocket', { 
-        url: this.url, 
-        attempt: this.reconnectAttempts + 1 
+      this.log('info', 'Connecting to WebSocket', {
+        url: this.url,
+        attempt: this.reconnectAttempts + 1
       });
-      
+
       this.readyState = WebSocket.CONNECTING;
       this.connectionStartTime = Date.now();
-      
+
       // Create WebSocket connection
       this.ws = new WebSocket(this.url);
       this.ws.binaryType = this.options.binaryType;
-      
+
       // Set up event handlers
       this.ws.onopen = (event) => this._handleOpen(event);
       this.ws.onmessage = (event) => this._handleMessage(event);
       this.ws.onclose = (event) => this._handleClose(event);
       this.ws.onerror = (event) => this._handleError(event);
-      
+
       // Set connection timeout
       this._setConnectionTimeout();
-      
+
     } catch (error) {
       this.log('error', 'Failed to create WebSocket', error);
       this._handleConnectionFailure(error);
@@ -161,8 +177,10 @@ class OptimizedWebSocket {
       this.connectionResolve(this);
     }
     
-    // Emit open event
-    this._emit('open', event);
+    // Emit open event only once per connection (not on reconnection)
+    if (this.reconnectAttempts === 0) {
+      this._emit('open', event);
+    }
   }
   
   // Handle incoming message
@@ -279,23 +297,22 @@ class OptimizedWebSocket {
   
   // Handle connection close
   _handleClose(event) {
-    this.log('info', 'WebSocket closed', { 
-      code: event.code, 
+    this.log('info', 'WebSocket closed', {
+      code: event.code,
       reason: event.reason,
-      wasClean: event.wasClean 
+      wasClean: event.wasClean
     });
-    
+
     this.readyState = WebSocket.CLOSED;
     this._stopHeartbeat();
-    
+
     // Emit close event
     this._emit('close', event);
-    
-    // Attempt reconnection if not a clean close
-    if (!event.wasClean && this.reconnectAttempts < this.options.maxReconnectAttempts) {
-      this._scheduleReconnect();
-    } else if (this.connectionReject) {
-      this.connectionReject(new Error('WebSocket connection failed'));
+
+    // Don't auto-reconnect - let the application control reconnection
+    // This prevents infinite reconnection loops when backend is unstable
+    if (!event.wasClean && this.connectionReject) {
+      this.connectionReject(new Error(`WebSocket closed: ${event.code} ${event.reason}`));
     }
   }
   
@@ -313,33 +330,56 @@ class OptimizedWebSocket {
   // Handle connection failure
   _handleConnectionFailure(error) {
     this.log('error', 'Connection failed', error);
-    
+
     if (this.connectionReject) {
       this.connectionReject(error);
     }
-    
-    // Attempt reconnection
-    if (this.reconnectAttempts < this.options.maxReconnectAttempts) {
-      this._scheduleReconnect();
-    }
+
+    // Don't auto-reconnect - let the application control reconnection
+    // This prevents infinite reconnection loops when backend is unstable
+    // if (this.reconnectAttempts < this.options.maxReconnectAttempts) {
+    //   this._scheduleReconnect();
+    // }
   }
   
   // Schedule reconnection
   _scheduleReconnect() {
+    // Only reconnect if we haven't exceeded max attempts and connection is not already being attempted
+    if (this.reconnectAttempts >= this.options.maxReconnectAttempts || this.readyState === WebSocket.CONNECTING) {
+      return;
+    }
+    
     this.reconnectAttempts++;
     this.metrics.reconnectionCount++;
-    
+
+    // Check if we've exceeded max reconnect attempts
+    if (this.reconnectAttempts > this.options.maxReconnectAttempts) {
+      this.log('error', 'Max reconnect attempts reached, giving up', {
+        attempt: this.reconnectAttempts,
+        max: this.options.maxReconnectAttempts
+      });
+      this._emit('error', {
+        message: 'Failed to connect after multiple attempts',
+        attempts: this.reconnectAttempts
+      });
+      this.close();
+      return;
+    }
+
     this.log('info', 'Scheduling reconnection', {
       attempt: this.reconnectAttempts,
       delay: this.reconnectDelay
     });
-    
+
     setTimeout(() => {
-      this.log('info', 'Attempting reconnection', { attempt: this.reconnectAttempts });
-      this._emit('reconnect', { attempt: this.reconnectAttempts });
-      this._connect();
+      // Double-check we're not already connecting before attempting reconnection
+      if (this.readyState !== WebSocket.CONNECTING) {
+        this.log('info', 'Attempting reconnection', { attempt: this.reconnectAttempts });
+        this._emit('reconnect', { attempt: this.reconnectAttempts });
+        this._connect();
+      }
     }, this.reconnectDelay);
-    
+
     // Exponential backoff
     this.reconnectDelay = Math.min(
       this.reconnectDelay * this.options.reconnectBackoffMultiplier,
@@ -409,12 +449,13 @@ class OptimizedWebSocket {
     };
     
     this.send(JSON.stringify(pingMessage));
-    
-    // Set ping timeout
+
+    // Set ping timeout - increased to 30 seconds to prevent premature disconnection
+    // AI service sends ping every 15 seconds, so 30s gives us 2x buffer
     this.pingTimeout = setTimeout(() => {
       this.log('warn', 'Ping timeout, closing connection');
       this.close();
-    }, 5000);
+    }, 30000);
   }
   
   // Send message
@@ -582,6 +623,8 @@ class OptimizedWebSocket {
 }
 
 // Export for use in other modules
+export default OptimizedWebSocket;
+
 if (typeof module !== 'undefined' && module.exports) {
   module.exports = OptimizedWebSocket;
 } else if (typeof window !== 'undefined') {

@@ -1,611 +1,442 @@
-import asyncio
-import numpy as np
-import sounddevice as sd
-from queue import Queue
-import threading
-import time
-from dataclasses import dataclass
-from typing import Optional, AsyncGenerator
-import io
-import wave
-import tempfile
+# -- coding: utf-8 --
 import os
-import re
+import asyncio
+import time
+import threading
+import queue
+import pyaudio
+from omni_realtime_client import OmniRealtimeClient, TurnDetectionMode
 
- """在M2 Mac mini（16G统一内存）上组合式流水线（本地 ASR + 本地小/中型 LLM‐MLX + 本地 TTS），实现 “我说 → ASR → LLM 思考 → TTS 说回”的本地对话"""
+class AudioPlayer:
+    """实时音频播放器类"""
+    def __init__(self, sample_rate=24000, channels=1, sample_width=2):
+        self.sample_rate = sample_rate
+        self.channels = channels
+        self.sample_width = sample_width  # 2 bytes for 16-bit
+        self.audio_queue = queue.Queue()
+        self.is_playing = False
+        self.play_thread = None
+        self.pyaudio_instance = None
+        self.stream = None
+        self._lock = threading.Lock()  # 添加锁来同步访问
+        self._last_data_time = time.time()  # 记录最后接收数据的时间
+        self._response_done = False  # 添加响应完成标志
+        self._waiting_for_response = False # 标记是否正在等待服务器响应
+        # 记录最后一次向音频流写入数据的时间及最近一次音频块的时长，用于更精确地判断播放结束
+        self._last_play_time = time.time()
+        self._last_chunk_duration = 0.0
 
-
-# MLX imports
-import mlx.core as mx
-from mlx_lm import load, generate
-
-# 使用标准whisper
-try:
-    import whisper
-
-    WHISPER_AVAILABLE = True
-    print("✅ OpenAI Whisper available")
-except ImportError:
-    WHISPER_AVAILABLE = False
-    print("⚠️ OpenAI Whisper not available")
-
-# 禁用VAD，使用简单能量检测
-VAD_AVAILABLE = False
-print("🔧 使用简单能量检测代替WebRTC VAD")
-
-# TTS imports
-try:
-    import pyttsx3
-
-    SYSTEM_TTS_AVAILABLE = True
-    print("✅ System TTS available")
-except ImportError:
-    SYSTEM_TTS_AVAILABLE = False
-    print("⚠️ No TTS available")
-
-
-@dataclass
-class AudioConfig:
-    sample_rate: int = 16000
-    chunk_size: int = 1024
-    channels: int = 1
-    silence_timeout: float = 2.5
-    min_audio_length: float = 1.0
-    max_buffer_seconds: float = 8.0
-    energy_threshold: float = 0.005
-    silence_threshold: float = 0.001
-
-
-class StreamingVoiceAgent:
-    def __init__(self):
-        self.config = AudioConfig()
-        self.audio_queue = Queue()
-        self.is_listening = False
-        self.is_speaking = False
-
-        # Initialize components
-        self._init_asr()
-        self._init_llm()
-        self._init_tts()
-
-    def _init_asr(self):
-        """初始化ASR"""
-        print("🎤 Loading ASR model...")
-        if WHISPER_AVAILABLE:
-            try:
-                self.asr_model = whisper.load_model("base")
-                self.asr_type = "whisper"
-                print("✅ Whisper model loaded (offline)")
-            except Exception as e:
-                print(f"❌ Failed to load Whisper: {e}")
-                self.asr_model = None
-                self.asr_type = "none"
-        else:
-            self.asr_model = None
-            self.asr_type = "none"
-            print("❌ No ASR available")
-
-    def _init_llm(self):
-        """初始化LLM"""
-        print("🧠 Loading LLM model...")
-        try:
-            self.llm_model, self.tokenizer = load(
-                "mlx-community/Qwen2.5-7B-Instruct-4bit",
-                tokenizer_config={"trust_remote_code": True}
-            )
-            print("✅ LLM model loaded")
-        except Exception as e:
-            print(f"❌ Failed to load LLM: {e}")
-            raise
-
-    def _init_tts(self):
-        """初始化TTS - 修复多次调用问题"""
-        print("🔊 Loading TTS model...")
-
-        self.tts = None
-        self.tts_type = "none"
-        self.tts_lock = asyncio.Lock()  # 添加锁防止并发问题
-
-        if SYSTEM_TTS_AVAILABLE:
-            try:
-                self.tts = pyttsx3.init()
-
-                # 获取所有可用语音
-                voices = self.tts.getProperty('voices')
-                self.available_voices = {}
-
-                if voices:
-                    print("🎵 可用语音:")
-                    for i, voice in enumerate(voices):
-                        voice_id = voice.id
-                        voice_name = voice.name
-                        lang_code = getattr(voice, 'languages', ['unknown'])[0] if hasattr(voice,
-                                                                                           'languages') and voice.languages else 'unknown'
-
-                        print(f"   [{i}] {voice_name} ({lang_code}) - {voice_id}")
-
-                        # 建立语言映射
-                        if any(x in voice_name.lower() or x in voice_id.lower() for x in
-                               ['chinese', 'zh', 'mandarin', '中文']):
-                            self.available_voices['zh'] = voice_id
-                        elif any(x in voice_name.lower() or x in voice_id.lower() for x in
-                                 ['english', 'en', 'us', 'uk']):
-                            self.available_voices['en'] = voice_id
-                        elif any(x in voice_name.lower() or x in voice_id.lower() for x in ['japanese', 'ja', '日本']):
-                            self.available_voices['ja'] = voice_id
-                        elif any(x in voice_name.lower() or x in voice_id.lower() for x in ['korean', 'ko', '한국']):
-                            self.available_voices['ko'] = voice_id
-                        elif any(
-                                x in voice_name.lower() or x in voice_id.lower() for x in ['french', 'fr', 'français']):
-                            self.available_voices['fr'] = voice_id
-                        elif any(x in voice_name.lower() or x in voice_id.lower() for x in ['german', 'de', 'deutsch']):
-                            self.available_voices['de'] = voice_id
-                        elif any(
-                                x in voice_name.lower() or x in voice_id.lower() for x in ['spanish', 'es', 'español']):
-                            self.available_voices['es'] = voice_id
-
-                    print(f"🌍 语言映射: {self.available_voices}")
-
-                    # 设置默认语音（优先中文）
-                    if 'zh' in self.available_voices:
-                        self.tts.setProperty('voice', self.available_voices['zh'])
-                        self.current_voice = 'zh'
-                        print(f"✅ 默认语音设为中文")
-                    elif 'en' in self.available_voices:
-                        self.tts.setProperty('voice', self.available_voices['en'])
-                        self.current_voice = 'en'
-                        print(f"✅ 默认语音设为英文")
-                    else:
-                        self.current_voice = 'default'
-                        print("✅ 使用系统默认语音")
-                else:
-                    self.current_voice = 'default'
-                    self.available_voices = {}
-
-                # 设置TTS参数
-                self.tts.setProperty('rate', 180)
-                self.tts.setProperty('volume', 0.9)
-                self.tts_type = "system"
-                print("✅ System TTS loaded with multi-language support")
+    def start(self):
+        """启动音频播放器"""
+        with self._lock:
+            if self.is_playing:
                 return
 
+            self.is_playing = True
+
+            try:
+                self.pyaudio_instance = pyaudio.PyAudio()
+
+                # 创建音频输出流
+                self.stream = self.pyaudio_instance.open(
+                    format=pyaudio.paInt16,  # 16-bit
+                    channels=self.channels,
+                    rate=self.sample_rate,
+                    output=True,
+                    frames_per_buffer=1024
+                )
+
+                # 启动播放线程
+                self.play_thread = threading.Thread(target=self._play_audio)
+                self.play_thread.daemon = True
+                self.play_thread.start()
+
+                print("音频播放器已启动")
             except Exception as e:
-                print(f"⚠️ System TTS failed: {e}")
+                print(f"启动音频播放器失败: {e}")
+                self._cleanup_resources()
+                raise
 
-        print("⚠️ No TTS available - text-only mode")
+    def stop(self):
+        """停止音频播放器"""
+        with self._lock:
+            if not self.is_playing:
+                return
 
-    def _detect_language(self, text: str) -> str:
-        """检测文本语言"""
+            self.is_playing = False
+
+        # 清空队列
+        while not self.audio_queue.empty():
+            try:
+                self.audio_queue.get_nowait()
+            except queue.Empty:
+                break
+
+        # 等待播放线程结束（在锁外面等待，避免死锁）
+        if self.play_thread and self.play_thread.is_alive():
+            self.play_thread.join(timeout=2.0)
+
+        # 再次获取锁来清理资源
+        with self._lock:
+            self._cleanup_resources()
+
+        print("音频播放器已停止")
+
+    def _cleanup_resources(self):
+        """清理音频资源（必须在锁内调用）"""
         try:
-            # 简单的语言检测
-            chinese_chars = len(re.findall(r'[\u4e00-\u9fff]', text))
-            japanese_chars = len(re.findall(r'[\u3040-\u309f\u30a0-\u30ff]', text))
-            korean_chars = len(re.findall(r'[\uac00-\ud7af]', text))
-            total_chars = len(text)
-
-            if total_chars == 0:
-                return 'en'
-
-            # 计算各语言字符占比
-            chinese_ratio = chinese_chars / total_chars
-            japanese_ratio = japanese_chars / total_chars
-            korean_ratio = korean_chars / total_chars
-
-            if chinese_ratio > 0.3:
-                return 'zh'
-            elif japanese_ratio > 0.3:
-                return 'ja'
-            elif korean_ratio > 0.3:
-                return 'ko'
-            else:
-                # 检测其他欧洲语言的特征词
-                text_lower = text.lower()
-                if any(word in text_lower for word in
-                       ['le', 'la', 'les', 'de', 'du', 'des', 'je', 'tu', 'nous', 'vous']):
-                    return 'fr'
-                elif any(
-                        word in text_lower for word in ['der', 'die', 'das', 'ich', 'du', 'wir', 'ihr', 'und', 'oder']):
-                    return 'de'
-                elif any(word in text_lower for word in ['el', 'la', 'los', 'las', 'yo', 'tu', 'nosotros', 'vosotros']):
-                    return 'es'
-                else:
-                    return 'en'
-
+            # 关闭音频流
+            if self.stream:
+                if not self.stream.is_stopped():
+                    self.stream.stop_stream()
+                self.stream.close()
+                self.stream = None
         except Exception as e:
-            print(f"Language detection error: {e}")
-            return 'en'
-
-    def _set_voice_for_language(self, language: str):
-        """根据语言设置合适的语音"""
-        if not self.tts or not self.available_voices:
-            return
+            print(f"关闭音频流时出错: {e}")
 
         try:
-            target_voice = None
-
-            # 直接匹配
-            if language in self.available_voices:
-                target_voice = self.available_voices[language]
-            # 回退策略
-            elif language in ['zh-cn', 'zh-tw'] and 'zh' in self.available_voices:
-                target_voice = self.available_voices['zh']
-            elif language in ['en-us', 'en-gb'] and 'en' in self.available_voices:
-                target_voice = self.available_voices['en']
-            # 默认回退到英文或中文
-            elif 'zh' in self.available_voices:
-                target_voice = self.available_voices['zh']
-            elif 'en' in self.available_voices:
-                target_voice = self.available_voices['en']
-
-            if target_voice and target_voice != getattr(self, 'current_voice_id', None):
-                self.tts.setProperty('voice', target_voice)
-                self.current_voice_id = target_voice
-                print(f"🎵 切换语音: {language} -> {target_voice}")
-
+            if self.pyaudio_instance:
+                self.pyaudio_instance.terminate()
+                self.pyaudio_instance = None
         except Exception as e:
-            print(f"Voice switching error: {e}")
+            print(f"终止PyAudio时出错: {e}")
 
-    def _energy_vad(self, audio_data: np.ndarray) -> bool:
-        """基于能量的语音活动检测"""
-        rms = np.sqrt(np.mean(audio_data ** 2))
-        return rms > self.config.energy_threshold
-
-    def _is_silence(self, audio_data: np.ndarray) -> bool:
-        """检测是否为静音"""
-        rms = np.sqrt(np.mean(audio_data ** 2))
-        return rms < self.config.silence_threshold
-
-    def _audio_callback(self, indata, frames, time, status):
-        """音频回调"""
-        if status:
-            print(f"Audio input error: {status}")
-
-        if not self.is_speaking:
-            audio_data = indata[:, 0].copy()
-            audio_data = np.clip(audio_data, -1.0, 1.0)
+    def add_audio_data(self, audio_data):
+        """添加音频数据到播放队列"""
+        if self.is_playing and audio_data:
             self.audio_queue.put(audio_data)
+            with self._lock:
+                self._last_data_time = time.time()  # 更新最后接收数据的时间
+                self._waiting_for_response = False # 收到数据，不再等待
 
-    def _transcribe_audio_whisper(self, audio_data: np.ndarray) -> str:
-        """使用离线Whisper转录"""
-        try:
-            if self.asr_model is None:
-                return ""
+    def stop_receiving_data(self):
+        """标记不再接收新的音频数据"""
+        with self._lock:
+            self._response_done = True
+            self._waiting_for_response = False # 响应结束，不再等待
 
-            if audio_data.dtype != np.float32:
-                audio_data = audio_data.astype(np.float32)
+    def prepare_for_next_turn(self):
+        """为下一轮对话重置播放器状态。"""
+        with self._lock:
+            self._response_done = False
+            self._last_data_time = time.time()
+            self._last_play_time = time.time()
+            self._last_chunk_duration = 0.0
+            self._waiting_for_response = True # 开始等待下一轮响应
 
-            audio_data = np.clip(audio_data, -1.0, 1.0)
-
-            result = self.asr_model.transcribe(
-                audio_data,
-                language=None,
-                task="transcribe",
-                verbose=False
-            )
-
-            return result.get("text", "").strip()
-
-        except Exception as e:
-            print(f"Whisper transcription error: {e}")
-            return ""
-
-    async def _stream_asr(self) -> AsyncGenerator[str, None]:
-        """流式ASR处理"""
-        buffer = []
-        silence_start = None
-        last_speech_time = time.time()
-        speech_detected = False
-
-        print("🎤 开始监听音频... (使用能量检测)")
-
-        while self.is_listening:
+        # 清空上一轮可能残留的音频数据
+        while not self.audio_queue.empty():
             try:
-                current_time = time.time()
+                self.audio_queue.get_nowait()
+            except queue.Empty:
+                break
 
-                chunks_this_cycle = 0
-                while not self.audio_queue.empty() and chunks_this_cycle < 10:
-                    try:
-                        chunk = self.audio_queue.get_nowait()
-                        buffer.append(chunk)
-                        chunks_this_cycle += 1
-                    except:
-                        break
+    def is_finished_playing(self):
+        """检查是否已经播放完所有音频数据"""
+        with self._lock:
+            queue_size = self.audio_queue.qsize()
+            time_since_last_data = time.time() - self._last_data_time
+            time_since_last_play = time.time() - self._last_play_time
 
-                if len(buffer) > 0:
-                    recent_chunks = buffer[-5:]
-                    if recent_chunks:
-                        recent_audio = np.concatenate(recent_chunks)
+            # ---------------------- 智能结束判定 ----------------------
+            # 1. 首选：如果服务器已标记完成且播放队列为空
+            #    进一步等待最近一块音频播放完毕（音频块时长 + 0.1s 容错）。
+            if self._response_done and queue_size == 0:
+                min_wait = max(self._last_chunk_duration + 0.1, 0.5)  # 至少等待 0.5s
+                if time_since_last_play >= min_wait:
+                    return True
 
-                        has_speech = self._energy_vad(recent_audio)
-                        is_silence = self._is_silence(recent_audio)
+            # 2. 备用：如果长时间没有新数据且播放队列为空
+            #    当服务器没有明确发出 `response.done` 时，此逻辑作为保障
+            if not self._waiting_for_response and queue_size == 0 and time_since_last_data > 1.0:
+                print("\n(超时未收到新音频，判定播放结束)")
+                return True
 
-                        if has_speech:
-                            if not speech_detected:
-                                print("🔊 检测到语音...")
-                                speech_detected = True
-                            silence_start = None
-                            last_speech_time = current_time
-                        elif speech_detected and is_silence:
-                            if silence_start is None:
-                                silence_start = current_time
-                                print("🔇 检测到静音...")
+            return False
 
-                buffer_duration = len(buffer) * self.config.chunk_size / self.config.sample_rate
+    def _play_audio(self):
+        """播放音频数据的工作线程"""
+        while True:
+            # 检查是否应该停止
+            with self._lock:
+                if not self.is_playing:
+                    break
+                stream_ref = self.stream  # 获取流的引用
 
-                should_process = False
-                if (speech_detected and silence_start and
-                        current_time - silence_start > self.config.silence_timeout):
-                    should_process = True
-                elif buffer_duration > self.config.max_buffer_seconds:
-                    should_process = True
-                    print("⚠️ Buffer满，强制处理")
+            try:
+                # 从队列中获取音频数据，超时0.1秒
+                audio_data = self.audio_queue.get(timeout=0.1)
 
-                if should_process and buffer_duration > self.config.min_audio_length:
-                    print(f"🔄 处理音频: {buffer_duration:.1f}s")
+                # 再次检查状态和流的有效性
+                with self._lock:
+                    if self.is_playing and stream_ref and not stream_ref.is_stopped():
+                        try:
+                            # 播放音频数据
+                            stream_ref.write(audio_data)
+                            # 更新最近播放信息
+                            self._last_play_time = time.time()
+                            self._last_chunk_duration = len(audio_data) / (self.channels * self.sample_width) / self.sample_rate
+                        except Exception as e:
+                            print(f"写入音频流时出错: {e}")
+                            break
 
-                    try:
-                        audio_data = np.concatenate(buffer)
-                        rms = np.sqrt(np.mean(audio_data ** 2))
-                        print(f"📊 音频RMS: {rms:.4f}")
+                # 标记该数据块已处理完成
+                self.audio_queue.task_done()
 
-                        if rms > self.config.silence_threshold:
-                            if self.asr_type == "whisper":
-                                text = self._transcribe_audio_whisper(audio_data)
-                            else:
-                                text = ""
-
-                            if text and len(text.strip()) > 2:
-                                print(f"🎤 转录: {text}")
-                                yield text
-                            else:
-                                print("🔇 无有效语音内容")
-                        else:
-                            print("🔇 音频能量过低，跳过")
-
-                    except Exception as e:
-                        print(f"Audio processing error: {e}")
-
-                    buffer = []
-                    silence_start = None
-                    speech_detected = False
-
-                if current_time - last_speech_time > 15:
-                    if buffer:
-                        print("🧹 清理超时buffer")
-                        buffer = []
-                    silence_start = None
-                    speech_detected = False
-
-                await asyncio.sleep(0.05)
-
+            except queue.Empty:
+                # 队列为空时继续等待
+                continue
             except Exception as e:
-                print(f"Stream ASR error: {e}")
-                await asyncio.sleep(0.1)
+                print(f"播放音频时出错: {e}")
+                break
 
-    async def _generate_response(self, text: str) -> AsyncGenerator[str, None]:
-        """生成LLM响应"""
-        messages = [
-            {"role": "system", "content": "你是一个友善的AI助手。请用简洁自然的语言回答用户问题，回复控制在50字以内。"},
-            {"role": "user", "content": text}
-        ]
+class MicrophoneRecorder:
+    """实时麦克风录音器"""
+    def __init__(self, sample_rate=16000, channels=1, chunk_size=3200):
+        self.sample_rate = sample_rate
+        self.channels = channels
+        self.chunk_size = chunk_size
+        self.pyaudio_instance = None
+        self.stream = None
+        self.frames = []
+        self._is_recording = False
+        self._record_thread = None
 
-        prompt = self.tokenizer.apply_chat_template(
-            messages,
-            tokenize=False,
-            add_generation_prompt=True
-        )
+    def _recording_thread(self):
+        """录音工作线程"""
+        # 在 _is_recording 为 True 期间，持续从音频流中读取数据
+        while self._is_recording:
+            try:
+                # 使用 exception_on_overflow=False 避免因缓冲区溢出而崩溃
+                data = self.stream.read(self.chunk_size, exception_on_overflow=False)
+                self.frames.append(data)
+            except (IOError, OSError) as e:
+                # 当流被关闭时，读取操作可能会引发错误
+                print(f"录音流读取错误，可能已关闭: {e}")
+                break
 
-        try:
-            print("🧠 生成回复...")
-
-            response = generate(
-                model=self.llm_model,
-                tokenizer=self.tokenizer,
-                prompt=prompt,
-                max_tokens=128,
-            )
-
-            response = response.strip()
-
-            if prompt in response:
-                response = response.replace(prompt, "").strip()
-
-            response = response.replace("assistant\n", "").replace("Assistant:", "").replace("AI:", "").strip()
-
-            lines = [line.strip() for line in response.split('\n') if line.strip()]
-            if lines:
-                response = lines[0]
-
-            if response and len(response) > 3:
-                yield response
-            else:
-                yield "我明白了，还有什么可以帮助你的吗？"
-
-        except Exception as e:
-            print(f"LLM generation error: {e}")
-            yield "我理解了你的问题，让我换个方式回答你。"
-
-    async def _stream_tts(self, text: str):
-        """TTS合成与播放 - 修复多语言支持和重复播放问题"""
-        if not self.tts:
-            print(f"💬 AI回复: {text}")
+    def start(self):
+        """开始录音"""
+        if self._is_recording:
+            print("录音已在进行中。")
             return
 
-        # 使用异步锁防止并发TTS调用
-        async with self.tts_lock:
+        self.frames = []
+        self._is_recording = True
+
+        try:
+            self.pyaudio_instance = pyaudio.PyAudio()
+            self.stream = self.pyaudio_instance.open(
+                format=pyaudio.paInt16,
+                channels=self.channels,
+                rate=self.sample_rate,
+                input=True,
+                frames_per_buffer=self.chunk_size
+            )
+
+            self._record_thread = threading.Thread(target=self._recording_thread)
+            self._record_thread.daemon = True
+            self._record_thread.start()
+            print("麦克风录音已开始...")
+        except Exception as e:
+            print(f"启动麦克风失败: {e}")
+            self._is_recording = False
+            self._cleanup()
+            raise
+
+    def stop(self):
+        """停止录音并返回音频数据"""
+        if not self._is_recording:
+            return None
+
+        self._is_recording = False
+
+        # 等待录音线程安全退出
+        if self._record_thread:
+            self._record_thread.join(timeout=1.0)
+
+        self._cleanup()
+
+        print("麦克风录音已停止。")
+        return b''.join(self.frames)
+
+    def _cleanup(self):
+        """安全地清理 PyAudio 资源"""
+        if self.stream:
             try:
-                print(f"🔊 语音播放: {text}")
-
-                # 检测语言并切换语音
-                detected_lang = self._detect_language(text)
-                print(f"🌍 检测语言: {detected_lang}")
-                self._set_voice_for_language(detected_lang)
-
-                self.is_speaking = True
-
-                # 分句播放，改进分句逻辑
-                sentences = self._split_sentences(text)
-                print(f"📝 分句结果: {sentences}")
-
-                for i, sentence in enumerate(sentences):
-                    if sentence.strip():
-                        print(f"🎵 播放第{i + 1}句: {sentence}")
-
-                        # 在新线程中执行TTS避免阻塞
-                        def speak_sentence():
-                            try:
-                                # 重新初始化TTS引擎以避免状态问题
-                                temp_tts = pyttsx3.init()
-
-                                # 重新设置语音
-                                if hasattr(self, 'current_voice_id'):
-                                    temp_tts.setProperty('voice', self.current_voice_id)
-                                temp_tts.setProperty('rate', 180)
-                                temp_tts.setProperty('volume', 0.9)
-
-                                temp_tts.say(sentence)
-                                temp_tts.runAndWait()
-                                temp_tts.stop()
-
-                            except Exception as e:
-                                print(f"TTS sentence error: {e}")
-
-                        # 在线程池中执行
-                        loop = asyncio.get_event_loop()
-                        await loop.run_in_executor(None, speak_sentence)
-
-                        # 句子间短暂停顿
-                        if i < len(sentences) - 1:
-                            await asyncio.sleep(0.3)
-
-                print("✅ TTS播放完成")
-                self.is_speaking = False
-
+                if self.stream.is_active():
+                    self.stream.stop_stream()
+                self.stream.close()
             except Exception as e:
-                print(f"TTS error: {e}")
-                self.is_speaking = False
+                print(f"关闭音频流时出错: {e}")
 
-    def _split_sentences(self, text: str) -> list:
-        """改进的分句方法"""
-        if not text.strip():
-            return []
+        if self.pyaudio_instance:
+            try:
+                self.pyaudio_instance.terminate()
+            except Exception as e:
+                print(f"终止 PyAudio 实例时出错: {e}")
 
-        # 使用正则表达式分句，支持中英文标点
-        import re
+        self.stream = None
+        self.pyaudio_instance = None
 
-        # 分句标点符号
-        sentence_endings = r'[。！？.!?]+\s*'
-        sentences = re.split(sentence_endings, text)
+async def interactive_test():
+    """
+    交互式测试脚本：允许多轮连续对话，每轮可以发送音频和图片。
+    """
+    # ------------------- 1. 初始化和连接 (一次性) -------------------
+    api_key = os.environ.get("DASHSCOPE_API_KEY")
+    if not api_key:
+        print("请设置DASHSCOPE_API_KEY环境变量")
+        return
 
-        # 过滤空句子并保留标点
-        result = []
-        parts = re.findall(r'[^。！？.!?]*[。！？.!?]+|[^。！？.!?]+$', text)
+    print("--- 实时多轮音视频对话客户端 ---")
+    print("正在初始化音频播放器和客户端...")
 
-        for part in parts:
-            part = part.strip()
-            if part:
-                result.append(part)
+    audio_player = AudioPlayer()
+    audio_player.start()
 
-        # 如果没有找到分句，返回整个文本
-        if not result:
-            result = [text.strip()]
+    def on_audio_received(audio_data):
+        audio_player.add_audio_data(audio_data)
 
-        return result
+    def on_response_done(event):
+        print("\n(收到响应结束标记)")
+        audio_player.stop_receiving_data()
 
-    async def _conversation_loop(self):
-        """主对话循环"""
-        print("\n🎯 语音对话已启动!")
-        print("💡 使用说明:")
-        print("   - 正常说话，系统会自动检测语音开始和结束")
-        print("   - 说完话后等待2.5秒，AI会自动处理")
-        print("   - 支持中英文及多语言混合识别和播报")
-        print("   - 按 Ctrl+C 退出")
-        print("=" * 50)
+    realtime_client = OmniRealtimeClient(
+        base_url="wss://dashscope.aliyuncs.com/api-ws/v1/realtime",
+        api_key=api_key,
+        model="qwen3-omni-flash-realtime",
+        voice="Ethan",
+        instructions="你是个人助理小云，请你准确且友好地解答用户的问题，始终以乐于助人的态度回应。", # 设定模型角色
+        on_text_delta=lambda text: print(f"助手回复: {text}", end="", flush=True),
+        on_audio_delta=on_audio_received,
+        turn_detection_mode=TurnDetectionMode.MANUAL,
+        extra_event_handlers={"response.done": on_response_done}
+    )
 
-        async for user_text in self._stream_asr():
-            if not user_text.strip():
+    message_handler_task = None
+    try:
+        await realtime_client.connect()
+        print("已连接到服务器。输入 'q' 或 'quit' 可随时退出程序。")
+        message_handler_task = asyncio.create_task(realtime_client.handle_messages())
+        await asyncio.sleep(0.5)
+
+        turn_counter = 1
+        # ------------------- 2. 多轮对话循环 -------------------
+        while True:
+            print(f"\n--- 第 {turn_counter} 轮对话 ---")
+            audio_player.prepare_for_next_turn()
+
+            recorded_audio = None
+            image_paths = []
+
+            # --- 获取用户输入：从麦克风录音 ---
+            loop = asyncio.get_event_loop()
+            recorder = MicrophoneRecorder(sample_rate=16000) # 推荐使用16k采样率进行语音识别
+
+            print("准备录音。按 Enter 键开始录音 (或输入 'q' 退出)...")
+            user_input = await loop.run_in_executor(None, input)
+            if user_input.strip().lower() in ['q', 'quit']:
+                print("用户请求退出...")
+                return
+
+            try:
+                recorder.start()
+            except Exception:
+                print("无法启动录音，请检查您的麦克风权限和设备。跳过本轮。")
                 continue
 
-            print(f"\n👤 用户: {user_text}")
+            print("录音中... 再次按 Enter 键停止录音。")
+            await loop.run_in_executor(None, input)
 
-            # 暂停录音
-            self.is_listening = False
-            print("⏸️ 暂停录音，AI思考中...")
+            recorded_audio = recorder.stop()
 
-            # 生成并播放回复
-            async for response in self._generate_response(user_text):
-                print(f"🤖 AI: {response}")
-                await self._stream_tts(response)
+            if not recorded_audio or len(recorded_audio) == 0:
+                print("未录制到有效音频，请重新开始本轮对话。")
+                continue
 
-            print("=" * 50)
+            # --- 获取图片输入 (可选) ---
+            # 以下图片输入功能已被注释，暂时禁用。若需启用请取消下方代码注释。
+            # print("\n请逐行输入【图片文件】的绝对路径 (可选)。完成后，输入 's' 或按 Enter 发送请求。")
+            # while True:
+            #     path = input("图片路径: ").strip()
+            #     if path.lower() == 's' or path == '':
+            #         break
+            #     if path.lower() in ['q', 'quit']:
+            #         print("用户请求退出...")
+            #         return
+            #
+            #     if not os.path.isabs(path):
+            #         print("错误: 请输入绝对路径。")
+            #         continue
+            #     if not os.path.exists(path):
+            #         print(f"错误: 文件不存在 -> {path}")
+            #         continue
+            #     image_paths.append(path)
+            #     print(f"已添加图片: {os.path.basename(path)}")
 
-            # 恢复录音
-            await asyncio.sleep(1.5)
-            self.is_listening = True
-            print("🎤 继续监听...")
+            # --- 3. 发送数据并获取响应 ---
+            print("\n--- 输入确认 ---")
+            print(f"待处理音频: 1个 (来自麦克风), 图片: {len(image_paths)}个")
+            print("------------------")
 
-    def start_conversation(self):
-        """启动语音对话"""
-        print("🚀 启动语音Agent...")
-        print(f"🔧 系统配置:")
-        print(f"   - ASR: {self.asr_type}")
-        print(f"   - LLM: Qwen2.5-7B-Instruct (4bit)")
-        print(f"   - TTS: {self.tts_type}")
-        print(f"   - VAD: 能量检测 (阈值: {self.config.energy_threshold})")
-        print(f"   - 静音超时: {self.config.silence_timeout}s")
+            # 3.1 发送录制的音频
+            try:
+                print(f"发送麦克风录音 ({len(recorded_audio)}字节)")
+                await realtime_client.stream_audio(recorded_audio)
+                await asyncio.sleep(0.1)
+            except Exception as e:
+                print(f"发送麦克风录音失败: {e}")
+                continue
 
-        if self.asr_model is None:
-            print("❌ ASR不可用，无法启动")
-            return
+            # 3.2 发送所有图片文件
+            # 以下图片发送代码已被注释，暂时禁用。
+            # for i, path in enumerate(image_paths):
+            #     try:
+            #         with open(path, "rb") as f:
+            #             data = f.read()
+            #         print(f"发送图片 {i+1}: {os.path.basename(path)} ({len(data)}字节)")
+            #         await realtime_client.append_image(data)
+            #         await asyncio.sleep(0.1)
+            #     except Exception as e:
+            #         print(f"发送图片 {os.path.basename(path)} 失败: {e}")
 
-        # 测试LLM
-        print("🔧 测试LLM生成功能...")
-        try:
-            test_prompt = self.tokenizer.apply_chat_template(
-                [{"role": "user", "content": "你好"}],
-                tokenize=False,
-                add_generation_prompt=True
-            )
-            test_response = generate(
-                model=self.llm_model,
-                tokenizer=self.tokenizer,
-                prompt=test_prompt,
-                max_tokens=50
-            )
-            print("✅ LLM测试成功")
-        except Exception as e:
-            print(f"❌ LLM测试失败: {e}")
-            return
+            # 3.3 提交并等待响应
+            print("提交所有输入，请求服务器响应...")
+            await realtime_client.commit_audio_buffer()
+            await realtime_client.create_response()
 
-        self.is_listening = True
+            print("等待并播放服务器响应音频...")
+            start_time = time.time()
+            max_wait_time = 60
+            while not audio_player.is_finished_playing():
+                if time.time() - start_time > max_wait_time:
+                    print(f"\n等待超时 ({max_wait_time}秒), 进入下一轮。")
+                    break
+                await asyncio.sleep(0.2)
 
-        try:
-            with sd.InputStream(
-                    channels=self.config.channels,
-                    samplerate=self.config.sample_rate,
-                    blocksize=self.config.chunk_size,
-                    callback=self._audio_callback,
-                    dtype=np.float32
-            ):
-                asyncio.run(self._conversation_loop())
-        except KeyboardInterrupt:
-            print("\n👋 对话结束")
-            self.is_listening = False
-        except Exception as e:
-            print(f"❌ 启动失败: {e}")
+            print("\n本轮音频播放完成！")
+            turn_counter += 1
 
+    except (asyncio.CancelledError, KeyboardInterrupt):
+        print("\n程序被中断。")
+    except Exception as e:
+        print(f"发生未处理的错误: {e}")
+    finally:
+        # ------------------- 4. 清理资源 -------------------
+        print("\n正在关闭连接并清理资源...")
+        if message_handler_task and not message_handler_task.done():
+            message_handler_task.cancel()
 
-# 使用示例
+        if 'realtime_client' in locals() and realtime_client.ws and not realtime_client.ws.close:
+            await realtime_client.close()
+            print("连接已关闭。")
+
+        audio_player.stop()
+        print("程序退出。")
+
 if __name__ == "__main__":
-    print("🔍 环境检查:")
-    print(f"   - MLX设备: {mx.default_device()}")
-    print(f"   - Whisper可用: {WHISPER_AVAILABLE}")
-    print(f"   - TTS可用: {SYSTEM_TTS_AVAILABLE}")
-
-    if not WHISPER_AVAILABLE:
-        print("\n🚨 需要安装Whisper:")
-        print("pip install openai-whisper")
-        exit(1)
-
-    agent = StreamingVoiceAgent()
-    agent.start_conversation()
+    try:
+        asyncio.run(interactive_test())
+    except KeyboardInterrupt:
+        print("\n程序被用户强制退出。")

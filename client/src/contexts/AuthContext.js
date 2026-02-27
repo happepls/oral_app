@@ -39,6 +39,7 @@ export const AuthProvider = ({ children }) => {
       // handleResponse in api.js extracts the data part for successful responses
       const { user: userData, token: newToken } = response;
       localStorage.setItem('authToken', newToken);
+      localStorage.setItem('token', newToken); // For backward compatibility
       localStorage.setItem('user', JSON.stringify(userData));
       setUser(userData);
       setToken(newToken);
@@ -63,6 +64,7 @@ export const AuthProvider = ({ children }) => {
       // handleResponse in api.js extracts the data part for successful responses
       const { user: newUser, token: newToken } = response;
       localStorage.setItem('authToken', newToken);
+      localStorage.setItem('token', newToken); // For backward compatibility
       localStorage.setItem('user', JSON.stringify(newUser));
       setUser(newUser);
       setToken(newToken);
@@ -113,6 +115,35 @@ export const AuthProvider = ({ children }) => {
     }
   };
 
+  const checkTokenExpiry = () => {
+    const token = localStorage.getItem('authToken');
+    if (!token) return false;
+    
+    try {
+      const payload = JSON.parse(atob(token.split('.')[1]));
+      const now = Math.floor(Date.now() / 1000);
+      const timeLeft = payload.exp - now;
+      
+      // Consider token expired if less than 5 minutes left
+      return timeLeft > 300;
+    } catch (e) {
+      return false;
+    }
+  };
+
+  const refreshToken = async () => {
+    try {
+      // For now, just logout and redirect to login
+      // In a full implementation, you would use a refresh token
+      logout();
+      window.location.href = '/login';
+      return false;
+    } catch (err) {
+      console.error('Failed to refresh token:', err);
+      return false;
+    }
+  };
+
   const value = {
     user,
     token,
@@ -123,6 +154,8 @@ export const AuthProvider = ({ children }) => {
     logout,
     updateProfile,
     refreshProfile,
+    checkTokenExpiry,
+    refreshToken,
     isAuthenticated: !!user
   };
 

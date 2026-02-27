@@ -1,7 +1,7 @@
 const { createProxyMiddleware } = require('http-proxy-middleware');
 
 module.exports = function(app) {
-  const target = process.env.PROXY_TARGET || 'http://localhost:8080';
+  const target = process.env.PROXY_TARGET || 'http://localhost:8081';
   
   // Explicit WebSocket Proxy
   app.use('/api/ws', createProxyMiddleware({
@@ -11,10 +11,10 @@ module.exports = function(app) {
     logLevel: 'debug'
   }));
   
-  // General API Proxy
+  // General API Proxy - Remove ws to avoid conflicts
   app.use('/api', createProxyMiddleware({
     target: target,
     changeOrigin: true,
-    // ws: true, // Disable implicit ws here to avoid conflicts
+    logLevel: 'debug'
   }));
 };

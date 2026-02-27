@@ -553,6 +553,8 @@ class NetworkAdaptiveManager {
 }
 
 // Export for use in other modules
+export default NetworkAdaptiveManager;
+
 if (typeof module !== 'undefined' && module.exports) {
   module.exports = NetworkAdaptiveManager;
 } else if (typeof window !== 'undefined') {

@@ -6,7 +6,7 @@ services:
     container_name: oral_app_api_gateway
     restart: unless-stopped
     ports:
-      - "8080:80"
+      - "8081:80"
     volumes:
       - ./api-gateway/nginx.conf:/etc/nginx/nginx.conf
     depends_on:
@@ -18,6 +18,8 @@ services:
       - history-analytics-service
     networks:
       - oral_app_net
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
 
   history-analytics-service:
     build: ./services/history-analytics-service
@@ -38,19 +40,21 @@ services:
       - oral_app_net
 
   client-app:
-    build: ./client
+    build:
+      context: ./client
+      dockerfile: Dockerfile.prod
+      args:
+        - REACT_APP_API_URL=/api
+        - REACT_APP_API_GATEWAY=http://oral_app_api_gateway:80
     container_name: oral_app_client_app
     restart: unless-stopped
     ports:
-      - "5001:5000"
-    volumes:
-      - ./client/src:/app/src
-      - ./client/public:/app/public
-      - ./client/node_modules:/app/node_modules
+      - "5001:5001"
     environment:
       - REACT_APP_API_URL=/api
-      - PROXY_TARGET=http://api-gateway
-      - WDS_SOCKET_PORT=5001
+      - REACT_APP_API_GATEWAY=http://oral_app_api_gateway:80
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     networks:
       - oral_app_net
 
@@ -133,7 +137,7 @@ services:
       - REDIS_HOST=redis
       - REDIS_PORT=6379
       - JWT_SECRET=your_jwt_secret_key_change_in_production
-      - AI_SERVICE_WS_URL=ws://ai-omni-service:8008/stream
+      - AI_SERVICE_WS_URL=ws://ai-omni-service:8082/stream
     env_file:
       - ./services/comms-service/.env
     depends_on:
@@ -147,20 +151,17 @@ services:
     restart: always
     ports:
       - "8082:8082"
-      - "8081:8081"
-    expose:
-      - "8008"
     volumes:
       - ./services/ai-omni-service/models:/usr/src/app/models
-      - ./services/ai-omni-service/.env:/app/.env
       - ./services/ai-omni-service/app:/app/app
     env_file:
       - ./services/ai-omni-service/.env
     environment:
-      - QWEN3_OMNI_MODEL=qwen3-omni-flash-realtime-2025-12-01
       - USER_SERVICE_URL=http://user-service:3000
       - CONVERSATION_SERVICE_URL=http://conversation-service:8083
       - MEDIA_SERVICE_URL=http://media-processing-service:3005
+      - QWEN3_OMNI_API_KEY=${QWEN3_OMNI_API_KEY:-}
+      - DASHSCOPE_API_KEY=${DASHSCOPE_API_KEY:-}
     networks:
       - oral_app_net
 
@@ -199,6 +200,25 @@ services:
       - ./services/media-processing-service/.env:/app/.env
     env_file:
       - ./services/media-processing-service/.env
+    networks:
+      - oral_app_net
+
+  workflow-service:
+    build: ./services/workflow-service
+    container_name: oral_app_workflow_service
+    restart: always
+    ports:
+      - "3006:3006"
+    environment:
+      - POSTGRES_HOST=postgres
+      - POSTGRES_PORT=5432
+      - POSTGRES_USER=user
+      - POSTGRES_PASSWORD=password
+      - POSTGRES_DB=oral_app
+    env_file:
+      - ./.env
+    depends_on:
+      - postgres
     networks:
       - oral_app_net
 

@@ -6,11 +6,31 @@ const bcrypt = require('bcryptjs');
 
 const client = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
 
-// Helper to generate JWT
+// Enhanced JWT configuration (matching enhancedAuthMiddleware.js)
+const JWT_CONFIG = {
+  accessTokenExpiry: '24h', // Extended to 24 hours for better user experience
+  refreshTokenExpiry: '7d', // Longer-lived refresh tokens
+  algorithm: 'HS256',
+  issuer: 'oral-app',
+  audience: 'oral-app-users'
+};
+
+// Helper to generate JWT with proper configuration
 const generateToken = (id) => {
-  return jwt.sign({ id }, process.env.JWT_SECRET, {
-    expiresIn: '30d',
-  });
+  return jwt.sign(
+    { 
+      id: id,
+      type: 'access',
+      iat: Math.floor(Date.now() / 1000)
+    },
+    process.env.JWT_SECRET,
+    {
+      expiresIn: JWT_CONFIG.accessTokenExpiry,
+      algorithm: JWT_CONFIG.algorithm,
+      issuer: JWT_CONFIG.issuer,
+      audience: JWT_CONFIG.audience
+    }
+  );
 };
 
 exports.register = async (req, res) => {

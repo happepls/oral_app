@@ -6,7 +6,7 @@ const { promisify } = require('util');
 
 // Enhanced JWT configuration
 const JWT_CONFIG = {
-  accessTokenExpiry: '15m', // Short-lived access tokens
+  accessTokenExpiry: '24h', // Extended to 24 hours for better user experience
   refreshTokenExpiry: '7d', // Longer-lived refresh tokens
   algorithm: 'HS256',
   issuer: 'oral-app',

@@ -27,6 +27,37 @@ const SESSION_EXPIRATION_S = 86400 * 7; // 7 days in seconds
 
 app.use(express.json());
 
+// Health check endpoint
+app.get('/health', (req, res) => {
+  res.status(200).json({
+    status: 'OK',
+    service: 'conversation-service',
+    timestamp: new Date().toISOString(),
+    uptime: process.uptime()
+  });
+});
+
+// Metrics endpoint for Prometheus
+app.get('/metrics', (req, res) => {
+  const metrics = [
+    `# HELP nodejs_uptime_seconds Uptime of the Node.js process`,
+    `# TYPE nodejs_uptime_seconds gauge`,
+    `nodejs_uptime_seconds ${process.uptime()}`,
+    `# HELP nodejs_memory_rss_bytes Resident Set Size memory`,
+    `# TYPE nodejs_memory_rss_bytes gauge`,
+    `nodejs_memory_rss_bytes ${process.memoryUsage().rss}`,
+    `# HELP nodejs_heap_total_bytes Total heap size`,
+    `# TYPE nodejs_heap_total_bytes gauge`,
+    `nodejs_heap_total_bytes ${process.memoryUsage().heapTotal}`,
+    `# HELP nodejs_heap_used_bytes Used heap size`,
+    `# TYPE nodejs_heap_used_bytes gauge`,
+    `nodejs_heap_used_bytes ${process.memoryUsage().heapUsed}`
+  ];
+  
+  res.set('Content-Type', 'text/plain; version=0.0.4');
+  res.send(metrics.join('\n'));
+});
+
 app.get('/', (req, res) => {
   res.status(200).send('Conversation Service is running.');
 });
@@ -43,7 +74,7 @@ app.post('/start', async (req, res) => {
 
   try {
     let sessionId;
-    
+
     if (!forceNew) {
       // Try to get existing session list from Redis
       const existingSessionData = await redis.get(sessionListKey);
@@ -52,11 +83,11 @@ app.post('/start', async (req, res) => {
         if (parsedData.expiresAt > Date.now()) {
           sessionId = parsedData.list[0];
           console.log(`Found active session for user ${userId}, goal ${effectiveGoalId}: ${sessionId}`);
-          
+
           // Update expiration time
           parsedData.expiresAt = Date.now() + (SESSION_EXPIRATION_S * 1000); // Convert to ms
           await redis.setex(sessionListKey, SESSION_EXPIRATION_S, JSON.stringify(parsedData));
-          
+
           return res.status(200).json({
             success: true,
             message: 'Existing session retrieved.',
@@ -74,8 +105,30 @@ app.post('/start', async (req, res) => {
       list: [sessionId],
       expiresAt: Date.now() + (SESSION_EXPIRATION_S * 1000) // Convert to ms
     };
-    
+
     await redis.setex(sessionListKey, SESSION_EXPIRATION_S, JSON.stringify(sessionData));
+
+    // Initialize conversation in history-analytics-service
+    try {
+      const initResponse = await fetch(`http://history-analytics-service:3004/conversation`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          sessionId,
+          userId,
+          messages: [],
+          startTime: new Date().toISOString()
+        })
+      });
+      
+      if (!initResponse.ok) {
+        console.error(`Failed to initialize conversation in history service: ${initResponse.status} ${await initResponse.text()}`);
+      } else {
+        console.log(`Initialized conversation record for session ${sessionId} in history service`);
+      }
+    } catch (initError) {
+      console.error(`Error initializing conversation in history service:`, initError);
+    }
 
     res.status(201).json({
       success: true,
@@ -105,14 +158,14 @@ app.get('/sessions', async (req, res) => {
   try {
     const existingSessionData = await redis.get(sessionListKey);
     let list = [];
-    
+
     if (existingSessionData) {
       const parsedData = JSON.parse(existingSessionData);
       if (parsedData.expiresAt > Date.now()) {
         list = parsedData.list;
       }
     }
-    
+
     res.status(200).json({
       success: true,
       data: { sessions: list }
@@ -133,7 +186,7 @@ app.get('/history/:sessionId', async (req, res) => {
         method: 'GET',
         headers: { 'Content-Type': 'application/json' }
       });
-      
+
       if (historyResponse.ok) {
         const historyData = await historyResponse.json();
         console.log(`Retrieved history for session ${sessionId} from history-analytics-service`);
@@ -150,7 +203,7 @@ app.get('/history/:sessionId', async (req, res) => {
     } catch (fetchError) {
       console.log(`Failed to fetch from history-analytics-service, using fallback: ${fetchError.message}`);
     }
-    
+
     // Fallback: Return empty history if history-analytics-service is not available
     res.status(200).json({
       success: true,
@@ -178,16 +231,16 @@ app.post('/history/:sessionId', async (req, res) => {
       console.log(`Error: userId is required when saving messages array.`);
       return res.status(400).json({ message: 'userId is required when saving messages array.' });
     }
-    
+
     try {
       // Forward to history-analytics-service - try different endpoint paths
       let historyResponse;
-      
+
       // First try the conversation endpoint
       const conversationUrl = `http://history-analytics-service:3004/api/history/conversation`;
       console.log(`Attempting to save messages via conversation endpoint: ${conversationUrl}`);
       console.log(`Request body:`, { sessionId, userId, messagesCount: messages.length });
-      
+
       historyResponse = await fetch(conversationUrl, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -197,18 +250,18 @@ app.post('/history/:sessionId', async (req, res) => {
           messages
         })
       });
-      
+
       if (historyResponse.ok) {
         console.log(`Saved ${messages.length} messages to session ${sessionId} via history-analytics-service conversation endpoint`);
         return res.status(201).json({ message: 'Messages saved successfully.' });
       } else {
         console.error(`Failed to save messages via history-analytics-service conversation endpoint: ${historyResponse.status}`);
-        
+
         // Try fallback to the session messages endpoint
         const sessionMessagesUrl = `http://history-analytics-service:3004/api/history/session/${sessionId}/messages`;
         console.log(`Attempting to save messages via session messages endpoint: ${sessionMessagesUrl}`);
         console.log(`Request body:`, { userId, messagesCount: messages.length });
-        
+
         const fallbackResponse = await fetch(sessionMessagesUrl, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -217,7 +270,7 @@ app.post('/history/:sessionId', async (req, res) => {
             messages
           })
         });
-        
+
         if (fallbackResponse.ok) {
           console.log(`Saved ${messages.length} messages to session ${sessionId} via history-analytics-service history endpoint`);
           return res.status(201).json({ message: 'Messages saved successfully.' });
@@ -239,7 +292,7 @@ app.post('/history/:sessionId', async (req, res) => {
     try {
       // Forward single message to history-analytics-service - try different endpoint paths
       let historyResponse;
-      
+
       // First try the conversation endpoint
       historyResponse = await fetch(`http://history-analytics-service:3004/api/history/conversation`, {
         method: 'POST',
@@ -250,13 +303,13 @@ app.post('/history/:sessionId', async (req, res) => {
           messages: [{ role, content, audioUrl }]
         })
       });
-      
+
       if (historyResponse.ok) {
         console.log(`Saved single message to session ${sessionId} via history-analytics-service conversation endpoint`);
         return res.status(201).json({ message: 'Message saved successfully.' });
       } else {
         console.error(`Failed to save message via history-analytics-service conversation endpoint: ${historyResponse.status}`);
-        
+
         // Try fallback to the history session endpoint
         const fallbackResponse = await fetch(`http://history-analytics-service:3004/api/history/session/${sessionId}`, {
           method: 'POST',
@@ -266,7 +319,7 @@ app.post('/history/:sessionId', async (req, res) => {
             messages: [{ role, content, audioUrl }]
           })
         });
-        
+
         if (fallbackResponse.ok) {
           console.log(`Saved single message to session ${sessionId} via history-analytics-service history endpoint`);
           return res.status(201).json({ message: 'Message saved successfully.' });
@@ -349,6 +402,7 @@ app.get('/history/stats/:userId', async (req, res) => {
 
 app.listen(PORT, () => {
   console.log(`Conversation Service listening on port ${PORT}`);
+  console.log(`Health check available at http://localhost:${PORT}/health`);
 });
 
 // Graceful shutdown

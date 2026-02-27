@@ -50,7 +50,7 @@ function Register() {
     }
 
     const result = await register({
-      name: formData.name,
+      username: formData.name,
       email: formData.email,
       password: formData.password
     });

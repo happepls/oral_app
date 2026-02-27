@@ -1,6 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const mediaController = require('../controllers/mediaController');
+const proxyController = require('../controllers/proxyController'); // Add proxy controller
 const multer = require('multer');
 const path = require('path');
 const { v4: uuidv4 } = require('uuid');
@@ -25,5 +26,11 @@ const storage = multer.diskStorage({
 const upload = multer({ storage: storage });
 
 router.post('/upload', upload.fields([{ name: 'user_audio', maxCount: 1 }, { name: 'ai_audio', maxCount: 1 }]), mediaController.uploadAndProcessAudio);
+
+// Add proxy route for COS audio files
+router.get('/proxy', proxyController.proxyAudio);
+
+// Health check route
+router.get('/health', proxyController.health);
 
 module.exports = router;

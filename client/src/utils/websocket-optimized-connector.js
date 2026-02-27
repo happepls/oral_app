@@ -31,7 +31,7 @@
       const scenario = searchParams.get('scenario');
       const topic = searchParams.get('topic');
       const voice = localStorage.getItem('ai_voice') || 'Serena';
-      wsUrl = `${protocol}//localhost:8080/api/ws/?token=${token}&sessionId=${sessionId}${scenario ? `&scenario=${scenario}` : ''}${topic ? `&topic=${topic}` : ''}&voice=${voice}`;
+      wsUrl = `${protocol}//localhost:8081/api/ws/?token=${token}&sessionId=${sessionId}${scenario ? `&scenario=${scenario}` : ''}${topic ? `&topic=${topic}` : ''}&voice=${voice}`;
     } else {
       const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
       wsUrl = `${protocol}//${window.location.host}/api/ws/?token=${token}&sessionId=${sessionId}&voice=${localStorage.getItem('ai_voice') || 'Serena'}`;

@@ -4,9 +4,9 @@ exports.saveConversation = async (req, res) => {
   try {
     console.log('saveConversation endpoint called');
     console.log('Request body:', JSON.stringify(req.body, null, 2));
-    
+
     const { sessionId, userId, messages, topic, metrics, startTime, endTime } = req.body;
-    
+
     // Validate required fields
     if (!sessionId) {
       console.log('Error: sessionId is required');
@@ -22,16 +22,31 @@ exports.saveConversation = async (req, res) => {
     }
 
     // Filter out empty messages (must have content OR audioUrl)
-    // Relaxed check: allow '...' placeholders if they have audio, or just audio
-    const validMessages = messages ? messages.filter(msg => 
+    const validMessages = messages ? messages.filter(msg =>
         (msg.content && msg.content.trim().length > 0) || msg.audioUrl
     ) : [];
 
     let conversation = await Conversation.findOne({ sessionId });
 
     if (conversation) {
-      // Update existing
-      conversation.messages = validMessages.length > 0 ? validMessages : conversation.messages;
+      // APPEND new messages to existing conversation (not replace!)
+      if (validMessages.length > 0) {
+        // Get the last message from existing conversation to check for duplicates
+        const lastExistingMsg = conversation.messages[conversation.messages.length - 1];
+        const newMsg = validMessages[validMessages.length - 1];
+        
+        // Only append if this is a new message (check by content + role combination)
+        const isDuplicate = lastExistingMsg && 
+                           lastExistingMsg.role === newMsg.role && 
+                           lastExistingMsg.content === newMsg.content;
+        
+        if (!isDuplicate) {
+          conversation.messages.push(...validMessages);
+          console.log(`Appended ${validMessages.length} messages to session ${sessionId}, total: ${conversation.messages.length}`);
+        } else {
+          console.log(`Duplicate message detected, skipping append for session ${sessionId}`);
+        }
+      }
       conversation.metrics = metrics || conversation.metrics;
       conversation.endTime = endTime || conversation.endTime;
       conversation.topic = topic || conversation.topic;
@@ -44,10 +59,11 @@ exports.saveConversation = async (req, res) => {
         messages: validMessages,
         topic,
         metrics,
-        startTime,
+        startTime: startTime || new Date(),
         endTime
       });
       await conversation.save();
+      console.log(`Created new session ${sessionId} with ${validMessages.length} messages`);
     }
 
     console.log(`Successfully saved conversation for session ${sessionId}`);
@@ -162,8 +178,16 @@ exports.getConversationDetail = async (req, res) => {
     const conversation = await Conversation.findOne({ sessionId: sessionId });
 
     if (!conversation) {
-      console.log(`Conversation not found for sessionId: ${sessionId}`);
-      return res.status(404).json({ success: false, message: 'Conversation not found' });
+      console.log(`Conversation not found for sessionId: ${sessionId}, returning empty conversation object`);
+      // Return an empty conversation object instead of creating one with null userId
+      return res.status(200).json({
+        success: true,
+        data: {
+          sessionId,
+          messages: [],
+          startTime: new Date()
+        }
+      });
     }
 
     console.log(`Found conversation with ${conversation.messages ? conversation.messages.length : 0} messages`);
@@ -181,10 +205,20 @@ exports.getSessionHistory = async (req, res) => {
     const conversation = await Conversation.findOne({ sessionId: sessionId });
 
     if (!conversation) {
-      console.log(`No conversation found for sessionId: ${sessionId}, returning empty messages`);
-      return res.status(200).json({ 
-        success: true, 
-        data: { messages: [] } 
+      console.log(`No conversation found for sessionId: ${sessionId}, creating new empty conversation`);
+      // Create a new conversation record with empty messages
+      const newConversation = new Conversation({
+        sessionId,
+        userId: null, // userId might not be available at this point
+        messages: [],
+        startTime: new Date()
+      });
+      await newConversation.save();
+      
+      console.log(`Created new conversation record for session ${sessionId}`);
+      return res.status(200).json({
+        success: true,
+        data: { messages: [] }
       });
     }
 
@@ -330,5 +364,101 @@ exports.getStats = async (req, res) => {
   } catch (error) {
     console.error('Get Stats Error:', error);
     res.status(500).json({ success: false, message: 'Server Error' });
+  }
+};
+
+// Proficiency metrics persistence
+exports.saveProficiencyMetrics = async (req, res) => {
+  try {
+    const { userId } = req.params;
+    const { language_accuracy, complexity_score, engagement_level, improvement_suggestions, total_interactions, cumulative_accuracy, cumulative_complexity, total_proficiency } = req.body;
+
+    if (!userId) {
+      return res.status(400).json({ success: false, message: 'UserId is required' });
+    }
+
+    // Validate metrics
+    if (typeof language_accuracy !== 'number' || typeof complexity_score !== 'number') {
+      return res.status(400).json({ success: false, message: 'Invalid metrics format' });
+    }
+
+    // Clamp values to valid ranges
+    const clampedAccuracy = Math.max(0, Math.min(1, language_accuracy));
+    const clampedComplexity = Math.max(0, Math.min(1, complexity_score));
+
+    const metrics = {
+      language_accuracy: clampedAccuracy,
+      complexity_score: clampedComplexity,
+      engagement_level: engagement_level || 'normal',
+      improvement_suggestions: Array.isArray(improvement_suggestions) ? improvement_suggestions.slice(0, 10) : [],
+      total_interactions: total_interactions || 0,
+      cumulative_accuracy: cumulative_accuracy || 0,
+      cumulative_complexity: cumulative_complexity || 0,
+      total_proficiency: total_proficiency || 0,
+      last_updated: new Date()
+    };
+
+    // Use MongoDB to store proficiency metrics
+    const ProficiencyMetrics = require('../models/ProficiencyMetrics');
+
+    await ProficiencyMetrics.findOneAndUpdate(
+      { userId },
+      metrics,
+      { upsert: true, new: true }
+    );
+
+    console.log(`Saved proficiency metrics for user ${userId}:`, {
+      accuracy: Math.round(clampedAccuracy * 100) + '%',
+      complexity: Math.round(clampedComplexity * 100) + '%',
+      interactions: metrics.total_interactions,
+      total_proficiency: metrics.total_proficiency
+    });
+
+    res.status(200).json({
+      success: true,
+      data: metrics,
+      message: 'Proficiency metrics saved successfully'
+    });
+  } catch (error) {
+    console.error('Save Proficiency Metrics Error:', error);
+    res.status(500).json({ success: false, message: 'Server Error', error: error.message });
+  }
+};
+
+exports.getProficiencyMetrics = async (req, res) => {
+  try {
+    const { userId } = req.params;
+
+    if (!userId) {
+      return res.status(400).json({ success: false, message: 'UserId is required' });
+    }
+
+    const ProficiencyMetrics = require('../models/ProficiencyMetrics');
+
+    let metrics = await ProficiencyMetrics.findOne({ userId });
+
+    // Return default metrics if none found
+    if (!metrics) {
+      metrics = {
+        language_accuracy: 0,
+        complexity_score: 0,
+        engagement_level: 'normal',
+        improvement_suggestions: [],
+        total_interactions: 0,
+        cumulative_accuracy: 0,
+        cumulative_complexity: 0,
+        total_proficiency: 0,
+        last_updated: new Date()
+      };
+    }
+
+    res.status(200).json({
+      success: true,
+      data: metrics,
+      message: 'Proficiency metrics retrieved successfully'
+    });
+  } catch (error) {
+    console.error('Get Proficiency Metrics Error:', error);
+    res.status(500).json({ success: false, message: 'Server Error', error: error.message });
   }
 };

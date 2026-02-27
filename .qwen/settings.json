@@ -1,4 +1,5 @@
 {
+
   "mcpServers": {
     "filesystem": {
       "command": "npx",
@@ -24,5 +25,8 @@
       ]
     }
   },
+  "model": {
+  "sessionTokenLimit": 628000
+    },
   "$version": 3
 }

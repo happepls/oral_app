@@ -2,17 +2,6 @@
 
 ## In Progress
 
-- [ ] [Optimization] 端端音频流延迟的性能测试和优化
-- [ ] [Optimization] 实现音频流缓冲和网络自适应机制
-
-## To Do
-
-- [ ] [Security] 增强 API 安全性和用户数据保护
-- [ ] [Docs] 编写 API 文档和使用指南
-- [ ] [Deployment] 完善 Docker Compose 部署配置
-- [ ] [Deployment] 实现 CI/CD 流水线自动化
-- [ ] [Testing] 编写完整的集成测试套件
-- [ ] [AI] **Scenario Scoring Alignment**: Adapt AI scoring to evaluate 3 specific tasks per scenario over multiple turns.
 
 ## Backlog
 
@@ -161,3 +150,11 @@
 - [x] [Frontend] **Conversation UI Refactor**: Refactored ConversationScreen with SliverAppBar, Draggable Task Sidebar, and History 404 handling.
 - [x] [Backend] **Voice Stability**: Fixed `ai-omni-service` connection drops and `user_audio_ended` logic, and resolved 401 API Key issue.
 - [x] [Backend] **Chinese Support**: Updated `PromptManager` to support Native Chinese Tutor mode and Bridge Mode.
+- [x] [Optimization] 端到端音频流延迟的性能测试和优化
+- [x] [Optimization] 实现音频流缓冲和网络自适应机制
+- [x] [Security] 增强 API 安全性和用户数据保护
+- [x] [Docs] 编写 API 文档和使用指南
+- [x] [Deployment] 完善 Docker Compose 部署配置
+- [x] [Deployment] 实现 CI/CD 流水线自动化
+- [x] [Testing] 编写完整的集成测试套件
+- [x] [AI] **Scenario Scoring Alignment**: Adapt AI scoring to evaluate 3 specific tasks per scenario over multiple turns.
