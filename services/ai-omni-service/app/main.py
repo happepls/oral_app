@@ -557,6 +557,12 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query(None), ses
                     logger.info(f"Received session_start for user {payload.get('userId')}")
                     continue
 
+                # Handle ping from client - respond with pong
+                if msg_type == 'ping':
+                    logger.info(f"Ping received from client (ts={payload.get('timestamp')}), sending pong")
+                    await websocket.send_json({"type": "pong", "payload": {"timestamp": payload.get("timestamp", int(time.time()))}})
+                    continue
+
                 if (not conversation or not callback.is_connected) and msg_type in ['audio_stream', 'text_message', 'input_text', 'user_audio_ended']:
                     logger.warning("Attempting to reconnect DashScope due to inactive connection")
                     if conversation:
