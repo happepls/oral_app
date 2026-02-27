@@ -217,30 +217,9 @@ function Conversation() {
     const isCrossOrigin = audioUrl.startsWith('http') && !audioUrl.startsWith(window.location.origin);
     
     if (isCrossOrigin) {
-      // For cross-origin audio, use Audio element with anonymous crossorigin
-      const audio = new Audio();
-      audio.crossOrigin = 'anonymous';
-      
-      // Try direct play first (will work if COS has CORS headers or browser allows it)
-      audio.src = audioUrl;
-      audio.play()
-        .then(() => {
-          console.log('Audio playback started (direct)');
-          setIsAISpeaking(true);
-          audio.onended = () => {
-            setIsAISpeaking(false);
-            console.log('Audio playback ended');
-          };
-          // Don't log error for CORS - it's expected for cross-origin audio
-          audio.onerror = () => {
-            // Silently try proxy fallback
-            fetchAudioViaProxy(audioUrl);
-          };
-        })
-        .catch(() => {
-          // Silently try proxy fallback
-          fetchAudioViaProxy(audioUrl);
-        });
+      // For cross-origin audio, always use proxy to avoid CORS issues
+      console.log('Using proxy for cross-origin audio:', audioUrl);
+      fetchAudioViaProxy(audioUrl);
     } else {
       // Same-origin, use Web Audio API
       initAudioContext();
@@ -428,6 +407,22 @@ function Conversation() {
   // Handle JSON messages from WebSocket
   const handleJsonMessage = useCallback((data) => {
       console.log('Received JSON message:', data);
+
+      // Handle ping/pong messages for connection health
+      if (data.type === 'ping') {
+        // Send pong response
+        if (socketRef.current && socketRef.current.readyState === WebSocket.OPEN) {
+          socketRef.current.send(JSON.stringify({
+            type: 'pong',
+            timestamp: data.timestamp,
+            sequence: data.sequence
+          }));
+        }
+        return;
+      } else if (data.type === 'pong') {
+        console.log('Pong received, connection healthy');
+        return;
+      }
 
       // Handle different message types
       switch (data.type) {
@@ -798,8 +793,8 @@ function Conversation() {
     socketRef.current = new OptimizedWebSocket(wsUrl, {
       reconnectInterval: 1000,
       maxReconnectAttempts: 5,
-      connectionTimeout: 20000, // Increased to 20 seconds for AI service connection
-      heartbeatInterval: 30000,
+      connectionTimeout: 30000, // Increased to 30 seconds for AI service connection
+      heartbeatInterval: 15000, // Reduced to 15 seconds for more frequent heartbeat
       enableLogging: true,
       enableCompression: true
     });
@@ -814,6 +809,20 @@ function Conversation() {
       console.log('WS Open (Optimized)');
       setIsConnected(true);
       setWebSocketError(null);
+
+      // Start ping interval to keep connection alive
+      const pingInterval = setInterval(() => {
+        if (socketRef.current && socketRef.current.readyState === WebSocket.OPEN) {
+          socketRef.current.send(JSON.stringify({
+            type: 'ping',
+            timestamp: Date.now(),
+            sequence: Math.floor(Math.random() * 1000)
+          }));
+        }
+      }, 10000); // Send ping every 10 seconds
+
+      // Store interval reference for cleanup
+      socketRef.current.pingInterval = pingInterval;
 
       // Send session_start handshake
       const searchParams = new URLSearchParams(window.location.search);
@@ -871,6 +880,12 @@ function Conversation() {
     socketRef.current.addEventListener('close', async (event) => {
         console.log('WebSocket Closed (Optimized):', event.code, event.reason);
         setIsConnected(false);
+
+        // Clear ping interval
+        if (socketRef.current.pingInterval) {
+          clearInterval(socketRef.current.pingInterval);
+          socketRef.current.pingInterval = null;
+        }
 
         // Save conversation history when connection closes
         await saveConversationHistory();
@@ -1099,6 +1114,24 @@ function Conversation() {
   // Auto-scroll to bottom when messages change
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [messages]);
+
+  // Auto-play AI audio when messages get audio URLs
+  useEffect(() => {
+    messages.forEach((message, index) => {
+      if (message.type === 'ai' && message.audioUrl && !message.audioPlayed) {
+        // Mark message as played to prevent repeated playback
+        setMessages(prev => {
+          const newMessages = [...prev];
+          newMessages[index] = { ...newMessages[index], audioPlayed: true };
+          return newMessages;
+        });
+        
+        // Play the audio
+        console.log(`[AutoPlay] Playing AI audio for message ${index}:`, message.audioUrl);
+        playFullAudio(message.audioUrl);
+      }
+    });
   }, [messages]);
 
   // Handle text selection for TTS

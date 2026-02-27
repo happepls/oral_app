@@ -450,12 +450,12 @@ class OptimizedWebSocket {
     
     this.send(JSON.stringify(pingMessage));
 
-    // Set ping timeout - increased to 30 seconds to prevent premature disconnection
-    // AI service sends ping every 15 seconds, so 30s gives us 2x buffer
+    // Set ping timeout - increased to 45 seconds to prevent premature disconnection
+    // With 15s heartbeat interval, 45s gives us 3x buffer
     this.pingTimeout = setTimeout(() => {
       this.log('warn', 'Ping timeout, closing connection');
       this.close();
-    }, 30000);
+    }, 45000);
   }
   
   // Send message
