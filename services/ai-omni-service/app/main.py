@@ -26,7 +26,9 @@ logger = logging.getLogger("app.main")
 api_key = os.getenv("QWEN3_OMNI_API_KEY") or os.getenv("DASHSCOPE_API_KEY")
 if not api_key:
     logger.error("QWEN3_OMNI_API_KEY not found in environment")
+    raise ValueError("QWEN3_OMNI_API_KEY environment variable is required")
 dashscope.api_key = api_key
+logger.info("Using real DashScope API with provided API key")
 
 app = FastAPI()
 
@@ -43,11 +45,11 @@ app.add_middleware(
 
 async def get_user_context(token: str):
     """Fetches user profile and goal context from user-service."""
-    user_service_url = os.getenv("USER_SERVICE_URL", "http://localhost:3001")
+    user_service_url = os.getenv("USER_SERVICE_URL", "http://localhost:3000")
     try:
         async with httpx.AsyncClient() as client:
             resp = await client.get(
-                f"{user_service_url}/profile",
+                f"{user_service_url}/api/users/profile",
                 headers={"Authorization": f"Bearer {token}"},
                 timeout=5.0
             )
@@ -57,7 +59,7 @@ async def get_user_context(token: str):
                 data = response_data.get('user', response_data) if isinstance(response_data, dict) else response_data
                 logger.info(f"User profile fetched: id={data.get('id')}, nickname={data.get('nickname')}")
                 goal_resp = await client.get(
-                    f"{user_service_url}/goals/active",
+                    f"{user_service_url}/api/users/goals/active",
                     headers={"Authorization": f"Bearer {token}"},
                     timeout=5.0
                 )
@@ -73,7 +75,7 @@ async def get_user_context(token: str):
 
 async def save_single_message(session_id: str, user_id: str, role: str, content: str, audio_url: str = None):
     """Saves a single message to conversation-service."""
-    conv_service_url = os.getenv("CONVERSATION_SERVICE_URL", "http://localhost:8000")
+    conv_service_url = os.getenv("CONVERSATION_SERVICE_URL", "http://localhost:8083")
     payload = {
         "role": role,
         "content": content,
@@ -102,7 +104,7 @@ async def execute_action_with_response(action_name: str, params: dict, token: st
         try:
             async with httpx.AsyncClient() as client:
                 await client.put(
-                    f"{user_service_url}/profile",
+                    f"{user_service_url}/api/users/profile",
                     json=params,
                     headers={"Authorization": f"Bearer {token}"}
                 )
@@ -146,33 +148,12 @@ async def execute_action_with_response(action_name: str, params: dict, token: st
     return None
 
 # --- Prompt Management ---
-
-class PromptManager:
-    def __init__(self, prompt_file: str = "app/prompts.py"):
-        try:
-            from . import prompts
-            self.prompts = prompts
-        except ImportError:
-            self.prompts = None
-
-    def generate_system_prompt(self, context: dict, role: str = "OralTutor") -> str:
-        base_prompt = getattr(self.prompts, f"{role}_PROMPT", "") if self.prompts else ""
-        try:
-            formatted = base_prompt.format(
-                nickname=context.get('nickname', 'Explorer'),
-                native_language=context.get('native_language', 'Chinese'),
-                target_language=context.get('target_language', 'English'),
-                interests=", ".join(context.get('interests', [])),
-                current_focus=context.get('custom_topic', 'General conversation')
-            )
-            return formatted
-        except Exception as e:
-            logger.warning(f"Failed to format prompt: {e}")
-            return base_prompt
-
-prompt_manager = PromptManager()
-
-# --- DashScope Integration ---
+# Import the full prompt manager from prompt_manager.py
+# Use absolute import since main.py runs as a script
+import sys
+import os
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from prompt_manager import prompt_manager
 
 class WebSocketCallback(OmniRealtimeCallback):
     def __init__(self, websocket: WebSocket, loop: asyncio.AbstractEventLoop, user_context: dict, token: str, user_id: str, session_id: str, history_messages: list = [], scenario: str = None):
@@ -200,7 +181,7 @@ class WebSocketCallback(OmniRealtimeCallback):
         self.session_ready = False
         self.pending_user_transcript = None  # Buffer user transcript until AI response completes
         self.ai_responding = False  # Track if AI is currently responding
-        logger.info(f"Assigned Role: {self.role}, Loaded History: {len(self.messages)} msgs")
+        self.connection_established_sent = False  # Track if we've sent connection_established
 
     def _determine_role(self, context):
         if not context or isinstance(context, str): return "InfoCollector"
@@ -264,6 +245,7 @@ class WebSocketCallback(OmniRealtimeCallback):
                     instructions=system_prompt,
                     voice=selected_voice,
                     output_modalities=[MultiModality.TEXT, MultiModality.AUDIO],
+                    input_audio_format=AudioFormat.PCM_16000HZ_MONO_16BIT,  # Explicitly set input audio format
                     input_audio_transcription={"model": os.getenv("QWEN3_OMNI_MODEL", "qwen3-omni-flash-realtime"), "enabled": True},
                     enable_turn_detection=False,
                 )
@@ -299,13 +281,20 @@ class WebSocketCallback(OmniRealtimeCallback):
 
     def on_event(self, response: dict) -> None:
         event_name = response.get('type')
-        rid = response.get('header', {}).get('response_id') or response.get('response_id') or response.get('request_id')
-        
+        # Try multiple locations for response_id to ensure we capture it from all event types
+        rid = (
+            response.get('header', {}).get('response_id') or 
+            response.get('response_id') or 
+            response.get('request_id') or
+            response.get('item', {}).get('response_id') or
+            self.current_response_id  # Fallback to existing if not found
+        )
+
         # Log all events for debugging
-        if event_name not in ['response.audio.delta', 'response.audio_transcript.delta']:
+        if event_name not in ['response.audio.delta', 'response.audio_transcript.delta', 'response.audio.done', 'response.audio_transcript.done']:
             logger.info(f"DashScope Event: {event_name}, RID: {rid}")
             logger.info(f"Detailed Event Data: {json.dumps(response)[:500]}")
-        
+
         if event_name == 'session.created':
             self.session_ready = True
             if not self.messages and not self.welcome_sent:
@@ -314,10 +303,10 @@ class WebSocketCallback(OmniRealtimeCallback):
                     self._trigger_welcome_message()
                 import threading
                 threading.Thread(target=delayed_trigger, daemon=True).start()
-        
-        if rid:
+
+        # Always update current_response_id if we have a new one
+        if rid and rid not in self.ignored_response_ids:
             self.current_response_id = rid
-            if rid in self.ignored_response_ids: return
 
         async def process_event():
             try:
@@ -331,12 +320,14 @@ class WebSocketCallback(OmniRealtimeCallback):
                 elif event_name == 'response.audio_transcript.delta':
                     text = response.get('delta')
                     if text:
+                        # Accumulate text internally, don't send chunks to frontend
                         self.ai_responding = True  # Mark AI as actively responding
                         self.full_response_text += text
                         if not hasattr(self, '_sent_role_for_turn'):
+                            # Send role switch signal once
                             await self.websocket.send_json({"type": "role_switch", "payload": {"role": self.role}})
                             self._sent_role_for_turn = True
-                        await self.websocket.send_json({"type": "text_response", "payload": text, "responseId": self.current_response_id})
+                        # Don't send text chunks - wait for complete message
                 elif event_name == 'response.audio.done':
                     if self.ai_audio_buffer:
                         data = bytes(self.ai_audio_buffer)
@@ -345,7 +336,20 @@ class WebSocketCallback(OmniRealtimeCallback):
                             url = await self.upload_audio_to_cos(d, 'ai_audio')
                             if url:
                                 await self.websocket.send_json({"type": "audio_url", "payload": {"url": url, "role": "assistant"}, "responseId": r})
-                                self.last_ai_audio_url = url
+                                # Store audio URL by response ID to ensure correct pairing
+                                if not hasattr(self, 'audio_urls_by_response'):
+                                    self.audio_urls_by_response = {}
+                                self.audio_urls_by_response[r] = url
+                                logger.info(f"Stored audio URL for response {r}")
+                                
+                                # Now save the complete message with audio URL to history
+                                # Find the message in self.messages by response ID and update it
+                                for msg in reversed(self.messages):
+                                    if msg.get('role') == 'assistant' and not msg.get('audioUrl'):
+                                        msg['audioUrl'] = url
+                                        await save_single_message(self.session_id, self.user_id, "assistant", msg.get('content', ''), url)
+                                        logger.info(f"Saved AI message with audio URL to history: {msg.get('content', '')[:50]}...")
+                                        break
                         asyncio.create_task(upload_ai_task(data, self.current_response_id))
                 elif event_name == 'conversation.item.input_audio_transcription.completed':
                     # Handle user audio transcription - send immediately to ensure correct UI order
@@ -363,17 +367,37 @@ class WebSocketCallback(OmniRealtimeCallback):
                     clean_text = re.sub(r'```json.*?```', '', self.full_response_text, flags=re.DOTALL|re.IGNORECASE).strip()
                     clean_text = re.sub(r'\{"action":.*?\}', '', clean_text, flags=re.DOTALL|re.IGNORECASE).strip()
                     self.full_response_text = clean_text
+                    
+                    # Send complete message to frontend in one go
                     if self.full_response_text:
                         msg = {"role": "assistant", "content": self.full_response_text, "timestamp": datetime.utcnow().isoformat()}
                         if self.last_ai_audio_url: msg['audioUrl'] = self.last_ai_audio_url; self.last_ai_audio_url = None
                         self.messages.append(msg)
                         await save_single_message(self.session_id, self.user_id, "assistant", self.full_response_text, msg.get('audioUrl'))
+                        
+                        # Send complete message to frontend with responseId
+                        await self.websocket.send_json({
+                            "type": "ai_message",
+                            "payload": {
+                                "content": self.full_response_text,
+                                "responseId": self.current_response_id or f"ai-{int(time.time() * 1000)}",
+                                "audioUrl": msg.get('audioUrl')
+                            },
+                            "timestamp": int(time.time() * 1000)
+                        })
+                        logger.info(f"Sent complete AI message: {self.full_response_text[:50]}...")
+
+                    # Handle task completion internally - NO separate feedback messages to frontend
+                    # The AI's verbal feedback (e.g., "Perfect!") is already in the response text
                     text_lower = self.full_response_text.lower()
                     if any(re.search(p, text_lower) for p in [r"\bperfect\b", r"\bexcellent\b", r"\bmission accomplished\b", r"\byou nailed it\b", r"\bcorrect!\b"]):
                         scenario_title = self.user_context.get('custom_topic', 'Unknown').split(" (Tasks:")[0].strip()
                         result = await execute_action_with_response("update_task_score", {"task": "NEXT_PENDING_TASK", "scoreDelta": 30, "feedback": "Task completed"}, self.token, self.user_id, self.session_id, context=self.user_context)
-                        if result and result.get('taskCompleted'): await self.websocket.send_json({"type": "task_completed", "payload": {"task": "Task Completed"}})
-                        else: await self.websocket.send_json({"type": "task_progress", "payload": {"score": result.get('newScore', 0) if result else 0}})
+                        # Only log the update - NO messages sent to frontend
+                        if result and result.get('taskCompleted'):
+                            logger.info(f"Task completed for user {self.user_id}: {result.get('taskTitle')}")
+                        else:
+                            logger.info(f"Task progress updated for user {self.user_id}")
                     self.full_response_text = ""
                     self.ai_responding = False  # AI finished responding
                     if hasattr(self, '_sent_role_for_turn'): delattr(self, '_sent_role_for_turn')
@@ -421,8 +445,9 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query(None), ses
         logger.warning(f"Failed to fetch history: {e}")
         logger.error(f"Error details: {str(e)}")
     loop = asyncio.get_running_loop()
-    callback = WebSocketCallback(websocket, loop, user_context, token, user_id, session_id, history_messages, scenario)
     
+    callback = WebSocketCallback(websocket, loop, user_context, token, user_id, session_id, history_messages, scenario)
+
     def connect_dashscope():
         try:
             logger.info(f"Connecting to DashScope for session {session_id}")
@@ -436,6 +461,8 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query(None), ses
             logger.error(traceback.format_exc())
             raise e
 
+
+
     async def heartbeat():
         while True:
             try:
@@ -447,7 +474,7 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query(None), ses
                     except Exception as e:
                         logger.error(f"Heartbeat audio append failed: {e}")
             except: break
-            
+
     heartbeat_task = None
     conversation = None
     try:
@@ -456,12 +483,13 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query(None), ses
         except Exception as e:
             await websocket.send_json({"type": "error", "payload": {"error": str(e)}})
             await websocket.close(); return
-            
+
         heartbeat_task = asyncio.create_task(heartbeat())
-            
+
         while True:
             try:
                 message = await websocket.receive_text()
+                logger.info(f"Received message: {message}")
                 data = json.loads(message)
                 msg_type, payload = data.get('type'), data.get('payload', {})
                 
@@ -482,14 +510,30 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query(None), ses
                         continue
                         
                 if msg_type == 'audio_stream':
-                    audio_b64 = payload.get('audioBuffer')
+                    audio_b64 = payload.get('audio')
+                    sample_rate = payload.get('sample_rate', 16000)
+                    audio_format = payload.get('format', 'pcm16')
+
                     if audio_b64:
-                        if callback.is_connected:
-                            try:
-                                conversation.append_audio(audio_b64)
-                            except Exception as e:
-                                logger.error(f"Error appending audio: {e}")
-                        callback.user_audio_buffer.extend(base64.b64decode(audio_b64))
+                        # Log audio format for debugging
+                        if not hasattr(connect_dashscope, 'audio_format_logged'):
+                            logger.info(f"Receiving audio: sample_rate={sample_rate}, format={audio_format}")
+                            connect_dashscope.audio_format_logged = True
+
+                        # Decode audio data for buffering
+                        try:
+                            audio_data = base64.b64decode(audio_b64)
+                            if callback.is_connected:
+                                try:
+                                    # Append audio to DashScope conversation
+                                    # The SDK expects base64-encoded PCM data
+                                    conversation.append_audio(audio_b64)
+                                except Exception as e:
+                                    logger.error(f"Error appending audio to DashScope: {e}")
+                                    logger.error(traceback.format_exc())
+                            callback.user_audio_buffer.extend(audio_data)
+                        except Exception as e:
+                            logger.error(f"Error decoding audio data: {e}")
                 elif msg_type == 'user_audio_ended':
                     if callback.user_audio_buffer:
                         if callback.is_connected:
@@ -543,8 +587,18 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query(None), ses
             except: pass
 
 @app.get("/health")
-async def health_check(): return {"status": "ok"}
+async def health_check(): 
+    return {"status": "ok"}
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8008)
+
+    # Get port configuration
+    main_port = int(os.getenv("AI_SERVICE_PORT", "8082"))
+
+    print(f"Starting AI service on port {main_port}")
+    print("WebSocket endpoint available at /stream")
+    print("Health check endpoint available at /health")
+
+    # Run single server that handles both WebSocket and health check endpoints
+    uvicorn.run(app, host="0.0.0.0", port=main_port)

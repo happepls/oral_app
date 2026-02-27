@@ -1,0 +1,89 @@
+name: Deploy to Production
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'  # Triggers on version tags
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: production
+    permissions:
+      packages: read
+      contents: read
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Set up Docker
+      uses: docker/setup-docker-action@v3
+
+    - name: Login to Container Registry
+      uses: docker/login-action@v3
+      with:
+        registry: ${{ env.REGISTRY }}
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: Pull latest images
+      run: |
+        docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/client:latest
+        docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/user-service:latest
+        docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/comms-service:latest
+        docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/ai-omni-service:latest
+        docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/history-analytics-service:latest
+        docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/conversation-service:latest
+        docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/media-processing-service:latest
+        docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/api-gateway:latest
+
+    - name: Render Docker Compose template
+      run: |
+        # Replace image tags in docker-compose.yml with tagged versions
+        sed -i "s|image: .*client:.*|image: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/client:${{ github.ref_name }}|g" docker-compose.prod.yml
+        sed -i "s|image: .*user-service:.*|image: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/user-service:${{ github.ref_name }}|g" docker-compose.prod.yml
+        sed -i "s|image: .*comms-service:.*|image: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/comms-service:${{ github.ref_name }}|g" docker-compose.prod.yml
+        sed -i "s|image: .*ai-omni-service:.*|image: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/ai-omni-service:${{ github.ref_name }}|g" docker-compose.prod.yml
+        sed -i "s|image: .*history-analytics-service:.*|image: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/history-analytics-service:${{ github.ref_name }}|g" docker-compose.prod.yml
+        sed -i "s|image: .*conversation-service:.*|image: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/conversation-service:${{ github.ref_name }}|g" docker-compose.prod.yml
+        sed -i "s|image: .*media-processing-service:.*|image: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/media-processing-service:${{ github.ref_name }}|g" docker-compose.prod.yml
+        sed -i "s|image: .*api-gateway:.*|image: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/api-gateway:${{ github.ref_name }}|g" docker-compose.prod.yml
+
+    - name: Deploy to production server
+      run: |
+        # Copy files to production server
+        echo "${{ secrets.SSH_PRIVATE_KEY }}" > ssh_key
+        chmod 600 ssh_key
+        
+        # SSH to production server and deploy
+        ssh -i ssh_key -o StrictHostKeyChecking=no ${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }} << 'EOF'
+          # Pull latest images
+          docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/client:${{ github.ref_name }}
+          docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/user-service:${{ github.ref_name }}
+          docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/comms-service:${{ github.ref_name }}
+          docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/ai-omni-service:${{ github.ref_name }}
+          docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/history-analytics-service:${{ github.ref_name }}
+          docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/conversation-service:${{ github.ref_name }}
+          docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/media-processing-service:${{ github.ref_name }}
+          docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/api-gateway:${{ github.ref_name }}
+          
+          # Stop existing containers
+          docker-compose -f docker-compose.prod.yml down
+          
+          # Start new containers
+          docker-compose -f docker-compose.prod.yml up -d
+          
+          # Cleanup unused images
+          docker image prune -f
+        EOF
+
+    - name: Notify deployment
+      run: |
+        curl -X POST -H 'Content-type: application/json' \
+        --data '{"text":"Deployment completed successfully to production"}' \
+        ${{ secrets.SLACK_WEBHOOK_URL }}

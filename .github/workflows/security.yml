@@ -1,0 +1,75 @@
+name: Security Scan
+
+on:
+  push:
+    branches: [ main, develop ]
+  schedule:
+    - cron: '0 2 * * 0'  # Weekly security scans
+
+jobs:
+  security-scan:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Run Trivy vulnerability scanner in repo mode
+      uses: aquasecurity/trivy-action@master
+      with:
+        scan-type: 'fs'
+        scan-ref: '.'
+        format: 'sarif'
+        output: 'trivy-results.sarif'
+
+    - name: Upload Trivy scan results to GitHub Security tab
+      uses: github/codeql-action/upload-sarif@v2
+      if: always()
+      with:
+        sarif_file: 'trivy-results.sarif'
+
+    - name: Run Trivy vulnerability scanner in image mode
+      uses: aquasecurity/trivy-action@master
+      with:
+        scan-type: 'image'
+        image-ref: 'node:18-alpine'
+        format: 'table'
+        exit-code: '1'
+        ignore-unfixed: true
+        vuln-type: 'os,library'
+        severity: 'CRITICAL,HIGH'
+
+    - name: Run Snyk to check for vulnerabilities
+      uses: snyk/actions/node@master
+      continue-on-error: true
+      env:
+        SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+      with:
+        args: --all-projects --fail-on-count=10
+
+    - name: Run CodeQL Analysis
+      uses: github/codeql-action/analyze@v2
+      with:
+        category: "/language:javascript"
+
+    - name: Run Docker Security Scan
+      run: |
+        # Build Docker images for security scanning
+        docker build -t oral-app-client:latest ./client
+        docker build -t oral-app-user-service:latest ./services/user-service
+        docker build -t oral-app-comms-service:latest ./services/comms-service
+        docker build -t oral-app-ai-omni-service:latest ./services/ai-omni-service
+        docker build -t oral-app-history-analytics-service:latest ./services/history-analytics-service
+        docker build -t oral-app-conversation-service:latest ./services/conversation-service
+        docker build -t oral-app-media-processing-service:latest ./services/media-processing-service
+        docker build -t oral-app-api-gateway:latest ./api-gateway
+
+        # Scan images with Trivy
+        docker run --rm -v /var/run/docker.sock:/var/run/docker.sock aquasec/trivy image oral-app-client:latest
+        docker run --rm -v /var/run/docker.sock:/var/run/docker.sock aquasec/trivy image oral-app-user-service:latest
+        docker run --rm -v /var/run/docker.sock:/var/run/docker.sock aquasec/trivy image oral-app-comms-service:latest
+        docker run --rm -v /var/run/docker.sock:/var/run/docker.sock aquasec/trivy image oral-app-ai-omni-service:latest
+        docker run --rm -v /var/run/docker.sock:/var/run/docker.sock aquasec/trivy image oral-app-history-analytics-service:latest
+        docker run --rm -v /var/run/docker.sock:/var/run/docker.sock aquasec/trivy image oral-app-conversation-service:latest
+        docker run --rm -v /var/run/docker.sock:/var/run/docker.sock aquasec/trivy image oral-app-media-processing-service:latest
+        docker run --rm -v /var/run/docker.sock:/var/run/docker.sock aquasec/trivy image oral-app-api-gateway:latest

@@ -1,0 +1,87 @@
+name: Deploy to Staging
+
+on:
+  push:
+    branches: [ develop ]
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
+jobs:
+  deploy-staging:
+    runs-on: ubuntu-latest
+    environment: staging
+    permissions:
+      packages: read
+      contents: read
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Set up Docker
+      uses: docker/setup-docker-action@v3
+
+    - name: Login to Container Registry
+      uses: docker/login-action@v3
+      with:
+        registry: ${{ env.REGISTRY }}
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: Pull latest images
+      run: |
+        docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/client:develop
+        docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/user-service:develop
+        docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/comms-service:develop
+        docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/ai-omni-service:develop
+        docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/history-analytics-service:develop
+        docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/conversation-service:develop
+        docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/media-processing-service:develop
+        docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/api-gateway:develop
+
+    - name: Deploy to staging server
+      run: |
+        # Copy files to staging server
+        echo "${{ secrets.STAGING_SSH_PRIVATE_KEY }}" > ssh_key
+        chmod 600 ssh_key
+        
+        # SSH to staging server and deploy
+        ssh -i ssh_key -o StrictHostKeyChecking=no ${{ secrets.STAGING_DEPLOY_USER }}@${{ secrets.STAGING_DEPLOY_HOST }} << 'EOF'
+          # Pull latest images
+          docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/client:develop
+          docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/user-service:develop
+          docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/comms-service:develop
+          docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/ai-omni-service:develop
+          docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/history-analytics-service:develop
+          docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/conversation-service:develop
+          docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/media-processing-service:develop
+          docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/api-gateway:develop
+          
+          # Stop existing containers
+          docker-compose -f docker-compose.staging.yml down
+          
+          # Start new containers
+          docker-compose -f docker-compose.staging.yml up -d
+          
+          # Run integration tests against staging
+          docker-compose -f docker-compose.staging.yml exec -T user-service npm test
+          docker-compose -f docker-compose.staging.yml exec -T history-analytics-service npm test
+        EOF
+
+    - name: Run post-deployment tests
+      run: |
+        # Wait for services to be ready
+        sleep 30
+        
+        # Run health checks
+        curl -f http://staging.orai.com/health || exit 1
+        curl -f http://staging.orai.com/api/users/health || exit 1
+        curl -f http://staging.orai.com/api/history/health || exit 1
+
+    - name: Notify staging deployment
+      run: |
+        curl -X POST -H 'Content-type: application/json' \
+        --data '{"text":"Staging deployment completed successfully"}' \
+        ${{ secrets.SLACK_WEBHOOK_URL }}

@@ -1,0 +1,9 @@
+# Development override for client-app
+# This mounts the local build folder to avoid rebuilding the image
+
+services:
+  client-app:
+    image: oral_app-client-app:latest
+    volumes:
+      - ./client/build:/app/build:ro
+    command: ["node", "server.js"]

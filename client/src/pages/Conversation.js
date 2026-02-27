@@ -2,9 +2,9 @@ import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { conversationAPI, aiAPI, userAPI } from '../services/api';
 import { getAuthHeaders } from '../services/api';
-import RealTimeRecorderOptimized from '../components/RealTimeRecorderOptimized';
+import RealTimeRecorder from '../components/RealTimeRecorder';
 import { useAuth } from '../contexts/AuthContext';
-import AudioBar from '../components/AudioBar'; // Import the new AudioBar component
+import AudioBar from '../components/AudioBar.jsx'; // Import the new AudioBar component
 import NetworkAdaptiveManager from '../utils/network-adaptive-manager';
 import OptimizedWebSocket from '../utils/websocket-optimized';
 
@@ -28,6 +28,12 @@ function Conversation() {
   const [selection, setSelection] = useState({ text: '', x: 0, y: 0, visible: false });
   const [isSynthesizing, setIsSynthesizing] = useState(false);
   const [welcomeMessageShown, setWelcomeMessageShown] = useState(false); // Track if welcome message has been shown
+  const connectWebSocketRef = useRef(null); // Ref to store connectWebSocket function
+  
+  // WebSocket connection control states
+  const [isManualDisconnect, setIsManualDisconnect] = useState(false); // Track if user manually disconnected
+  const [reconnectAttempts, setReconnectAttempts] = useState(0); // Track reconnection attempts
+  const MAX_RECONNECT_ATTEMPTS = 3; // Maximum automatic reconnect attempts before requiring manual intervention
 
   // Default scenario templates
   const DEFAULT_SCENARIOS = {
@@ -200,19 +206,91 @@ function Conversation() {
     setIsAISpeaking(false);
   };
 
-  // Play full audio (for AudioBar)
+  // Play full audio (for AudioBar) - use proxy for cross-origin audio
   const playFullAudio = (audioUrl) => {
-    initAudioContext();
-    fetch(audioUrl)
-      .then(res => res.arrayBuffer())
-      .then(buffer => audioContextRef.current.decodeAudioData(buffer))
-      .then(audioBuffer => {
-        const source = audioContextRef.current.createBufferSource();
-        source.buffer = audioBuffer;
-        source.connect(audioContextRef.current.destination);
-        source.start();
-      })
-      .catch(err => console.error('Error playing full audio:', err));
+    console.log('Playing full audio from:', audioUrl);
+    
+    // Stop any currently playing audio first
+    stopAudioPlayback();
+    
+    // Check if URL is cross-origin
+    const isCrossOrigin = audioUrl.startsWith('http') && !audioUrl.startsWith(window.location.origin);
+    
+    if (isCrossOrigin) {
+      // For cross-origin audio, use Audio element with anonymous crossorigin
+      const audio = new Audio();
+      audio.crossOrigin = 'anonymous';
+      
+      // Try direct play first (will work if COS has CORS headers or browser allows it)
+      audio.src = audioUrl;
+      audio.play()
+        .then(() => {
+          console.log('Audio playback started (direct)');
+          setIsAISpeaking(true);
+          audio.onended = () => {
+            setIsAISpeaking(false);
+            console.log('Audio playback ended');
+          };
+          // Don't log error for CORS - it's expected for cross-origin audio
+          audio.onerror = () => {
+            // Silently try proxy fallback
+            fetchAudioViaProxy(audioUrl);
+          };
+        })
+        .catch(() => {
+          // Silently try proxy fallback
+          fetchAudioViaProxy(audioUrl);
+        });
+    } else {
+      // Same-origin, use Web Audio API
+      initAudioContext();
+      fetch(audioUrl)
+        .then(res => res.arrayBuffer())
+        .then(buffer => {
+          if (!audioContextRef.current) return;
+          return audioContextRef.current.decodeAudioData(buffer);
+        })
+        .then(audioBuffer => {
+          if (!audioBuffer || !audioContextRef.current) return;
+          const source = audioContextRef.current.createBufferSource();
+          source.buffer = audioBuffer;
+          source.connect(audioContextRef.current.destination);
+          source.start();
+          setIsAISpeaking(true);
+          source.onended = () => {
+            setIsAISpeaking(false);
+            console.log('Audio playback ended');
+          };
+        })
+        .catch(err => console.error('Error playing same-origin audio:', err));
+    }
+  };
+
+  // Fetch audio via API proxy to avoid CORS issues
+  const fetchAudioViaProxy = async (audioUrl) => {
+    try {
+      // Use our API gateway as a proxy to fetch the audio
+      const proxyUrl = `/api/media/proxy?url=${encodeURIComponent(audioUrl)}`;
+      
+      const response = await fetch(proxyUrl);
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      
+      const arrayBuffer = await response.arrayBuffer();
+      
+      initAudioContext();
+      if (!audioContextRef.current) return;
+      
+      const audioBuffer = await audioContextRef.current.decodeAudioData(arrayBuffer);
+      const source = audioContextRef.current.createBufferSource();
+      source.buffer = audioBuffer;
+      source.connect(audioContextRef.current.destination);
+      source.start();
+      
+      setIsAISpeaking(true);
+      source.onended = () => setIsAISpeaking(false);
+    } catch (err) {
+      // Silently ignore proxy errors - audio playback is optional
+    }
   };
 
   // Text-to-speech for selected text
@@ -293,6 +371,20 @@ function Conversation() {
     navigate('/discovery');
   };
 
+  // Manual retry reconnect function
+  const handleManualRetry = useCallback(() => {
+    console.log('Manual retry triggered');
+    setIsManualDisconnect(false);
+    setReconnectAttempts(0);
+    setWebSocketError(null);
+
+    // Reconnect with current session ID
+    if (sessionId) {
+      // Use latest connectWebSocket reference
+      connectWebSocketRef.current(sessionId);
+    }
+  }, [sessionId]);
+
   // Save conversation history
   const saveConversationHistory = async () => {
     if (!sessionId || messages.length === 0) {
@@ -312,7 +404,7 @@ function Conversation() {
           content: msg.content,
           audioUrl: msg.audioUrl || null
         }));
-      
+
       console.log('Messages after filtering:', messagesToSave.map((m, i) => ({index: i, role: m.role, content: m.content?.substring(0, 50)})));
 
       if (messagesToSave.length === 0) {
@@ -320,7 +412,7 @@ function Conversation() {
         return;
       }
 
-      const response = await conversationAPI.saveHistory(sessionId, messagesToSave);
+      const response = await conversationAPI.saveHistory(sessionId, messagesToSave, user.id);
       if (response.success) {
         console.log('Conversation history saved successfully');
       } else {
@@ -331,14 +423,34 @@ function Conversation() {
     }
   };
 
+  const connectionToastShownRef = useRef(false);
+
   // Handle JSON messages from WebSocket
   const handleJsonMessage = useCallback((data) => {
       console.log('Received JSON message:', data);
-      
+
       // Handle different message types
       switch (data.type) {
         case 'connection_established':
            console.log('Connection established:', data.payload);
+           // Only show toast once per page session to avoid spam
+           if (connectionToastShownRef.current) {
+               console.log('Connection toast already shown, skipping');
+               break;
+           }
+           connectionToastShownRef.current = true;
+           
+           // Add connection success message only once
+           setMessages(prev => {
+             const hasConnectionMessage = prev.some(msg => 
+               msg.type === 'system' && msg.content.includes('连接成功')
+             );
+             if (!hasConnectionMessage) {
+               return [...prev, { type: 'system', content: '连接成功！请按住麦克风开始说话。' }];
+             }
+             return prev;
+           });
+           
            // Re-fetch tasks after connection to ensure we have the latest state
            // This is especially important after page refresh
            const searchParams = new URLSearchParams(window.location.search);
@@ -363,8 +475,7 @@ function Conversation() {
 
                            // Show toast
                            const completedTask = activeScenario.tasks.find(t => t.status === 'completed' && !completedTasks.has(t.text));
-                           const toastMsg = completedTask ? `✅ 完成任务: ${completedTask.text}` : '✅ 进度已保存';
-                           setMessages(prev => [...prev, { type: 'system', content: toastMsg }]);
+                           if (completedTask) { setMessages(prev => [...prev, { type: 'system', content: `✅ 完成任务：${completedTask.text}` }]); }
                        }
                    }
                }).catch(err => console.error('Failed to sync tasks:', err));
@@ -404,8 +515,10 @@ function Conversation() {
            });
            break;
         case 'audio_url':
-           const { url, role } = data.payload;
-           const targetResponseId = data.responseId; // Get ID from event
+           const audioPayload = data.payload || data;
+           const url = audioPayload.url || data.url;
+           const role = audioPayload.role || data.role;
+           const targetResponseId = data.responseId || audioPayload.responseId; // Get ID from event
 
            if (role === 'assistant') {
                setMessages(prev => {
@@ -451,6 +564,62 @@ function Conversation() {
            setCurrentRole(data.payload.role);
            console.log('Role switched to:', data.payload.role);
            break;
+        case 'ai_message':
+           // Handle AI message from comms-service (contains text content in payload)
+           console.log('🤖 AI Message:', data);
+           const msgPayload = data.payload || data;
+           const aiContent = msgPayload.content || data.content || data.text || msgPayload.text || '';
+           const responseId = msgPayload.responseId || data.responseId;
+           
+           if (aiContent) {
+               setMessages(prev => {
+                   const last = prev[prev.length - 1];
+                   // If last message is an in-progress AI message, update it
+                   if (last && last.type === 'ai' && !last.isFinal) {
+                       return [
+                           ...prev.slice(0, -1),
+                           {
+                               ...last,
+                               content: aiContent,
+                               isFinal: true,
+                               responseId: responseId || last.responseId
+                           }
+                       ];
+                   }
+                   // Otherwise create new AI message
+                   return [...prev, {
+                       type: 'ai',
+                       content: aiContent,
+                       isFinal: true,
+                       responseId: responseId
+                   }];
+               });
+           }
+           break;
+        case 'ai_response':
+           // Handle AI text response from comms-service
+           console.log('🤖 AI Response:', data.text);
+           setMessages(prev => {
+               const last = prev[prev.length - 1];
+               // If last message is an in-progress AI message, update it
+               if (last && last.type === 'ai' && !last.isFinal) {
+                   return [
+                       ...prev.slice(0, -1),
+                       {
+                           ...last,
+                           content: data.text,
+                           isFinal: true
+                       }
+                   ];
+               }
+               // Otherwise create new AI message
+               return [...prev, {
+                   type: 'ai',
+                   content: data.text,
+                   isFinal: true
+               }];
+           });
+           break;
         case 'user_transcript':
            // Display user's speech transcription in chat
            if (data.payload && data.payload.text) {
@@ -477,8 +646,49 @@ function Conversation() {
         case 'error':
            console.error('Server Error:', data.payload);
            break;
+        case 'user_proficiency_feedback':
+           // Handle proficiency feedback from workflow service
+           console.log('📊 Proficiency Feedback:', data.payload);
+           break;
+        case 'proficiency_update':
+           // Handle proficiency update notification
+           console.log('📈 Proficiency Update:', data.payload);
+           const profPayload = data.payload || {};
+           const delta = profPayload.delta || profPayload.proficiency_delta || 0;
+           const total = profPayload.total || profPayload.current_proficiency || 0;
+           if (delta > 0) {
+               setMessages(prev => [...prev, {
+                   type: 'system',
+                   content: `+${delta} 熟练度 | 总分：${total}`,
+                   isFinal: true
+               }]);
+               // Auto-dismiss after 3 seconds
+               setTimeout(() => {
+                   setMessages(prev => prev.filter(m => m.type !== 'system' || !m.content.includes('熟练度')));
+               }, 3000);
+           }
+           break;
+        case 'task_completed':
+           // Handle task completion notification
+           console.log('✅ Task Completed:', data.payload);
+           const taskPayload = data.payload || {};
+           if (taskPayload.task_title) {
+               setMessages(prev => [...prev, {
+                   type: 'system',
+                   content: `✅ 任务完成：${taskPayload.task_title}`,
+                   isFinal: true
+               }]);
+               // Update completed tasks
+               if (taskPayload.task_title) {
+                   setCompletedTasks(prev => new Set([...prev, taskPayload.task_title]));
+               }
+           }
+           break;
+        case 'dashscope_response':
+           // Internal DashScope events - ignore
+           break;
         default:
-           console.log('Unhandled message type:', data.type);
+           // Ignore unknown message types silently
            break;
       }
   }, []); // Removed currentRole dependency
@@ -488,67 +698,60 @@ function Conversation() {
 
     initAudioContext();
     const ctx = audioContextRef.current;
-    
-    // console.log('Playing Audio Chunk, size:', audioData.size);
 
+    console.log('Playing Audio Chunk, type:', audioData.constructor.name, 'size:', audioData.byteLength || audioData.size);
+
+    let audioBuffer;
     try {
-        const arrayBuffer = await audioData.arrayBuffer();
+        // audioData is already an ArrayBuffer, no need to call .arrayBuffer()
+        const decodeBuffer = audioData.slice(0);
+        audioBuffer = await ctx.decodeAudioData(decodeBuffer);
+        console.log('Audio decoded successfully, duration:', audioBuffer.duration, 'sampleRate:', audioBuffer.sampleRate);
+    } catch (e) {
+        console.log('decodeAudioData failed, trying PCM fallback:', e.message);
         
-        let audioBuffer;
-        try {
-            const decodeBuffer = arrayBuffer.slice(0);
-            audioBuffer = await ctx.decodeAudioData(decodeBuffer);
-        } catch (e) {
-            // Check if it's actually JSON sent as binary
-            try {
-                const text = await audioData.text();
-                const json = JSON.parse(text);
-                console.log('Recovered JSON from Binary:', json);
-                handleJsonMessage(json);
-                return;
-            } catch (jsonErr) {
-                // Not JSON, continue with PCM fallback
-            }
-
-            // Only warn, don't crash or error out loudly
-            // console.warn('decodeAudioData failed, trying PCM fallback'); 
-            
-            // Fallback: Assume Raw PCM Int16 24kHz Mono
-            const int16Array = new Int16Array(arrayBuffer);
-            const float32Array = new Float32Array(int16Array.length);
-            for (let i = 0; i < int16Array.length; i++) {
-                float32Array[i] = int16Array[i] / 32768.0;
-            }
-            audioBuffer = ctx.createBuffer(1, float32Array.length, 24000);
-            audioBuffer.getChannelData(0).set(float32Array);
+        // Fallback: Assume Raw PCM Int16 24kHz Mono
+        const int16Array = new Int16Array(audioData);
+        const float32Array = new Float32Array(int16Array.length);
+        for (let i = 0; i < int16Array.length; i++) {
+            float32Array[i] = int16Array[i] / 32768.0;
         }
-
-        const source = ctx.createBufferSource();
-        source.buffer = audioBuffer;
-        source.connect(ctx.destination);
-        source.onended = () => {
-             // Cleanup if needed
-        };
-
-        const currentTime = ctx.currentTime;
-        const start = Math.max(currentTime, nextStartTimeRef.current);
-        
-        source.start(start);
-        nextStartTimeRef.current = start + audioBuffer.duration;
-        
-        // Track source for cancellation
-        audioQueueRef.current.push(source);
-        
-        setIsAISpeaking(true);
-
-    } catch (error) {
-      console.error('Audio playback error (Chunk):', error);
+        audioBuffer = ctx.createBuffer(1, float32Array.length, 24000);
+        audioBuffer.getChannelData(0).set(float32Array);
+        console.log('PCM fallback created, length:', float32Array.length);
     }
+
+    const source = ctx.createBufferSource();
+    source.buffer = audioBuffer;
+    source.connect(ctx.destination);
+    source.onended = () => {
+         // Cleanup if needed
+    };
+
+    const currentTime = ctx.currentTime;
+    const start = Math.max(currentTime, nextStartTimeRef.current);
+
+    source.start(start);
+    nextStartTimeRef.current = start + audioBuffer.duration;
+
+    // Track source for cancellation
+    audioQueueRef.current.push(source);
+
+    setIsAISpeaking(true);
+    console.log('Audio playback started, isAISpeaking:', true);
+
   }, [handleJsonMessage]);
 
   // --- WebSocket Logic ---
-  const connectWebSocket = useCallback(() => {
-    if (!token || !sessionId) return;
+  const connectWebSocket = useCallback((explicitSessionId = null) => {
+    const effectiveSessionId = explicitSessionId || sessionId;
+    if (!token || !effectiveSessionId) {
+      console.log('connectWebSocket: missing token or sessionId', { token, effectiveSessionId, sessionId });
+      return;
+    }
+
+    // Store in ref for later use
+    connectWebSocketRef.current = connectWebSocket;
 
     // Close existing if any
     if (socketRef.current) {
@@ -572,30 +775,30 @@ function Conversation() {
 
     // Determine WebSocket URL based on environment
     let wsUrl;
+
+    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const searchParams = new URLSearchParams(window.location.search);
+    const scenario = searchParams.get('scenario');
+    const topic = searchParams.get('topic');
+    const voice = localStorage.getItem('ai_voice') || 'Serena';
     
-    if (window.location.hostname === 'localhost' && (window.location.port === '5001' || window.location.port === '')) {
-      const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-      const searchParams = new URLSearchParams(window.location.search);
-      const scenario = searchParams.get('scenario');
-      const topic = searchParams.get('topic');
-      const voice = localStorage.getItem('ai_voice') || 'Serena';
-      wsUrl = `${protocol}//localhost:8080/api/ws/?token=${token}&sessionId=${sessionId}${scenario ? `&scenario=${scenario}` : ''}${topic ? `&topic=${topic}` : ''}&voice=${voice}`;
+    // Determine the correct WebSocket host
+    let wsHost;
+    if (window.location.hostname === 'localhost' && window.location.port === '3000') {
+      // Development server - connect to API gateway on port 8081
+      wsHost = 'localhost:8081';
     } else {
-      const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-      wsUrl = `${protocol}//${window.location.host}/api/ws/?token=${token}&sessionId=${sessionId}&voice=${localStorage.getItem('ai_voice') || 'Serena'}`;
-      
-      const searchParams = new URLSearchParams(window.location.search);
-      const scenario = searchParams.get('scenario');
-      const topic = searchParams.get('topic');
-      if (scenario) wsUrl += `&scenario=${scenario}`;
-      if (topic) wsUrl += `&topic=${topic}`;
+      // Production or Docker environment - use current host
+      wsHost = window.location.host;
     }
+    
+    wsUrl = `${protocol}//${wsHost}/api/ws/?token=${token}&sessionId=${effectiveSessionId}${scenario ? `&scenario=${scenario}` : ''}${topic ? `&topic=${topic}` : ''}&voice=${voice}`;
 
     // Create optimized WebSocket connection
     socketRef.current = new OptimizedWebSocket(wsUrl, {
       reconnectInterval: 1000,
       maxReconnectAttempts: 5,
-      connectionTimeout: 10000,
+      connectionTimeout: 20000, // Increased to 20 seconds for AI service connection
       heartbeatInterval: 30000,
       enableLogging: true,
       enableCompression: true
@@ -606,22 +809,10 @@ function Conversation() {
       window.networkAdaptiveManager.setWebSocket(socketRef.current);
     }
 
+    // Register event listeners BEFORE connecting to avoid missing events
     socketRef.current.addEventListener('open', () => {
       console.log('WS Open (Optimized)');
       setIsConnected(true);
-      
-      // Only show connection success message if we don't have conversation history
-      setMessages(prev => {
-        const hasConversationHistory = prev.some(msg =>
-          msg.type === 'user' ||
-          (msg.type === 'ai' && !msg.content.includes('连接AI导师') && !msg.content.includes('新会话开始'))
-        );
-
-        if (!hasConversationHistory) {
-          return [...prev, { type: 'system', content: '连接成功！请按住麦克风开始说话。' }];
-        }
-        return prev;
-      });
       setWebSocketError(null);
 
       // Send session_start handshake
@@ -644,8 +835,11 @@ function Conversation() {
     });
 
     socketRef.current.addEventListener('message', async (event) => {
+      console.log('[WS Message] Type:', event.data?.constructor?.name, 'Size:', event.data?.byteLength || event.data?.size || 'N/A');
+      
       if (event.data instanceof ArrayBuffer) {
         // Handle binary audio data
+        console.log('[Audio] Received binary audio data, size:', event.data.byteLength);
         playAudioChunk(event.data);
       } else if (typeof event.data === 'string') {
         try {
@@ -656,12 +850,15 @@ function Conversation() {
         }
       } else if (event.data instanceof Blob) {
         // Handle blob data
+        console.log('[Audio] Received blob data, size:', event.data.size);
         try {
           const arrayBuffer = await event.data.arrayBuffer();
           playAudioChunk(arrayBuffer);
         } catch (e) {
           console.error('Failed to handle blob:', e);
         }
+      } else {
+        console.warn('[WS] Unknown message type:', typeof event.data, event.data);
       }
     });
 
@@ -678,14 +875,41 @@ function Conversation() {
         // Save conversation history when connection closes
         await saveConversationHistory();
 
-        // Only show error if it wasn't a clean close
-        if (event.code !== 1000) {
-            setWebSocketError('连接已关闭');
-        }
-        
         // Stop network monitoring
         if (window.networkAdaptiveManager) {
           window.networkAdaptiveManager.stopMonitoring();
+        }
+
+        // Don't auto-reconnect if:
+        // 1. It was a clean close (code 1000)
+        // 2. User manually disconnected
+        // 3. Max reconnect attempts reached
+        const isCleanClose = event.code === 1000 || event.code === 1001;
+        
+        if (isCleanClose || isManualDisconnect || reconnectAttempts >= MAX_RECONNECT_ATTEMPTS) {
+            if (!isCleanClose && !isManualDisconnect) {
+                setWebSocketError(`连接已关闭 (${event.code})`);
+            } else if (reconnectAttempts >= MAX_RECONNECT_ATTEMPTS) {
+                setWebSocketError(`已达到最大重试次数 (${MAX_RECONNECT_ATTEMPTS})，请刷新页面或点击重试`);
+            }
+            return;
+        }
+
+        // Auto-reconnect with exponential backoff for unexpected disconnections
+        if (!isManualDisconnect && reconnectAttempts < MAX_RECONNECT_ATTEMPTS) {
+            const attemptNum = reconnectAttempts + 1;
+            console.log(`Attempting automatic reconnection ${attemptNum}/${MAX_RECONNECT_ATTEMPTS}...`);
+            setReconnectAttempts(prev => prev + 1);
+            
+            // Exponential backoff: 1s, 2s, 4s
+            const delay = Math.min(1000 * Math.pow(2, reconnectAttempts), 10000);
+            
+            setTimeout(() => {
+                // Check if we should still reconnect (not manually disconnected in the meantime)
+                if (!isManualDisconnect && reconnectAttempts < MAX_RECONNECT_ATTEMPTS) {
+                    connectWebSocket(sessionId);
+                }
+            }, delay);
         }
     });
 
@@ -702,6 +926,12 @@ function Conversation() {
       setWebSocketError('重新连接中...');
     });
 
+    // Start the connection AFTER all event listeners are registered
+    socketRef.current.connect().catch(err => {
+      console.error('WebSocket connection failed:', err);
+      setWebSocketError('连接失败，请刷新页面重试');
+    });
+
     // Start network monitoring
     if (window.networkAdaptiveManager) {
       window.networkAdaptiveManager.startMonitoring();
@@ -713,6 +943,12 @@ function Conversation() {
   useEffect(() => {
     const init = async () => {
       if (!user?.id || !token) return; // Wait for full auth
+      
+      // Don't auto-reconnect on every render - only on initial mount or manual retry
+      if (isManualDisconnect) {
+        console.log('Manual disconnect detected, skipping auto-init');
+        return;
+      }
 
       // Check URL for sessionId (e.g., ?sessionId=...)
       const searchParams = new URLSearchParams(window.location.search);
@@ -806,8 +1042,21 @@ function Conversation() {
               // Verify that the stored session ID is still valid by checking history
               try {
                   const historyRes = await conversationAPI.getHistory(storedSessionId);
-                  if (historyRes && historyRes.messages) {
+                  if (historyRes && historyRes.messages && historyRes.messages.length > 0) {
                       effectiveSessionId = storedSessionId;
+                      // Load history messages into state
+                      const historyMessages = historyRes.messages.map(msg => ({
+                          type: msg.role === 'user' ? 'user' : 'ai',
+                          content: msg.content,
+                          audioUrl: msg.audioUrl,
+                          isFinal: true
+                      }));
+                      setMessages(prev => {
+                          // Keep initial system message, add history
+                          const systemMsg = prev.find(m => m.type === 'system');
+                          return systemMsg ? [systemMsg, ...historyMessages] : historyMessages;
+                      });
+                      console.log('Loaded history messages:', historyMessages.length);
                   }
               } catch (err) {
                   console.log('Stored session not valid, will create new one:', err);
@@ -840,12 +1089,12 @@ function Conversation() {
           setCurrentScenarioIndex(location.state.currentIndex);
       }
 
-      // Connect WebSocket
-      connectWebSocket();
+      // Connect WebSocket with the effective session ID (state may not be updated yet)
+      connectWebSocket(effectiveSessionId);
     };
 
     init();
-  }, [token, user, connectWebSocket, location]);
+  }, [token, user, isManualDisconnect]); // Removed connectWebSocket from dependencies to prevent infinite loop
 
   // Auto-scroll to bottom when messages change
   useEffect(() => {
@@ -861,15 +1110,21 @@ function Conversation() {
   // --- Recorder Callbacks ---
 
   const handleRecordingStart = () => {
+    // CRITICAL: Check WebSocket connection before allowing recording
+    const wsReadyState = socketRef.current?.getReadyState?.() || socketRef.current?.readyState;
+    if (!isConnected || wsReadyState !== WebSocket.OPEN) {
+        console.error('❌ Cannot start recording: WebSocket not connected, state:', wsReadyState);
+        alert('AI 导师尚未连接，请稍后再试');
+        return;
+    }
+
     isInterruptedRef.current = false; // Reset flag for new turn
     const newId = Date.now().toString();
     currentUserMessageIdRef.current = newId; // New turn ID
 
-    // Check if we need to interrupt backend streaming
-    const wasBackendStreaming = isAISpeaking;
-
-    // Always stop local audio playback immediately
+    // Always stop audio playback immediately (interrupt AI response)
     stopAudioPlayback();
+    isInterruptedRef.current = true; // Mark as interrupted
 
     // 1. Force finalize ALL previous messages
     // 2. Immediately create a placeholder for the NEW user turn
@@ -886,29 +1141,60 @@ function Conversation() {
         }];
     });
 
-    // If backend was streaming, send interruption signal
-    if (wasBackendStreaming) {
-        console.log('Interruption triggered (Backend Streaming)!');
-        isInterruptedRef.current = true;
-
-        if (socketRef.current?.readyState === WebSocket.OPEN) {
-            socketRef.current.send(JSON.stringify({ type: 'user_interruption' }));
-        }
-    } else {
-        console.log('Recording started (New Turn)');
+    // Send interruption signal to backend
+    console.log('🔇 Interruption triggered - stopping AI response and starting new turn');
+    if (socketRef.current?.getReadyState?.() === WebSocket.OPEN || socketRef.current?.readyState === WebSocket.OPEN) {
+        socketRef.current.send(JSON.stringify({ type: 'user_interruption' }));
     }
   };
 
   const handleRecordingStop = () => {
-    if (socketRef.current?.readyState === WebSocket.OPEN) {
-        console.log('Sending user_audio_ended');
-        socketRef.current.send(JSON.stringify({ type: 'user_audio_ended' }));
+    const wsReadyState = socketRef.current?.getReadyState?.() || socketRef.current?.readyState;
+    console.log('🎤 handleRecordingStop called, WebSocket state:', wsReadyState);
+
+    // Wait for WebSocket to be ready before sending
+    if (wsReadyState !== WebSocket.OPEN) {
+        console.log('⏳ WebSocket not ready (state:', wsReadyState, '), waiting for connection...');
+        
+        // Wait for connection with timeout
+        const waitForConnection = () => {
+            const checkReady = () => {
+                const currentState = socketRef.current?.getReadyState?.() || socketRef.current?.readyState;
+                if (currentState === WebSocket.OPEN) {
+                    console.log('✅ WebSocket now ready, sending user_audio_ended');
+                    socketRef.current.send(JSON.stringify({ type: 'user_audio_ended' }));
+                } else if (currentState === WebSocket.CONNECTING) {
+                    // Still connecting, check again in 100ms
+                    setTimeout(checkReady, 100);
+                } else {
+                    console.error('❌ WebSocket failed to connect (state:', currentState, ')');
+                    setWebSocketError('连接失败，请刷新页面重试');
+                }
+            };
+            checkReady();
+        };
+        
+        // Set timeout to give up after 10 seconds
+        setTimeout(() => {
+            const finalState = socketRef.current?.getReadyState?.() || socketRef.current?.readyState;
+            if (finalState !== WebSocket.OPEN) {
+                console.error('❌ WebSocket connection timeout after waiting');
+                setWebSocketError('连接超时，请刷新页面重试');
+            }
+        }, 10000);
+        
+        waitForConnection();
+        return;
     }
-    isInterruptedRef.current = false;
+
+    console.log('📤 Sending user_audio_ended');
+    socketRef.current.send(JSON.stringify({ type: 'user_audio_ended' }));
+    console.log('✅ user_audio_ended sent, keeping WebSocket open for AI response');
   };
 
   const handleRecordingCancel = () => {
-    if (socketRef.current?.readyState === WebSocket.OPEN) {
+    const wsReadyState = socketRef.current?.getReadyState?.() || socketRef.current?.readyState;
+    if (wsReadyState === WebSocket.OPEN || wsReadyState === WebSocket.CONNECTING) {
         socketRef.current.send(JSON.stringify({ type: 'user_audio_cancelled' }));
     }
     const cancelId = currentUserMessageIdRef.current;
@@ -917,8 +1203,15 @@ function Conversation() {
   };
 
   const handleAudioData = (data) => {
-    if (socketRef.current?.readyState === WebSocket.OPEN) {
+    const wsReadyState = socketRef.current?.getReadyState?.() || socketRef.current?.readyState;
+    if (wsReadyState === WebSocket.OPEN) {
         socketRef.current.send(data);
+    } else if (wsReadyState === WebSocket.CONNECTING) {
+        // Queue audio data for when connection opens
+        console.log('⏳ WebSocket connecting, queuing audio data');
+        socketRef.current.send(data);
+    } else {
+        console.warn('⚠️ Cannot send audio data - WebSocket not connected, state:', wsReadyState);
     }
   };
 
@@ -1008,7 +1301,6 @@ function Conversation() {
       {/* Messages Area */}
       <main className="flex-1 overflow-y-auto p-4 space-y-6 scroll-smooth">
         {messages.map((msg, index) => {
-          console.log(`Rendering message ${index}: type=${msg.type}, content='${msg.content?.substring(0, 50)}...'`);
           
           if (msg.type === 'system') {
               return (
@@ -1023,14 +1315,11 @@ function Conversation() {
           const isAI = msg.type === 'ai';
           const displayContent = msg.content ? msg.content.replace(/```json[\s\S]*?```/g, '').trim() : '';
 
-          console.log(`Message ${index} displayContent: '${displayContent}'`);
 
           if (!isAI && (!displayContent || displayContent === '...')) {
-            console.log(`Filtering out user message ${index} due to empty content`);
             return null;
           }
           if (isAI && !displayContent) {
-            console.log(`Filtering out AI message ${index} due to empty content`);
             return null;
           }
 
@@ -1065,7 +1354,7 @@ function Conversation() {
       {/* Footer / Controls */}
       <footer className="pb-6 pt-4 px-4 bg-white dark:bg-slate-900 border-t border-slate-100 dark:border-slate-800 shrink-0 shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.05)]">
         <div className="flex flex-col items-center gap-2">
-            <RealTimeRecorderOptimized 
+            <RealTimeRecorder
               onAudioData={handleAudioData}
               isConnected={isConnected}
               onStart={handleRecordingStart}
@@ -1074,9 +1363,29 @@ function Conversation() {
               enableCompression={true}
               enableMetrics={true}
             />
+            
+            {/* WebSocket Error Display with Retry Button */}
             {webSocketError && (
-                <p className="text-xs text-red-500 bg-red-50 dark:bg-red-900/20 px-3 py-1 rounded-full animate-pulse">
-                    {webSocketError}
+                <div className="flex items-center gap-3 w-full max-w-md">
+                    <p className="text-xs text-red-500 bg-red-50 dark:bg-red-900/20 px-3 py-1.5 rounded-full flex-1">
+                        {webSocketError}
+                    </p>
+                    
+                    {/* Retry Button - show when connection fails or max attempts reached */}
+                    <button
+                        onClick={handleManualRetry}
+                        className="px-3 py-1.5 bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-300 rounded-lg text-xs font-medium flex items-center gap-1 hover:bg-red-200 dark:hover:bg-red-900/50 transition animate-pulse"
+                    >
+                        <span className="material-symbols-outlined text-sm">refresh</span>
+                        <span>重试</span>
+                    </button>
+                </div>
+            )}
+            
+            {/* Connection Status Indicator */}
+            {!isConnected && !webSocketError && (
+                <p className="text-xs text-yellow-600 dark:text-yellow-400 bg-yellow-50 dark:bg-yellow-900/20 px-3 py-1 rounded-full">
+                    正在连接 AI 导师...
                 </p>
             )}
         </div>

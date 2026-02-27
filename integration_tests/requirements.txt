@@ -1,0 +1,56 @@
+# Integration Testing Requirements for Oral AI Application
+# Install with: pip install -r requirements.txt
+
+# Core testing framework
+pytest>=7.4.0
+pytest-asyncio>=0.21.0
+pytest-cov>=4.1.0
+pytest-html>=3.2.0
+pytest-xdist>=3.3.0
+
+# HTTP testing
+requests>=2.31.0
+httpx>=0.24.0
+
+# WebSocket testing
+websocket-client>=1.6.0
+websockets>=11.0.0
+
+# Audio processing (for media tests)
+librosa>=0.10.0
+soundfile>=0.12.0
+numpy>=1.24.0
+
+# Database testing
+psycopg2-binary>=2.9.0
+pymongo>=4.5.0
+redis>=4.6.0
+
+# JWT and crypto testing
+PyJWT>=2.8.0
+cryptography>=41.0.0
+
+# Async testing
+asyncio>=3.4.3
+aiohttp>=3.8.0
+
+# Performance testing
+locust>=2.16.0
+
+# Mock and fixtures
+faker>=19.0.0
+factory-boy>=3.3.0
+responses>=0.23.0
+
+# Reporting and monitoring
+pytest-json-report>=1.5.0
+pytest-benchmark>=4.0.0
+
+# Environment and configuration
+python-dotenv>=1.0.0
+pyyaml>=6.0.0
+
+# Utilities
+tqdm>=4.65.0
+colorama>=0.4.6
+rich>=13.0.0

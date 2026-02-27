@@ -1,0 +1,192 @@
+name: Docker Build and Push
+
+on:
+  push:
+    branches: [ main, develop ]
+    tags: [ 'v*.*.*' ]
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+
+    - name: Log in to Container Registry
+      uses: docker/login-action@v3
+      with:
+        registry: ${{ env.REGISTRY }}
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: Extract metadata for client
+      id: meta-client
+      uses: docker/metadata-action@v5
+      with:
+        images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/client
+        tags: |
+          type=ref,event=branch
+          type=ref,event=pr
+          type=semver,pattern={{version}}
+          type=semver,pattern={{major}}.{{minor}}
+          type=sha,prefix=
+
+    - name: Extract metadata for user-service
+      id: meta-user-service
+      uses: docker/metadata-action@v5
+      with:
+        images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/user-service
+        tags: |
+          type=ref,event=branch
+          type=ref,event=pr
+          type=semver,pattern={{version}}
+          type=semver,pattern={{major}}.{{minor}}
+          type=sha,prefix=
+
+    - name: Extract metadata for comms-service
+      id: meta-comms-service
+      uses: docker/metadata-action@v5
+      with:
+        images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/comms-service
+        tags: |
+          type=ref,event=branch
+          type=ref,event=pr
+          type=semver,pattern={{version}}
+          type=semver,pattern={{major}}.{{minor}}
+          type=sha,prefix=
+
+    - name: Extract metadata for ai-omni-service
+      id: meta-ai-omni-service
+      uses: docker/metadata-action@v5
+      with:
+        images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/ai-omni-service
+        tags: |
+          type=ref,event=branch
+          type=ref,event=pr
+          type=semver,pattern={{version}}
+          type=semver,pattern={{major}}.{{minor}}
+          type=sha,prefix=
+
+    - name: Extract metadata for history-analytics-service
+      id: meta-history-analytics-service
+      uses: docker/metadata-action@v5
+      with:
+        images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/history-analytics-service
+        tags: |
+          type=ref,event=branch
+          type=ref,event=pr
+          type=semver,pattern={{version}}
+          type=semver,pattern={{major}}.{{minor}}
+          type=sha,prefix=
+
+    - name: Extract metadata for conversation-service
+      id: meta-conversation-service
+      uses: docker/metadata-action@v5
+      with:
+        images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/conversation-service
+        tags: |
+          type=ref,event=branch
+          type=ref,event=pr
+          type=semver,pattern={{version}}
+          type=semver,pattern={{major}}.{{minor}}
+          type=sha,prefix=
+
+    - name: Extract metadata for media-processing-service
+      id: meta-media-processing-service
+      uses: docker/metadata-action@v5
+      with:
+        images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/media-processing-service
+        tags: |
+          type=ref,event=branch
+          type=ref,event=pr
+          type=semver,pattern={{version}}
+          type=semver,pattern={{major}}.{{minor}}
+          type=sha,prefix=
+
+    - name: Extract metadata for api-gateway
+      id: meta-api-gateway
+      uses: docker/metadata-action@v5
+      with:
+        images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/api-gateway
+        tags: |
+          type=ref,event=branch
+          type=ref,event=pr
+          type=semver,pattern={{version}}
+          type=semver,pattern={{major}}.{{minor}}
+          type=sha,prefix=
+
+    - name: Build and push client
+      uses: docker/build-push-action@v5
+      with:
+        context: ./client
+        file: ./client/Dockerfile.prod
+        push: true
+        tags: ${{ steps.meta-client.outputs.tags }}
+        labels: ${{ steps.meta-client.outputs.labels }}
+
+    - name: Build and push user-service
+      uses: docker/build-push-action@v5
+      with:
+        context: ./services/user-service
+        push: true
+        tags: ${{ steps.meta-user-service.outputs.tags }}
+        labels: ${{ steps.meta-user-service.outputs.labels }}
+
+    - name: Build and push comms-service
+      uses: docker/build-push-action@v5
+      with:
+        context: ./services/comms-service
+        push: true
+        tags: ${{ steps.meta-comms-service.outputs.tags }}
+        labels: ${{ steps.meta-comms-service.outputs.labels }}
+
+    - name: Build and push ai-omni-service
+      uses: docker/build-push-action@v5
+      with:
+        context: ./services/ai-omni-service
+        push: true
+        tags: ${{ steps.meta-ai-omni-service.outputs.tags }}
+        labels: ${{ steps.meta-ai-omni-service.outputs.labels }}
+
+    - name: Build and push history-analytics-service
+      uses: docker/build-push-action@v5
+      with:
+        context: ./services/history-analytics-service
+        push: true
+        tags: ${{ steps.meta-history-analytics-service.outputs.tags }}
+        labels: ${{ steps.meta-history-analytics-service.outputs.labels }}
+
+    - name: Build and push conversation-service
+      uses: docker/build-push-action@v5
+      with:
+        context: ./services/conversation-service
+        push: true
+        tags: ${{ steps.meta-conversation-service.outputs.tags }}
+        labels: ${{ steps.meta-conversation-service.outputs.labels }}
+
+    - name: Build and push media-processing-service
+      uses: docker/build-push-action@v5
+      with:
+        context: ./services/media-processing-service
+        push: true
+        tags: ${{ steps.meta-media-processing-service.outputs.tags }}
+        labels: ${{ steps.meta-media-processing-service.outputs.labels }}
+
+    - name: Build and push api-gateway
+      uses: docker/build-push-action@v5
+      with:
+        context: ./api-gateway
+        push: true
+        tags: ${{ steps.meta-api-gateway.outputs.tags }}
+        labels: ${{ steps.meta-api-gateway.outputs.labels }}

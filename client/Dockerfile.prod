@@ -1,0 +1,39 @@
+FROM node:18-alpine
+
+WORKDIR /app
+
+# Configure faster Alpine mirrors
+RUN sed -i 's/dl-cdn.alpinelinux.org/mirrors.aliyun.com/g' /etc/apk/repositories
+
+# Install minimal build dependencies (only if needed for native modules)
+# Removed python3, make, g++ as they are rarely needed for pure JS React apps
+RUN apk add --no-cache curl
+
+# Use build arguments for environment variables
+ARG REACT_APP_API_URL
+ARG REACT_APP_API_GATEWAY
+
+# Create .env file with build args
+RUN echo "REACT_APP_API_URL=$REACT_APP_API_URL" > .env && \
+    echo "REACT_APP_API_GATEWAY=$REACT_APP_API_GATEWAY" >> .env
+
+# Copy package files
+COPY package*.json ./
+
+# Copy source code BEFORE node_modules to ensure cache is invalidated
+COPY . .
+
+# Copy node_modules (this layer will be cached if packages don't change)
+COPY node_modules ./node_modules
+
+# Build the application
+RUN npm run build
+
+EXPOSE 5001
+
+# Copy server file
+COPY server.js .
+
+USER node
+
+CMD ["node", "server.js"]
