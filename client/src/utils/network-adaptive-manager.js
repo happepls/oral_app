@@ -274,7 +274,12 @@ class NetworkAdaptiveManager {
   // Update quality assessment
   updateQualityAssessment() {
     const { rtt, packetLoss, stability } = this.networkState;
-    
+
+    // Skip assessment if RTT is not yet available
+    if (rtt === undefined || rtt === null || isNaN(rtt)) {
+      return;
+    }
+
     // Determine quality based on RTT
     let rttQuality = 'poor';
     if (rtt < this.options.rttThresholds.excellent) {

@@ -560,7 +560,11 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query(None), ses
                 # Handle ping from client - respond with pong
                 if msg_type == 'ping':
                     logger.info(f"Ping received from client (ts={payload.get('timestamp')}), sending pong")
-                    await websocket.send_json({"type": "pong", "payload": {"timestamp": payload.get("timestamp", int(time.time()))}})
+                    await websocket.send_json({
+                        "type": "pong",
+                        "timestamp": payload.get("timestamp", int(time.time() * 1000)),
+                        "sequence": payload.get("sequence", 0)
+                    })
                     continue
 
                 if (not conversation or not callback.is_connected) and msg_type in ['audio_stream', 'text_message', 'input_text', 'user_audio_ended']:
