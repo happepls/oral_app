@@ -540,7 +540,7 @@ function Conversation() {
                        const index = newMessages.findIndex(m => m.type === 'ai' && m.responseId === targetResponseId);
                        if (index !== -1) {
                            console.log(`[AudioURL] Attached to message ${index} via ID ${targetResponseId}`);
-                           newMessages[index] = { ...newMessages[index], audioUrl: url };
+                           newMessages[index] = { ...newMessages[index], audioUrl: url, audioPlayed: false };
                            return newMessages;
                        }
                    }
@@ -549,7 +549,7 @@ function Conversation() {
                    for (let i = newMessages.length - 1; i >= 0; i--) {
                        if (newMessages[i].type === 'ai' && !newMessages[i].audioUrl) {
                            console.log(`[AudioURL] Fallback attachment to message ${i}`);
-                           newMessages[i] = { ...newMessages[i], audioUrl: url };
+                           newMessages[i] = { ...newMessages[i], audioUrl: url, audioPlayed: false };
                            break;
                        }
                    }
