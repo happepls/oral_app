@@ -25,11 +25,25 @@ Repository: `git@github.com:happepls/oral_app.git` (master branch)
 
 ## Development Setup
 - **Start Services**: `docker compose up -d --build`
-- **Frontend Dev**: `cd client && npm start` (Port 5001:5000)
+- **Frontend Dev**: `cd client && npm start` (Port 3000:3000)
+- **Frontend Docker**: `docker compose up -d client-app` (Port 5001:5001) - runs production build
 - **Test Scenarios**: `source .venv/bin/activate && python test_client_scenario.py`
 
+### Build Process
+- **Local Build**: `cd client && npm run build` - creates production build in `client/build/`
+- **Docker Build**: `docker compose build client-app` - builds from source in `client/` using `Dockerfile.prod`, runs `npm run build` inside container
+- **.dockerignore**: Recommended in `client/` directory:
+  ```
+  build/
+  node_modules/
+  .git
+  *.log
+  ```
+  This ensures Docker builds from source (not stale local build) and reduces context size.
+
 ## Service Port Mapping
-- **Client App**: 5001:5000 (React frontend)
+- **Client App Dev**: 3000:3000 (React frontend via npm start)
+- **Client App Docker**: 5001:5001 (React frontend production via Docker)
 - **API Gateway**: 8080:80 (Nginx proxy)
 - **User Service**: 3002:3000 (JWT authentication)
 - **Comms Service**: 3001:8080 (WebSocket real-time communication)
@@ -42,10 +56,10 @@ Repository: `git@github.com:happepls/oral_app.git` (master branch)
 - **MongoDB**: 27017:27017 (Conversation history)
 - **Redis**: 6379:6379 (Caching & sessions)
 
-## Current Status (Feb 2026)
+## Current Status (Mar 2026)
 - **Features**: Proficiency Scoring, Scenario-based Training, Dynamic Curriculum, Real-time Task Tracking.
 - **AI Integration**: Qwen3-Omni with streaming ASR/TTS.
-- **Recent Fixes**: Scoring loop, Scenario logic, Interruption handling (barge-in), Bilingual strategy.
+- **Recent Fixes**: Scoring loop, Scenario logic, Interruption handling (barge-in), Bilingual strategy, AudioUrl persistence, Audio playback queue management.
 
 ## Recent Issues and Solutions
 - **WebSocket Connection Issue**: Fixed by updating the API Gateway WebSocket configuration and ensuring proper routing from frontend to comms-service to ai-omni-service
@@ -56,6 +70,9 @@ Repository: `git@github.com:happepls/oral_app.git` (master branch)
 - **Client App Port Configuration**: Fixed nginx configuration in client-app to listen on correct port (5000) matching docker-compose.yml mapping, resolving 502 Bad Gateway errors
 - **Rate Limiting for Internal Services**: Fixed 429 errors by skipping rate limiting for internal service communication (Docker network 172.x.x.x)
 - **Workflow Integration**: Successfully integrated 4 workflows for oral practice orchestration
+- **AudioUrl Persistence (Mar 2026)**: Fixed issue where AI audio URLs were lost after page refresh. Backend fix: `services/ai-omni-service/app/main.py` now saves messages in `response.audio.done` event (line ~392). Frontend fix: `client/src/pages/Conversation.js` sets `audioPlayed: true` when loading history, and useEffect condition checks `audioPlayed === false` (minified as `!1===e.audioPlayed`).
+- **Audio Playback Queue (Mar 2026)**: Fixed issue where clicking replay button caused all audio to play together. Added audio source to `audioQueueRef` queue in `playFullAudio` and `fetchAudioViaProxy` functions. `stopAudioPlayback` now iterates through queue to stop all audio sources.
+- **Docker Build Optimization**: Recommended adding `.dockerignore` in `client/` directory to exclude `build/`, `node_modules/`, `.git` - ensures Docker builds from source and reduces context size. Development override in `docker-compose.override.yml` still mounts local build for convenience.
 
 ## Workflow Integration (Feb 2026)
 
@@ -197,3 +214,18 @@ docker compose exec postgres psql -U user -d oral_app -c \
 
 ## Important
 在完成容器镜像的构建或更新部署后，应利用 `docker exec` 命令进入运行中的容器环境，执行必要的验证操作，以确认容器内应用程序的代码已成功更新至最新版本，并避免继续执行旧代码逻辑。
+
+### 验证客户端容器更新
+```bash
+# 检查容器构建时间
+docker inspect oral_app_client_app --format='{{.Created}}'
+
+# 验证代码已更新（检查关键字符串）
+docker exec oral_app_client_app grep -o "audioPlayed === false" /app/build/static/js/*.js
+
+# 或检查压缩后的代码（false 被转换为 !1）
+docker exec oral_app_client_app grep -o "!1===e.audioPlayed" /app/build/static/js/*.js
+
+# 验证服务响应
+curl -s http://localhost:5001/ | head -20
+```

@@ -45,6 +45,7 @@
   "devDependencies": {
     "@tailwindcss/forms": "^0.5.10",
     "autoprefixer": "^10.4.22",
+    "baseline-browser-mapping": "^2.10.0",
     "postcss": "^8.5.6",
     "react-app-rewired": "^2.2.1",
     "tailwindcss": "^3.4.18"

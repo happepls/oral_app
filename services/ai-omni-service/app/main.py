@@ -411,12 +411,13 @@ class WebSocketCallback(OmniRealtimeCallback):
                     self.full_response_text = clean_text
                     
                     # Send complete message to frontend in one go
+                    # Note: Don't save to conversation service here - wait for audio.done to save with audioUrl
                     if self.full_response_text:
-                        msg = {"role": "assistant", "content": self.full_response_text, "timestamp": datetime.utcnow().isoformat()}
+                        msg = {"role": "assistant", "content": self.full_response_text, "timestamp": datetime.utcnow().isoformat(), "responseId": self.current_response_id or f"ai-{int(time.time() * 1000)}"}
                         if self.last_ai_audio_url: msg['audioUrl'] = self.last_ai_audio_url; self.last_ai_audio_url = None
                         self.messages.append(msg)
-                        await save_single_message(self.session_id, self.user_id, "assistant", self.full_response_text, msg.get('audioUrl'))
-                        
+                        # Removed: await save_single_message(...) - now saved in response.audio.done after audioUrl is generated
+
                         # Send complete message to frontend with responseId
                         await self._safe_send({
                             "type": "ai_message",

@@ -215,7 +215,7 @@ function Conversation() {
     
     // Check if URL is cross-origin
     const isCrossOrigin = audioUrl.startsWith('http') && !audioUrl.startsWith(window.location.origin);
-    
+
     if (isCrossOrigin) {
       // For cross-origin audio, always use proxy to avoid CORS issues
       console.log('Using proxy for cross-origin audio:', audioUrl);
@@ -234,10 +234,16 @@ function Conversation() {
           const source = audioContextRef.current.createBufferSource();
           source.buffer = audioBuffer;
           source.connect(audioContextRef.current.destination);
+          
+          // Add to queue for stop functionality
+          audioQueueRef.current.push(source);
+          
           source.start();
           setIsAISpeaking(true);
           source.onended = () => {
             setIsAISpeaking(false);
+            // Remove from queue when done
+            audioQueueRef.current = audioQueueRef.current.filter(s => s !== source);
             console.log('Audio playback ended');
           };
         })
@@ -250,23 +256,31 @@ function Conversation() {
     try {
       // Use our API gateway as a proxy to fetch the audio
       const proxyUrl = `/api/media/proxy?url=${encodeURIComponent(audioUrl)}`;
-      
+
       const response = await fetch(proxyUrl);
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
-      
+
       const arrayBuffer = await response.arrayBuffer();
-      
+
       initAudioContext();
       if (!audioContextRef.current) return;
-      
+
       const audioBuffer = await audioContextRef.current.decodeAudioData(arrayBuffer);
       const source = audioContextRef.current.createBufferSource();
       source.buffer = audioBuffer;
       source.connect(audioContextRef.current.destination);
-      source.start();
       
+      // Add to queue for stop functionality
+      audioQueueRef.current.push(source);
+      
+      source.start();
+
       setIsAISpeaking(true);
-      source.onended = () => setIsAISpeaking(false);
+      source.onended = () => {
+        setIsAISpeaking(false);
+        // Remove from queue when done
+        audioQueueRef.current = audioQueueRef.current.filter(s => s !== source);
+      };
     } catch (err) {
       // Silently ignore proxy errors - audio playback is optional
     }
@@ -435,12 +449,14 @@ function Conversation() {
            }
            connectionToastShownRef.current = true;
            
-           // Add connection success message only once
+           // Add connection success message only once, and only if no history messages exist
            setMessages(prev => {
-             const hasConnectionMessage = prev.some(msg => 
+             const hasConnectionMessage = prev.some(msg =>
                msg.type === 'system' && msg.content.includes('连接成功')
              );
-             if (!hasConnectionMessage) {
+             // Only show if no history (i.e., only has initial system message)
+             const isFirstMessage = prev.length <= 1;
+             if (!hasConnectionMessage && isFirstMessage) {
                return [...prev, { type: 'system', content: '连接成功！请按住麦克风开始说话。' }];
              }
              return prev;
@@ -1060,11 +1076,13 @@ function Conversation() {
                   if (historyRes && historyRes.messages && historyRes.messages.length > 0) {
                       effectiveSessionId = storedSessionId;
                       // Load history messages into state
+                      // Set audioPlayed: true to prevent auto-play on page refresh
                       const historyMessages = historyRes.messages.map(msg => ({
                           type: msg.role === 'user' ? 'user' : 'ai',
                           content: msg.content,
                           audioUrl: msg.audioUrl,
-                          isFinal: true
+                          isFinal: true,
+                          audioPlayed: true
                       }));
                       setMessages(prev => {
                           // Keep initial system message, add history
@@ -1119,14 +1137,16 @@ function Conversation() {
   // Auto-play AI audio when messages get audio URLs
   useEffect(() => {
     messages.forEach((message, index) => {
-      if (message.type === 'ai' && message.audioUrl && !message.audioPlayed) {
+      // Only auto-play if explicitly marked as not played (audioPlayed === false)
+      // Don't auto-play if audioPlayed is undefined or true
+      if (message.type === 'ai' && message.audioUrl && message.audioPlayed === false) {
         // Mark message as played to prevent repeated playback
         setMessages(prev => {
           const newMessages = [...prev];
           newMessages[index] = { ...newMessages[index], audioPlayed: true };
           return newMessages;
         });
-        
+
         // Play the audio
         console.log(`[AutoPlay] Playing AI audio for message ${index}:`, message.audioUrl);
         playFullAudio(message.audioUrl);
