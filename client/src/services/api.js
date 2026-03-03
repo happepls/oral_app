@@ -101,6 +101,25 @@ export const userAPI = {
     return handleResponse(response);
   },
 
+  async getCurrentTask() {
+    const response = await fetch(`${API_BASE_URL}/users/goals/current-task`, {
+      headers: getAuthHeaders()
+    });
+    return handleResponse(response);
+  },
+
+  async resetTask(taskId, scenarioTitle) {
+    const response = await fetch(`${API_BASE_URL}/users/goals/reset-task`, {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      body: JSON.stringify({ 
+        task_id: taskId,
+        scenario_title: scenarioTitle
+      })
+    });
+    return handleResponse(response);
+  },
+
   // Check-in APIs
   async checkin() {
     const response = await fetch(`${API_BASE_URL}/users/checkin`, {

@@ -289,7 +289,7 @@ exports.getActiveGoal = async (req, res) => {
     try {
         const userId = req.user.id;
         const goal = await User.getActiveGoal(userId);
-        
+
         res.json({
             success: true,
             data: {
@@ -301,6 +301,96 @@ exports.getActiveGoal = async (req, res) => {
         res.status(500).json({
             success: false,
             message: '获取当前目标时服务器错误'
+        });
+    }
+};
+
+exports.getCurrentTask = async (req, res) => {
+    try {
+        const userId = req.user.id;
+        const goal = await User.getActiveGoal(userId);
+
+        if (!goal || !goal.scenarios) {
+            return res.json({
+                success: true,
+                data: {
+                    task: null,
+                    scenario: null,
+                    progress: 0
+                }
+            });
+        }
+
+        // Find the first incomplete task
+        let currentTask = null;
+        let currentScenario = null;
+        
+        for (const scenario of goal.scenarios) {
+            if (scenario.tasks && Array.isArray(scenario.tasks)) {
+                const incompleteTask = scenario.tasks.find(t => t.status !== 'completed');
+                if (incompleteTask) {
+                    currentTask = incompleteTask;
+                    currentScenario = scenario;
+                    break;
+                }
+            }
+        }
+
+        res.json({
+            success: true,
+            data: {
+                task: currentTask,
+                scenario: currentScenario,
+                progress: currentTask ? currentTask.progress : 0,
+                goalId: goal.id
+            }
+        });
+    } catch (error) {
+        console.error('Get Current Task Error:', error);
+        res.status(500).json({
+            success: false,
+            message: '获取当前任务时服务器错误'
+        });
+    }
+};
+
+// Reset task progress (for retry functionality)
+exports.resetTask = async (req, res) => {
+    try {
+        const userId = req.user.id;
+        const { task_id, scenario_title } = req.body;
+
+        const db = require('../models/db');
+
+        if (task_id) {
+            // Reset single task by ID
+            await db.query(
+                `UPDATE user_tasks 
+                 SET score = 0, status = 'pending', interaction_count = 0, feedback = NULL, completed_at = NULL, updated_at = NOW()
+                 WHERE id = $1 AND user_id = $2`,
+                [task_id, userId]
+            );
+            res.json({ success: true, message: '任务进度已重置' });
+        } else if (scenario_title) {
+            // Reset all tasks in a specific scenario
+            await db.query(
+                `UPDATE user_tasks 
+                 SET score = 0, status = 'pending', interaction_count = 0, feedback = NULL, completed_at = NULL, updated_at = NOW()
+                 WHERE user_id = $1 AND scenario_title = $2`,
+                [userId, scenario_title]
+            );
+            res.json({ success: true, message: '场景任务已重置' });
+        } else {
+            return res.status(400).json({
+                success: false,
+                message: '需要提供任务ID或场景标题'
+            });
+        }
+    } catch (error) {
+        console.error('Reset Task Error:', error);
+        res.status(500).json({
+            success: false,
+            message: '重置任务时服务器错误'
         });
     }
 };

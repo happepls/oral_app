@@ -165,9 +165,26 @@ function Discovery() {
       return <div className="flex items-center justify-center min-h-screen">Loading...</div>;
   }
 
-  // Calculate overall progress
-  // MVP: Simply based on proficiency or scenarios completed (if we tracked that)
-  const progress = Math.min(100, userProficiency);
+  // Calculate overall progress based on scenario completion
+  let progress = 0;
+  if (activeGoal && activeGoal.scenarios && activeGoal.scenarios.length > 0) {
+    const totalScenarios = activeGoal.scenarios.length;
+    let completedScenarios = 0;
+    
+    activeGoal.scenarios.forEach(scenario => {
+      if (scenario.tasks && scenario.tasks.length > 0) {
+        const allTasksCompleted = scenario.tasks.every(task => task.status === 'completed');
+        if (allTasksCompleted) {
+          completedScenarios++;
+        }
+      }
+    });
+    
+    progress = Math.round((completedScenarios / totalScenarios) * 100);
+  } else {
+    // Fallback to proficiency if no scenarios
+    progress = Math.min(100, userProficiency);
+  }
 
   return (
     <div className="relative flex flex-col min-h-screen w-full bg-background-light dark:bg-background-dark">

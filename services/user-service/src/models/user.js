@@ -171,11 +171,15 @@ User.getActiveGoal = async (userId) => {
                         dbt.task_description === tText
                     );
                     
-                    // Return object with status
+                    // Return object with status and progress
+                    const taskScore = dbTask ? dbTask.score : 0;
+                    const taskProgress = Math.min(100, Math.round((taskScore / 3) * 100)); // 3 points = 100% completion
                     return {
+                        id: dbTask ? dbTask.id : null,
                         text: tText,
                         status: dbTask ? dbTask.status : 'pending',
-                        score: dbTask ? dbTask.score : 0
+                        score: taskScore,
+                        progress: taskProgress
                     };
                 });
                 return { ...scenario, tasks: scenarioTasks };

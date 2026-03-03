@@ -14,12 +14,7 @@ function Conversation() {
   const { user, token, loading } = useAuth(); // Added loading state
   
   // UI States
-  const [messages, setMessages] = useState([
-    {
-      type: 'system',
-      content: '正在连接AI导师...'
-    }
-  ]);
+  const [messages, setMessages] = useState([]);
   const [isConnected, setIsConnected] = useState(false);
   const [currentRole, setCurrentRole] = useState('OralTutor'); // Default role
   const [isAISpeaking, setIsAISpeaking] = useState(false);
@@ -100,15 +95,33 @@ function Conversation() {
   };
 
   // Scenario Tasks State
-  const [tasks, setTasks] = useState(location.state?.tasks || []);
+  // Initialize as empty - will be populated from backend in useEffect
+  const [tasks, setTasks] = useState([]);
   const [completedTasks, setCompletedTasks] = useState(new Set());
-  // Initialize showTasks based on whether we have tasks or scenario info
+  
+  // Task Progress State (for progress bar)
+  const [currentTaskProgress, setCurrentTaskProgress] = useState(() => {
+    // Try to load from localStorage for persistence
+    const searchParams = new URLSearchParams(window.location.search);
+    const scenario = searchParams.get('scenario') || location.state?.scenario;
+    if (scenario) {
+      const saved = localStorage.getItem(`task_progress_${scenario}`);
+      return saved ? parseInt(saved, 10) : 0;
+    }
+    return 0;
+  });
+  const [currentTaskScore, setCurrentTaskScore] = useState(0);
+  const [engagementLevel, setEngagementLevel] = useState('中'); // 高/中/低
+  const previousProgressRef = useRef(0); // Track previous progress to prevent unreasonable jumps
+  
+  // Initialize showTasks based on whether we have scenario info
+  // Tasks will be loaded from backend, so we show tasks if scenario is specified
   const [showTasks, setShowTasks] = useState(() => {
     const searchParams = new URLSearchParams(window.location.search);
     const scenarioFromUrl = searchParams.get('scenario');
     const scenarioFromState = location.state?.scenario;
-    // Show tasks if we have tasks or if we have scenario info (meaning tasks might load later)
-    return tasks.length > 0 || !!scenarioFromUrl || !!scenarioFromState;
+    // Show tasks if we have scenario info (tasks will be loaded from backend)
+    return !!scenarioFromUrl || !!scenarioFromState;
   });
   
   // Track if tasks are loading to prevent showing "Loading tasks" when we know tasks exist
@@ -178,6 +191,7 @@ function Conversation() {
   const currentUserMessageIdRef = useRef(null);
   const messagesEndRef = useRef(null);
   const socketRef = useRef(null);
+  const lastProficiencyUpdateRef = useRef(null); // Track last processed proficiency update to prevent duplicates
 
   // Initialize audio context
   const initAudioContext = () => {
@@ -341,15 +355,38 @@ function Conversation() {
   };
 
   // Handle retry current scenario
-  const handleRetryCurrentScenario = () => {
+  const handleRetryCurrentScenario = async () => {
+    // Get scenario from URL params or state
+    const searchParams = new URLSearchParams(window.location.search);
+    const scenarioFromUrl = searchParams.get('scenario');
+    const scenarioFromState = location.state?.scenario;
+    const scenarioTitle = scenarioFromState || scenarioFromUrl;
+    
+    console.log('Retrying scenario:', scenarioTitle);
+    
+    // Reset all tasks in the current scenario
+    try {
+      if (scenarioTitle) {
+        console.log('Resetting all tasks in scenario:', scenarioTitle);
+        await userAPI.resetTask(null, scenarioTitle);
+      }
+    } catch (err) {
+      console.error('Failed to reset scenario:', err);
+    }
+
     setShowCompletionModal(false);
     setCompletedTasks(new Set());
     completionCheckedRef.current = false;
+    setCurrentTaskProgress(0);
+    setCurrentTaskScore(0);
+    previousProgressRef.current = 0; // Reset progress tracking
+    lastProficiencyUpdateRef.current = null; // Reset deduplication
+
     // Clear messages but keep the connection
     setMessages([
       {
         type: 'system',
-        content: '重新开始练习...'
+        content: '重新开始练习当前场景...'
       }
     ]);
   };
@@ -448,20 +485,11 @@ function Conversation() {
                break;
            }
            connectionToastShownRef.current = true;
-           
-           // Add connection success message only once, and only if no history messages exist
-           setMessages(prev => {
-             const hasConnectionMessage = prev.some(msg =>
-               msg.type === 'system' && msg.content.includes('连接成功')
-             );
-             // Only show if no history (i.e., only has initial system message)
-             const isFirstMessage = prev.length <= 1;
-             if (!hasConnectionMessage && isFirstMessage) {
-               return [...prev, { type: 'system', content: '连接成功！请按住麦克风开始说话。' }];
-             }
-             return prev;
-           });
-           
+
+           // Don't show connection message in chat - it's handled by UI status indicator
+           // Just log the connection for debugging
+           console.log('WebSocket connected, role:', data.payload?.role);
+
            // Re-fetch tasks after connection to ensure we have the latest state
            // This is especially important after page refresh
            const searchParams = new URLSearchParams(window.location.search);
@@ -470,22 +498,57 @@ function Conversation() {
                // Re-fetch the latest goal state from DB to sync task progress
                userAPI.getActiveGoal().then(res => {
                    if (res && res.goal && res.goal.scenarios) {
-                       const activeScenario = res.goal.scenarios.find(s => s.title.trim() === scenario.trim());
+                       let activeScenario = res.goal.scenarios.find(s => s.title.trim() === scenario.trim());
+                       
+                       // Try case-insensitive match if exact match fails
+                       if (!activeScenario) {
+                           activeScenario = res.goal.scenarios.find(s => 
+                               s.title.toLowerCase() === scenario.toLowerCase()
+                           );
+                       }
+                       
+                       // Try partial match as fallback
+                       if (!activeScenario) {
+                           activeScenario = res.goal.scenarios.find(s =>
+                               s.title.toLowerCase().includes(scenario.toLowerCase()) ||
+                               scenario.toLowerCase().includes(s.title.toLowerCase())
+                           );
+                       }
+                       
                        if (activeScenario && activeScenario.tasks) {
                            setTasks(activeScenario.tasks);
                            console.log('Updated tasks from backend:', activeScenario.tasks);
 
-                           // Re-calculate completed set
+                           // Re-calculate completed set and current task progress
                            const newCompleted = new Set();
+                           let currentTaskProgress = 0;
+                           let currentTaskScore = 0;
+
                            activeScenario.tasks.forEach(t => {
-                               if (typeof t === 'object' && t.status === 'completed') {
-                                   newCompleted.add(t.text);
+                               if (typeof t === 'object') {
+                                   if (t.status === 'completed') {
+                                       newCompleted.add(t.text);
+                                   } else if (t.status === 'pending' || t.status === 'in_progress') {
+                                       // Get progress from the first incomplete task
+                                       if (currentTaskProgress === 0) {
+                                           currentTaskProgress = t.progress || 0;
+                                           currentTaskScore = t.score || 0;
+                                       }
+                                   }
                                }
                            });
                            setCompletedTasks(newCompleted);
 
-                           // Show toast
-                           const completedTask = activeScenario.tasks.find(t => t.status === 'completed' && !completedTasks.has(t.text));
+                           // Update progress bar from backend
+                           if (currentTaskProgress > 0) {
+                               setCurrentTaskProgress(currentTaskProgress);
+                               setCurrentTaskScore(currentTaskScore);
+                               // Save to localStorage for persistence
+                               localStorage.setItem(`task_progress_${scenario}`, currentTaskProgress.toString());
+                           }
+
+                           // Show toast for newly completed task
+                           const completedTask = activeScenario.tasks.find(t => t.status === 'completed' && !newCompleted.has(t.text));
                            if (completedTask) { setMessages(prev => [...prev, { type: 'system', content: `✅ 完成任务：${completedTask.text}` }]); }
                        }
                    }
@@ -662,17 +725,59 @@ function Conversation() {
            console.log('📊 Proficiency Feedback:', data.payload);
            break;
         case 'proficiency_update':
-           // Handle proficiency update notification
-           console.log('📈 Proficiency Update:', data.payload);
+           // Handle proficiency update notification with deduplication
            const profPayload = data.payload || {};
+           const updateKey = `${profPayload.task_id}-${profPayload.task_score}-${profPayload.delta}`;
+           
+           // Skip if we've already processed this exact update
+           if (lastProficiencyUpdateRef.current === updateKey) {
+               console.log('Skipping duplicate proficiency update:', updateKey);
+               break;
+           }
+           lastProficiencyUpdateRef.current = updateKey;
+           
+           console.log('📈 Proficiency Update:', profPayload);
            const delta = profPayload.delta || profPayload.proficiency_delta || 0;
            const total = profPayload.total || profPayload.current_proficiency || 0;
+           const taskScore = profPayload.task_score || 0;
+
            if (delta > 0) {
                setMessages(prev => [...prev, {
                    type: 'system',
                    content: `+${delta} 熟练度 | 总分：${total}`,
                    isFinal: true
                }]);
+               
+               // Update progress bar with safeguard against unreasonable jumps
+               const rawProgress = Math.min(100, Math.round((taskScore / 3) * 100));
+               // Prevent progress from jumping more than 34% (which would be +1 score jump)
+               // If the jump is larger, it might be due to duplicate workflow calls
+               const maxAllowedProgress = previousProgressRef.current + 34;
+               const newProgress = Math.min(rawProgress, maxAllowedProgress);
+               
+               // Only update if there's a valid delta (progress increased or stayed same)
+               if (newProgress >= previousProgressRef.current) {
+                   setCurrentTaskProgress(newProgress);
+                   previousProgressRef.current = newProgress;
+               }
+               setCurrentTaskScore(taskScore);
+               
+               // Update engagement level based on delta
+               if (delta >= 3) {
+                   setEngagementLevel('高');
+               } else if (delta >= 2) {
+                   setEngagementLevel('中');
+               } else {
+                   setEngagementLevel('低');
+               }
+               
+               // Save to localStorage for persistence
+               const searchParams = new URLSearchParams(window.location.search);
+               const scenario = searchParams.get('scenario') || location.state?.scenario;
+               if (scenario) {
+                   localStorage.setItem(`task_progress_${scenario}`, newProgress.toString());
+               }
+               
                // Auto-dismiss after 3 seconds
                setTimeout(() => {
                    setMessages(prev => prev.filter(m => m.type !== 'system' || !m.content.includes('熟练度')));
@@ -693,6 +798,59 @@ function Conversation() {
                if (taskPayload.task_title) {
                    setCompletedTasks(prev => new Set([...prev, taskPayload.task_title]));
                }
+               
+               // Reset progress bar for next task
+               setCurrentTaskProgress(0);
+               setCurrentTaskScore(0);
+               setEngagementLevel('中');
+               previousProgressRef.current = 0; // Reset progress tracking
+               lastProficiencyUpdateRef.current = null; // Reset deduplication for next task
+               
+               // Clear localStorage for this scenario (will be refreshed from backend)
+               const searchParams = new URLSearchParams(window.location.search);
+               const scenario = searchParams.get('scenario') || location.state?.scenario;
+               if (scenario) {
+                   localStorage.removeItem(`task_progress_${scenario}`);
+               }
+               
+               // Refresh tasks from backend to get next task
+               setTimeout(async () => {
+                   try {
+                       const res = await userAPI.getActiveGoal();
+                       if (res && res.goal && res.goal.scenarios) {
+                           let activeScenario = res.goal.scenarios.find(s => s.title.trim() === scenario?.trim());
+                           
+                           // Try case-insensitive match if exact match fails
+                           if (!activeScenario) {
+                               activeScenario = res.goal.scenarios.find(s => 
+                                   s.title.toLowerCase() === scenario?.toLowerCase()
+                               );
+                           }
+                           
+                           // Try partial match as fallback
+                           if (!activeScenario) {
+                               activeScenario = res.goal.scenarios.find(s =>
+                                   s.title.toLowerCase().includes(scenario?.toLowerCase() || '') ||
+                                   (scenario && scenario.toLowerCase().includes(s.title.toLowerCase()))
+                               );
+                           }
+                           
+                           if (activeScenario && activeScenario.tasks) {
+                               setTasks(activeScenario.tasks);
+                               // Update completed set
+                               const newCompleted = new Set();
+                               activeScenario.tasks.forEach(t => {
+                                   if (typeof t === 'object' && t.status === 'completed') {
+                                       newCompleted.add(t.text);
+                                   }
+                               });
+                               setCompletedTasks(newCompleted);
+                           }
+                       }
+                   } catch (err) {
+                       console.error('Failed to refresh tasks after completion:', err);
+                   }
+               }, 1500);
            }
            break;
         case 'dashscope_response':
@@ -702,7 +860,7 @@ function Conversation() {
            // Ignore unknown message types silently
            break;
       }
-  }, []); // Removed currentRole dependency
+  }, [setCurrentTaskProgress, setCurrentTaskScore, setEngagementLevel, setCompletedTasks, setTasks, location.state, userAPI]);
 
   const playAudioChunk = useCallback(async (audioData) => {
     if (isInterruptedRef.current) return; // Drop audio if interrupted
@@ -987,27 +1145,44 @@ function Conversation() {
       const scenario = searchParams.get('scenario') || location.state?.scenario;
       const topic = searchParams.get('topic');
 
-      // Refresh Tasks if missing (Page Refresh)
-      if (!location.state?.tasks && scenario) {
+      // Always refresh tasks from backend to ensure consistency
+      if (scenario) {
           try {
-              console.log('Attempting to restore tasks for scenario:', scenario);
-              console.log('Current location.state:', location.state);
-              
+              console.log('Fetching tasks from backend for scenario:', scenario);
+
               const goalRes = await userAPI.getActiveGoal();
               console.log('getActiveGoal response:', goalRes);
-              
+
               let scenarios = [];
               let activeScenario = null;
-              
+
               if (goalRes && goalRes.goal && goalRes.goal.scenarios) {
                   console.log('Available Scenarios:', goalRes.goal.scenarios.map(s => s.title));
                   console.log('Requested Scenario:', scenario);
                   scenarios = goalRes.goal.scenarios;
+                  
+                  // Try exact match first
                   activeScenario = goalRes.goal.scenarios.find(s => s.title.trim() === scenario.trim());
+                  
+                  // Try case-insensitive match
+                  if (!activeScenario) {
+                      activeScenario = goalRes.goal.scenarios.find(s => 
+                          s.title.toLowerCase() === scenario.toLowerCase()
+                      );
+                  }
+                  
+                  // Try partial match as fallback
+                  if (!activeScenario) {
+                      activeScenario = goalRes.goal.scenarios.find(s =>
+                          s.title.toLowerCase().includes(scenario.toLowerCase()) ||
+                          scenario.toLowerCase().includes(s.title.toLowerCase())
+                      );
+                  }
+                  
                   console.log('Found active scenario:', activeScenario);
               } else {
                   console.log('No goal found, using default scenarios');
-                  
+
                   // Determine goal type from scenario name
                   let goalType = 'daily_conversation'; // default
                   if (scenario.toLowerCase().includes('business') || scenario.toLowerCase().includes('meeting')) {
@@ -1019,24 +1194,24 @@ function Conversation() {
                   } else if (scenario.toLowerCase().includes('presentation') || scenario.toLowerCase().includes('speech')) {
                       goalType = 'presentation';
                   }
-                  
+
                   scenarios = DEFAULT_SCENARIOS[goalType] || DEFAULT_SCENARIOS.daily_conversation;
                   activeScenario = scenarios.find(s => s.title.trim() === scenario.trim());
-                  
+
                   if (!activeScenario) {
                       // Try to find a similar scenario
-                      activeScenario = scenarios.find(s => 
+                      activeScenario = scenarios.find(s =>
                           s.title.toLowerCase().includes(scenario.toLowerCase()) ||
                           scenario.toLowerCase().includes(s.title.toLowerCase())
                       );
                   }
-                  
+
                   if (!activeScenario && scenarios.length > 0) {
                       // Use first scenario as fallback
                       activeScenario = scenarios[0];
                   }
               }
-              
+
               if (activeScenario && activeScenario.tasks) {
                   console.log('Setting tasks from active scenario:', activeScenario.tasks);
                   setTasks(activeScenario.tasks);
@@ -1048,19 +1223,17 @@ function Conversation() {
           } catch (e) {
               console.error('Failed to restore tasks from goal:', e);
               console.error('Error details:', e.message, e.stack);
-              
+
               // Final fallback - use default scenarios
               console.log('Using default scenarios due to error');
               const defaultScenarios = DEFAULT_SCENARIOS.daily_conversation;
               const activeScenario = defaultScenarios.find(s => s.title.trim() === scenario.trim()) || defaultScenarios[0];
-              
+
               if (activeScenario && activeScenario.tasks) {
                   setTasks(activeScenario.tasks);
                   console.log('Restored tasks from default scenarios:', activeScenario.tasks);
               }
           }
-      } else {
-          console.log('Tasks refresh skipped - location.state.tasks:', location.state?.tasks, 'scenario:', scenario);
       }
 
       // Determine session ID priority: URL > localStorage > new session
@@ -1310,30 +1483,53 @@ function Conversation() {
       )}
 
       {/* Header */}
-      <header className="flex items-center justify-between p-4 border-b border-gray-200 dark:border-gray-800 bg-white/80 dark:bg-slate-900/80 backdrop-blur shrink-0 z-10">
-        <button 
-          onClick={() => navigate('/discovery')}
-          className="p-2 text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-full">
-          <span className="material-symbols-outlined">close</span>
-        </button>
-        <div className="flex flex-col items-center">
-          <h1 className="font-bold text-gray-900 dark:text-white flex items-center gap-2">
-            <span className="material-symbols-outlined text-primary">school</span>
-            {currentRole === 'OralTutor' ? 'AI 导师' : currentRole}
-          </h1>
-          <span className={`text-xs px-2 py-0.5 rounded-full flex items-center gap-1 ${isConnected ? 'bg-green-100 text-green-700' : 'bg-yellow-100 text-yellow-700'}`}>
-            <span className={`w-1.5 h-1.5 rounded-full ${isConnected ? 'bg-green-500' : 'bg-yellow-500'}`}></span>
-            {isConnected ? '在线' : '连接中...'}
-          </span>
-        </div>
-        <div className="flex items-center gap-2">
-            <span className="text-sm font-medium text-gray-700 dark:text-gray-300 hidden sm:block">
-                {user?.username || '用户'}
+      <header className="flex flex-col items-center justify-between p-4 border-b border-gray-200 dark:border-gray-800 bg-white/80 dark:bg-slate-900/80 backdrop-blur shrink-0 z-10">
+        <div className="flex items-center justify-between w-full">
+          <button
+            onClick={() => navigate('/discovery')}
+            className="p-2 text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-full">
+            <span className="material-symbols-outlined">close</span>
+          </button>
+          <div className="flex flex-col items-center">
+            <h1 className="font-bold text-gray-900 dark:text-white flex items-center gap-2">
+              <span className="material-symbols-outlined text-primary">school</span>
+              {currentRole === 'OralTutor' ? 'AI 导师' : currentRole}
+            </h1>
+            <span className={`text-xs px-2 py-0.5 rounded-full flex items-center gap-1 ${isConnected ? 'bg-green-100 text-green-700' : 'bg-yellow-100 text-yellow-700'}`}>
+              <span className={`w-1.5 h-1.5 rounded-full ${isConnected ? 'bg-green-500' : 'bg-yellow-500'}`}></span>
+              {isConnected ? '在线' : '连接中...'}
             </span>
-            <div className="w-8 h-8 rounded-full bg-primary/10 text-primary flex items-center justify-center font-bold">
-                {user?.username ? user.username[0].toUpperCase() : 'U'}
-            </div>
+          </div>
+          <div className="flex items-center gap-2">
+              <span className="text-sm font-medium text-gray-700 dark:text-gray-300 hidden sm:block">
+                  {user?.username || '用户'}
+              </span>
+              <div className="w-8 h-8 rounded-full bg-primary/10 text-primary flex items-center justify-center font-bold">
+                  {user?.username ? user.username[0].toUpperCase() : 'U'}
+              </div>
+          </div>
         </div>
+        
+        {/* Progress Bar - Task Progress */}
+        {(tasks.length > 0 || location.state?.scenario || new URLSearchParams(window.location.search).get('scenario')) && (
+          <div className="w-full mt-2 px-4">
+            <div className="flex items-center justify-between text-xs text-gray-600 dark:text-gray-400 mb-1">
+              <span className="flex items-center gap-1">
+                参与度: 
+                <span className={`font-medium ${engagementLevel === '高' ? 'text-green-600' : engagementLevel === '中' ? 'text-yellow-600' : 'text-red-600'}`}>
+                  {engagementLevel}
+                </span>
+              </span>
+              <span>{currentTaskProgress}%</span>
+            </div>
+            <div className="w-full h-2 bg-gray-200 dark:bg-gray-700 rounded-full overflow-hidden">
+              <div 
+                className={`h-full transition-all duration-500 ease-out ${currentTaskProgress >= 100 ? 'bg-green-500' : 'bg-primary'}`}
+                style={{ width: `${currentTaskProgress}%` }}
+              />
+            </div>
+          </div>
+        )}
       </header>
 
       {/* Floating Playback Button */}
@@ -1434,13 +1630,6 @@ function Conversation() {
                     </button>
                 </div>
             )}
-            
-            {/* Connection Status Indicator */}
-            {!isConnected && !webSocketError && (
-                <p className="text-xs text-yellow-600 dark:text-yellow-400 bg-yellow-50 dark:bg-yellow-900/20 px-3 py-1 rounded-full">
-                    正在连接 AI 导师...
-                </p>
-            )}
         </div>
       </footer>
       
@@ -1495,12 +1684,12 @@ function Conversation() {
                   </button>
                 )}
                 
-                <button 
+                <button
                   onClick={handleRetryCurrentScenario}
                   className="w-full py-3 bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-300 rounded-xl font-medium flex items-center justify-center gap-2 hover:bg-amber-200 dark:hover:bg-amber-900/50 transition"
                 >
                   <span className="material-symbols-outlined">replay</span>
-                  <span>继续练习</span>
+                  <span>重新练习</span>
                 </button>
                 
                 <button 

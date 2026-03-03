@@ -7,6 +7,7 @@ import httpx
 import time
 import re
 import traceback
+import os
 from datetime import datetime
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Query
 from fastapi.middleware.cors import CORSMiddleware
@@ -21,6 +22,9 @@ import dashscope
 # --- Configuration & Logging ---
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("app.main")
+
+# Workflow Service URL
+WORKFLOW_SERVICE_URL = os.getenv("WORKFLOW_SERVICE_URL", "http://workflow-service:3006")
 
 # DashScope API Key
 api_key = os.getenv("QWEN3_OMNI_API_KEY") or os.getenv("DASHSCOPE_API_KEY")
@@ -43,8 +47,13 @@ app.add_middleware(
 
 # --- Service Utilities ---
 
-async def get_user_context(token: str):
-    """Fetches user profile and goal context from user-service."""
+async def get_user_context(token: str, scenario: str = None):
+    """Fetches user profile and goal context from user-service.
+    
+    Args:
+        token: JWT token
+        scenario: Optional scenario name to find the correct current task
+    """
     user_service_url = os.getenv("USER_SERVICE_URL", "http://localhost:3000")
     try:
         async with httpx.AsyncClient() as client:
@@ -64,7 +73,63 @@ async def get_user_context(token: str):
                     timeout=5.0
                 )
                 if goal_resp.status_code == 200:
-                    data['active_goal'] = goal_resp.json().get('data')
+                    goal_data = goal_resp.json().get('data', {})
+                    # Handle {data: {goal: goal}} format
+                    active_goal = goal_data.get('goal', goal_data)
+
+                    # Fetch current task info based on scenario
+                    if scenario and active_goal.get('scenarios'):
+                        # Find matching scenario
+                        scenarios = active_goal.get('scenarios', [])
+                        matched_scenario = None
+                        for s in scenarios:
+                            if s.get('title', '').lower() == scenario.lower() or \
+                               scenario.lower() in s.get('title', '').lower() or \
+                               s.get('title', '').lower() in scenario.lower():
+                                matched_scenario = s
+                                break
+                        
+                        if matched_scenario:
+                            # Find first incomplete task in this scenario
+                            tasks = matched_scenario.get('tasks', [])
+                            current_task = None
+                            for task in tasks:
+                                if isinstance(task, dict) and task.get('status') != 'completed':
+                                    current_task = task
+                                    break
+                            
+                            # If all tasks completed, use the last one
+                            if not current_task:
+                                completed_tasks = [t for t in tasks if isinstance(t, dict) and t.get('status') == 'completed']
+                                if completed_tasks:
+                                    current_task = completed_tasks[-1]
+                            
+                            if current_task:
+                                active_goal['current_task'] = {
+                                    'id': current_task.get('id'),
+                                    'task_description': current_task.get('text'),
+                                    'scenario_title': matched_scenario.get('title', '')
+                                }
+                                logger.info(f"Found scenario-matched current task: {current_task.get('text')} in {matched_scenario.get('title')}")
+                    else:
+                        # Fallback to global current-task endpoint
+                        task_resp = await client.get(
+                            f"{user_service_url}/api/users/goals/current-task",
+                            headers={"Authorization": f"Bearer {token}"},
+                            timeout=5.0
+                        )
+                        if task_resp.status_code == 200:
+                            task_data = task_resp.json().get('data', {})
+                            current_task = task_data.get('task', {})
+                            current_scenario = task_data.get('scenario', {})
+                            if current_task:
+                                active_goal['current_task'] = {
+                                    'id': current_task.get('id'),
+                                    'task_description': current_task.get('text'),
+                                    'scenario_title': current_scenario.get('title', '')
+                                }
+
+                    data['active_goal'] = active_goal
                 return data
             else:
                 logger.error(f"Failed to fetch user context: {resp.status_code} {resp.text}")
@@ -146,6 +211,110 @@ async def execute_action_with_response(action_name: str, params: dict, token: st
             logger.error(f"Failed to update task score: {e}")
     
     return None
+async def call_proficiency_workflow(user_id: str, goal_id: int, task_id: int, conversation_history: list, user_context: dict, token: str, scenario: str = None):
+    """
+    调用工作流 2（熟练度打分）来分析对话并更新分数
+    """
+    try:
+        # 如果没有 task_id，需要从 user-service 获取当前任务 ID
+        task_description = user_context.get('custom_topic', 'General Practice')
+        scenario_title = user_context.get('custom_topic', 'General Practice').split(" (Tasks:")[0].strip()
+
+        if not task_id or task_id == 0:
+            user_service_url = os.getenv("USER_SERVICE_URL", "http://localhost:3000")
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                # 如果提供了 scenario 参数，使用场景特定的任务查找
+                if scenario:
+                    # 先获取 active goal 来找到当前场景下的任务
+                    goal_resp = await client.get(
+                        f"{user_service_url}/api/users/goals/active",
+                        headers={"Authorization": f"Bearer {token}"}
+                    )
+                    if goal_resp.status_code == 200:
+                        goal_data = goal_resp.json().get('data', {})
+                        active_goal = goal_data.get('goal', {})
+                        scenarios = active_goal.get('scenarios', [])
+                        
+                        # 查找匹配的场景
+                        matched_scenario = None
+                        for s in scenarios:
+                            if s.get('title', '').lower() == scenario.lower() or \
+                               scenario.lower() in s.get('title', '').lower() or \
+                               s.get('title', '').lower() in scenario.lower():
+                                matched_scenario = s
+                                break
+                        
+                        if matched_scenario:
+                            scenario_title = matched_scenario.get('title', scenario_title)
+                            # 查找该场景下第一个未完成的任务
+                            tasks = matched_scenario.get('tasks', [])
+                            for task in tasks:
+                                if isinstance(task, dict) and task.get('status') != 'completed':
+                                    task_id = task.get('id', 0)
+                                    task_description = task.get('text', task_description)
+                                    logger.info(f"Found scenario-matched task: id={task_id}, task={task_description}, scenario={scenario_title}")
+                                    break
+                            
+                            # 如果所有任务都完成了，使用场景的最后一个任务
+                            if not task_id or task_id == 0:
+                                completed_tasks = [t for t in tasks if isinstance(t, dict) and t.get('status') == 'completed']
+                                if completed_tasks:
+                                    last_task = completed_tasks[-1]
+                                    task_id = last_task.get('id', 0)
+                                    task_description = last_task.get('text', task_description)
+                                    logger.info(f"All tasks completed, using last task: id={task_id}, task={task_description}")
+                
+                # 如果没有 scenario 参数或仍然没有找到 task_id，使用原来的 fallback 逻辑
+                if not task_id or task_id == 0:
+                    resp = await client.get(
+                        f"{user_service_url}/api/users/goals/current-task",
+                        headers={"Authorization": f"Bearer {token}"}
+                    )
+                    if resp.status_code == 200:
+                        data = resp.json().get('data', {})
+                        task = data.get('task', {})
+                        scenario_data = data.get('scenario', {})
+                        if task:
+                            task_id = task.get('id', 0)
+                            task_description = task.get('text', task_description)
+                            scenario_title = scenario_data.get('title', scenario_title)
+                            logger.warning(f"Using fallback current-task (not scenario-matched): id={task_id}, task={task_description}, scenario={scenario_title}")
+
+        # 如果仍然没有 task_id，跳过评分
+        if not task_id or task_id == 0:
+            logger.warning("No task_id available, skipping proficiency workflow")
+            return None
+
+        # 获取当前任务信息
+        current_task = {
+            "id": task_id,
+            "task_description": task_description,
+            "scenario_title": scenario_title
+        }
+
+        payload = {
+            "user_id": user_id,
+            "goal_id": goal_id,
+            "task_id": task_id,
+            "conversation_history": conversation_history[-10:],  # 最近 10 轮对话
+            "current_task": current_task
+        }
+
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            resp = await client.post(
+                f"{WORKFLOW_SERVICE_URL}/api/workflows/proficiency-scoring/update",
+                json=payload
+            )
+            if resp.status_code == 200:
+                result = resp.json()
+                logger.info(f"Proficiency workflow result: {result}")
+                return result.get('data', {})
+            else:
+                logger.error(f"Failed to call proficiency workflow: {resp.status_code} {resp.text}")
+                return None
+    except Exception as e:
+        logger.error(f"Error calling proficiency workflow: {e}")
+        return None
 
 # --- Prompt Management ---
 # Import the full prompt manager from prompt_manager.py
@@ -374,6 +543,11 @@ class WebSocketCallback(OmniRealtimeCallback):
                     if self.ai_audio_buffer:
                         data = bytes(self.ai_audio_buffer)
                         self.ai_audio_buffer = bytearray()
+                        
+                        # 获取goal_id和task_id用于工作流调用
+                        goal_id = self.user_context.get('active_goal', {}).get('id')
+                        task_id = self.user_context.get('current_task_id')
+                        
                         async def upload_ai_task(d, r):
                             url = await self.upload_audio_to_cos(d, 'ai_audio')
                             if url:
@@ -383,7 +557,7 @@ class WebSocketCallback(OmniRealtimeCallback):
                                     self.audio_urls_by_response = {}
                                 self.audio_urls_by_response[r] = url
                                 logger.info(f"Stored audio URL for response {r}")
-                                
+
                                 # Now save the complete message with audio URL to history
                                 # Find the message in self.messages by response ID and update it
                                 for msg in reversed(self.messages):
@@ -392,6 +566,54 @@ class WebSocketCallback(OmniRealtimeCallback):
                                         await save_single_message(self.session_id, self.user_id, "assistant", msg.get('content', ''), url)
                                         logger.info(f"Saved AI message with audio URL to history: {msg.get('content', '')[:50]}...")
                                         break
+                                
+                                # 调用工作流2（熟练度打分）- 每次AI回复后都调用
+                                if goal_id and self.messages:
+                                    workflow_result = await call_proficiency_workflow(
+                                        self.user_id,
+                                        goal_id,
+                                        task_id or 0,
+                                        self.messages,
+                                        self.user_context,
+                                        self.token,
+                                        self.scenario
+                                    )
+                                    
+                                    if workflow_result:
+                                        delta = workflow_result.get('proficiency_delta', 0)
+                                        total = workflow_result.get('total_proficiency', 0)
+                                        task_completed = workflow_result.get('task_completed', False)
+                                        task_score = workflow_result.get('task_score', 0)
+                                        
+                                        # 计算进度条百分比
+                                        progress = min(100, round((task_score / 3) * 100)) if task_score else 0
+                                        
+                                        # 发送proficiency_update到前端
+                                        if delta > 0:
+                                            await self._safe_send({
+                                                "type": "proficiency_update",
+                                                "payload": {
+                                                    "delta": delta,
+                                                    "total": total,
+                                                    "task_score": task_score,
+                                                    "message": workflow_result.get('message', '')
+                                                }
+                                            })
+                                            logger.info(f"Sent proficiency_update: delta={delta}, total={total}, task_score={task_score}")
+                                        
+                                        # 发送task_completed到前端
+                                        if task_completed:
+                                            await self._safe_send({
+                                                "type": "task_completed",
+                                                "payload": {
+                                                    "task_title": workflow_result.get('task_title', 'Task'),
+                                                    "scenario_title": self.user_context.get('custom_topic', 'General Practice').split(" (Tasks:")[0].strip(),
+                                                    "score": task_score,
+                                                    "message": workflow_result.get('message', 'Task completed!')
+                                                }
+                                            })
+                                            logger.info(f"Task completed: {workflow_result.get('task_title')}")
+                                        
                         asyncio.create_task(upload_ai_task(data, self.current_response_id))
                 elif event_name == 'conversation.item.input_audio_transcription.completed':
                     # Handle user audio transcription - send immediately to ensure correct UI order
@@ -436,11 +658,48 @@ class WebSocketCallback(OmniRealtimeCallback):
                     if any(re.search(p, text_lower) for p in [r"\bperfect\b", r"\bexcellent\b", r"\bmission accomplished\b", r"\byou nailed it\b", r"\bcorrect!\b"]):
                         scenario_title = self.user_context.get('custom_topic', 'Unknown').split(" (Tasks:")[0].strip()
                         result = await execute_action_with_response("update_task_score", {"task": "NEXT_PENDING_TASK", "scoreDelta": 30, "feedback": "Task completed"}, self.token, self.user_id, self.session_id, context=self.user_context)
-                        # Only log the update - NO messages sent to frontend
-                        if result and result.get('taskCompleted'):
-                            logger.info(f"Task completed for user {self.user_id}: {result.get('taskTitle')}")
-                        else:
-                            logger.info(f"Task progress updated for user {self.user_id}")
+                        
+                        # Send proficiency_update message to frontend
+                        if result:
+                            new_score = result.get('newScore', 0)
+                            task_completed = result.get('taskCompleted', False)
+                            task_name = result.get('taskName', '')
+                            
+                            # Calculate progress (score / 60 * 100 since 60 is completion threshold)
+                            progress = min(100, round(new_score / 60 * 100))
+                            
+                            # Determine delta based on score change
+                            delta = 1 if new_score >= 30 else 0
+                            if new_score >= 60:
+                                delta = 3
+                            elif new_score >= 30:
+                                delta = 2
+                            
+                            # Send proficiency_update
+                            await self._safe_send({
+                                "type": "proficiency_update",
+                                "payload": {
+                                    "delta": delta,
+                                    "total": progress,
+                                    "task_score": new_score,
+                                    "message": f"+{delta} proficiency points"
+                                }
+                            })
+                            
+                            # Send task_completed if applicable
+                            if task_completed:
+                                await self._safe_send({
+                                    "type": "task_completed",
+                                    "payload": {
+                                        "task_title": task_name,
+                                        "scenario_title": scenario_title,
+                                        "score": new_score,
+                                        "message": "Task completed!"
+                                    }
+                                })
+                                logger.info(f"Task completed for user {self.user_id}: {task_name}")
+                            else:
+                                logger.info(f"Task progress updated for user {self.user_id}: {new_score}/60")
                     self.full_response_text = ""
                     self.ai_responding = False  # AI finished responding
                     if hasattr(self, '_sent_role_for_turn'): delattr(self, '_sent_role_for_turn')
@@ -481,7 +740,7 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query(None), ses
     if not token or not sessionId:
         await websocket.send_json({"type": "error", "payload": {"message": "Unauthorized"}})
         await websocket.close(); return
-    user_context = await get_user_context(token)
+    user_context = await get_user_context(token, scenario)
     if not user_context:
         await websocket.send_json({"type": "error", "payload": {"message": "Invalid token"}})
         await websocket.close(); return

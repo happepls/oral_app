@@ -24,7 +24,9 @@ router.put('/api/users/profile', protect, userController.updateProfile);
 // Goal routes
 router.post('/api/users/goals', protect, userController.createGoal);
 router.get('/api/users/goals/active', protect, userController.getActiveGoal);
+router.get('/api/users/goals/current-task', protect, userController.getCurrentTask);
 router.put('/api/users/goals/:id/complete', protect, userController.completeGoal);
+router.post('/api/users/goals/reset-task', protect, userController.resetTask);
 
 // Check-in routes
 router.post('/api/users/checkin', protect, userController.checkin);
