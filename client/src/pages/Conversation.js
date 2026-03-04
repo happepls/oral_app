@@ -728,33 +728,59 @@ function Conversation() {
            // Handle proficiency update notification with deduplication
            const profPayload = data.payload || {};
            const updateKey = `${profPayload.task_id}-${profPayload.task_score}-${profPayload.delta}`;
-           
+
            // Skip if we've already processed this exact update
            if (lastProficiencyUpdateRef.current === updateKey) {
                console.log('Skipping duplicate proficiency update:', updateKey);
                break;
            }
            lastProficiencyUpdateRef.current = updateKey;
-           
+
            console.log('📈 Proficiency Update:', profPayload);
            const delta = profPayload.delta || profPayload.proficiency_delta || 0;
            const total = profPayload.total || profPayload.current_proficiency || 0;
            const taskScore = profPayload.task_score || 0;
+           const message = profPayload.message || '';
+           const improvementTips = profPayload.improvement_tips || [];
 
-           if (delta > 0) {
+           // Show improvement tips even if delta=0 (e.g., when task relevance is low)
+           if (improvementTips.length > 0) {
+               const tipsText = '💡 建议：' + improvementTips.join('；');
                setMessages(prev => [...prev, {
                    type: 'system',
-                   content: `+${delta} 熟练度 | 总分：${total}`,
+                   content: tipsText,
+                   isFinal: true,
+                   className: 'text-sm text-slate-500'
+               }]);
+               // Note: Tips are now permanent (no auto-dismiss) so users can refer back to them
+           }
+
+           // Update proficiency and progress bar only if delta > 0
+           if (delta > 0) {
+               const total = profPayload.total || profPayload.current_proficiency || 0;
+               const taskScore = profPayload.task_score || 0;
+               const message = profPayload.message || '';
+
+               // Build message with improvement tips if available
+               let content = `+${delta} 熟练度 | 总分：${total}`;
+               if (message && message !== '+1 熟练度 | 表现良好，继续保持' && message !== '+2 熟练度 | 表现优秀！继续加油！') {
+                   content += ` - ${message}`;
+               }
+
+               setMessages(prev => [...prev, {
+                   type: 'system',
+                   content: content,
                    isFinal: true
                }]);
-               
+
                // Update progress bar with safeguard against unreasonable jumps
-               const rawProgress = Math.min(100, Math.round((taskScore / 3) * 100));
+               // Task completion threshold: score >= 9
+               const rawProgress = Math.min(100, Math.round((taskScore / 9) * 100));
                // Prevent progress from jumping more than 34% (which would be +1 score jump)
                // If the jump is larger, it might be due to duplicate workflow calls
                const maxAllowedProgress = previousProgressRef.current + 34;
                const newProgress = Math.min(rawProgress, maxAllowedProgress);
-               
+
                // Only update if there's a valid delta (progress increased or stayed same)
                if (newProgress >= previousProgressRef.current) {
                    setCurrentTaskProgress(newProgress);

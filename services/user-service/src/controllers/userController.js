@@ -324,7 +324,7 @@ exports.getCurrentTask = async (req, res) => {
         // Find the first incomplete task
         let currentTask = null;
         let currentScenario = null;
-        
+
         for (const scenario of goal.scenarios) {
             if (scenario.tasks && Array.isArray(scenario.tasks)) {
                 const incompleteTask = scenario.tasks.find(t => t.status !== 'completed');
@@ -350,6 +350,73 @@ exports.getCurrentTask = async (req, res) => {
         res.status(500).json({
             success: false,
             message: '获取当前任务时服务器错误'
+        });
+    }
+};
+
+// Get next pending task for a specific scenario
+exports.getNextPendingTask = async (req, res) => {
+    try {
+        const userId = req.user.id;
+        const { scenario_title } = req.query;
+
+        if (!scenario_title) {
+            return res.status(400).json({
+                success: false,
+                message: '缺少场景标题参数'
+            });
+        }
+
+        const goal = await User.getActiveGoal(userId);
+
+        if (!goal || !goal.scenarios) {
+            return res.json({
+                success: true,
+                data: {
+                    task: null,
+                    scenario: null,
+                    allCompleted: true
+                }
+            });
+        }
+
+        // Find the scenario
+        const scenario = goal.scenarios.find(s => 
+            s.title.toLowerCase() === scenario_title.toLowerCase() ||
+            s.title.toLowerCase().includes(scenario_title.toLowerCase()) ||
+            scenario_title.toLowerCase().includes(s.title.toLowerCase())
+        );
+
+        if (!scenario) {
+            return res.json({
+                success: true,
+                data: {
+                    task: null,
+                    scenario: null,
+                    message: '未找到该场景'
+                }
+            });
+        }
+
+        // Find the first incomplete task in this scenario
+        const incompleteTask = scenario.tasks && Array.isArray(scenario.tasks)
+            ? scenario.tasks.find(t => t.status !== 'completed')
+            : null;
+
+        res.json({
+            success: true,
+            data: {
+                task: incompleteTask,
+                scenario: scenario,
+                allCompleted: !incompleteTask,
+                goalId: goal.id
+            }
+        });
+    } catch (error) {
+        console.error('Get Next Pending Task Error:', error);
+        res.status(500).json({
+            success: false,
+            message: '获取下一个任务时服务器错误'
         });
     }
 };

@@ -81,7 +81,8 @@ class ProficiencyScoringWorkflow:
             proficiency_delta=proficiency_delta,
             scores=scores,
             feedback=feedback,
-            db_connection=db_connection
+            db_connection=db_connection,
+            current_task=current_task
         )
 
         return result
@@ -354,9 +355,9 @@ class ProficiencyScoringWorkflow:
             return 0, "请专注于当前任务场景练习"
 
         if avg_score >= 8:
-            return 3, "表现优秀！继续加油！"
+            return 2, "表现优秀！继续加油！"
         elif avg_score >= 6:
-            return 2, "表现良好，继续保持"
+            return 1, "表现良好，继续保持"
         elif avg_score >= 4:
             return 1, "有进步，继续练习"
         else:
@@ -370,7 +371,8 @@ class ProficiencyScoringWorkflow:
         proficiency_delta: int,
         scores: Dict[str, int],
         feedback: str,
-        db_connection: Any
+        db_connection: Any,
+        current_task: Dict[str, Any] = None
     ) -> Dict[str, Any]:
         """
         更新用户熟练度，检查是否完成任务
@@ -386,7 +388,7 @@ class ProficiencyScoringWorkflow:
             }
         """
         # 生成改进建议
-        improvement_tips = self._generate_improvement_tips(scores)
+        improvement_tips = self._generate_improvement_tips(scores, current_task)
 
         result = {
             "proficiency_delta": proficiency_delta,
@@ -418,7 +420,7 @@ class ProficiencyScoringWorkflow:
         # 获取当前 task 累计分数
         task_result = await db_connection.fetchrow(
             """
-            SELECT score, status FROM user_tasks WHERE id = $1
+            SELECT score, status, interaction_count FROM user_tasks WHERE id = $1
             """,
             task_id
         )
@@ -437,8 +439,8 @@ class ProficiencyScoringWorkflow:
         result["task_title"] = task_info.get("task_description", "Task") if task_info else "Task"
         result["scenario_title"] = task_info.get("scenario_title", "") if task_info else ""
 
-        # 检查是否达到任务完成标准 (累计 3 分)
-        if current_task_score >= 3 and task_result.get("status") != "completed":
+        # 检查是否达到任务完成标准 (累计 10 分且至少 3 轮交互)
+        if current_task_score >= 9 and task_result.get("interaction_count", 0) >= 3 and task_result.get("status") != "completed":
             # 生成任务完成的详细反馈
             completion_feedback = self._generate_completion_feedback(scores, improvement_tips)
 
@@ -486,36 +488,86 @@ class ProficiencyScoringWorkflow:
 
         return result
 
-    def _generate_improvement_tips(self, scores: Dict[str, int]) -> List[str]:
-        """根据评分生成具体的改进建议"""
+    def _generate_improvement_tips(self, scores: Dict[str, int], current_task: Dict[str, Any] = None) -> List[str]:
+        """根据评分生成具体的改进建议，包含场景关键词"""
         tips = []
 
         fluency = scores.get("fluency", 5)
         vocabulary = scores.get("vocabulary", 5)
         grammar = scores.get("grammar", 5)
         task_relevance = scores.get("task_relevance", 5)
+        
+        # 获取当前任务信息
+        task_desc = current_task.get("task_description", "") if current_task else ""
+        scenario_title = current_task.get("scenario_title", "") if current_task else ""
 
         if fluency < 5:
-            tips.append("尝试使用更多连接词（如 and, but, because）来使表达更流畅")
+            tips.append("尝试使用更多连接词（如 and, but, because, so, however）来使表达更流畅")
         elif fluency < 8:
-            tips.append("试着用更长的句子表达完整的意思")
+            tips.append("试着用更长的句子表达完整的意思，例如：'I would like to...' 而不是单个单词")
 
         if vocabulary < 5:
-            tips.append("多使用场景相关的词汇，丰富表达")
+            # 根据场景提供具体关键词
+            keywords = self._get_scene_keywords(scenario_title, task_desc)
+            if keywords:
+                tips.append(f"多使用场景相关词汇：{', '.join(keywords[:5])}")
+            else:
+                tips.append("多使用场景相关的词汇，丰富表达")
         elif vocabulary < 8:
-            tips.append("可以尝试使用一些高级词汇来提升表达")
+            tips.append("可以尝试使用一些高级词汇来提升表达，如：appreciate, consider, prefer")
 
         if grammar < 5:
-            tips.append("注意时态一致性，主谓要一致")
+            tips.append("注意时态一致性，主谓要一致（如：I have, He has）")
         elif grammar < 8:
-            tips.append("注意句子结构的完整性")
+            tips.append("注意句子结构的完整性，确保有主语和谓语")
 
         if task_relevance < 5:
-            tips.append("请专注于当前任务场景进行练习")
+            # 提供具体任务关键词
+            keywords = self._get_scene_keywords(scenario_title, task_desc)
+            if keywords:
+                tips.append(f"专注于当前任务，使用关键词：{', '.join(keywords[:5])}")
+            else:
+                tips.append("请专注于当前任务场景进行练习")
         elif task_relevance < 8:
-            tips.append("尝试更多使用任务相关的关键词")
+            keywords = self._get_scene_keywords(scenario_title, task_desc)
+            if keywords:
+                tips.append(f"尝试更多使用任务相关的关键词：{', '.join(keywords[:3])}")
+            else:
+                tips.append("尝试更多使用任务相关的关键词")
 
         return tips
+    
+    def _get_scene_keywords(self, scenario_title: str, task_desc: str) -> List[str]:
+        """根据场景和任务返回具体关键词列表"""
+        scenario_lower = scenario_title.lower() if scenario_title else ""
+        task_lower = task_desc.lower() if task_desc else ""
+        
+        # 场景关键词映射表（扩展版）
+        scene_keywords_map = {
+            "grocery": ["vegetable", "fruit", "price", "checkout", "cart", "item", "location", "aisle", "organic", "fresh"],
+            "coffee": ["coffee", "drink", "order", "menu", "espresso", "latte", "cappuccino", "milk", "sugar", "size"],
+            "restaurant": ["restaurant", "table", "reservation", "menu", "order", "waiter", "bill", "tip", "food", "dish"],
+            "direction": ["direction", "location", "street", "road", "turn", "left", "right", "straight", "map", "near"],
+            "phone": ["phone", "call", "caller", "message", "answer", "hang", "speaking", "hold", "transfer"],
+            "greeting": ["hello", "hi", "hey", "good", "morning", "afternoon", "meet", "friend", "name", "nice"],
+            "business": ["meeting", "project", "team", "client", "deadline", "report", "presentation", "schedule"],
+            "travel": ["travel", "flight", "hotel", "ticket", "airport", "booking", "destination", "trip"],
+            "shopping": ["buy", "price", "cost", "discount", "size", "color", "try", "pay", "receipt"],
+            "weather": ["weather", "sunny", "rainy", "cloudy", "temperature", "hot", "cold", "windy"]
+        }
+        
+        # 匹配场景
+        matched_keywords = []
+        for scene_key, keywords in scene_keywords_map.items():
+            if scene_key in scenario_lower or scene_key in task_lower:
+                matched_keywords.extend(keywords)
+        
+        # 如果找到关键词，返回前 8 个
+        if matched_keywords:
+            return list(dict.fromkeys(matched_keywords))[:8]  # 去重
+        
+        # 默认返回通用关键词
+        return ["practice", "conversation", "English", "speak", "learn"]
 
     def _generate_completion_feedback(
         self,

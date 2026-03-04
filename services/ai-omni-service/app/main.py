@@ -214,14 +214,18 @@ async def execute_action_with_response(action_name: str, params: dict, token: st
 async def call_proficiency_workflow(user_id: str, goal_id: int, task_id: int, conversation_history: list, user_context: dict, token: str, scenario: str = None):
     """
     调用工作流 2（熟练度打分）来分析对话并更新分数
+    
+    改进：
+    - 任务完成后自动获取下一个待完成任务
+    - 更新 user_context 以便 AI 切换到新任务
     """
     try:
         # 如果没有 task_id，需要从 user-service 获取当前任务 ID
         task_description = user_context.get('custom_topic', 'General Practice')
         scenario_title = user_context.get('custom_topic', 'General Practice').split(" (Tasks:")[0].strip()
+        user_service_url = os.getenv("USER_SERVICE_URL", "http://localhost:3000")
 
         if not task_id or task_id == 0:
-            user_service_url = os.getenv("USER_SERVICE_URL", "http://localhost:3000")
             async with httpx.AsyncClient(timeout=10.0) as client:
                 # 如果提供了 scenario 参数，使用场景特定的任务查找
                 if scenario:
@@ -234,7 +238,7 @@ async def call_proficiency_workflow(user_id: str, goal_id: int, task_id: int, co
                         goal_data = goal_resp.json().get('data', {})
                         active_goal = goal_data.get('goal', {})
                         scenarios = active_goal.get('scenarios', [])
-                        
+
                         # 查找匹配的场景
                         matched_scenario = None
                         for s in scenarios:
@@ -243,7 +247,7 @@ async def call_proficiency_workflow(user_id: str, goal_id: int, task_id: int, co
                                s.get('title', '').lower() in scenario.lower():
                                 matched_scenario = s
                                 break
-                        
+
                         if matched_scenario:
                             scenario_title = matched_scenario.get('title', scenario_title)
                             # 查找该场景下第一个未完成的任务
@@ -254,7 +258,7 @@ async def call_proficiency_workflow(user_id: str, goal_id: int, task_id: int, co
                                     task_description = task.get('text', task_description)
                                     logger.info(f"Found scenario-matched task: id={task_id}, task={task_description}, scenario={scenario_title}")
                                     break
-                            
+
                             # 如果所有任务都完成了，使用场景的最后一个任务
                             if not task_id or task_id == 0:
                                 completed_tasks = [t for t in tasks if isinstance(t, dict) and t.get('status') == 'completed']
@@ -263,7 +267,7 @@ async def call_proficiency_workflow(user_id: str, goal_id: int, task_id: int, co
                                     task_id = last_task.get('id', 0)
                                     task_description = last_task.get('text', task_description)
                                     logger.info(f"All tasks completed, using last task: id={task_id}, task={task_description}")
-                
+
                 # 如果没有 scenario 参数或仍然没有找到 task_id，使用原来的 fallback 逻辑
                 if not task_id or task_id == 0:
                     resp = await client.get(
@@ -308,7 +312,34 @@ async def call_proficiency_workflow(user_id: str, goal_id: int, task_id: int, co
             if resp.status_code == 200:
                 result = resp.json()
                 logger.info(f"Proficiency workflow result: {result}")
-                return result.get('data', {})
+                result_data = result.get('data', {})
+                
+                # 如果任务完成，获取下一个待完成任务并更新 user_context
+                if result_data.get('task_completed'):
+                    logger.info(f"Task {task_id} completed, fetching next pending task...")
+
+                    # 获取下一个待完成任务
+                    next_task_resp = await client.get(
+                        f"{user_service_url}/api/users/goals/next-task?scenario_title={scenario_title}",
+                        headers={"Authorization": f"Bearer {token}"}
+                    )
+
+                    if next_task_resp.status_code == 200:
+                        next_task_data = next_task_resp.json().get('data', {})
+                        next_task = next_task_data.get('task')
+
+                        if next_task:
+                            # 更新 user_context 中的任务信息
+                            user_context['current_task'] = next_task
+                            user_context['custom_topic'] = f"{scenario_title} (Next task: {next_task.get('text', 'N/A')})"
+                            user_context['next_task_text'] = next_task.get('text', '')
+                            logger.info(f"Next task loaded: {next_task.get('text')}, updated user_context")
+                        else:
+                            logger.info(f"All tasks completed in scenario: {scenario_title}")
+                            user_context['custom_topic'] = f"{scenario_title} (All tasks completed!)"
+                            user_context['next_task_text'] = None
+
+                return result_data
             else:
                 logger.error(f"Failed to call proficiency workflow: {resp.status_code} {resp.text}")
                 return None
@@ -424,11 +455,24 @@ class WebSocketCallback(OmniRealtimeCallback):
                 scenarios = active_goal.get('scenarios', [])
                 matched_scenario = next((s for s in scenarios if s.get('title') == self.scenario), None)
                 if matched_scenario:
+                    # Get current task (first incomplete) or last task if all completed
                     tasks = matched_scenario.get('tasks', [])
-                    tasks_str = ", ".join([t.get('text', str(t)) if isinstance(t, dict) else str(t) for t in tasks])
-                    self.user_context['custom_topic'] = f"{self.scenario} (Tasks: {tasks_str})"
-                    full_ctx['custom_topic'] = self.user_context['custom_topic']
-                    logger.info(f"Selected Scenario: {self.scenario}, Tasks: {tasks_str}")
+                    current_task = next((t for t in tasks if isinstance(t, dict) and t.get('status') != 'completed'), None)
+                    
+                    if current_task:
+                        # Highlight current task explicitly
+                        task_text = current_task.get('text', 'Practice conversation')
+                        self.user_context['current_task_text'] = task_text
+                        self.user_context['custom_topic'] = f"{self.scenario} (Current task: {task_text})"
+                        full_ctx['custom_topic'] = self.user_context['custom_topic']
+                        full_ctx['task_description'] = task_text  # Explicitly set for prompt template
+                        logger.info(f"Selected Scenario: {self.scenario}, Current Task: {task_text}")
+                    else:
+                        # All tasks completed
+                        self.user_context['custom_topic'] = f"{self.scenario} (All tasks completed!)"
+                        full_ctx['custom_topic'] = self.user_context['custom_topic']
+                        full_ctx['task_description'] = 'Review and practice all tasks'
+                        logger.info(f"All tasks completed in scenario: {self.scenario}")
                 else:
                     self.user_context['custom_topic'] = self.scenario
                     full_ctx['custom_topic'] = self.scenario
@@ -443,7 +487,7 @@ class WebSocketCallback(OmniRealtimeCallback):
                 history_text = "\n\n# Previous Conversation Context (READ-ONLY):\n"
                 history_text += "**CRITICAL**: This is HISTORY only. Do NOT auto-complete tasks. Wait for user to speak first.\n"
                 history_text += "**Do NOT say 'Perfect!' or 'Excellent!' until user attempts a NEW task in THIS session.**\n\n"
-                recent_msgs = self.messages[-10:] 
+                recent_msgs = self.messages[-10:]
                 for msg in recent_msgs:
                     role_label = "User" if msg['role'] == 'user' else "AI"
                     history_text += f"{role_label}: {msg.get('content', '')}\n"
@@ -586,7 +630,7 @@ class WebSocketCallback(OmniRealtimeCallback):
                                         task_score = workflow_result.get('task_score', 0)
                                         
                                         # 计算进度条百分比
-                                        progress = min(100, round((task_score / 3) * 100)) if task_score else 0
+                                        progress = min(100, round((task_score / 9) * 100)) if task_score else 0
                                         
                                         # 发送proficiency_update到前端
                                         if delta > 0:
@@ -596,7 +640,8 @@ class WebSocketCallback(OmniRealtimeCallback):
                                                     "delta": delta,
                                                     "total": total,
                                                     "task_score": task_score,
-                                                    "message": workflow_result.get('message', '')
+                                                    "message": workflow_result.get('message', ''),
+                                                    "improvement_tips": workflow_result.get('improvement_tips', [])
                                                 }
                                             })
                                             logger.info(f"Sent proficiency_update: delta={delta}, total={total}, task_score={task_score}")
@@ -613,6 +658,10 @@ class WebSocketCallback(OmniRealtimeCallback):
                                                 }
                                             })
                                             logger.info(f"Task completed: {workflow_result.get('task_title')}")
+                                            
+                                            # 刷新 AI 的 session prompt 以更新任务上下文
+                                            logger.info("Refreshing AI session prompt with new task context...")
+                                            self._update_session_prompt()
                                         
                         asyncio.create_task(upload_ai_task(data, self.current_response_id))
                 elif event_name == 'conversation.item.input_audio_transcription.completed':

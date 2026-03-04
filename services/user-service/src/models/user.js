@@ -173,7 +173,7 @@ User.getActiveGoal = async (userId) => {
                     
                     // Return object with status and progress
                     const taskScore = dbTask ? dbTask.score : 0;
-                    const taskProgress = Math.min(100, Math.round((taskScore / 3) * 100)); // 3 points = 100% completion
+                    const taskProgress = Math.min(100, Math.round((taskScore / 9) * 100)); // 3 points = 100% completion
                     return {
                         id: dbTask ? dbTask.id : null,
                         text: tText,
