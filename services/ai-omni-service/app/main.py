@@ -639,12 +639,13 @@ class WebSocketCallback(OmniRealtimeCallback):
                                                 "payload": {
                                                     "delta": delta,
                                                     "total": total,
+                                                    "task_id": workflow_result.get('task_id', 0),
                                                     "task_score": task_score,
                                                     "message": workflow_result.get('message', ''),
                                                     "improvement_tips": workflow_result.get('improvement_tips', [])
                                                 }
                                             })
-                                            logger.info(f"Sent proficiency_update: delta={delta}, total={total}, task_score={task_score}")
+                                            logger.info(f"Sent proficiency_update: delta={delta}, total={total}, task_id={workflow_result.get('task_id')}, task_score={task_score}")
                                         
                                         # 发送task_completed到前端
                                         if task_completed:
@@ -658,9 +659,35 @@ class WebSocketCallback(OmniRealtimeCallback):
                                                 }
                                             })
                                             logger.info(f"Task completed: {workflow_result.get('task_title')}")
-                                            
+
                                             # 刷新 AI 的 session prompt 以更新任务上下文
                                             logger.info("Refreshing AI session prompt with new task context...")
+                                            
+                                            # 先从数据库获取最新的任务状态
+                                            try:
+                                                async with httpx.AsyncClient() as client:
+                                                    # Fetch updated goal and tasks from backend
+                                                    goal_resp = await client.get(
+                                                        f"{user_service_url}/api/users/goals/active",
+                                                        headers={"Authorization": f"Bearer {self.token}"},
+                                                        timeout=5.0
+                                                    )
+                                                    if goal_resp.status_code == 200:
+                                                        goal_data = goal_resp.json().get('data', {})
+                                                        active_goal = goal_data.get('goal', goal_data)
+                                                        
+                                                        # Update user_context with fresh task data
+                                                        if active_goal and active_goal.get('scenarios'):
+                                                            scenarios = active_goal.get('scenarios', [])
+                                                            matched_scenario = next((s for s in scenarios if s.get('title') == self.scenario), None)
+                                                            if matched_scenario:
+                                                                # Update the scenario tasks in user_context
+                                                                self.user_context['active_goal']['scenarios'] = scenarios
+                                                                logger.info(f"Updated task data from backend: {len(matched_scenario.get('tasks', []))} tasks")
+                                            except Exception as e:
+                                                logger.error(f"Failed to fetch updated task data: {e}")
+                                            
+                                            # Now refresh AI session prompt with updated task data
                                             self._update_session_prompt()
                                         
                         asyncio.create_task(upload_ai_task(data, self.current_response_id))

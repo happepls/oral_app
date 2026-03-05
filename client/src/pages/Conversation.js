@@ -364,9 +364,9 @@ function Conversation() {
     const scenarioFromUrl = searchParams.get('scenario');
     const scenarioFromState = location.state?.scenario;
     const scenarioTitle = scenarioFromState || scenarioFromUrl;
-    
+
     console.log('Retrying scenario:', scenarioTitle);
-    
+
     // Reset all tasks in the current scenario
     try {
       if (scenarioTitle) {
@@ -386,13 +386,76 @@ function Conversation() {
     previousProgressRef.current = 0; // Reset progress tracking
     lastProficiencyUpdateRef.current = null; // Reset deduplication
 
-    // Clear messages but keep the connection
+    // Clear messages
     setMessages([
       {
         type: 'system',
         content: '重新开始练习当前场景...'
       }
     ]);
+
+    // Refresh tasks from backend to get updated status
+    try {
+      const updatedGoal = await userAPI.getActiveGoal();
+      if (updatedGoal && updatedGoal.goal && updatedGoal.goal.scenarios) {
+        const matchedScenario = updatedGoal.goal.scenarios.find(
+          s => s.title === scenarioTitle || 
+               (scenarioTitle && s.title.toLowerCase().includes(scenarioTitle.toLowerCase()))
+        );
+        if (matchedScenario) {
+          setTasks(matchedScenario.tasks);
+          console.log('Tasks refreshed after retry:', matchedScenario.tasks);
+        }
+      }
+    } catch (err) {
+      console.error('Failed to refresh tasks:', err);
+    }
+
+    // Reset session to clear AI context and restart with first task prompt
+    try {
+      if (sessionId) {
+        // Properly cleanup WebSocket connection
+        if (socketRef.current) {
+          // Clear ping interval first to prevent errors
+          if (socketRef.current.pingInterval) {
+            clearInterval(socketRef.current.pingInterval);
+            socketRef.current.pingInterval = null;
+          }
+          
+          // Stop heartbeat if the method exists
+          if (socketRef.current._stopHeartbeat) {
+            socketRef.current._stopHeartbeat();
+          }
+          
+          // Remove all event listeners to prevent callbacks after close
+          socketRef.current.removeAllListeners();
+          
+          // Close the connection
+          socketRef.current.close();
+          socketRef.current = null;
+        }
+        
+        // Clear old session from sessionStorage and localStorage
+        sessionStorage.removeItem('session_id');
+        
+        // Clear scenario-specific session from localStorage to prevent history reload on refresh
+        if (scenarioTitle) {
+          localStorage.removeItem(`session_${scenarioTitle}`);
+          console.log('Cleared localStorage session for scenario:', scenarioTitle);
+        }
+        
+        setSessionId(null);
+
+        // Create new session which will trigger AI to use first task prompt
+        const newSessionId = 'sess_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
+        sessionStorage.setItem('session_id', newSessionId);
+        setSessionId(newSessionId);
+
+        console.log('New session created for retry:', newSessionId);
+      }
+    } catch (err) {
+      console.error('Failed to reset session:', err);
+    }
   };
 
   // Handle select other scenario

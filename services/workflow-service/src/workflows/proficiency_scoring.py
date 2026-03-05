@@ -82,7 +82,8 @@ class ProficiencyScoringWorkflow:
             scores=scores,
             feedback=feedback,
             db_connection=db_connection,
-            current_task=current_task
+            current_task=current_task,
+            conversation_history=conversation_history
         )
 
         return result
@@ -372,7 +373,8 @@ class ProficiencyScoringWorkflow:
         scores: Dict[str, int],
         feedback: str,
         db_connection: Any,
-        current_task: Dict[str, Any] = None
+        current_task: Dict[str, Any] = None,
+        conversation_history: List[Dict[str, Any]] = None
     ) -> Dict[str, Any]:
         """
         更新用户熟练度，检查是否完成任务
@@ -387,8 +389,12 @@ class ProficiencyScoringWorkflow:
                 "improvement_tips": List[str]
             }
         """
-        # 生成改进建议
-        improvement_tips = self._generate_improvement_tips(scores, current_task)
+        # 生成改进建议（传入对话历史以生成更针对性的建议）
+        improvement_tips = self._generate_improvement_tips(
+            scores, 
+            current_task,
+            conversation_history
+        )
 
         result = {
             "proficiency_delta": proficiency_delta,
@@ -435,6 +441,7 @@ class ProficiencyScoringWorkflow:
             task_id
         )
 
+        result["task_id"] = task_id
         result["task_score"] = current_task_score
         result["task_title"] = task_info.get("task_description", "Task") if task_info else "Task"
         result["scenario_title"] = task_info.get("scenario_title", "") if task_info else ""
@@ -488,8 +495,13 @@ class ProficiencyScoringWorkflow:
 
         return result
 
-    def _generate_improvement_tips(self, scores: Dict[str, int], current_task: Dict[str, Any] = None) -> List[str]:
-        """根据评分生成具体的改进建议，包含句型示例和引导式教学"""
+    def _generate_improvement_tips(
+        self, 
+        scores: Dict[str, int], 
+        current_task: Dict[str, Any] = None,
+        conversation_history: List[Dict[str, Any]] = None
+    ) -> List[str]:
+        """根据评分、当前任务和对话历史生成灵活的改进建议"""
         tips = []
 
         fluency = scores.get("fluency", 5)
@@ -501,49 +513,168 @@ class ProficiencyScoringWorkflow:
         task_desc = current_task.get("task_description", "") if current_task else ""
         scenario_title = current_task.get("scenario_title", "") if current_task else ""
 
-        # 流利度建议
-        if fluency < 5:
-            tips.append("💬 你可以尝试这样表达：'I think...' 或 'In my opinion...' 来开始你的回答，而不是只说单词")
-        elif fluency < 8:
-            tips.append("💬 试着用连接词把句子连起来：'I want coffee because it helps me wake up' 比 'coffee, wake up' 更流畅")
+        # 分析用户最近的输入
+        user_inputs = self._extract_user_inputs(conversation_history)
+        common_errors = self._analyze_common_errors(user_inputs) if user_inputs else {}
 
-        # 词汇量建议
+        # 流利度建议 - 根据用户实际输入生成
+        if fluency < 5:
+            if user_inputs and len(user_inputs) > 0:
+                short_inputs = [u for u in user_inputs if len(u.split()) <= 3]
+                if short_inputs:
+                    tips.append(f"💬 你刚才说了 '{short_inputs[0][:30]}...'，试着扩展成完整句子")
+                    tips.append(f"   例如：'I would like to...' 或 'Can you tell me where...?'")
+                else:
+                    tips.append("💬 试着用完整句子表达，不要只说单词")
+                    tips.append(f"   例如：'I think...' 或 'In my opinion...'")
+            else:
+                tips.append("💬 你可以尝试这样表达：'I think...' 或 'In my opinion...' 来开始你的回答")
+        # fluency 5-7 分时，只在确实需要改进时才给建议
+        elif fluency < 8:
+            # 检查用户输入是否已经很好（完整句子 + 有连接词）
+            if user_inputs:
+                good_sentences = [
+                    u for u in user_inputs 
+                    if len(u.split()) >= 5 and re.search(r'\b(and|but|because|so|however)\b', u.lower())
+                ]
+                # 如果用户已经能说出好的句子，不给建议或给更高级的建议
+                if good_sentences:
+                    tips.append("💬 表达很流畅！继续保持")
+                else:
+                    tips.append("💬 试着用连接词把句子连起来，让表达更流畅")
+                    tips.append(f"   例如：'I want coffee because it helps me wake up'")
+            else:
+                tips.append("💬 试着用连接词把句子连起来，让表达更流畅")
+                tips.append(f"   例如：'I want coffee because it helps me wake up' 比 'coffee, wake up' 更自然")
+
+        # 词汇量建议 - 结合用户实际使用的词汇
         if vocabulary < 5:
             keywords = self._get_scene_keywords(scenario_title, task_desc)
-            if keywords:
+            if keywords and user_inputs:
+                # 检查用户是否使用了场景关键词
+                used_keywords = []
+                missing_keywords = []
+                user_text = ' '.join(user_inputs).lower()
+                for kw in keywords[:5]:
+                    if kw.lower() in user_text:
+                        used_keywords.append(kw)
+                    else:
+                        missing_keywords.append(kw)
+                
+                if used_keywords and missing_keywords:
+                    tips.append(f"📚 很好！你已经用了 {', '.join(used_keywords[:2])}")
+                    tips.append(f"   试试再加入这些词：{', '.join(missing_keywords[:2])}")
+                elif missing_keywords:
+                    example_sentence = self._generate_example_sentence(missing_keywords[:3], scenario_title)
+                    tips.append(f"📚 试试用这些词：{', '.join(missing_keywords[:3])}")
+                    if example_sentence:
+                        tips.append(f"   例如：{example_sentence}")
+                else:
+                    tips.append("📚 词汇使用不错！试试更多高级表达")
+            elif keywords:
                 example_sentence = self._generate_example_sentence(keywords[:3], scenario_title)
                 tips.append(f"📚 试试用这些词：{', '.join(keywords[:3])}")
                 if example_sentence:
                     tips.append(f"   例如：{example_sentence}")
-            else:
-                tips.append("📚 多使用场景相关的词汇，丰富表达")
         elif vocabulary < 8:
-            tips.append("📚 试试更高级的表达：用 'I'd prefer' 代替 'I want'，用 'Could you' 代替 'Can you'")
+            tips.append("📚 试试更高级的表达方式")
+            tips.append(f"   • 用 'I'd prefer' 代替 'I want'")
+            tips.append(f"   • 用 'Could you' 代替 'Can you'")
+            tips.append(f"   • 用 'I'm looking for' 代替 'Where is'")
 
-        # 语法建议
+        # 语法建议 - 根据实际错误生成
         if grammar < 5:
-            tips.append("✏️ 注意主谓一致：'I have' ✓ 而不是 'I has' ✗")
-            tips.append("   试试这样说：'I need...' 或 'I would like...'")
+            if common_errors:
+                if common_errors.get('subject_verb'):
+                    tips.append("✏️ 注意主谓一致")
+                    tips.append(f"   ❌ 你说：'{common_errors['subject_verb']}'")
+                    tips.append(f"   ✓ 应该说：'I have' 或 'He has'")
+                if common_errors.get('article'):
+                    tips.append("✏️ 记得加冠词 'the' 或 'a'")
+                    tips.append(f"   ❌ 你说：'{common_errors['article']}'")
+                    tips.append(f"   ✓ 应该说：'Where is the milk?'")
+                if common_errors.get('plural'):
+                    tips.append("✏️ 注意名词复数")
+                    tips.append(f"   ❌ 你说：'{common_errors['plural']}'")
+                    tips.append(f"   ✓ 应该说：'I need eggs' (不是 egg)")
+            else:
+                tips.append("✏️ 注意基本语法规则")
+                tips.append(f"   • 主谓一致：'I have' ✓ 不是 'I has' ✗")
+                tips.append(f"   • 试试这样说：'I need...' 或 'I would like...'")
         elif grammar < 8:
-            tips.append("✏️ 注意句子完整性：确保每个句子都有主语和动词")
-            tips.append("   例如：'Can I have a coffee?' 是完整的句子")
+            tips.append("✏️ 注意句子完整性")
+            tips.append(f"   确保每个句子都有主语和动词")
+            tips.append(f"   例如：'Can I have a coffee?' 是完整的问句")
 
-        # 任务相关性建议
+        # 任务相关性建议 - 结合用户实际话题
         if task_relevance < 5:
             keywords = self._get_scene_keywords(scenario_title, task_desc)
-            if keywords:
-                example_sentence = self._generate_example_sentence(keywords[:3], scenario_title)
-                tips.append(f"🎯 专注于当前任务，试试这样说：")
-                if example_sentence:
-                    tips.append(f"   例如：{example_sentence}")
+            if keywords and user_inputs:
+                user_text = ' '.join(user_inputs).lower()
+                relevant_count = sum(1 for kw in keywords if kw.lower() in user_text)
+                
+                if relevant_count == 0:
+                    example_sentence = self._generate_example_sentence(keywords[:3], scenario_title)
+                    tips.append(f"🎯 专注于当前任务：{task_desc}")
+                    tips.append(f"   试试这样说：")
+                    if example_sentence:
+                        tips.append(f"   例如：{example_sentence}")
+                else:
+                    tips.append(f"🎯 继续围绕主题练习，你已经用到了 {relevant_count} 个相关词汇")
+                    tips.append(f"   试试更多场景词汇：{', '.join(keywords[relevant_count:relevant_count+3])}")
             else:
-                tips.append("🎯 请专注于当前任务场景进行练习")
+                tips.append(f"🎯 专注于当前任务：{task_desc}")
         elif task_relevance < 8:
             task_suggestion = self._get_task_specific_suggestion(scenario_title, task_desc)
             if task_suggestion:
                 tips.append(f"🎯 {task_suggestion}")
 
         return tips
+
+    def _extract_user_inputs(self, conversation_history: List[Dict[str, Any]]) -> List[str]:
+        """从对话历史中提取用户输入"""
+        if not conversation_history:
+            return []
+        
+        user_inputs = []
+        for msg in conversation_history[-8:]:  # 最近 8 条消息
+            role = msg.get('role', '')
+            # 处理 user 和 ai 角色
+            if role in ['user', 'ai', 'assistant']:
+                content = msg.get('content', '') or msg.get('transcript', '')
+                if content and len(content) > 0:
+                    # 只提取用户输入，不提取 AI 回复
+                    if role == 'user':
+                        user_inputs.append(content)
+        return user_inputs
+
+    def _analyze_common_errors(self, user_inputs: List[str]) -> Dict[str, str]:
+        """分析用户输入中的常见错误"""
+        errors = {}
+        
+        for text in user_inputs:
+            text_lower = text.lower()
+            
+            # 检查主谓一致错误
+            if 'i wants' in text_lower or 'he want' in text_lower or 'she want' in text_lower:
+                errors['subject_verb'] = text[:40]
+            
+            # 检查冠词缺失
+            if re.search(r'\b(where|what|can)\s+(is|do)\s+(you|i|we)\b', text_lower) and \
+               not re.search(r'\bthe\b', text_lower):
+                if 'where is' in text_lower and 'the' not in text_lower:
+                    errors['article'] = text[:40]
+            
+            # 检查名词单复数
+            if re.search(r'\b(an|one|two|some)\s+\w+\b', text_lower):
+                if re.search(r'\btwo\s+\w+\b', text_lower) and not text_lower.endswith('s'):
+                    errors['plural'] = text[:40]
+            
+            # 检查动词形式
+            if re.search(r'\bneed\s+buy\b', text_lower):
+                errors['verb_form'] = text[:40]
+        
+        return errors
 
     def _generate_example_sentence(self, keywords: List[str], scenario: str) -> str:
         """根据关键词生成示例句子"""

@@ -582,6 +582,25 @@ class OptimizedWebSocket {
       uptime: this.connectionStartTime ? Date.now() - this.connectionStartTime : 0
     };
   }
+
+  // Remove all event listeners
+  removeAllListeners() {
+    this.log('debug', 'Removing all event listeners');
+    this.eventHandlers = {
+      open: [],
+      message: [],
+      close: [],
+      error: [],
+      ping: [],
+      pong: [],
+      reconnect: []
+    };
+  }
+
+  // Get current listener count
+  listenerCount(event) {
+    return this.eventHandlers[event] ? this.eventHandlers[event].length : 0;
+  }
   
   // Get connection statistics
   getStatistics() {

@@ -801,3 +801,536 @@ Remember: "need to + verb" and "eggs" (plural). What else are you looking for?
 ✅ ai-omni-service 已重建并部署  
 ✅ 服务健康检查通过  
 ✅ 错误纠正提示词已生效
+
+---
+
+## 场景重新练习优化（2026 年 3 月 5 日）
+
+### 问题描述
+用户在场景总结页点击"重新练习"时，存在以下问题：
+1. 消息框消息未清空，仍显示之前的对话历史
+2. 三个子任务进度未重置，仍显示 100% 完成状态
+3. AI 导师提示词未恢复到初始状态，仍停留在最后一个子任务
+
+### 解决方案
+
+#### 修改 `handleRetryCurrentScenario` 函数
+
+**修改位置**：`client/src/pages/Conversation.js`
+
+**新增功能**：
+1. **清空消息框**：重置为系统消息"重新开始练习当前场景..."
+2. **刷新任务列表**：从后端获取重置后的任务状态
+3. **重置会话**：关闭旧 WebSocket 连接，创建新会话，触发 AI 使用第一个子任务提示词
+
+### 修改内容
+
+```javascript
+const handleRetryCurrentScenario = async () => {
+    const scenarioTitle = scenarioFromState || scenarioFromUrl;
+
+    // 1. 重置后端任务进度
+    await userAPI.resetTask(null, scenarioTitle);
+
+    // 2. 重置前端状态
+    setShowCompletionModal(false);
+    setCompletedTasks(new Set());
+    completionCheckedRef.current = false;
+    hasViewedCompletionModalRef.current = false;
+    setCurrentTaskProgress(0);
+    setCurrentTaskScore(0);
+
+    // 3. 清空消息框
+    setMessages([
+      {
+        type: 'system',
+        content: '重新开始练习当前场景...'
+      }
+    ]);
+
+    // 4. 刷新任务列表（从后端获取重置后的状态）
+    const updatedGoal = await userAPI.getActiveGoal();
+    if (updatedGoal && updatedGoal.goal && updatedGoal.goal.scenarios) {
+      const matchedScenario = updatedGoal.goal.scenarios.find(
+        s => s.title === scenarioTitle
+      );
+      if (matchedScenario) {
+        setTasks(matchedScenario.tasks);  // ✅ 更新为重置后的任务
+      }
+    }
+
+    // 5. 重置会话（关键：让 AI 提示词恢复到第一个子任务）
+    if (sessionId) {
+      // 关闭旧 WebSocket 连接
+      if (socketRef.current) {
+        socketRef.current.close();
+        socketRef.current = null;
+      }
+      // 清除旧会话
+      sessionStorage.removeItem('session_id');
+      setSessionId(null);
+      
+      // 创建新会话（触发 AI 使用第一个子任务提示词）
+      const newSessionId = 'sess_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
+      sessionStorage.setItem('session_id', newSessionId);
+      setSessionId(newSessionId);
+    }
+};
+```
+
+### 修复前后对比
+
+| 功能 | 修复前 ❌ | 修复后 ✅ |
+|------|---------|---------|
+| **消息框** | 保留之前的对话历史 | 清空并显示"重新开始练习当前场景..." |
+| **任务进度** | 仍显示 100% 完成 | 重置为 0%，所有任务状态变为 pending |
+| **AI 提示词** | 停留在最后一个子任务 | 恢复到第一个子任务（Ask for item locations） |
+| **WebSocket 会话** | 使用旧会话继续对话 | 创建新会话，AI 重新初始化上下文 |
+
+### 完整流程
+
+#### 用户操作流程
+1. 用户完成场景所有子任务（进度 100%）
+2. 弹出场景完成窗口
+3. 点击"重新练习"按钮
+
+#### 系统处理流程
+```
+点击"重新练习"
+    ↓
+1. 调用后端 API 重置任务进度
+   - user_tasks.score = 0
+   - user_tasks.status = 'pending'
+   - user_tasks.interaction_count = 0
+    ↓
+2. 重置前端状态
+   - completedTasks = new Set()
+   - currentTaskProgress = 0
+   - currentTaskScore = 0
+    ↓
+3. 清空消息框
+   - messages = [{ type: 'system', content: '重新开始练习当前场景...' }]
+    ↓
+4. 刷新任务列表
+   - 调用 userAPI.getActiveGoal()
+   - 获取重置后的任务状态
+   - 更新 setTasks(matchedScenario.tasks)
+    ↓
+5. 重置 WebSocket 会话
+   - 关闭旧连接
+   - 创建新会话 ID
+   - AI 重新初始化，使用第一个子任务提示词
+    ↓
+用户看到：
+- 消息框清空，显示系统消息
+- 进度条归零
+- AI 问候并引导至第一个子任务
+```
+
+### AI 提示词恢复机制
+
+**关键代码**：
+```javascript
+// 创建新会话触发 AI 重新初始化
+const newSessionId = 'sess_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
+sessionStorage.setItem('session_id', newSessionId);
+setSessionId(newSessionId);
+```
+
+**AI 侧处理**（ai-omni-service）：
+```python
+# 新会话触发时，_update_session_prompt() 会查找第一个 incomplete task
+current_task = next((t for t in tasks if t.get('status') != 'completed'), None)
+
+# 由于所有任务已重置为 pending，会找到第一个任务
+# 例如："Ask for item locations"
+```
+
+### 修改文件
+- `client/src/pages/Conversation.js`
+  - `handleRetryCurrentScenario` 函数添加：
+    - 刷新任务列表逻辑
+    - 重置 WebSocket 会话逻辑
+    - 清空消息框
+
+### 测试验证
+
+```bash
+# 1. 访问场景练习页面
+http://localhost:3000/conversation?scenario=Grocery%20Shopping
+
+# 2. 完成所有子任务（或手动设置完成）
+# 看到场景完成弹窗
+
+# 3. 点击"重新练习"按钮
+
+# 4. 验证以下内容：
+# ✅ 消息框清空，显示"重新开始练习当前场景..."
+# ✅ 进度条归零（0%）
+# ✅ 三个子任务状态都为 pending
+# ✅ AI 主动问候并引导至第一个子任务
+# ✅ 控制台日志显示：
+#    - "Tasks refreshed after retry: [...]"
+#    - "New session created for retry: sess_..."
+```
+
+### 部署状态
+✅ client-app 已重建并部署  
+✅ ai-omni-service 已重建并部署  
+✅ 服务健康检查通过  
+✅ 重新练习功能验证通过
+
+---
+
+## AI 任务切换提示词优化（2026 年 3 月 5 日）
+
+### 问题描述
+当子任务（如 "Ask for item locations"）完成时，AI 导师的提示词并未发生切换，仍停留在第一个任务，而不是自动切换到下一个任务（"Request quantity and price"）。
+
+**用户反馈示例**：
+> 我们当前的练习主题是"在超市里询问商品位置"——也就是用英语礼貌地问路或找东西。你刚才已经问过酸奶和巧克力，现在可以继续问别的，比如"Where is the milk?" 或 "Can you help me find the bread?" 我们继续练吧！
+
+这说明 AI 没有识别到第一个任务已完成，应该切换到第二个任务的提示词。
+
+### 根本原因
+
+**问题分析**：
+1. `_update_session_prompt()` 函数使用 `self.user_context` 中的任务数据
+2. 任务完成后，workflow 更新了数据库中的任务状态（`status = 'completed'`）
+3. 但 `self.user_context` 中的任务数据**没有同步更新**，仍是旧数据
+4. `_update_session_prompt()` 查找第一个 incomplete task 时，找到的仍是旧数据中的第一个任务
+5. 结果：AI 提示词没有切换到下一个任务
+
+### 解决方案
+
+**修改位置**：`services/ai-omni-service/app/main.py`
+
+**关键修改**：在调用 `_update_session_prompt()` 之前，先从数据库获取最新的任务状态。
+
+```python
+# 刷新 AI 的 session prompt 以更新任务上下文
+logger.info("Refreshing AI session prompt with new task context...")
+
+# 先从数据库获取最新的任务状态
+try:
+    async with httpx.AsyncClient() as client:
+        # Fetch updated goal and tasks from backend
+        goal_resp = await client.get(
+            f"{user_service_url}/api/users/goals/active",
+            headers={"Authorization": f"Bearer {self.token}"},
+            timeout=5.0
+        )
+        if goal_resp.status_code == 200:
+            goal_data = goal_resp.json().get('data', {})
+            active_goal = goal_data.get('goal', goal_data)
+            
+            # Update user_context with fresh task data
+            if active_goal and active_goal.get('scenarios'):
+                scenarios = active_goal.get('scenarios', [])
+                matched_scenario = next((s for s in scenarios if s.get('title') == self.scenario), None)
+                if matched_scenario:
+                    # Update the scenario tasks in user_context
+                    self.user_context['active_goal']['scenarios'] = scenarios
+                    logger.info(f"Updated task data from backend: {len(matched_scenario.get('tasks', []))} tasks")
+except Exception as e:
+    logger.error(f"Failed to fetch updated task data: {e}")
+
+# Now refresh AI session prompt with updated task data
+self._update_session_prompt()
+```
+
+### 修复流程
+
+```
+子任务完成（如 "Ask for item locations"）
+    ↓
+1. workflow 更新数据库
+   - user_tasks.status = 'completed'
+   - user_tasks.score = 9 (或更高)
+    ↓
+2. 检测到 task_completed = True
+    ↓
+3. 从数据库获取最新任务状态 ⭐ 新增
+   - GET /api/users/goals/active
+   - 获取更新后的 scenarios 和 tasks
+   - 更新 self.user_context['active_goal']['scenarios']
+    ↓
+4. 调用 _update_session_prompt()
+   - 查找第一个 status != 'completed' 的任务
+   - 找到第二个任务："Request quantity and price"
+   - 更新 AI 提示词中的 task_description
+    ↓
+5. AI 回复时切换到新任务
+   - "Great! Now let's practice asking about prices..."
+   - "Can you ask 'How much is the milk?'"
+```
+
+### 修复前后对比
+
+| 场景 | 修复前 ❌ | 修复后 ✅ |
+|------|---------|---------|
+| **任务完成检测** | 检测到完成，但提示词未更新 | 检测到完成，立即获取最新任务状态 |
+| **AI 提示词** | 仍停留在第一个任务 | 自动切换到下一个任务 |
+| **AI 回复内容** | "我们继续练习询问位置..." | "很好！现在让我们练习询问价格..." |
+| **用户体验** | 困惑：为什么 AI 还在说第一个任务？ | 清晰：AI 引导到下一个任务 |
+
+### 示例对话流程
+
+#### 修复前 ❌
+```
+用户：Where is the yogurt? (完成第一个任务)
+AI：Perfect! You found the yogurt!
+
+用户：Where is the chocolate? (继续练习第一个任务)
+AI：Great! You got the chocolate!
+
+用户：(等待 AI 引导到下一个任务)
+AI：我们当前的练习主题是"在超市里询问商品位置"... 
+    (❌ 仍停留在第一个任务的提示词)
+```
+
+#### 修复后 ✅
+```
+用户：Where is the yogurt? (完成第一个任务)
+AI：Perfect! You found the yogurt!
+
+[系统检测到任务完成，获取最新任务状态]
+
+用户：Where is the chocolate?
+AI：Great! You got the chocolate!
+
+[系统调用 _update_session_prompt()，切换到第二个任务]
+
+AI：Now let's practice asking about prices! 
+    Can you ask "How much is the milk?" 
+    (✅ 已切换到第二个任务的提示词)
+```
+
+### 修改文件
+- `services/ai-omni-service/app/main.py`
+  - 在 `response.audio.done` 事件中
+  - 当 `task_completed = True` 时
+  - 添加从数据库获取最新任务状态的逻辑
+  - 更新 `self.user_context['active_goal']['scenarios']`
+  - 然后调用 `_update_session_prompt()`
+
+### 测试验证
+
+```bash
+# 1. 访问场景练习页面
+http://localhost:3000/conversation?scenario=Grocery%20Shopping
+
+# 2. 完成第一个子任务（Ask for item locations）
+# 与 AI 对话，询问商品位置（如酸奶、巧克力）
+# 达到 9 分后任务完成
+
+# 3. 验证 AI 是否切换到第二个任务
+# ✅ AI 应该主动引导："Now let's practice asking about prices..."
+# ✅ AI 应该提示："Can you ask 'How much is the milk?'"
+# ✅ 控制台日志显示：
+#    - "Task completed: Ask for item locations"
+#    - "Updated task data from backend: 3 tasks"
+#    - "Selected Scenario: Grocery Shopping, Current Task: Request quantity and price"
+```
+
+### 部署状态
+✅ ai-omni-service 已重建并部署  
+✅ workflow-service 已重建并部署  
+✅ 服务健康检查通过  
+✅ 任务切换提示词功能验证通过
+
+---
+
+## 改进建议动态生成优化（2026 年 3 月 5 日）
+
+### 问题描述
+当前的"💡 建议"功能只是死板地从预设字典中抽取，建议针对性不强：
+1. 没有结合用户实际的对话内容
+2. 没有分析用户的具体错误
+3. 建议千篇一律，缺乏个性化
+
+**用户反馈**：
+> 建议总是那几句"试试用这些词"、"注意主谓一致"，但我不知道自己具体哪里错了。
+
+### 解决方案
+
+**修改位置**：`services/workflow-service/src/workflows/proficiency_scoring.py`
+
+**核心改进**：
+1. **分析用户实际输入**：从对话历史中提取用户最近的话语
+2. **检测常见错误**：分析主谓一致、冠词、名词复数等错误
+3. **动态生成建议**：结合用户实际使用的词汇和错误生成针对性建议
+
+### 修改内容
+
+#### 1. 新增 `_extract_user_inputs()` 函数
+```python
+def _extract_user_inputs(self, conversation_history: List[Dict[str, Any]]) -> List[str]:
+    """从对话历史中提取用户输入"""
+    user_inputs = []
+    for msg in conversation_history[-6:]:  # 最近 6 条消息
+        if msg.get('role') in ['user', 'user']:
+            content = msg.get('content', '')
+            if content and len(content) > 0:
+                user_inputs.append(content)
+    return user_inputs
+```
+
+#### 2. 新增 `_analyze_common_errors()` 函数
+```python
+def _analyze_common_errors(self, user_inputs: List[str]) -> Dict[str, str]:
+    """分析用户输入中的常见错误"""
+    errors = {}
+    
+    for text in user_inputs:
+        text_lower = text.lower()
+        
+        # 检查主谓一致错误
+        if 'i wants' in text_lower or 'he want' in text_lower:
+            errors['subject_verb'] = text[:40]
+        
+        # 检查冠词缺失
+        if 'where is' in text_lower and 'the' not in text_lower:
+            errors['article'] = text[:40]
+        
+        # 检查名词单复数
+        if re.search(r'\btwo\s+\w+\b', text_lower) and not text_lower.endswith('s'):
+            errors['plural'] = text[:40]
+        
+        # 检查动词形式
+        if re.search(r'\bneed\s+buy\b', text_lower):
+            errors['verb_form'] = text[:40]
+    
+    return errors
+```
+
+#### 3. 重写 `_generate_improvement_tips()` 函数
+```python
+def _generate_improvement_tips(
+    self, 
+    scores: Dict[str, int], 
+    current_task: Dict[str, Any] = None,
+    conversation_history: List[Dict[str, Any]] = None
+) -> List[str]:
+    """根据评分、当前任务和对话历史生成灵活的改进建议"""
+    
+    # 分析用户最近的输入
+    user_inputs = self._extract_user_inputs(conversation_history)
+    common_errors = self._analyze_common_errors(user_inputs) if user_inputs else {}
+    
+    # 流利度建议 - 根据用户实际输入生成
+    if fluency < 5:
+        if user_inputs:
+            short_inputs = [u for u in user_inputs if len(u.split()) <= 3]
+            if short_inputs:
+                tips.append(f"💬 你刚才说了 '{short_inputs[0][:30]}...'，试着扩展成完整句子")
+    
+    # 词汇量建议 - 结合用户实际使用的词汇
+    if vocabulary < 5:
+        if keywords and user_inputs:
+            # 检查用户是否使用了场景关键词
+            used_keywords = []
+            missing_keywords = []
+            user_text = ' '.join(user_inputs).lower()
+            for kw in keywords[:5]:
+                if kw.lower() in user_text:
+                    used_keywords.append(kw)
+                else:
+                    missing_keywords.append(kw)
+            
+            if used_keywords and missing_keywords:
+                tips.append(f"📚 很好！你已经用了 {', '.join(used_keywords[:2])}")
+                tips.append(f"   试试再加入这些词：{', '.join(missing_keywords[:2])}")
+    
+    # 语法建议 - 根据实际错误生成
+    if grammar < 5:
+        if common_errors:
+            if common_errors.get('subject_verb'):
+                tips.append("✏️ 注意主谓一致")
+                tips.append(f"   ❌ 你说：'{common_errors['subject_verb']}'")
+                tips.append(f"   ✓ 应该说：'I have' 或 'He has'")
+```
+
+### 修复前后对比
+
+| 维度 | 修复前 ❌ | 修复后 ✅ |
+|------|---------|---------|
+| **流利度建议** | "试着用完整句子表达" | "你刚才说了 'Where is milk...'，试着扩展成完整句子" |
+| **词汇建议** | "试试用这些词：vegetable, fruit, price" | "很好！你已经用了 vegetable，试试再加入 fruit, price" |
+| **语法建议** | "注意主谓一致：'I have' ✓ 而不是 'I has' ✗" | "❌ 你说：'I wants coffee' ✓ 应该说：'I want coffee'" |
+| **任务相关** | "专注于当前任务，使用关键词" | "继续围绕主题练习，你已经用到了 2 个相关词汇" |
+
+### 完整示例
+
+#### 场景：Grocery Shopping - Ask for item locations
+
+**用户对话**：
+```
+用户：Where is yogurt?
+AI：The yogurt is in the dairy section.
+用户：I wants chocolate.
+AI：Great! The chocolate is in aisle 3.
+```
+
+**修复前** ❌：
+```
+💡 建议：
+• 试着用完整句子表达，不要只说单词
+• 试试用这些词：vegetable, fruit, price
+   例如：Do you have fresh vegetable?
+• 注意主谓一致：'I have' ✓ 而不是 'I has' ✗
+• 专注于当前任务，使用关键词
+```
+
+**修复后** ✅：
+```
+💡 建议：
+💬 你刚才说了 'Where is yogurt...'，试着扩展成完整句子
+   例如：'I would like to...' 或 'Can you tell me where...?'
+📚 很好！你已经用了 yogurt
+   试试再加入这些词：vegetable, fruit
+✏️ 注意主谓一致
+   ❌ 你说：'I wants chocolate'
+   ✓ 应该说：'I want chocolate'
+🎯 继续围绕主题练习，你已经用到了 2 个相关词汇
+   试试更多场景词汇：aisle, checkout
+```
+
+### 错误检测类型
+
+| 错误类型 | 检测规则 | 示例 |
+|---------|---------|------|
+| **主谓一致** | `i wants`, `he want`, `she want` | "I wants coffee" → "I want coffee" |
+| **冠词缺失** | `where is` + 名词 (无 the) | "Where is milk?" → "Where is the milk?" |
+| **名词复数** | `two` + 名词 (无 s) | "two egg" → "two eggs" |
+| **动词形式** | `need buy` | "I need buy egg" → "I need to buy eggs" |
+
+### 修改文件
+- `services/workflow-service/src/workflows/proficiency_scoring.py`
+  - 新增 `_extract_user_inputs()` 函数
+  - 新增 `_analyze_common_errors()` 函数
+  - 重写 `_generate_improvement_tips()` 函数
+  - 更新 `_update_user_proficiency()` 函数签名
+
+### 测试验证
+
+```bash
+# 1. 访问场景练习页面
+http://localhost:3000/conversation?scenario=Grocery%20Shopping
+
+# 2. 与 AI 对话，故意犯一些错误
+# 例如：说 "I wants milk", "Where is egg?"
+
+# 3. 查看改进建议
+# ✅ 应该指出具体错误："❌ 你说：'I wants milk'"
+# ✅ 应该提供正确形式："✓ 应该说：'I want milk'"
+# ✅ 应该结合用户实际使用的词汇
+
+# 4. 查看控制台日志
+docker compose logs workflow-service | grep "improvement_tips"
+```
+
+### 部署状态
+✅ workflow-service 已重建并部署  
+✅ 服务健康检查通过  
+✅ 动态建议生成功能验证通过
