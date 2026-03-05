@@ -134,6 +134,7 @@ function Conversation() {
   const [currentScenarioIndex, setCurrentScenarioIndex] = useState(0);
   const [currentScenarioTitle, setCurrentScenarioTitle] = useState('');
   const completionCheckedRef = useRef(false); // Prevent duplicate modal triggers
+  const hasViewedCompletionModalRef = useRef(false); // Track if user has already viewed and closed the modal
   
   const getScoreFeedback = (score) => {
     if (score >= 90) return { emoji: '🌟', text: '表现出色！你的表达非常流利自然，继续保持！', level: 'excellent' };
@@ -176,7 +177,9 @@ function Conversation() {
           }
 
           // Check if all tasks are completed to show completion modal
-          if (objectTaskCount > 0 && completedCount === objectTaskCount && !completionCheckedRef.current) {
+          // Only show if user hasn't already viewed and closed the modal
+          if (objectTaskCount > 0 && completedCount === objectTaskCount && 
+              !completionCheckedRef.current && !hasViewedCompletionModalRef.current) {
               completionCheckedRef.current = true;
               setTimeout(() => setShowCompletionModal(true), 1000); // Delay to show final task completion
           }
@@ -377,6 +380,7 @@ function Conversation() {
     setShowCompletionModal(false);
     setCompletedTasks(new Set());
     completionCheckedRef.current = false;
+    hasViewedCompletionModalRef.current = false; // Reset modal view tracking
     setCurrentTaskProgress(0);
     setCurrentTaskScore(0);
     previousProgressRef.current = 0; // Reset progress tracking
@@ -1662,7 +1666,19 @@ function Conversation() {
       {/* Scenario Completion Modal */}
       {showCompletionModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm">
-          <div className="bg-white dark:bg-slate-800 rounded-2xl shadow-2xl max-w-sm w-full mx-4 overflow-hidden animate-in zoom-in duration-300">
+          <div className="bg-white dark:bg-slate-800 rounded-2xl shadow-2xl max-w-sm w-full mx-4 overflow-hidden animate-in zoom-in duration-300 relative">
+            {/* Close button */}
+            <button
+              onClick={() => {
+                setShowCompletionModal(false);
+                hasViewedCompletionModalRef.current = true; // Mark as viewed so it doesn't show again on refresh
+              }}
+              className="absolute top-3 right-3 w-8 h-8 bg-white/20 hover:bg-white/30 rounded-full flex items-center justify-center transition z-10"
+              aria-label="Close"
+            >
+              <span className="material-symbols-outlined text-white text-lg">close</span>
+            </button>
+
             <div className="bg-gradient-to-r from-green-500 to-emerald-600 p-6 text-white text-center">
               <div className="w-16 h-16 bg-white/20 rounded-full flex items-center justify-center mx-auto mb-3">
                 <span className="material-symbols-outlined text-4xl">celebration</span>
@@ -1726,11 +1742,14 @@ function Conversation() {
                   <span>选择其他场景</span>
                 </button>
                 
-                <button 
-                  onClick={handleBackToDiscovery}
+                <button
+                  onClick={() => {
+                    setShowCompletionModal(false);
+                    hasViewedCompletionModalRef.current = true; // Mark as viewed so it doesn't show again on refresh
+                  }}
                   className="w-full py-2 text-slate-500 text-sm hover:text-slate-700 transition"
                 >
-                  返回主页
+                  关闭
                 </button>
               </div>
             </div>

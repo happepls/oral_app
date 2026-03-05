@@ -441,9 +441,363 @@ ORDER BY id;
 ✅ ai-omni-service 已重建并部署  
 ✅ 所有服务健康检查通过  
 
+## 场景完成弹窗优化（2026 年 3 月 5 日）
+
+### 问题描述
+1. 场景完成弹窗没有关闭按钮，用户无法关闭
+2. 刷新页面后会重复弹出同一个完成弹窗
+3. 用户无法查看对话历史记录
+
+### 解决方案
+
+#### 1. 添加关闭按钮
+在弹窗右上角添加关闭按钮（X 图标），用户可随时关闭弹窗。
+
+**修改位置**：`client/src/pages/Conversation.js`
+```javascript
+// 在弹窗容器添加 relative 定位
+<div className="... relative">
+  {/* Close button */}
+  <button
+    onClick={() => {
+      setShowCompletionModal(false);
+      hasViewedCompletionModalRef.current = true; // Mark as viewed
+    }}
+    className="absolute top-3 right-3 w-8 h-8 bg-white/20 hover:bg-white/30 rounded-full ..."
+  >
+    <span className="material-symbols-outlined text-white text-lg">close</span>
+  </button>
+  ...
+</div>
+```
+
+#### 2. 防止重复弹窗
+添加 `hasViewedCompletionModalRef` 标记，用户关闭后不再自动弹出。
+
+```javascript
+const hasViewedCompletionModalRef = useRef(false); // Track if user has already viewed and closed the modal
+
+// 触发条件增加检查
+if (objectTaskCount > 0 && completedCount === objectTaskCount && 
+    !completionCheckedRef.current && !hasViewedCompletionModalRef.current) {
+    completionCheckedRef.current = true;
+    setTimeout(() => setShowCompletionModal(true), 1000);
+}
+```
+
+#### 3. 重置场景时清除标记
+用户选择"重新练习"时，清除所有标记，允许再次显示弹窗。
+
+```javascript
+const handleRetryCurrentScenario = async () => {
+    ...
+    hasViewedCompletionModalRef.current = false; // Reset modal view tracking
+    ...
+}
+```
+
+#### 4. 底部关闭按钮
+在弹窗底部添加"关闭"按钮，与右上角 X 按钮功能相同。
+
+```javascript
+<button
+  onClick={() => {
+    setShowCompletionModal(false);
+    hasViewedCompletionModalRef.current = true;
+  }}
+  className="w-full py-2 text-slate-500 text-sm hover:text-slate-700 transition"
+>
+  关闭
+</button>
+```
+
+### 修改文件
+- `client/src/pages/Conversation.js`
+  - 添加 `hasViewedCompletionModalRef`
+  - 弹窗容器添加 `relative` 定位
+  - 添加右上角关闭按钮
+  - 底部按钮改为"关闭"（原"返回主页"）
+  - 更新触发条件检查
+  - `handleRetryCurrentScenario` 清除标记
+
+### 用户体验改进
+1. ✅ 用户可随时关闭场景完成弹窗
+2. ✅ 关闭后可查看完整的对话历史记录
+3. ✅ 刷新页面不会重复弹出（除非选择"重新练习"）
+4. ✅ 保留所有操作按钮（下一个场景/重新练习/选择其他场景）
+
 ## 相关文档
 
 - 进度条修复：`docs/progress_bar_task_switch_fix.md`
 - AI 任务切换修复：`docs/ai_task_transition_fix.md`
 - 改进建议优化：`docs/improvement_tips_optimization.md`
 - 任务完成机制：`docs/task_completion_optimization.md`
+
+---
+
+## 引导式教学优化（2026 年 3 月 5 日）
+
+### 问题描述
+之前的改进建议只有词汇列举，缺少：
+1. 完整的句型示例
+2. 引导式教学提示
+3. 具体场景的表达建议
+
+### 解决方案
+
+#### 1. 新增 `_generate_example_sentence()` 函数
+根据场景和关键词自动生成示例句子。
+
+**句型模板示例**：
+```python
+sentence_templates = {
+    "grocery": [
+        "Where can I find the {0}?",
+        "How much is the {0}?",
+        "I'm looking for {0} and {1}.",
+        "Do you have fresh {0}?"
+    ],
+    "coffee": [
+        "Can I get a {0}, please?",
+        "I'd like a {0} with {1}.",
+        "What size {0} do you have?",
+        "Could I have a {0} to go?"
+    ],
+    # ...更多场景
+}
+```
+
+#### 2. 新增 `_get_task_specific_suggestion()` 函数
+根据具体任务类型提供针对性建议。
+
+**任务建议映射**：
+```python
+task_suggestions = {
+    "ask for": "🎯 试试用疑问句：'Could you tell me where...?' 或 'Do you know where...?'",
+    "request": "🎯 用礼貌的请求句型：'Could I have...?' 或 'I'd like to request...'",
+    "order": "🎯 点餐句型：'I'd like to order...' 或 'Can I get...?'",
+    "handle checkout": "🎯 结账句型：'Can I pay by card?' 或 'Could I have the receipt, please?'",
+    # ...更多任务类型
+}
+```
+
+#### 3. 重写 `_generate_improvement_tips()` 函数
+每个维度都提供具体句型示例和引导式教学。
+
+**修改前后对比**：
+
+| 维度 | 修改前 ❌ | 修改后 ✅ |
+|------|---------|---------|
+| **流利度<5** | 尝试使用更多连接词 | 💬 你可以尝试这样表达：'I think...' 或 'In my opinion...' 来开始你的回答 |
+| **流利度<8** | 试着用更长的句子 | 💬 试着用连接词把句子连起来：'I want coffee because it helps me wake up' |
+| **词汇<5** | 多使用场景相关词汇：vegetable, fruit, price | 📚 试试用这些词：vegetable, fruit, price<br>例如：Do you have fresh vegetable? |
+| **词汇<8** | 可以尝试使用一些高级词汇 | 📚 试试更高级的表达：用 'I'd prefer' 代替 'I want'，用 'Could you' 代替 'Can you' |
+| **语法<5** | 注意时态一致性 | ✏️ 注意主谓一致：'I have' ✓ 而不是 'I has' ✗<br>试试这样说：'I need...' 或 'I would like...' |
+| **语法<8** | 注意句子结构的完整性 | ✏️ 注意句子完整性：确保每个句子都有主语和动词<br>例如：'Can I have a coffee?' 是完整的句子 |
+| **任务相关<5** | 专注于当前任务，使用关键词 | 🎯 专注于当前任务，试试这样说：<br>例如：Do you have fresh vegetable? |
+| **任务相关<8** | 尝试更多使用任务相关的关键词 | 🎯 根据具体任务提供针对性句型建议 |
+
+### 完整示例
+
+#### Grocery Shopping 场景 - Ask for item locations 任务
+
+**用户表现**：fluency=4, vocabulary=4, grammar=4, task_relevance=4
+
+**修改前** ❌：
+```
+💡 建议：
+• 尝试使用更多连接词（如 and, but, because）来使表达更流畅
+• 多使用场景相关词汇：vegetable, fruit, price, checkout, cart
+• 注意时态一致性，主谓要一致
+• 专注于当前任务，使用关键词：vegetable, fruit, price, checkout, cart
+```
+
+**修改后** ✅：
+```
+💡 建议：
+💬 你可以尝试这样表达：'I think...' 或 'In my opinion...' 来开始你的回答，而不是只说单词
+📚 试试用这些词：vegetable, fruit, price
+   例如：Do you have fresh vegetable?
+✏️ 注意主谓一致：'I have' ✓ 而不是 'I has' ✗
+   试试这样说：'I need...' 或 'I would like...'
+🎯 专注于当前任务，试试这样说：
+   例如：Do you have fresh vegetable?
+```
+
+#### Coffee Shop 场景 - Order drink 任务
+
+**用户表现**：fluency=6, vocabulary=7, grammar=6, task_relevance=7
+
+**修改后** ✅：
+```
+💡 建议：
+💬 试着用连接词把句子连起来：'I want coffee because it helps me wake up' 比 'coffee, wake up' 更流畅
+📚 试试更高级的表达：用 'I'd prefer' 代替 'I want'，用 'Could you' 代替 'Can you'
+✏️ 注意句子完整性：确保每个句子都有主语和动词
+   例如：'Can I have a coffee?' 是完整的句子
+🎯 点餐句型：'I'd like to order...' 或 'Can I get...?'
+```
+
+### 支持的场景模板
+
+| 场景 | 示例句型 |
+|------|---------|
+| **Grocery** | "Where can I find the {0}?", "How much is the {0}?", "Do you have fresh {0}?" |
+| **Coffee** | "Can I get a {0}, please?", "I'd like a {0} with {1}.", "Could I have a {0} to go?" |
+| **Restaurant** | "Could we have a table for two?", "I'd like to order the {0}.", "Could I have the bill, please?" |
+| **Direction** | "Excuse me, where is the {0}?", "How do I get to the {0}?", "Can you show me on the map?" |
+| **Greeting** | "Hi, my name is...", "Nice to meet you!", "How are you doing today?" |
+| **Shopping** | "How much does this cost?", "Do you have this in a different size?", "Can I try this on?" |
+| **Travel** | "I'd like to book a flight to...", "What time is my flight?", "Can I have a window seat?" |
+| **Business** | "Let me introduce myself...", "What do you think about...?", "I suggest we..." |
+
+### 修改文件
+- `services/workflow-service/src/workflows/proficiency_scoring.py`
+  - 重写 `_generate_improvement_tips()` 函数
+  - 新增 `_generate_example_sentence()` 函数
+  - 新增 `_get_task_specific_suggestion()` 函数
+
+### 测试验证
+
+```bash
+# 测试 Grocery Shopping 场景
+docker exec oral_app_workflow_service python -c "
+from src.workflows.proficiency_scoring import proficiency_scoring_workflow
+tips = proficiency_scoring_workflow._generate_improvement_tips(
+    {'fluency':4,'vocabulary':4,'grammar':4,'task_relevance':4}, 
+    {'scenario_title':'Grocery Shopping','task_description':'Ask for item locations'}
+)
+print('\\n'.join(tips))
+"
+
+# 预期输出：
+# 💬 你可以尝试这样表达：'I think...' 或 'In my opinion...' 来开始你的回答
+# 📚 试试用这些词：vegetable, fruit, price
+#    例如：Do you have fresh vegetable?
+# ✏️ 注意主谓一致：'I have' ✓ 而不是 'I has' ✗
+#    试试这样说：'I need...' 或 'I would like...'
+# 🎯 专注于当前任务，试试这样说：
+#    例如：Do you have fresh vegetable?
+```
+
+### 部署状态
+✅ workflow-service 已重建并部署  
+✅ ai-omni-service 已重建并部署  
+✅ 服务健康检查通过  
+✅ 示例句子生成功能验证通过
+
+---
+
+## 实时错误纠正优化（2026 年 3 月 5 日）
+
+### 问题描述
+用户在练习过程中出现语法或词汇错误时，AI 导师没有及时指出并给出正确表达建议，导致用户可能形成错误的语言习惯。
+
+### 解决方案
+
+#### 修改 AI 导师提示词
+在 `prompt_manager.py` 的 `oral_tutor_template` 中添加错误纠正指南。
+
+**新增内容**：
+1. **错误纠正责任**：明确 AI 需要纠正用户的语法/词汇错误
+2. **纠正原则**：温和、提供正确形式、给出示例、继续对话
+3. **示例演示**：提供具体的错误纠正示例
+
+**修改位置**：`services/ai-omni-service/app/prompt_manager.py`
+
+```python
+# Error Correction Guidelines
+**When you notice grammar or vocabulary errors:**
+1. **Be Gentle**: Don't directly say "You're wrong"
+2. **Provide Correct Form**: Show the correct way to say it
+3. **Give Example**: Provide a complete example sentence
+4. **Move On**: After correction, continue the conversation naturally
+
+# Error Correction Examples
+- User: "I wants coffee" → You: "Great! Just remember: 'I want coffee' (not 'wants'). Can you tell me what size coffee you'd like?"
+- User: "Where is milk?" → You: "Good question! A more natural way: 'Where can I find the milk?' or 'Where is the milk located?' Now, what else do you need?"
+- User: "I need buy egg" → You: "Nice try! Better: 'I need to buy eggs' or 'I'd like to buy some eggs'. Remember: 'need to + verb' and 'eggs' (plural). What else are you looking for?"
+```
+
+### 错误纠正示例
+
+#### 场景 1：主谓一致错误
+
+**用户**：`"I wants coffee"`
+
+**AI 回复** ✅：
+```
+Great! Just remember: "I want coffee" (not "wants"). 
+Can you tell me what size coffee you'd like?
+```
+
+**纠正要点**：
+- 先鼓励（Great!）
+- 指出正确形式（I want coffee）
+- 说明错误点（not wants）
+- 继续对话（询问咖啡大小）
+
+#### 场景 2：缺少冠词
+
+**用户**：`"Where is milk?"`
+
+**AI 回复** ✅：
+```
+Good question! A more natural way: "Where can I find the milk?" 
+or "Where is the milk located?" Now, what else do you need?
+```
+
+**纠正要点**：
+- 肯定提问（Good question!）
+- 提供更自然的表达
+- 给出多个选项
+- 继续对话
+
+#### 场景 3：动词用法错误
+
+**用户**：`"I need buy egg"`
+
+**AI 回复** ✅：
+```
+Nice try! Better: "I need to buy eggs" or "I'd like to buy some eggs". 
+Remember: "need to + verb" and "eggs" (plural). What else are you looking for?
+```
+
+**纠正要点**：
+- 鼓励尝试（Nice try!）
+- 提供正确形式（need to buy）
+- 解释语法规则（need to + verb）
+- 指出名词复数（eggs）
+- 继续对话
+
+### 常见错误类型及纠正策略
+
+| 错误类型 | 用户输入 | AI 纠正方式 |
+|---------|---------|------------|
+| **主谓一致** | "I wants...", "He want..." | "Remember: I want / He wants" |
+| **冠词缺失** | "Where is milk?" | "Where can I find the milk?" |
+| **动词形式** | "I need buy..." | "I need to buy..." |
+| **名词单复数** | "one egg", "two egg" | "one egg", "two eggs" |
+| **时态错误** | "I go yesterday" | "You went yesterday (past tense)" |
+| **介词错误** | "in the bus" | "on the bus" |
+| **语序错误** | "You like what?" | "What do you like?" |
+
+### 纠正原则
+
+1. **温和友好**：使用 "Good try!", "Nice attempt!", "Great!" 开头
+2. **简洁明了**：只纠正一个主要错误，不要一次指出所有问题
+3. **提供示例**：给出完整的正确句子
+4. **解释规则**：简单说明语法规则（如 "need to + verb"）
+5. **继续对话**：纠正后自然过渡到下一个话题
+6. **不过度纠正**：不影响对话流畅度，80% 时间让用户说
+
+### 修改文件
+- `services/ai-omni-service/app/prompt_manager.py`
+  - `oral_tutor_template` 添加错误纠正指南
+  - 添加错误纠正示例
+  - 添加纠正原则说明
+
+### 部署状态
+✅ ai-omni-service 已重建并部署  
+✅ 服务健康检查通过  
+✅ 错误纠正提示词已生效

@@ -489,53 +489,175 @@ class ProficiencyScoringWorkflow:
         return result
 
     def _generate_improvement_tips(self, scores: Dict[str, int], current_task: Dict[str, Any] = None) -> List[str]:
-        """根据评分生成具体的改进建议，包含场景关键词"""
+        """根据评分生成具体的改进建议，包含句型示例和引导式教学"""
         tips = []
 
         fluency = scores.get("fluency", 5)
         vocabulary = scores.get("vocabulary", 5)
         grammar = scores.get("grammar", 5)
         task_relevance = scores.get("task_relevance", 5)
-        
+
         # 获取当前任务信息
         task_desc = current_task.get("task_description", "") if current_task else ""
         scenario_title = current_task.get("scenario_title", "") if current_task else ""
 
+        # 流利度建议
         if fluency < 5:
-            tips.append("尝试使用更多连接词（如 and, but, because, so, however）来使表达更流畅")
+            tips.append("💬 你可以尝试这样表达：'I think...' 或 'In my opinion...' 来开始你的回答，而不是只说单词")
         elif fluency < 8:
-            tips.append("试着用更长的句子表达完整的意思，例如：'I would like to...' 而不是单个单词")
+            tips.append("💬 试着用连接词把句子连起来：'I want coffee because it helps me wake up' 比 'coffee, wake up' 更流畅")
 
+        # 词汇量建议
         if vocabulary < 5:
-            # 根据场景提供具体关键词
             keywords = self._get_scene_keywords(scenario_title, task_desc)
             if keywords:
-                tips.append(f"多使用场景相关词汇：{', '.join(keywords[:5])}")
+                example_sentence = self._generate_example_sentence(keywords[:3], scenario_title)
+                tips.append(f"📚 试试用这些词：{', '.join(keywords[:3])}")
+                if example_sentence:
+                    tips.append(f"   例如：{example_sentence}")
             else:
-                tips.append("多使用场景相关的词汇，丰富表达")
+                tips.append("📚 多使用场景相关的词汇，丰富表达")
         elif vocabulary < 8:
-            tips.append("可以尝试使用一些高级词汇来提升表达，如：appreciate, consider, prefer")
+            tips.append("📚 试试更高级的表达：用 'I'd prefer' 代替 'I want'，用 'Could you' 代替 'Can you'")
 
+        # 语法建议
         if grammar < 5:
-            tips.append("注意时态一致性，主谓要一致（如：I have, He has）")
+            tips.append("✏️ 注意主谓一致：'I have' ✓ 而不是 'I has' ✗")
+            tips.append("   试试这样说：'I need...' 或 'I would like...'")
         elif grammar < 8:
-            tips.append("注意句子结构的完整性，确保有主语和谓语")
+            tips.append("✏️ 注意句子完整性：确保每个句子都有主语和动词")
+            tips.append("   例如：'Can I have a coffee?' 是完整的句子")
 
+        # 任务相关性建议
         if task_relevance < 5:
-            # 提供具体任务关键词
             keywords = self._get_scene_keywords(scenario_title, task_desc)
             if keywords:
-                tips.append(f"专注于当前任务，使用关键词：{', '.join(keywords[:5])}")
+                example_sentence = self._generate_example_sentence(keywords[:3], scenario_title)
+                tips.append(f"🎯 专注于当前任务，试试这样说：")
+                if example_sentence:
+                    tips.append(f"   例如：{example_sentence}")
             else:
-                tips.append("请专注于当前任务场景进行练习")
+                tips.append("🎯 请专注于当前任务场景进行练习")
         elif task_relevance < 8:
-            keywords = self._get_scene_keywords(scenario_title, task_desc)
-            if keywords:
-                tips.append(f"尝试更多使用任务相关的关键词：{', '.join(keywords[:3])}")
-            else:
-                tips.append("尝试更多使用任务相关的关键词")
+            task_suggestion = self._get_task_specific_suggestion(scenario_title, task_desc)
+            if task_suggestion:
+                tips.append(f"🎯 {task_suggestion}")
 
         return tips
+
+    def _generate_example_sentence(self, keywords: List[str], scenario: str) -> str:
+        """根据关键词生成示例句子"""
+        if not keywords or len(keywords) < 2:
+            return ""
+
+        # 场景相关的句型模板
+        sentence_templates = {
+            "grocery": [
+                f"Where can I find the {{0}}?",
+                f"How much is the {{0}}?",
+                f"I'm looking for {{0}} and {{1}}.",
+                f"Do you have fresh {{0}}?"
+            ],
+            "coffee": [
+                f"Can I get a {{0}}, please?",
+                f"I'd like a {{0}} with {{1}}.",
+                f"What size {{0}} do you have?",
+                f"Could I have a {{0}} to go?"
+            ],
+            "restaurant": [
+                f"Could we have a table for two?",
+                f"I'd like to order the {{0}}.",
+                f"Can I see the {{0}}?",
+                f"Could I have the bill, please?"
+            ],
+            "direction": [
+                f"Excuse me, where is the {{0}}?",
+                f"How do I get to the {{0}}?",
+                f"Is the {{0}} far from here?",
+                f"Can you show me on the map?"
+            ],
+            "greeting": [
+                f"Hi, my name is...",
+                f"Nice to meet you!",
+                f"How are you doing today?",
+                f"Where are you from?"
+            ],
+            "shopping": [
+                f"How much does this cost?",
+                f"Do you have this in a different size?",
+                f"Can I try this on?",
+                f"Is there a discount on this?"
+            ],
+            "travel": [
+                f"I'd like to book a flight to...",
+                f"What time is my flight?",
+                f"Where is the gate?",
+                f"Can I have a window seat?"
+            ],
+            "business": [
+                f"Let me introduce myself...",
+                f"What do you think about...?",
+                f"I suggest we...",
+                f"Could you clarify...?"
+            ]
+        }
+
+        # 匹配场景
+        scenario_lower = scenario.lower() if scenario else ""
+        matched_templates = []
+        for scene_key, templates in sentence_templates.items():
+            if scene_key in scenario_lower:
+                matched_templates = templates
+                break
+
+        if not matched_templates:
+            # 默认模板
+            matched_templates = [
+                f"Can I have {{0}}?",
+                f"I need {{0}} and {{1}}.",
+                f"Where is the {{0}}?"
+            ]
+
+        # 随机选择一个模板并填入关键词
+        import random
+        template = random.choice(matched_templates)
+        try:
+            sentence = template.format(*keywords)
+        except (IndexError, KeyError):
+            # 如果关键词不够，使用简单组合
+            sentence = f"Can I have {' and '.join(keywords)}?"
+
+        return sentence
+
+    def _get_task_specific_suggestion(self, scenario_title: str, task_desc: str) -> str:
+        """根据具体任务提供针对性建议"""
+        task_lower = task_desc.lower() if task_desc else ""
+
+        # 任务类型对应的建议
+        task_suggestions = {
+            "ask for": "🎯 试试用疑问句：'Could you tell me where...?' 或 'Do you know where...?'",
+            "request": "🎯 用礼貌的请求句型：'Could I have...?' 或 'I'd like to request...'",
+            "order": "🎯 点餐句型：'I'd like to order...' 或 'Can I get...?'",
+            "buy": "🎯 购物句型：'How much is...?' 或 'I'm interested in buying...'",
+            "describe": "🎯 描述句型：'It's...' 或 'There is/are...'",
+            "explain": "🎯 解释句型：'Let me explain...' 或 'The reason is...'",
+            "suggest": "🎯 建议句型：'How about...?' 或 'Why don't we...?'",
+            "agree": "🎯 同意句型：'I agree with...' 或 'That's a good point'",
+            "disagree": "🎯 不同意句型：'I see your point, but...' 或 'I'm not sure about...'",
+            "ask about": "🎯 询问句型：'Could you tell me about...?' 或 'What do you think of...?'",
+            "handle checkout": "🎯 结账句型：'Can I pay by card?' 或 'Could I have the receipt, please?'",
+            "price": "🎯 询问价格：'How much does it cost?' 或 'What's the price of...?'",
+            "quantity": "🎯 询问数量：'How many...?' 或 'Do you have more of these?'",
+            "location": "🎯 询问位置：'Where can I find...?' 或 'Which aisle is...in?'"
+        }
+
+        # 匹配任务关键词
+        for task_key, suggestion in task_suggestions.items():
+            if task_key in task_lower:
+                return suggestion
+
+        # 默认建议
+        return "🎯 专注于当前任务，用完整的句子表达你的想法"
     
     def _get_scene_keywords(self, scenario_title: str, task_desc: str) -> List[str]:
         """根据场景和任务返回具体关键词列表"""
