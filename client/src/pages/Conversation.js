@@ -358,14 +358,16 @@ function Conversation() {
   };
 
   // Handle retry current scenario
-  const handleRetryCurrentScenario = async () => {
+  const handleRetryCurrentScenario = async (options = {}) => {
+    const { keepHistory = true } = options; // Default to keeping conversation history
+    
     // Get scenario from URL params or state
     const searchParams = new URLSearchParams(window.location.search);
     const scenarioFromUrl = searchParams.get('scenario');
     const scenarioFromState = location.state?.scenario;
     const scenarioTitle = scenarioFromState || scenarioFromUrl;
 
-    console.log('Retrying scenario:', scenarioTitle);
+    console.log('Retrying scenario:', scenarioTitle, 'Keep history:', keepHistory);
 
     // Reset all tasks in the current scenario
     try {
@@ -386,20 +388,22 @@ function Conversation() {
     previousProgressRef.current = 0; // Reset progress tracking
     lastProficiencyUpdateRef.current = null; // Reset deduplication
 
-    // Clear messages
-    setMessages([
-      {
-        type: 'system',
-        content: '重新开始练习当前场景...'
-      }
-    ]);
+    // Optionally clear messages (default: keep history)
+    if (!keepHistory) {
+      setMessages([
+        {
+          type: 'system',
+          content: '重新开始练习当前场景...'
+        }
+      ]);
+    }
 
     // Refresh tasks from backend to get updated status
     try {
       const updatedGoal = await userAPI.getActiveGoal();
       if (updatedGoal && updatedGoal.goal && updatedGoal.goal.scenarios) {
         const matchedScenario = updatedGoal.goal.scenarios.find(
-          s => s.title === scenarioTitle || 
+          s => s.title === scenarioTitle ||
                (scenarioTitle && s.title.toLowerCase().includes(scenarioTitle.toLowerCase()))
         );
         if (matchedScenario) {
@@ -421,29 +425,29 @@ function Conversation() {
             clearInterval(socketRef.current.pingInterval);
             socketRef.current.pingInterval = null;
           }
-          
+
           // Stop heartbeat if the method exists
           if (socketRef.current._stopHeartbeat) {
             socketRef.current._stopHeartbeat();
           }
-          
+
           // Remove all event listeners to prevent callbacks after close
           socketRef.current.removeAllListeners();
-          
+
           // Close the connection
           socketRef.current.close();
           socketRef.current = null;
         }
-        
+
         // Clear old session from sessionStorage and localStorage
         sessionStorage.removeItem('session_id');
-        
+
         // Clear scenario-specific session from localStorage to prevent history reload on refresh
         if (scenarioTitle) {
           localStorage.removeItem(`session_${scenarioTitle}`);
           console.log('Cleared localStorage session for scenario:', scenarioTitle);
         }
-        
+
         setSessionId(null);
 
         // Create new session which will trigger AI to use first task prompt
@@ -456,6 +460,18 @@ function Conversation() {
     } catch (err) {
       console.error('Failed to reset session:', err);
     }
+
+    // Clear localStorage for this scenario to prevent old progress restoration
+    if (scenarioTitle) {
+      localStorage.removeItem(`task_progress_${scenarioTitle}`);
+      // Mark that welcome message should not be played after refresh
+      localStorage.setItem(`welcome_muted_${scenarioTitle}`, 'true');
+      console.log('Cleared localStorage progress for scenario:', scenarioTitle);
+    }
+
+    // Refresh page to ensure clean WebSocket connection (same as connection timeout retry)
+    console.log('Refreshing page to establish new connection...');
+    window.location.reload();
   };
 
   // Handle select other scenario
@@ -661,6 +677,10 @@ function Conversation() {
            const role = audioPayload.role || data.role;
            const targetResponseId = data.responseId || audioPayload.responseId; // Get ID from event
 
+           // Check if welcome message is muted (after retry)
+           const currentScenario = new URLSearchParams(window.location.search).get('scenario');
+           const welcomeMuted = currentScenario ? localStorage.getItem(`welcome_muted_${currentScenario}`) === 'true' : false;
+
            if (role === 'assistant') {
                setMessages(prev => {
                    const newMessages = [...prev];
@@ -670,7 +690,13 @@ function Conversation() {
                        const index = newMessages.findIndex(m => m.type === 'ai' && m.responseId === targetResponseId);
                        if (index !== -1) {
                            console.log(`[AudioURL] Attached to message ${index} via ID ${targetResponseId}`);
-                           newMessages[index] = { ...newMessages[index], audioUrl: url, audioPlayed: false };
+                           // If welcome is muted and this is the first AI message, don't auto-play
+                           const isFirstAIMessage = index === 0 || (index === 1 && newMessages[0]?.type === 'system');
+                           newMessages[index] = { 
+                               ...newMessages[index], 
+                               audioUrl: url, 
+                               audioPlayed: welcomeMuted && isFirstAIMessage ? true : false 
+                           };
                            return newMessages;
                        }
                    }
@@ -679,7 +705,12 @@ function Conversation() {
                    for (let i = newMessages.length - 1; i >= 0; i--) {
                        if (newMessages[i].type === 'ai' && !newMessages[i].audioUrl) {
                            console.log(`[AudioURL] Fallback attachment to message ${i}`);
-                           newMessages[i] = { ...newMessages[i], audioUrl: url, audioPlayed: false };
+                           const isFirstAIMessage = i === 0 || (i === 1 && newMessages[0]?.type === 'system');
+                           newMessages[i] = { 
+                               ...newMessages[i], 
+                               audioUrl: url, 
+                               audioPlayed: welcomeMuted && isFirstAIMessage ? true : false 
+                           };
                            break;
                        }
                    }
@@ -1093,14 +1124,20 @@ function Conversation() {
 
       // Send session_start handshake
       const searchParams = new URLSearchParams(window.location.search);
+      const scenario = searchParams.get('scenario');
+      
+      // Check if welcome message should be muted (after retry)
+      const welcomeMuted = scenario ? localStorage.getItem(`welcome_muted_${scenario}`) === 'true' : false;
+      
       const payload = {
           type: 'session_start',
           userId: user.id,
           sessionId: sessionId,
           token: token,
-          scenario: searchParams.get('scenario'),
+          scenario: scenario,
           topic: searchParams.get('topic'),
           isRestoration: true,
+          welcomeMuted: welcomeMuted,  // Flag to suppress welcome message
           clientInfo: {
             optimized: true,
             version: '2.0',
@@ -1694,25 +1731,41 @@ function Conversation() {
       </main>
 
       {/* Footer / Controls */}
-      <footer className="pb-6 pt-4 px-4 bg-white dark:bg-slate-900 border-t border-slate-100 dark:border-slate-800 shrink-0 shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.05)]">
-        <div className="flex flex-col items-center gap-2">
-            <RealTimeRecorder
-              onAudioData={handleAudioData}
-              isConnected={isConnected}
-              onStart={handleRecordingStart}
-              onStop={handleRecordingStop}
-              onCancel={handleRecordingCancel}
-              enableCompression={true}
-              enableMetrics={true}
-            />
-            
+      <footer className="pb-4 pt-3 px-4 bg-white dark:bg-slate-900 border-t border-slate-100 dark:border-slate-800 shrink-0 shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.05)]">
+        <div className="flex flex-col items-center gap-3">
+            {/* Main Controls: Recorder + Restart Button */}
+            <div className="flex items-center gap-3 w-full max-w-md">
+                <div className="flex-1">
+                    <RealTimeRecorder
+                      onAudioData={handleAudioData}
+                      isConnected={isConnected}
+                      onStart={handleRecordingStart}
+                      onStop={handleRecordingStop}
+                      onCancel={handleRecordingCancel}
+                      enableCompression={true}
+                      enableMetrics={true}
+                    />
+                </div>
+                
+                {/* Restart Practice Button - Icon only */}
+                {(tasks.length > 0 || location.state?.scenario || new URLSearchParams(window.location.search).get('scenario')) && (
+                    <button
+                      onClick={() => handleRetryCurrentScenario({ keepHistory: true })}
+                      className="flex-shrink-0 w-12 h-12 bg-amber-100 dark:bg-amber-900/30 hover:bg-amber-200 dark:hover:bg-amber-900/50 text-amber-700 dark:text-amber-300 rounded-xl flex items-center justify-center transition border border-amber-200 dark:border-amber-700"
+                      title="重新练习"
+                    >
+                      <span className="material-symbols-outlined">replay</span>
+                    </button>
+                )}
+            </div>
+
             {/* WebSocket Error Display with Retry Button */}
             {webSocketError && (
                 <div className="flex items-center gap-3 w-full max-w-md">
                     <p className="text-xs text-red-500 bg-red-50 dark:bg-red-900/20 px-3 py-1.5 rounded-full flex-1">
                         {webSocketError}
                     </p>
-                    
+
                     {/* Retry Button - show when connection fails or max attempts reached */}
                     <button
                         onClick={handleManualRetry}
@@ -1790,7 +1843,7 @@ function Conversation() {
                 )}
                 
                 <button
-                  onClick={handleRetryCurrentScenario}
+                  onClick={() => handleRetryCurrentScenario({ keepHistory: true })}
                   className="w-full py-3 bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-300 rounded-xl font-medium flex items-center justify-center gap-2 hover:bg-amber-200 dark:hover:bg-amber-900/50 transition"
                 >
                   <span className="material-symbols-outlined">replay</span>

@@ -317,17 +317,17 @@ const RealTimeRecorder = forwardRef(({
           </button>
         </div>
       ) : (
-        // Default microphone button
+        // Default microphone button - compact size matching avatar
         <button
           onClick={startRecording}
           disabled={!isConnected}
-          className={`relative flex items-center justify-center w-20 h-20 rounded-full font-medium transition-all shadow-lg shadow-primary/40
+          className={`relative flex items-center justify-center w-8 h-8 rounded-full font-medium transition-all shadow-lg shadow-primary/40
             ${isConnected
               ? 'bg-primary hover:shadow-xl hover:scale-105'
               : 'bg-slate-400 cursor-not-allowed opacity-50'
             } disabled:opacity-50 disabled:cursor-not-allowed`}
         >
-          <span className="material-symbols-outlined text-white text-3xl">
+          <span className="material-symbols-outlined text-white text-sm">
             {!isConnected ? 'signal_wifi_off' : 'mic'}
           </span>
         </button>

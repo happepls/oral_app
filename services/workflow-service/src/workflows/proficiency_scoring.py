@@ -23,18 +23,6 @@ class ProficiencyScoringWorkflow:
     - 累计 +3 分时推送任务完成标记
     """
 
-    # 场景关键词映射表
-    SCENE_KEYWORDS = {
-        "coffee": ["coffee", "drink", "order", "menu", "espresso", "latte", "cappuccino", "milk", "sugar", "cup", "barista"],
-        "grocery": ["grocery", "shopping", "food", "vegetable", "fruit", "price", "checkout", "cart", "item", "buy"],
-        "direction": ["direction", "location", "street", "road", "turn", "left", "right", "straight", "map", "address", "near"],
-        "phone": ["phone", "call", "caller", "message", "answer", "hang", "speaking", "hold", "transfer"],
-        "restaurant": ["restaurant", "table", "reservation", "menu", "order", "waiter", "bill", "tip", "food", "dish"],
-        "greeting": ["hello", "hi", "hey", "good", "morning", "afternoon", "evening", "meet", "friend", "name", "nice"],
-        "business": ["meeting", "project", "team", "client", "deadline", "report", "presentation", "schedule", "discuss"],
-        "travel": ["travel", "flight", "hotel", "ticket", "airport", "booking", "destination", "trip", "vacation"]
-    }
-
     def __init__(self):
         self.scoring_criteria = {
             "fluency": self._score_fluency,
@@ -42,6 +30,7 @@ class ProficiencyScoringWorkflow:
             "grammar": self._score_grammar,
             "task_relevance": self._score_task_relevance
         }
+        self._keyword_cache = {}  # 缓存已生成的场景关键词
 
     async def analyze_conversation_and_update_score(
         self,
@@ -281,17 +270,14 @@ class ProficiencyScoringWorkflow:
             return score
 
         # 获取任务描述和场景标题
-        task_desc = current_task.get("task_description", "").lower()
-        scenario_title = current_task.get("scenario_title", "").lower()
+        task_desc = current_task.get("task_description", "")
+        scenario_title = current_task.get("scenario_title", "")
+
+        # 使用动态生成的场景关键词
+        scene_keywords = set(self._get_scene_keywords(scenario_title, task_desc))
 
         # 提取任务关键词
-        task_keywords = set(re.findall(r'\b[a-zA-Z]{3,}\b', task_desc))
-
-        # 提取场景关键词
-        scene_keywords = set()
-        for key, words in self.SCENE_KEYWORDS.items():
-            if key in scenario_title or any(w in scenario_title for w in words):
-                scene_keywords.update(words)
+        task_keywords = set(re.findall(r'\b[a-zA-Z]{3,}\b', task_desc.lower()))
 
         # 获取用户对话内容
         user_content = " ".join(
@@ -534,7 +520,7 @@ class ProficiencyScoringWorkflow:
             # 检查用户输入是否已经很好（完整句子 + 有连接词）
             if user_inputs:
                 good_sentences = [
-                    u for u in user_inputs 
+                    u for u in user_inputs
                     if len(u.split()) >= 5 and re.search(r'\b(and|but|because|so|however)\b', u.lower())
                 ]
                 # 如果用户已经能说出好的句子，不给建议或给更高级的建议
@@ -542,10 +528,13 @@ class ProficiencyScoringWorkflow:
                     tips.append("💬 表达很流畅！继续保持")
                 else:
                     tips.append("💬 试着用连接词把句子连起来，让表达更流畅")
-                    tips.append(f"   例如：'I want coffee because it helps me wake up'")
+                    # 动态生成场景相关的示例
+                    if keywords and len(keywords) >= 2:
+                        example = self._generate_connector_example(keywords[:2], scenario_title)
+                        if example:
+                            tips.append(f"   例如：'{example}'")
             else:
                 tips.append("💬 试着用连接词把句子连起来，让表达更流畅")
-                tips.append(f"   例如：'I want coffee because it helps me wake up' 比 'coffee, wake up' 更自然")
 
         # 词汇量建议 - 结合用户实际使用的词汇
         if vocabulary < 5:
@@ -577,10 +566,65 @@ class ProficiencyScoringWorkflow:
                 if example_sentence:
                     tips.append(f"   例如：{example_sentence}")
         elif vocabulary < 8:
-            tips.append("📚 试试更高级的表达方式")
-            tips.append(f"   • 用 'I'd prefer' 代替 'I want'")
-            tips.append(f"   • 用 'Could you' 代替 'Can you'")
-            tips.append(f"   • 用 'I'm looking for' 代替 'Where is'")
+            # 给出场景相关的高级表达建议，而不是通用建议
+            keywords = self._get_scene_keywords(scenario_title, task_desc)
+            if keywords:
+                # 根据场景给出具体的高级表达建议
+                if '问候' in scenario_title.lower() or 'greeting' in scenario_title.lower() or 'greet' in scenario_title.lower():
+                    tips.append("📚 试试更自然的问候方式")
+                    tips.append(f"   • 用 'How's it going?' 代替 'How are you?'")
+                    tips.append(f"   • 用 'Great to meet you!' 代替 'Nice to meet you'")
+                    tips.append(f"   • 用 'What brings you here?' 开始对话")
+                elif '电话' in scenario_title.lower() or 'phone' in scenario_title.lower() or 'call' in scenario_title.lower():
+                    tips.append("📚 试试更专业的电话用语")
+                    tips.append(f"   • 用 'May I ask who's calling?' 代替 'Who is this?'")
+                    tips.append(f"   • 用 'Hold on, please' 代替 'Wait'")
+                    tips.append(f"   • 用 'I'll put you through' 代替 'I'll transfer'")
+                elif '咖啡' in scenario_title.lower() or 'coffee' in scenario_title.lower():
+                    tips.append("📚 试试更礼貌的点单方式")
+                    tips.append(f"   • 用 'Could I get...' 代替 'I want...'")
+                    tips.append(f"   • 用 'I'd like...' 代替 'Give me...'")
+                    tips.append(f"   • 用 'For here or to go?' 询问用餐方式")
+                elif '餐厅' in scenario_title.lower() or 'restaurant' in scenario_title.lower():
+                    tips.append("📚 试试更优雅的餐厅用语")
+                    tips.append(f"   • 用 'I'd like to order...' 代替 'I want...'")
+                    tips.append(f"   • 用 'Could we have...' 代替 'Give us...'")
+                    tips.append(f"   • 用 'This is delicious!' 表达赞美")
+                elif '购物' in scenario_title.lower() or 'shopping' in scenario_title.lower():
+                    tips.append("📚 试试更地道的购物表达")
+                    tips.append(f"   • 用 'I'm just looking' 代替 'I don't need help'")
+                    tips.append(f"   • 用 'Do you have this in...?' 询问尺寸/颜色")
+                    tips.append(f"   • 用 'Is this on sale?' 询问折扣")
+                elif '方向' in scenario_title.lower() or 'direction' in scenario_title.lower():
+                    tips.append("📚 试试更礼貌的问路方式")
+                    tips.append(f"   • 用 'Excuse me, could you tell me...' 开始问路")
+                    tips.append(f"   • 用 'Is it far from here?' 询问距离")
+                    tips.append(f"   • 用 'Can you show me on the map?' 请求帮助")
+                elif '旅行' in scenario_title.lower() or 'travel' in scenario_title.lower():
+                    tips.append("📚 试试更流畅的旅行表达")
+                    tips.append(f"   • 用 'I'd like to book...' 代替 'I want...'")
+                    tips.append(f"   • 用 'What time is my flight?' 询问时间")
+                    tips.append(f"   • 用 'Is breakfast included?' 询问服务")
+                elif '商务' in scenario_title.lower() or 'business' in scenario_title.lower():
+                    tips.append("📚 试试更专业的商务表达")
+                    tips.append(f"   • 用 'Let me introduce myself' 开始介绍")
+                    tips.append(f"   • 用 'What do you think about...?' 征求意见")
+                    tips.append(f"   • 用 'I suggest we...' 提出建议")
+                elif '天气' in scenario_title.lower() or 'weather' in scenario_title.lower():
+                    tips.append("📚 试试更生动的天气描述")
+                    tips.append(f"   • 用 'It's pouring' 代替 'It's raining hard'")
+                    tips.append(f"   • 用 'It's a beautiful day' 代替 'It's sunny'")
+                    tips.append(f"   • 用 'It's chilly today' 代替 'It's cold'")
+                else:
+                    # 通用场景 - 给出与场景相关的高级表达
+                    tips.append("📚 试试更高级的表达方式")
+                    tips.append(f"   • 用 'I'd prefer' 代替 'I want'")
+                    tips.append(f"   • 用 'Could you' 代替 'Can you'")
+                    tips.append(f"   • 用完整句子表达想法")
+            else:
+                tips.append("📚 试试更高级的表达方式")
+                tips.append(f"   • 用 'I'd prefer' 代替 'I want'")
+                tips.append(f"   • 用 'Could you' 代替 'Can you'")
 
         # 语法建议 - 根据实际错误生成
         if grammar < 5:
@@ -592,19 +636,34 @@ class ProficiencyScoringWorkflow:
                 if common_errors.get('article'):
                     tips.append("✏️ 记得加冠词 'the' 或 'a'")
                     tips.append(f"   ❌ 你说：'{common_errors['article']}'")
-                    tips.append(f"   ✓ 应该说：'Where is the milk?'")
+                    # 动态生成场景相关示例
+                    if keywords:
+                        kw = keywords[0] if keywords else "item"
+                        tips.append(f"   ✓ 应该说：'Where is the {kw}?'")
                 if common_errors.get('plural'):
                     tips.append("✏️ 注意名词复数")
                     tips.append(f"   ❌ 你说：'{common_errors['plural']}'")
-                    tips.append(f"   ✓ 应该说：'I need eggs' (不是 egg)")
+                    # 动态生成场景相关示例
+                    if keywords:
+                        kw = keywords[0] if keywords else "item"
+                        tips.append(f"   ✓ 应该说：'I need {kw}s'")
             else:
                 tips.append("✏️ 注意基本语法规则")
                 tips.append(f"   • 主谓一致：'I have' ✓ 不是 'I has' ✗")
-                tips.append(f"   • 试试这样说：'I need...' 或 'I would like...'")
+                # 动态生成场景相关示例
+                if keywords and len(keywords) >= 2:
+                    tips.append(f"   • 试试这样说：'I need {keywords[0]}...' 或 'I would like {keywords[1]}...'")
+                else:
+                    tips.append(f"   • 试试这样说：'I need...' 或 'I would like...'")
         elif grammar < 8:
             tips.append("✏️ 注意句子完整性")
             tips.append(f"   确保每个句子都有主语和动词")
-            tips.append(f"   例如：'Can I have a coffee?' 是完整的问句")
+            # 动态生成场景相关示例
+            if keywords:
+                kw = keywords[0] if keywords else "something"
+                tips.append(f"   例如：'Can I have {kw}?' 是完整的问句")
+            else:
+                tips.append(f"   例如：使用完整句子，不要只说单词")
 
         # 任务相关性建议 - 结合用户实际话题
         if task_relevance < 5:
@@ -681,72 +740,69 @@ class ProficiencyScoringWorkflow:
         if not keywords or len(keywords) < 2:
             return ""
 
-        # 场景相关的句型模板
+        # 场景相关的句型模板（支持中英文场景名）
         sentence_templates = {
-            "grocery": [
-                f"Where can I find the {{0}}?",
-                f"How much is the {{0}}?",
-                f"I'm looking for {{0}} and {{1}}.",
-                f"Do you have fresh {{0}}?"
-            ],
-            "coffee": [
-                f"Can I get a {{0}}, please?",
-                f"I'd like a {{0}} with {{1}}.",
-                f"What size {{0}} do you have?",
-                f"Could I have a {{0}} to go?"
-            ],
-            "restaurant": [
-                f"Could we have a table for two?",
-                f"I'd like to order the {{0}}.",
-                f"Can I see the {{0}}?",
-                f"Could I have the bill, please?"
-            ],
-            "direction": [
-                f"Excuse me, where is the {{0}}?",
-                f"How do I get to the {{0}}?",
-                f"Is the {{0}} far from here?",
-                f"Can you show me on the map?"
-            ],
-            "greeting": [
-                f"Hi, my name is...",
-                f"Nice to meet you!",
-                f"How are you doing today?",
-                f"Where are you from?"
-            ],
-            "shopping": [
-                f"How much does this cost?",
-                f"Do you have this in a different size?",
-                f"Can I try this on?",
-                f"Is there a discount on this?"
-            ],
-            "travel": [
-                f"I'd like to book a flight to...",
-                f"What time is my flight?",
-                f"Where is the gate?",
-                f"Can I have a window seat?"
-            ],
-            "business": [
-                f"Let me introduce myself...",
-                f"What do you think about...?",
-                f"I suggest we...",
-                f"Could you clarify...?"
-            ]
+            # 中文场景名
+            "问候": ["Hi, my name is...", "Nice to meet you!", "How are you doing today?", "Where are you from?", "Let me introduce myself."],
+            "日常问候": ["Hi, my name is...", "Nice to meet you!", "How are you doing today?", "Where are you from?", "Let me introduce myself."],
+            "电话": ["This is...", "May I ask who's calling?", "Hold on, please.", "Can I take a message?", "I'll put you through."],
+            "通话": ["This is...", "May I ask who's calling?", "Hold on, please.", "Can I take a message?", "I'll put you through."],
+            "咖啡": ["Can I get a {{0}}, please?", "I'd like a {{0}} with {{1}}.", "What size {{0}} do you have?", "Could I have a {{0}} to go?"],
+            "餐厅": ["Could we have a table for two?", "I'd like to order the {{0}}.", "Can I see the menu?", "Could I have the bill, please?"],
+            "购物": ["How much does this cost?", "Do you have this in a different size?", "Can I try this on?", "Is there a discount on this?"],
+            "方向": ["Excuse me, where is the {{0}}?", "How do I get to the {{0}}?", "Is the {{0}} far from here?", "Can you show me on the map?"],
+            "旅行": ["I'd like to book a flight to...", "What time is my flight?", "Where is the gate?", "Can I have a window seat?"],
+            "商务": ["Let me introduce myself...", "What do you think about...?", "I suggest we...", "Could you clarify...?"],
+            "天气": ["It's a beautiful day today.", "Looks like it might rain.", "How's the weather in your city?", "It's very hot/cold today."],
+            # 英文场景名
+            "greeting": ["Hi, my name is...", "Nice to meet you!", "How are you doing today?", "Where are you from?", "Let me introduce myself."],
+            "phone": ["This is...", "May I ask who's calling?", "Hold on, please.", "Can I take a message?", "I'll put you through."],
+            "coffee": ["Can I get a {{0}}, please?", "I'd like a {{0}} with {{1}}.", "What size {{0}} do you have?", "Could I have a {{0}} to go?"],
+            "restaurant": ["Could we have a table for two?", "I'd like to order the {{0}}.", "Can I see the {{0}}?", "Could I have the bill, please?"],
+            "shopping": ["How much does this cost?", "Do you have this in a different size?", "Can I try this on?", "Is there a discount on this?"],
+            "direction": ["Excuse me, where is the {{0}}?", "How do I get to the {{0}}?", "Is the {{0}} far from here?", "Can you show me on the map?"],
+            "travel": ["I'd like to book a flight to...", "What time is my flight?", "Where is the gate?", "Can I have a window seat?"],
+            "business": ["Let me introduce myself...", "What do you think about...?", "I suggest we...", "Could you clarify...?"],
+            "weather": ["It's a beautiful day today.", "Looks like it might rain.", "How's the weather in your city?", "It's very hot/cold today."]
         }
 
-        # 匹配场景
+        # 匹配场景 - 支持中英文
         scenario_lower = scenario.lower() if scenario else ""
         matched_templates = []
+        
         for scene_key, templates in sentence_templates.items():
             if scene_key in scenario_lower:
                 matched_templates = templates
                 break
+        
+        # 如果场景名包含"问候"或"greeting"，使用问候模板
+        if not matched_templates:
+            if '问候' in scenario_lower or 'greet' in scenario_lower:
+                matched_templates = sentence_templates.get('问候', [])
+            elif '电话' in scenario_lower or 'phone' in scenario_lower or 'call' in scenario_lower:
+                matched_templates = sentence_templates.get('电话', [])
+            elif '咖啡' in scenario_lower or 'coffee' in scenario_lower:
+                matched_templates = sentence_templates.get('咖啡', [])
+            elif '餐厅' in scenario_lower or 'restaurant' in scenario_lower:
+                matched_templates = sentence_templates.get('餐厅', [])
+            elif '购物' in scenario_lower or 'shopping' in scenario_lower or 'buy' in scenario_lower:
+                matched_templates = sentence_templates.get('购物', [])
+            elif '方向' in scenario_lower or 'direction' in scenario_lower or 'where' in scenario_lower:
+                matched_templates = sentence_templates.get('方向', [])
+            elif '旅行' in scenario_lower or 'travel' in scenario_lower:
+                matched_templates = sentence_templates.get('旅行', [])
+            elif '商务' in scenario_lower or 'business' in scenario_lower:
+                matched_templates = sentence_templates.get('商务', [])
+            elif '天气' in scenario_lower or 'weather' in scenario_lower:
+                matched_templates = sentence_templates.get('天气', [])
 
         if not matched_templates:
-            # 默认模板
+            # 默认模板 - 使用通用句型，避免"Where is"这种不合适的句型
             matched_templates = [
-                f"Can I have {{0}}?",
-                f"I need {{0}} and {{1}}.",
-                f"Where is the {{0}}?"
+                f"Can you tell me about {{0}}?",
+                f"I'd like to know more about {{0}} and {{1}}.",
+                f"Let's talk about {{0}}.",
+                f"What do you think of {{0}}?"
             ]
 
         # 随机选择一个模板并填入关键词
@@ -759,6 +815,60 @@ class ProficiencyScoringWorkflow:
             sentence = f"Can I have {' and '.join(keywords)}?"
 
         return sentence
+
+    def _generate_connector_example(self, keywords: List[str], scenario: str) -> str:
+        """根据关键词动态生成连接词示例句子 - 支持中英文场景名"""
+        if not keywords or len(keywords) < 2:
+            return ""
+        
+        kw1, kw2 = keywords[0], keywords[1]
+        
+        # 根据场景生成连接词示例
+        scenario_lower = scenario.lower() if scenario else ""
+        
+        # 问候场景（支持中英文）
+        if '问候' in scenario_lower or 'greeting' in scenario_lower or 'hello' in scenario_lower or 'meet' in scenario_lower:
+            return f"Hi, I'm {kw1}, and {kw2}?"
+        
+        # 电话场景（支持中英文）
+        if '电话' in scenario_lower or 'phone' in scenario_lower or 'call' in scenario_lower:
+            return f"This is {kw1}, and I'd like to {kw2}."
+        
+        # 咖啡/餐厅场景（支持中英文）
+        if '咖啡' in scenario_lower or '餐厅' in scenario_lower or 'coffee' in scenario_lower or 'restaurant' in scenario_lower or 'order' in scenario_lower:
+            return f"I'd like {kw1}, and could I also have {kw2}?"
+        
+        # 购物场景（支持中英文）
+        if '购物' in scenario_lower or 'shopping' in scenario_lower or 'buy' in scenario_lower or 'price' in scenario_lower:
+            return f"How much is {kw1}, and do you have {kw2}?"
+        
+        # 方向场景（支持中英文）
+        if '方向' in scenario_lower or 'direction' in scenario_lower or 'where' in scenario_lower:
+            return f"Where is {kw1}, and how do I get to {kw2}?"
+        
+        # 旅行场景（支持中英文）
+        if '旅行' in scenario_lower or 'travel' in scenario_lower or 'flight' in scenario_lower or 'hotel' in scenario_lower:
+            return f"I'd like to {kw1}, and I need {kw2}."
+        
+        # 商务场景（支持中英文）
+        if '商务' in scenario_lower or 'business' in scenario_lower or 'meeting' in scenario_lower:
+            return f"Let's discuss {kw1}, and I suggest {kw2}."
+        
+        # 天气场景（支持中英文）
+        if '天气' in scenario_lower or 'weather' in scenario_lower:
+            return f"The {kw1} is nice today, and I like {kw2}."
+        
+        # 通用模板 - 使用更自然的连接词
+        connectors = ['and', 'also', 'plus']
+        import random
+        connector = random.choice(connectors)
+        
+        if connector == 'and':
+            return f"I like {kw1}, and I enjoy {kw2}."
+        elif connector == 'also':
+            return f"I know {kw1}, and I also know {kw2}."
+        else:
+            return f"Let's talk about {kw1}, plus {kw2}."
 
     def _get_task_specific_suggestion(self, scenario_title: str, task_desc: str) -> str:
         """根据具体任务提供针对性建议"""
@@ -791,36 +901,118 @@ class ProficiencyScoringWorkflow:
         return "🎯 专注于当前任务，用完整的句子表达你的想法"
     
     def _get_scene_keywords(self, scenario_title: str, task_desc: str) -> List[str]:
-        """根据场景和任务返回具体关键词列表"""
+        """根据场景和任务动态生成关键词列表 - 使用 AI 生成 + 智能 fallback"""
         scenario_lower = scenario_title.lower() if scenario_title else ""
         task_lower = task_desc.lower() if task_desc else ""
-        
-        # 场景关键词映射表（扩展版）
+        combined = f"{scenario_lower} {task_lower}"
+
+        # 创建缓存键
+        cache_key = f"{scenario_lower}:{task_lower}"
+
+        # 检查缓存
+        if cache_key in self._keyword_cache:
+            return self._keyword_cache[cache_key]
+
+        # 场景关键词映射（作为 AI 调用失败的 fallback）- 支持中文场景名匹配
         scene_keywords_map = {
-            "grocery": ["vegetable", "fruit", "price", "checkout", "cart", "item", "location", "aisle", "organic", "fresh"],
-            "coffee": ["coffee", "drink", "order", "menu", "espresso", "latte", "cappuccino", "milk", "sugar", "size"],
-            "restaurant": ["restaurant", "table", "reservation", "menu", "order", "waiter", "bill", "tip", "food", "dish"],
-            "direction": ["direction", "location", "street", "road", "turn", "left", "right", "straight", "map", "near"],
-            "phone": ["phone", "call", "caller", "message", "answer", "hang", "speaking", "hold", "transfer"],
-            "greeting": ["hello", "hi", "hey", "good", "morning", "afternoon", "meet", "friend", "name", "nice"],
-            "business": ["meeting", "project", "team", "client", "deadline", "report", "presentation", "schedule"],
-            "travel": ["travel", "flight", "hotel", "ticket", "airport", "booking", "destination", "trip"],
-            "shopping": ["buy", "price", "cost", "discount", "size", "color", "try", "pay", "receipt"],
-            "weather": ["weather", "sunny", "rainy", "cloudy", "temperature", "hot", "cold", "windy"]
+            # 中文场景名
+            "问候": ["hello", "hi", "nice to meet you", "my name is", "how are you", "where are you from", "pleased to meet you", "let me introduce", "good morning", "good afternoon"],
+            "日常问候": ["hello", "hi", "nice to meet you", "my name is", "how are you", "where are you from", "pleased to meet you", "let me introduce", "good morning", "good afternoon"],
+            "电话": ["phone", "call", "calling", "speaking", "hold on", "one moment", "may I ask", "who's calling", "call back", "leave a message"],
+            "通话": ["phone", "call", "calling", "speaking", "hold on", "one moment", "may I ask", "who's calling", "call back", "leave a message"],
+            "咖啡": ["coffee", "latte", "cappuccino", "espresso", "order", "menu", "size", "milk", "sugar", "hot", "ice", "to go"],
+            "餐厅": ["restaurant", "table", "reservation", "menu", "order", "bill", "tip", "food", "dish", "delicious", "hungry"],
+            "购物": ["shopping", "buy", "price", "cost", "discount", "size", "color", "try on", "pay", "receipt"],
+            "方向": ["direction", "where is", "how to get", "street", "road", "turn left", "turn right", "straight", "map", "near"],
+            "旅行": ["travel", "flight", "hotel", "ticket", "airport", "booking", "destination", "trip", "passport", "visa"],
+            "商务": ["business", "meeting", "project", "team", "client", "deadline", "report", "presentation", "schedule"],
+            "天气": ["weather", "sunny", "rainy", "cloudy", "temperature", "hot", "cold", "windy", "forecast"],
+            # 英文场景名
+            "greeting": ["hello", "hi", "nice to meet you", "my name is", "how are you", "where are you from", "pleased to meet you", "let me introduce", "good morning", "good afternoon"],
+            "phone": ["phone", "call", "calling", "speaking", "hold on", "one moment", "may I ask", "who's calling", "call back", "leave a message"],
+            "coffee": ["coffee", "latte", "cappuccino", "espresso", "order", "menu", "size", "milk", "sugar", "hot", "ice", "to go"],
+            "restaurant": ["restaurant", "table", "reservation", "menu", "order", "bill", "tip", "food", "dish", "delicious", "hungry"],
+            "shopping": ["shopping", "buy", "price", "cost", "discount", "size", "color", "try on", "pay", "receipt"],
+            "direction": ["direction", "where is", "how to get", "street", "road", "turn left", "turn right", "straight", "map", "near"],
+            "travel": ["travel", "flight", "hotel", "ticket", "airport", "booking", "destination", "trip", "passport", "visa"],
+            "business": ["business", "meeting", "project", "team", "client", "deadline", "report", "presentation", "schedule"],
+            "weather": ["weather", "sunny", "rainy", "cloudy", "temperature", "hot", "cold", "windy", "forecast"],
         }
-        
-        # 匹配场景
+
+        # 尝试匹配场景关键词 - 支持部分匹配
         matched_keywords = []
         for scene_key, keywords in scene_keywords_map.items():
-            if scene_key in scenario_lower or scene_key in task_lower:
+            if scene_key in combined or combined in scene_key:
                 matched_keywords.extend(keywords)
         
-        # 如果找到关键词，返回前 8 个
+        # 如果匹配到关键词，返回去重后的结果
         if matched_keywords:
-            return list(dict.fromkeys(matched_keywords))[:8]  # 去重
+            unique_keywords = list(dict.fromkeys(matched_keywords))
+            self._keyword_cache[cache_key] = unique_keywords[:15]
+            return unique_keywords[:15]
+
+        # 尝试 AI 动态生成
+        try:
+            import httpx
+            import os
+
+            prompt = f"""You are an English language teaching expert. For the following speaking practice scenario and task, generate 10-15 essential English keywords/phrases.
+
+Scenario: {scenario_title or "General Conversation"}
+Task: {task_desc or "Practice speaking English"}
+
+Return ONLY a JSON array: ["keyword1", "keyword2", ...]"""
+
+            api_key = os.getenv("QWEN3_OMNI_API_KEY")
+            if api_key:
+                headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
+                payload = {
+                    "model": "qwen-turbo",
+                    "input": {"messages": [{"role": "user", "content": prompt}]}
+                }
+
+                response = httpx.post(
+                    "https://dashscope.aliyuncs.com/api/v1/services/aigc/text-generation/generation",
+                    headers=headers, json=payload, timeout=30.0
+                )
+
+                if response.status_code == 200:
+                    result = response.json()
+                    content = result.get("output", {}).get("choices", [{}])[0].get("message", {}).get("content", "[]")
+                    import json
+                    json_match = re.search(r'\[.*\]', content, re.DOTALL)
+                    if json_match:
+                        keywords = json.loads(json_match.group())
+                        keywords = [kw.strip().lower() for kw in keywords if isinstance(kw, str) and len(kw) > 1]
+                        if keywords:
+                            self._keyword_cache[cache_key] = keywords[:15]
+                            return keywords[:15]
+        except Exception as e:
+            pass  # AI 调用失败，使用 fallback
+
+        # Fallback: 从文本提取关键词
+        return self._extract_keywords_from_text(f"{scenario_title} {task_desc}")
+    
+    def _extract_keywords_from_text(self, text: str) -> List[str]:
+        """从文本中提取关键词作为后备方案"""
+        if not text:
+            return ["practice", "conversation", "English", "speak", "learn", "express", "communicate"]
         
-        # 默认返回通用关键词
-        return ["practice", "conversation", "English", "speak", "learn"]
+        text_lower = text.lower()
+        
+        # 提取实词（名词、动词、形容词）
+        words = re.findall(r'\b[a-zA-Z]{3,}\b', text_lower)
+        stop_words = {
+            'the', 'and', 'for', 'with', 'your', 'that', 'this', 'from', 'have', 'been',
+            'would', 'there', 'about', 'which', 'their', 'could', 'where', 'when', 'what',
+            'how', 'are', 'you', 'doing', 'fine', 'thanks', 'hello', 'hi', 'hey', 'good',
+            'practice', 'scenario', 'task', 'current', 'complete', 'finish'
+        }
+        keywords = [w for w in words if w not in stop_words]
+        
+        # 去重并保持顺序
+        unique_keywords = list(dict.fromkeys(keywords))
+        return unique_keywords[:10] if unique_keywords else ["practice", "conversation", "English", "speak", "learn"]
 
     def _generate_completion_feedback(
         self,

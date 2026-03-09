@@ -378,6 +378,7 @@ class WebSocketCallback(OmniRealtimeCallback):
         self.last_user_audio_url = None
         self.last_ai_audio_url = None
         self.welcome_sent = False
+        self.welcome_muted = False  # Flag to suppress welcome message after retry
         self.session_ready = False
         self.pending_user_transcript = None  # Buffer user transcript until AI response completes
         self.ai_responding = False  # Track if AI is currently responding
@@ -552,13 +553,12 @@ class WebSocketCallback(OmniRealtimeCallback):
 
         if event_name == 'session.created':
             self.session_ready = True
-            if not self.messages and not self.welcome_sent:
+            if not self.messages and not self.welcome_sent and not getattr(self, "welcome_muted", False):
                 def delayed_trigger():
                     time.sleep(0.5)
                     self._trigger_welcome_message()
                 import threading
                 threading.Thread(target=delayed_trigger, daemon=True).start()
-
         # Always update current_response_id if we have a new one
         if rid and rid not in self.ignored_response_ids:
             self.current_response_id = rid
@@ -611,8 +611,10 @@ class WebSocketCallback(OmniRealtimeCallback):
                                         logger.info(f"Saved AI message with audio URL to history: {msg.get('content', '')[:50]}...")
                                         break
                                 
-                                # 调用工作流2（熟练度打分）- 每次AI回复后都调用
-                                if goal_id and self.messages:
+                                # 调用工作流 2（熟练度打分）- 只在用户有输入后才调用
+                                # Skip workflow call if this is the welcome message (no user input yet)
+                                user_message_count = sum(1 for m in self.messages if m.get("role") == "user")
+                                if goal_id and user_message_count > 0:
                                     workflow_result = await call_proficiency_workflow(
                                         self.user_id,
                                         goal_id,
@@ -628,12 +630,13 @@ class WebSocketCallback(OmniRealtimeCallback):
                                         total = workflow_result.get('total_proficiency', 0)
                                         task_completed = workflow_result.get('task_completed', False)
                                         task_score = workflow_result.get('task_score', 0)
+                                        improvement_tips = workflow_result.get('improvement_tips', [])
                                         
                                         # 计算进度条百分比
                                         progress = min(100, round((task_score / 9) * 100)) if task_score else 0
                                         
                                         # 发送proficiency_update到前端
-                                        if delta > 0:
+                                        if delta > 0 or improvement_tips:
                                             await self._safe_send({
                                                 "type": "proficiency_update",
                                                 "payload": {
@@ -891,6 +894,10 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query(None), ses
                 
                 if msg_type == 'session_start':
                     logger.info(f"Received session_start for user {payload.get('userId')}")
+                    # Store welcome_muted flag to suppress welcome message after retry
+                    if payload.get('welcomeMuted'):
+                        callback.welcome_muted = True
+                        logger.info('Welcome message muted for this session')
                     continue
 
                 # Handle ping from client - respond with pong
