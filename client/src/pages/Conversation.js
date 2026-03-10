@@ -192,9 +192,11 @@ function Conversation() {
   const audioQueueRef = useRef([]);
   const isInterruptedRef = useRef(false);
   const currentUserMessageIdRef = useRef(null);
+  const currentRecordingSessionIdRef = useRef(null); // Track current recording session to ignore cancelled audio
   const messagesEndRef = useRef(null);
   const socketRef = useRef(null);
   const lastProficiencyUpdateRef = useRef(null); // Track last processed proficiency update to prevent duplicates
+  const recorderRef = useRef(null); // Ref for RealTimeRecorder to control session ID
 
   // Initialize audio context
   const initAudioContext = () => {
@@ -1478,6 +1480,15 @@ function Conversation() {
     const newId = Date.now().toString();
     currentUserMessageIdRef.current = newId; // New turn ID
 
+    // Get session ID from recorder (generated in startRecording)
+    const newSessionId = recorderRef.current?.getSessionId();
+    if (!newSessionId) {
+        console.error('❌ No session ID available from recorder');
+        return;
+    }
+    currentRecordingSessionIdRef.current = newSessionId;
+    console.log('🎤 Recording started, session ID:', newSessionId);
+
     // Always stop audio playback immediately (interrupt AI response)
     stopAudioPlayback();
     isInterruptedRef.current = true; // Mark as interrupted
@@ -1504,14 +1515,37 @@ function Conversation() {
     }
   };
 
-  const handleRecordingStop = () => {
+  const handleRecordingStop = (audioBuffers) => {
     const wsReadyState = socketRef.current?.getReadyState?.() || socketRef.current?.readyState;
-    console.log('🎤 handleRecordingStop called, WebSocket state:', wsReadyState);
+    console.log('🎤 handleRecordingStop called, WebSocket state:', wsReadyState, 'audio buffers:', audioBuffers?.length);
+
+    // Clear recording session ID to prevent any late audio data from being sent
+    console.log('🛑 Recording stopped, clearing session ID:', currentRecordingSessionIdRef.current);
+    currentRecordingSessionIdRef.current = null;
+
+    // Clear session ID in recorder
+    if (recorderRef.current) {
+        recorderRef.current.clearSessionId();
+    }
+
+    // Send buffered audio data
+    if (audioBuffers && audioBuffers.length > 0) {
+        console.log('🎤 Sending buffered audio data, count:', audioBuffers.length);
+        audioBuffers.forEach(buffer => {
+            if (wsReadyState === WebSocket.OPEN) {
+                socketRef.current.send(buffer);
+            } else {
+                console.warn('⚠️ Cannot send buffered audio - WebSocket not connected, state:', wsReadyState);
+            }
+        });
+    } else {
+        console.log('🎤 No buffered audio to send');
+    }
 
     // Wait for WebSocket to be ready before sending
     if (wsReadyState !== WebSocket.OPEN) {
         console.log('⏳ WebSocket not ready (state:', wsReadyState, '), waiting for connection...');
-        
+
         // Wait for connection with timeout
         const waitForConnection = () => {
             const checkReady = () => {
@@ -1529,7 +1563,7 @@ function Conversation() {
             };
             checkReady();
         };
-        
+
         // Set timeout to give up after 10 seconds
         setTimeout(() => {
             const finalState = socketRef.current?.getReadyState?.() || socketRef.current?.readyState;
@@ -1538,7 +1572,7 @@ function Conversation() {
                 setWebSocketError('连接超时，请刷新页面重试');
             }
         }, 10000);
-        
+
         waitForConnection();
         return;
     }
@@ -1549,6 +1583,15 @@ function Conversation() {
   };
 
   const handleRecordingCancel = () => {
+    console.log('🚫 Recording cancelled, clearing session ID:', currentRecordingSessionIdRef.current);
+    currentRecordingSessionIdRef.current = null; // Clear session ID to ignore any pending audio data
+
+    // Clear session ID in recorder
+    if (recorderRef.current) {
+        // 直接调用 internalCancelRecording 方法，它会清空缓存
+        recorderRef.current.cancelRecording();
+    }
+
     const wsReadyState = socketRef.current?.getReadyState?.() || socketRef.current?.readyState;
     if (wsReadyState === WebSocket.OPEN || wsReadyState === WebSocket.CONNECTING) {
         socketRef.current.send(JSON.stringify({ type: 'user_audio_cancelled' }));
@@ -1558,18 +1601,7 @@ function Conversation() {
     isInterruptedRef.current = false;
   };
 
-  const handleAudioData = (data) => {
-    const wsReadyState = socketRef.current?.getReadyState?.() || socketRef.current?.readyState;
-    if (wsReadyState === WebSocket.OPEN) {
-        socketRef.current.send(data);
-    } else if (wsReadyState === WebSocket.CONNECTING) {
-        // Queue audio data for when connection opens
-        console.log('⏳ WebSocket connecting, queuing audio data');
-        socketRef.current.send(data);
-    } else {
-        console.warn('⚠️ Cannot send audio data - WebSocket not connected, state:', wsReadyState);
-    }
-  };
+  // Removed handleAudioData since we now cache audio and send only on stop
 
   return (
     <div className="flex flex-col h-screen max-w-lg mx-auto bg-background-light dark:bg-background-dark relative">
@@ -1737,7 +1769,7 @@ function Conversation() {
             <div className="flex items-center gap-3 w-full max-w-md">
                 <div className="flex-1">
                     <RealTimeRecorder
-                      onAudioData={handleAudioData}
+                      ref={recorderRef}
                       isConnected={isConnected}
                       onStart={handleRecordingStart}
                       onStop={handleRecordingStop}

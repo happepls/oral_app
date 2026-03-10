@@ -1,7 +1,6 @@
 import React, { useState, useRef, useEffect, useImperativeHandle, forwardRef } from 'react';
 
 const RealTimeRecorder = forwardRef(({
-  onAudioData,
   isConnected,
   onStart,
   onStop,
@@ -23,19 +22,31 @@ const RealTimeRecorder = forwardRef(({
   const recordingStartTimeRef = useRef(null);
   const timerIntervalRef = useRef(null);
   const animationFrameRef = useRef(null);
-  const onAudioDataRef = useRef(onAudioData);
+  const audioBufferRef = useRef([]); // 缓存音频数据
+  const recordingSessionIdRef = useRef(null);
 
   // Update onAudioData ref when prop changes
   useEffect(() => {
-    onAudioDataRef.current = onAudioData;
-  }, [onAudioData]);
+  }, []);
 
   useImperativeHandle(ref, () => ({
     startRecording: () => {
       if (!isRecording && !isStartingRef.current) startRecording();
     },
     stopRecording: () => {
-      if (isRecording) stopRecording();
+      if (isRecording) return getAndClearAudioBuffer();
+    },
+    cancelRecording: () => {
+      internalCancelRecording();
+    },
+    getSessionId: () => recordingSessionIdRef.current,
+    setSessionId: (sessionId) => {
+      recordingSessionIdRef.current = sessionId;
+      console.log('🎤 Session ID set:', sessionId);
+    },
+    clearSessionId: () => {
+      recordingSessionIdRef.current = null;
+      console.log('🎤 Session ID cleared');
     }
   }));
 
@@ -67,6 +78,14 @@ const RealTimeRecorder = forwardRef(({
     if (analyserRef.current) {
       analyserRef.current = null;
     }
+  };
+
+  // 获取并清空音频缓冲区
+  const getAndClearAudioBuffer = () => {
+    const buffer = [...audioBufferRef.current];
+    audioBufferRef.current = []; // 清空缓冲区
+    console.log('🎤 Retrieved and cleared audio buffer, size:', buffer.length);
+    return buffer;
   };
 
   const formatTime = (ms) => {
@@ -110,14 +129,23 @@ const RealTimeRecorder = forwardRef(({
 
   const startRecording = async () => {
     if (isStartingRef.current) return;
-    
+
     // Check if connected before starting
     if (!isConnected) {
       alert('AI 导师尚未连接，请稍后再试');
       return;
     }
-    
+
     isStartingRef.current = true;
+
+    // CRITICAL: Reset cancelled flag at the very beginning
+    isCancelledRef.current = false;
+    console.log('🎤 Recording starting, cancelled flag reset');
+
+    // Generate session ID immediately so it's available when audio data arrives
+    const sessionId = Date.now().toString(36) + Math.random().toString(36).substr(2);
+    recordingSessionIdRef.current = sessionId;
+    console.log('🎤 Session ID generated:', sessionId);
 
     try {
       // Get user media with optimized constraints
@@ -183,16 +211,17 @@ const RealTimeRecorder = forwardRef(({
           console.log('Speech detected, energy:', data.energy);
         } else if (data.type === 'speech_end') {
           console.log('Speech ended, energy:', data.energy);
-        } else if (data.type === 'audio_data' && onAudioDataRef.current) {
+        } else if (data.type === 'audio_data') {
           console.log('Audio worklet sent audio_data:', data.buffer?.length, 'bytes');
-          onAudioDataRef.current(data.buffer);
+          // 缓存音频数据而不是立即发送
+          audioBufferRef.current.push(data.buffer);
+          console.log('Audio data cached, total buffers:', audioBufferRef.current.length);
         }
       };
 
       // Start monitoring audio level for waveform visualization
       monitorAudioLevel();
 
-      isCancelledRef.current = false;
       setIsRecording(true);
       setShowControls(true);
       isStartingRef.current = false;
@@ -228,11 +257,18 @@ const RealTimeRecorder = forwardRef(({
     setAudioLevel(0);
     isStartingRef.current = false;
 
-    if (onStop) onStop();
+    // Get buffered audio data
+    const audioBuffers = getAndClearAudioBuffer();
+    
+    // Call parent handler with buffered audio
+    if (onStop) onStop(audioBuffers);
   };
 
-  const cancelRecording = () => {
+  const internalCancelRecording = () => {
     isCancelledRef.current = true;
+    recordingSessionIdRef.current = null; // Clear session ID to prevent audio data from being sent
+    audioBufferRef.current = []; // 清空音频缓冲区
+    console.log('🎤 Cancelled: cleared audio buffer');
     cleanupAudioResources();
     stopTimer();
     setIsRecording(false);
@@ -241,7 +277,7 @@ const RealTimeRecorder = forwardRef(({
     setAudioLevel(0);
     isStartingRef.current = false;
 
-    if (onCancel) onCancel();
+    // Removed onCancel callback to prevent infinite loop with parent component
   };
 
   // Generate dynamic waveform bars based on audio level
@@ -302,7 +338,7 @@ const RealTimeRecorder = forwardRef(({
 
           {/* Cancel button */}
           <button
-            onClick={cancelRecording}
+            onClick={internalCancelRecording}
             className="w-14 h-14 bg-white dark:bg-slate-700 rounded-full flex items-center justify-center shadow-lg hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors"
           >
             <span className="material-symbols-outlined text-red-500 text-2xl">delete</span>
