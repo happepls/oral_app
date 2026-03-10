@@ -874,7 +874,7 @@ function Conversation() {
                }]);
 
                // Update progress bar with safeguard against unreasonable jumps
-               // Task completion threshold: score >= 9
+               // Task completion threshold: score >= 9 (100% progress at 9 points)
                const rawProgress = Math.min(100, Math.round((taskScore / 9) * 100));
                // Prevent progress from jumping more than 34% (which would be +1 score jump)
                // If the jump is larger, it might be due to duplicate workflow calls

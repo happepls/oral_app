@@ -432,7 +432,9 @@ class ProficiencyScoringWorkflow:
         result["task_title"] = task_info.get("task_description", "Task") if task_info else "Task"
         result["scenario_title"] = task_info.get("scenario_title", "") if task_info else ""
 
-        # 检查是否达到任务完成标准 (累计 10 分且至少 3 轮交互)
+        # 检查是否达到任务完成标准 (累计 9 分且至少 3 轮交互)
+        # 注意：分数范围是 0-10，但 9 分即表示 100% 进度（与前端保持一致）
+        # 需要至少 3 次交互，确保用户有足够的练习
         if current_task_score >= 9 and task_result.get("interaction_count", 0) >= 3 and task_result.get("status") != "completed":
             # 生成任务完成的详细反馈
             completion_feedback = self._generate_completion_feedback(scores, improvement_tips)

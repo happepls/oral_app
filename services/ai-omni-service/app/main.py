@@ -163,8 +163,8 @@ async def save_single_message(session_id: str, user_id: str, role: str, content:
 
 async def execute_action_with_response(action_name: str, params: dict, token: str, user_id: str, session_id: str, context: dict = None):
     """Executes a system action (like updating goals) by calling the appropriate microservice."""
-    user_service_url = os.getenv("USER_SERVICE_URL", "http://localhost:3001")
-    
+    user_service_url = os.getenv("USER_SERVICE_URL", "http://user-service:3000")
+
     if action_name == "update_profile":
         try:
             async with httpx.AsyncClient() as client:
@@ -183,22 +183,24 @@ async def execute_action_with_response(action_name: str, params: dict, token: st
             if not goal_id:
                 profile = await get_user_context(token)
                 goal_id = profile.get('active_goal', {}).get('id')
-            
+
             if goal_id:
                 scenario_title = context.get('custom_topic', 'General Practice')
                 if " (Tasks:" in scenario_title:
                     scenario_title = scenario_title.split(" (Tasks:")[0].strip()
 
+                # Use correct parameter names: 'scenario' not 'scenarioTitle'
                 payload = {
-                    "scenarioTitle": scenario_title,
-                    "taskTitle": params.get('task'),
+                    "scenario": scenario_title,
+                    "task": params.get('task', 'NEXT_PENDING_TASK'),
                     "scoreDelta": params.get('scoreDelta', 10),
                     "feedback": params.get('feedback', '')
                 }
-                
+
+                # Use correct internal API path: /api/users/internal/users/:id/tasks/complete
                 async with httpx.AsyncClient() as client:
                     resp = await client.post(
-                        f"{user_service_url}/goals/{goal_id}/tasks/complete",
+                        f"{user_service_url}/api/users/internal/users/{user_id}/tasks/complete",
                         json=payload,
                         headers={"Authorization": f"Bearer {token}"}
                     )
@@ -209,7 +211,7 @@ async def execute_action_with_response(action_name: str, params: dict, token: st
                         logger.error(f"Failed to score task: {resp.status_code} {resp.text}")
         except Exception as e:
             logger.error(f"Failed to update task score: {e}")
-    
+
     return None
 async def call_proficiency_workflow(user_id: str, goal_id: int, task_id: int, conversation_history: list, user_context: dict, token: str, scenario: str = None):
     """
@@ -467,6 +469,13 @@ class WebSocketCallback(OmniRealtimeCallback):
                         self.user_context['custom_topic'] = f"{self.scenario} (Current task: {task_text})"
                         full_ctx['custom_topic'] = self.user_context['custom_topic']
                         full_ctx['task_description'] = task_text  # Explicitly set for prompt template
+                        
+                        # Also update active_goal.current_task for prompt_manager
+                        full_ctx['active_goal']['current_task'] = {
+                            'scenario_title': self.scenario,
+                            'task_description': task_text
+                        }
+                        
                         logger.info(f"Selected Scenario: {self.scenario}, Current Task: {task_text}")
                     else:
                         # All tasks completed
@@ -665,9 +674,10 @@ class WebSocketCallback(OmniRealtimeCallback):
 
                                             # 刷新 AI 的 session prompt 以更新任务上下文
                                             logger.info("Refreshing AI session prompt with new task context...")
-                                            
+
                                             # 先从数据库获取最新的任务状态
                                             try:
+                                                user_service_url = os.getenv("USER_SERVICE_URL", "http://user-service:3000")
                                                 async with httpx.AsyncClient() as client:
                                                     # Fetch updated goal and tasks from backend
                                                     goal_resp = await client.get(
@@ -678,7 +688,7 @@ class WebSocketCallback(OmniRealtimeCallback):
                                                     if goal_resp.status_code == 200:
                                                         goal_data = goal_resp.json().get('data', {})
                                                         active_goal = goal_data.get('goal', goal_data)
-                                                        
+
                                                         # Update user_context with fresh task data
                                                         if active_goal and active_goal.get('scenarios'):
                                                             scenarios = active_goal.get('scenarios', [])
@@ -731,54 +741,8 @@ class WebSocketCallback(OmniRealtimeCallback):
                         })
                         logger.info(f"Sent complete AI message: {self.full_response_text[:50]}...")
 
-                    # Handle task completion internally - NO separate feedback messages to frontend
-                    # The AI's verbal feedback (e.g., "Perfect!") is already in the response text
-                    text_lower = self.full_response_text.lower()
-                    if any(re.search(p, text_lower) for p in [r"\bperfect\b", r"\bexcellent\b", r"\bmission accomplished\b", r"\byou nailed it\b", r"\bcorrect!\b"]):
-                        scenario_title = self.user_context.get('custom_topic', 'Unknown').split(" (Tasks:")[0].strip()
-                        result = await execute_action_with_response("update_task_score", {"task": "NEXT_PENDING_TASK", "scoreDelta": 30, "feedback": "Task completed"}, self.token, self.user_id, self.session_id, context=self.user_context)
-                        
-                        # Send proficiency_update message to frontend
-                        if result:
-                            new_score = result.get('newScore', 0)
-                            task_completed = result.get('taskCompleted', False)
-                            task_name = result.get('taskName', '')
-                            
-                            # Calculate progress (score / 60 * 100 since 60 is completion threshold)
-                            progress = min(100, round(new_score / 60 * 100))
-                            
-                            # Determine delta based on score change
-                            delta = 1 if new_score >= 30 else 0
-                            if new_score >= 60:
-                                delta = 3
-                            elif new_score >= 30:
-                                delta = 2
-                            
-                            # Send proficiency_update
-                            await self._safe_send({
-                                "type": "proficiency_update",
-                                "payload": {
-                                    "delta": delta,
-                                    "total": progress,
-                                    "task_score": new_score,
-                                    "message": f"+{delta} proficiency points"
-                                }
-                            })
-                            
-                            # Send task_completed if applicable
-                            if task_completed:
-                                await self._safe_send({
-                                    "type": "task_completed",
-                                    "payload": {
-                                        "task_title": task_name,
-                                        "scenario_title": scenario_title,
-                                        "score": new_score,
-                                        "message": "Task completed!"
-                                    }
-                                })
-                                logger.info(f"Task completed for user {self.user_id}: {task_name}")
-                            else:
-                                logger.info(f"Task progress updated for user {self.user_id}: {new_score}/60")
+                    # Note: Task scoring is handled by proficiency_scoring workflow after each user interaction
+                    # No need to manually update score here based on AI response keywords
                     self.full_response_text = ""
                     self.ai_responding = False  # AI finished responding
                     if hasattr(self, '_sent_role_for_turn'): delattr(self, '_sent_role_for_turn')
