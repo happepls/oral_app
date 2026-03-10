@@ -9,6 +9,10 @@ import asyncpg
 import os
 import json
 import logging
+import time
+from datetime import datetime
+from typing import List, Dict, Any, Optional
+import asyncio
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -32,17 +36,50 @@ db_pool = None
 
 @app.on_event("startup")
 async def startup_db_pool():
-    """Initialize database connection pool"""
+    """Initialize database connection pool with retry logic"""
     global db_pool
-    db_pool = await asyncpg.create_pool(
-        host=os.getenv("POSTGRES_HOST", "postgres"),
-        port=os.getenv("POSTGRES_PORT", "5432"),
-        user=os.getenv("POSTGRES_USER", "user"),
-        password=os.getenv("POSTGRES_PASSWORD", "password"),
-        database=os.getenv("POSTGRES_DB", "oral_app"),
-        min_size=5,
-        max_size=20
-    )
+    max_retries = 30
+    retry_delay = 2
+    
+    for attempt in range(max_retries):
+        try:
+            logger.info(f"Attempting to connect to PostgreSQL (attempt {attempt + 1}/{max_retries})...")
+            
+            db_pool = await asyncpg.create_pool(
+                host=os.getenv("POSTGRES_HOST", "postgres"),
+                port=os.getenv("POSTGRES_PORT", "5432"),
+                user=os.getenv("POSTGRES_USER", "user"),
+                password=os.getenv("POSTGRES_PASSWORD", "password"),
+                database=os.getenv("POSTGRES_DB", "oral_app"),
+                min_size=5,
+                max_size=20,
+                command_timeout=60,
+                server_settings={
+                    'application_name': 'workflow-service',
+                    'jit': 'off'  # Disable JIT for faster startup
+                }
+            )
+            
+            # Test the connection
+            async with db_pool.acquire() as conn:
+                await conn.fetchval("SELECT 1")
+            
+            logger.info("✅ PostgreSQL connection pool established successfully")
+            break
+            
+        except Exception as e:
+            logger.warning(f"❌ PostgreSQL connection attempt {attempt + 1} failed: {str(e)}")
+            
+            if attempt < max_retries - 1:
+                logger.info(f"⏳ Retrying in {retry_delay} seconds...")
+                await asyncio.sleep(retry_delay)
+                retry_delay = min(retry_delay * 1.5, 10)  # Exponential backoff, max 10s
+            else:
+                logger.error("❌ Failed to establish PostgreSQL connection after all retries")
+                raise RuntimeError(f"Failed to connect to PostgreSQL after {max_retries} attempts: {str(e)}")
+    
+    if not db_pool:
+        raise RuntimeError("Failed to establish database connection pool")
 
 
 @app.on_event("shutdown")
@@ -50,6 +87,27 @@ async def shutdown_db_pool():
     """Close database connection pool"""
     if db_pool:
         await db_pool.close()
+
+
+# ============== Health Check ==============
+
+@app.get("/health")
+async def health_check():
+    """Health check endpoint"""
+    try:
+        if db_pool is None:
+            return {"status": "unhealthy", "detail": "Database pool not initialized"}
+        
+        # Test database connection
+        async with db_pool.acquire() as conn:
+            result = await conn.fetchval("SELECT 1")
+            if result == 1:
+                return {"status": "healthy", "database": "connected"}
+            else:
+                return {"status": "unhealthy", "detail": "Database test query failed"}
+    except Exception as e:
+        logger.error(f"Health check failed: {str(e)}")
+        return {"status": "unhealthy", "detail": str(e)}
 
 
 async def get_db_connection():

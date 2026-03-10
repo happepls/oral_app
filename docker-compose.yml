@@ -73,6 +73,12 @@ services:
       - postgres_data:/var/lib/postgresql/data
     networks:
       - oral_app_net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U user -d oral_app"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
 
   mongo:
     image: mongo:6.0
@@ -120,7 +126,8 @@ services:
       - ./.env
       - ./services/user-service/.env
     depends_on:
-      - postgres
+      postgres:
+        condition: service_healthy
     networks:
       - oral_app_net
 
