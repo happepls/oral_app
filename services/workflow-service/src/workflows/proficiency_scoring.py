@@ -108,14 +108,19 @@ class ProficiencyScoringWorkflow:
         if not recent_turns:
             return scores
 
+        # 获取目标语言（从用户上下文或任务信息中获取）
+        target_language = current_task.get("target_language", "English")
+        if not target_language:
+            target_language = "English"
+
         # Fluency: 基于回复长度、停顿次数
         scores["fluency"] = self._score_fluency(recent_turns)
 
         # Vocabulary: 基于词汇多样性
         scores["vocabulary"] = self._score_vocabulary(recent_turns)
 
-        # Grammar: 基于语法错误检测
-        scores["grammar"] = self._score_grammar(recent_turns)
+        # Grammar: 基于语法错误检测（基于目标语言）
+        scores["grammar"] = self._score_grammar(recent_turns, target_language)
 
         # Task Relevance: 基于任务/场景相关性
         scores["task_relevance"] = self._score_task_relevance(
@@ -211,13 +216,17 @@ class ProficiencyScoringWorkflow:
 
         return min(10, max(0, score))
 
-    def _score_grammar(self, turns: List[Dict[str, Any]]) -> int:
+    def _score_grammar(self, turns: List[Dict[str, Any]], target_language: str = "English") -> int:
         """
-        语法评分 (0-10)
+        语法评分 (0-10) - 基于目标语言评估
         - 时态一致 : +3
         - 主谓一致 : +3
         - 句子结构完整 : +2
         - 无严重语法错误 : +2
+        
+        Args:
+            turns: 对话轮次
+            target_language: 目标语言（默认 English）
         """
         score = 5  # 基础分
 
@@ -225,7 +234,38 @@ class ProficiencyScoringWorkflow:
         if not user_turns:
             return score
 
-        # 检测常见语法错误 (简化版)
+        # 检测用户输入是否为有效内容
+        total_content = " ".join(t.get("content", "") for t in user_turns)
+
+        # 检测无效输入（纯标点、纯语气词、无意义字符）
+        invalid_patterns = [
+            r'^[啊呀哦嗯哎哟哼哈嘿哇]+$',  # 纯语气词
+            r'^[，。！？、；：""''（）()]+$',  # 纯标点
+            r'^[\u4e00-\u9fa5]{1,4}$',  # 1-4 个中文字符（太短，无法评估）
+        ]
+
+        for pattern in invalid_patterns:
+            if re.search(pattern, total_content.strip(), re.IGNORECASE):
+                return 3  # 无效输入，给最低分
+
+        # 检测用户输入语言是否与目标语言匹配
+        # 简单策略：检查是否包含目标语言的字符特征
+        target_language_lower = target_language.lower() if target_language else "english"
+        
+        # 英文特征：包含英文字母
+        has_english = bool(re.search(r'[a-zA-Z]', total_content))
+        # 中文特征：包含中文字符
+        has_chinese = bool(re.search(r'[\u4e00-\u9fa5]', total_content))
+        
+        # 如果目标语言是英文，但用户输入全是中文，失去基础分和加分
+        if 'english' in target_language_lower and has_chinese and not has_english:
+            return 2  # 语言不匹配，给最低分
+        
+        # 如果目标语言是中文，但用户输入全是英文，失去基础分和加分
+        if ('chinese' in target_language_lower or '中文' in target_language) and has_english and not has_chinese:
+            return 2  # 语言不匹配，给最低分
+
+        # 检测常见英文语法错误
         error_patterns = [
             (r"\bi is\b", "subject-verb agreement"),
             (r"\bhe have\b", "subject-verb agreement"),
@@ -242,9 +282,17 @@ class ProficiencyScoringWorkflow:
                 if re.search(pattern, content, re.IGNORECASE):
                     error_count += 1
 
-        # 根据错误数量扣分
+        # 根据错误数量扣分/加分
         if error_count == 0:
-            score += 3
+            # 没有英文语法错误，但需要检查是否有完整的句子结构
+            has_complete_sentence = any(
+                len(t.get("content", "").split()) >= 3
+                for t in user_turns
+            )
+            if has_complete_sentence:
+                score += 3
+            else:
+                score += 1  # 句子太短，只加 1 分
         elif error_count == 1:
             score += 2
         elif error_count == 2:
@@ -364,8 +412,9 @@ class ProficiencyScoringWorkflow:
         avg_score = sum(scores.values()) / len(scores)
         task_relevance = scores.get("task_relevance", 5)
 
-        # 如果话题严重偏离，不加分并给出反馈
-        if task_relevance < 2:
+        # 如果话题偏离（task_relevance < 3），不加分并给出反馈
+        # 话题相关性是核心指标，如果用户说的内容与任务无关，即使语言表达再好也不应该加分
+        if task_relevance < 3:
             return 0, "请专注于当前任务场景练习"
 
         if avg_score >= 8:

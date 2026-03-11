@@ -295,7 +295,8 @@ async def call_proficiency_workflow(user_id: str, goal_id: int, task_id: int, co
         current_task = {
             "id": task_id,
             "task_description": task_description,
-            "scenario_title": scenario_title
+            "scenario_title": scenario_title,
+            "target_language": user_context.get('active_goal', {}).get('target_language', 'English')
         }
 
         payload = {
@@ -496,7 +497,9 @@ class WebSocketCallback(OmniRealtimeCallback):
             if self.messages:
                 history_text = "\n\n# Previous Conversation Context (READ-ONLY):\n"
                 history_text += "**CRITICAL**: This is HISTORY only. Do NOT auto-complete tasks. Wait for user to speak first.\n"
-                history_text += "**Do NOT say 'Perfect!' or 'Excellent!' until user attempts a NEW task in THIS session.**\n\n"
+                history_text += "**Do NOT say 'Perfect!' or 'Excellent!' until user attempts a NEW task in THIS session.**\n"
+                history_text += f"**CURRENT TASK**: {full_ctx.get('task_description', 'Practice conversation')} in scenario: {self.scenario}\n"
+                history_text += "**If user asks about the topic, tell them the current task clearly.**\n\n"
                 recent_msgs = self.messages[-10:]
                 for msg in recent_msgs:
                     role_label = "User" if msg['role'] == 'user' else "AI"
@@ -699,7 +702,14 @@ class WebSocketCallback(OmniRealtimeCallback):
                                                                 logger.info(f"Updated task data from backend: {len(matched_scenario.get('tasks', []))} tasks")
                                             except Exception as e:
                                                 logger.error(f"Failed to fetch updated task data: {e}")
-                                            
+
+                                            # Clear conversation history to prevent context confusion when switching tasks
+                                            # Keep only the last 2 messages for context continuity
+                                            if len(self.messages) > 2:
+                                                old_messages = self.messages[-2:]  # Keep last 2 messages
+                                                self.messages = old_messages
+                                                logger.info(f"Cleared conversation history, kept last {len(old_messages)} messages")
+
                                             # Now refresh AI session prompt with updated task data
                                             self._update_session_prompt()
                                         
@@ -852,10 +862,13 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query(None), ses
         while True:
             try:
                 message = await websocket.receive_text()
-                logger.info(f"Received message: {message}")
                 data = json.loads(message)
                 msg_type, payload = data.get('type'), data.get('payload', {})
-                
+
+                # Log messages except ping (which is too frequent)
+                if msg_type != 'ping':
+                    logger.info(f"Received message: {message[:200]}..." if len(message) > 200 else f"Received message: {message}")
+
                 if msg_type == 'session_start':
                     logger.info(f"Received session_start for user {payload.get('userId')}")
                     # Store welcome_muted flag to suppress welcome message after retry
@@ -866,7 +879,7 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query(None), ses
 
                 # Handle ping from client - respond with pong
                 if msg_type == 'ping':
-                    logger.info(f"Ping received from client (ts={payload.get('timestamp')}), sending pong")
+                    logger.debug(f"Ping received from client (ts={payload.get('timestamp')}), sending pong")
                     await websocket.send_json({
                         "type": "pong",
                         "timestamp": payload.get("timestamp", int(time.time() * 1000)),
