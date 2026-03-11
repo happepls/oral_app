@@ -599,7 +599,7 @@ class WebSocketCallback(OmniRealtimeCallback):
                         
                         # 获取goal_id和task_id用于工作流调用
                         goal_id = self.user_context.get('active_goal', {}).get('id')
-                        task_id = self.user_context.get('current_task_id')
+                        task_id = self.user_context.get('active_goal', {}).get('current_task', {}).get('id')
                         
                         async def upload_ai_task(d, r):
                             url = await self.upload_audio_to_cos(d, 'ai_audio')

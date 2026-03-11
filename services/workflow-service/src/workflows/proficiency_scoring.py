@@ -258,7 +258,7 @@ class ProficiencyScoringWorkflow:
         current_task: Dict[str, Any]
     ) -> int:
         """
-        任务相关性评分 (0-10)
+        任务相关性评分 (0-10) - 支持跨语言匹配
         - 包含任务关键词 : +4
         - 包含场景关键词 : +3
         - 偏离话题 : -3
@@ -273,13 +273,10 @@ class ProficiencyScoringWorkflow:
         task_desc = current_task.get("task_description", "")
         scenario_title = current_task.get("scenario_title", "")
 
-        # 使用动态生成的场景关键词
-        scene_keywords = set(self._get_scene_keywords(scenario_title, task_desc))
+        # 使用动态生成的场景关键词（这是主要匹配依据，支持任何语言）
+        scene_keywords = self._get_scene_keywords(scenario_title, task_desc)
 
-        # 提取任务关键词
-        task_keywords = set(re.findall(r'\b[a-zA-Z]{3,}\b', task_desc.lower()))
-
-        # 获取用户对话内容
+        # 获取用户对话内容（转为小写用于匹配）
         user_content = " ".join(
             t.get("content", "").lower()
             for t in turns
@@ -289,40 +286,70 @@ class ProficiencyScoringWorkflow:
         if not user_content:
             return score
 
-        # 检查任务关键词匹配
-        matched_task_keywords = sum(1 for kw in task_keywords if kw in user_content)
+        # 跨语言关键词匹配策略：
+        # 1. 使用场景关键词与用户对话内容进行子串匹配（不依赖特定语言）
+        # 2. 关键词可能是短语（如 "your hometown"），需要检查是否包含
+        matched_scene_keywords = sum(1 for kw in scene_keywords if kw.lower() in user_content)
 
-        # 检查场景关键词匹配
-        matched_scene_keywords = sum(1 for kw in scene_keywords if kw in user_content)
+        # 3. 从任务描述中提取关键词（支持任何语言）
+        # 尝试提取英文单词
+        task_keywords_en = set(re.findall(r'\b[a-zA-Z]{3,}\b', task_desc.lower()))
+        # 尝试提取其他语言的词（简单策略：按空格分割）
+        task_keywords_generic = set(task_desc.lower().split())
+        # 合并关键词
+        task_keywords = task_keywords_en | task_keywords_generic
+        # 过滤掉太短的词（<3 字符）和无意义词（中英文停用词）
+        stop_words = {'the', 'a', 'an', 'is', 'are', 'was', 'were', 'be', 'been', 'being',
+                      'have', 'has', 'had', 'do', 'does', 'did', 'will', 'would', 'could',
+                      'should', 'may', 'might', 'must', 'shall', 'can', 'need', 'dare',
+                      'ought', 'used', 'to', 'of', 'in', 'for', 'on', 'with', 'at', 'by',
+                      'from', 'as', 'into', 'through', 'during', 'before', 'after', 'above',
+                      'below', 'between', 'under', 'again', 'further', 'then', 'once', '的',
+                      '了', '在', '是', '我', '有', '和', '就', '不', '人', '都', '一', '一个'}
+        task_keywords = {kw for kw in task_keywords if len(kw) >= 3 and kw not in stop_words}
 
-        # 计算得分
+        # 如果没有提取到任务关键词，使用场景关键词（转为 set）
+        if not task_keywords:
+            task_keywords = set(scene_keywords) if isinstance(scene_keywords, list) else scene_keywords
+
+        # 检查任务关键词匹配（严格匹配，不支持部分匹配）
+        matched_task_keywords = sum(1 for kw in task_keywords if kw.lower() in user_content)
+        matched_scene_keywords = sum(1 for kw in scene_keywords if kw.lower() in user_content)
+
+        # 计算得分 - 严格阈值
         if matched_task_keywords >= 2:
             score += 4
         elif matched_task_keywords >= 1:
-            score += 2
-
-        if matched_scene_keywords >= 2:
             score += 3
+        elif matched_scene_keywords >= 2:
+            score += 2
         elif matched_scene_keywords >= 1:
             score += 1
 
         # 检测偏离话题（用户谈论完全不相关的内容）
+        # 1. 检测明显的无关话题关键词
         off_topic_indicators = [
             "politics", "religion", "sex", "violence", "weapon",
             "coding", "programming", "math", "physics", "chemistry",
-            "stock", "crypto", "investment"
+            "stock", "crypto", "investment",
+            # 食物相关（与问候/爱好场景无关）
+            "eat", "food", "dinner", "lunch", "breakfast", "cook", "recipe",
+            "吃", "饭", "晚餐", "午餐", "早餐", "做饭", "菜", "面", "面条", "下面"
         ]
-        # 场景相关词（应该避免的）
-        task_related = task_keywords | scene_keywords
-
-        # 如果用户说的内容和任务场景完全无关
-        if task_related and matched_task_keywords == 0 and matched_scene_keywords == 0:
-            # 检查是否有明显的无关内容
-            has_off_topic = any(word in user_content for word in off_topic_indicators)
-            if has_off_topic:
-                score = max(0, score - 5)  # 严重偏离话题
-            else:
-                score = max(0, score - 3)  # 轻度偏离话题
+        
+        # 2. 检测用户输入是否包含任务/场景关键词
+        task_related = task_keywords | (set(scene_keywords) if isinstance(scene_keywords, list) else scene_keywords)
+        has_task_keywords = any(kw.lower() in user_content for kw in task_related)
+        
+        # 3. 检测是否有明显的无关内容
+        has_off_topic = any(word in user_content for word in off_topic_indicators)
+        
+        # 4. 如果用户说的内容和任务场景完全无关，且有明显的无关话题
+        if not has_task_keywords and has_off_topic:
+            score = max(0, score - 5)  # 严重偏离话题，扣 5 分
+        elif not has_task_keywords and matched_scene_keywords == 0 and matched_task_keywords == 0:
+            # 完全没有匹配到关键词，轻度偏离话题
+            score = max(0, score - 3)  # 扣 3 分
 
         return min(10, max(0, score))
 
@@ -338,7 +365,7 @@ class ProficiencyScoringWorkflow:
         task_relevance = scores.get("task_relevance", 5)
 
         # 如果话题严重偏离，不加分并给出反馈
-        if task_relevance < 3:
+        if task_relevance < 2:
             return 0, "请专注于当前任务场景练习"
 
         if avg_score >= 8:
@@ -389,7 +416,11 @@ class ProficiencyScoringWorkflow:
             "scores": scores,
             "feedback": feedback,
             "improvement_tips": improvement_tips,
-            "message": None
+            "message": None,
+            "task_id": task_id,
+            "task_score": 0,
+            "task_title": "",
+            "scenario_title": ""
         }
 
         # 如果话题偏离，不加分
@@ -484,8 +515,8 @@ class ProficiencyScoringWorkflow:
         return result
 
     def _generate_improvement_tips(
-        self, 
-        scores: Dict[str, int], 
+        self,
+        scores: Dict[str, int],
         current_task: Dict[str, Any] = None,
         conversation_history: List[Dict[str, Any]] = None
     ) -> List[str]:
@@ -500,6 +531,9 @@ class ProficiencyScoringWorkflow:
         # 获取当前任务信息
         task_desc = current_task.get("task_description", "") if current_task else ""
         scenario_title = current_task.get("scenario_title", "") if current_task else ""
+
+        # 预加载场景关键词（供后续使用）
+        keywords = self._get_scene_keywords(scenario_title, task_desc)
 
         # 分析用户最近的输入
         user_inputs = self._extract_user_inputs(conversation_history)
@@ -540,7 +574,6 @@ class ProficiencyScoringWorkflow:
 
         # 词汇量建议 - 结合用户实际使用的词汇
         if vocabulary < 5:
-            keywords = self._get_scene_keywords(scenario_title, task_desc)
             if keywords and user_inputs:
                 # 检查用户是否使用了场景关键词
                 used_keywords = []
@@ -669,22 +702,19 @@ class ProficiencyScoringWorkflow:
 
         # 任务相关性建议 - 结合用户实际话题
         if task_relevance < 5:
-            keywords = self._get_scene_keywords(scenario_title, task_desc)
-            if keywords and user_inputs:
-                user_text = ' '.join(user_inputs).lower()
-                relevant_count = sum(1 for kw in keywords if kw.lower() in user_text)
-                
-                if relevant_count == 0:
+            # 针对具体任务生成建议，而不是通用场景关键词
+            task_examples = self._generate_task_specific_examples(task_desc, scenario_title)
+            tips.append(f"🎯 专注于当前任务：{task_desc}")
+            tips.append(f"   试试这样说：")
+            if task_examples:
+                tips.append(f"   例如：{task_examples[0]}")
+            else:
+                # Fallback to scene keywords
+                keywords = self._get_scene_keywords(scenario_title, task_desc)
+                if keywords:
                     example_sentence = self._generate_example_sentence(keywords[:3], scenario_title)
-                    tips.append(f"🎯 专注于当前任务：{task_desc}")
-                    tips.append(f"   试试这样说：")
                     if example_sentence:
                         tips.append(f"   例如：{example_sentence}")
-                else:
-                    tips.append(f"🎯 继续围绕主题练习，你已经用到了 {relevant_count} 个相关词汇")
-                    tips.append(f"   试试更多场景词汇：{', '.join(keywords[relevant_count:relevant_count+3])}")
-            else:
-                tips.append(f"🎯 专注于当前任务：{task_desc}")
         elif task_relevance < 8:
             task_suggestion = self._get_task_specific_suggestion(scenario_title, task_desc)
             if task_suggestion:
@@ -818,59 +848,99 @@ class ProficiencyScoringWorkflow:
 
         return sentence
 
+    def _generate_task_specific_examples(self, task_desc: str, scenario_title: str) -> List[str]:
+        """根据具体任务描述生成针对性例句"""
+        task_lower = task_desc.lower() if task_desc else ""
+        scenario_lower = scenario_title.lower() if scenario_title else ""
+        
+        # 任务相关的例句模板（支持中英文任务描述）
+        task_examples_map = {
+            # 中文任务 - 日常问候场景
+            "奥特曼": ["I like Ultraman because he is very strong.", "My favorite hero is Ultraman.", "I enjoy watching Ultraman shows.", "Ultraman is my childhood hero."],
+            "喜欢的": ["I like...", "My favorite... is...", "I enjoy...", "I'm interested in..."],
+            "爱好": ["My hobby is...", "I like to...", "I enjoy...", "In my free time, I..."],
+            "工作": ["I work as a...", "My job is...", "I'm responsible for...", "I work in..."],
+            "家乡": ["I'm from...", "My hometown is...", "I was born in...", "I grew up in..."],
+            "家庭": ["I have a...", "There are... people in my family.", "My family is...", "I live with..."],
+            "周末": ["On weekends, I...", "I usually... on Saturday.", "My weekend plan is...", "I like to... during the weekend."],
+            "朋友": ["My friend is...", "I like to... with my friends.", "We often...", "My best friend is..."],
+            "城市": ["My city is...", "I live in...", "The weather in my city is...", "My city is famous for..."],
+            # 英文任务
+            "hobby": ["My hobby is...", "I like to...", "I enjoy...", "In my free time, I..."],
+            "favorite": ["My favorite... is...", "I like... the most.", "I prefer...", "I'm fond of..."],
+            "work": ["I work as a...", "My job is...", "I'm responsible for...", "I work in..."],
+            "hometown": ["I'm from...", "My hometown is...", "I was born in...", "I grew up in..."],
+            "family": ["I have a...", "There are... people in my family.", "My family is...", "I live with..."],
+            "weekend": ["On weekends, I...", "I usually... on Saturday.", "My weekend plan is...", "I like to... during the weekend."],
+            "friend": ["My friend is...", "I like to... with my friends.", "We often...", "My best friend is..."],
+            "city": ["My city is...", "I live in...", "The weather in my city is...", "My city is famous for..."],
+        }
+        
+        # 匹配任务关键词
+        matched_examples = []
+        for task_key, examples in task_examples_map.items():
+            if task_key in task_lower or task_key in scenario_lower:
+                matched_examples.extend(examples)
+        
+        # 返回匹配的例句，如果没有则返回通用例句
+        if matched_examples:
+            import random
+            return random.sample(matched_examples, min(3, len(matched_examples)))
+        
+        # 默认返回通用例句
+        return ["Can you tell me more about this?", "I'd like to know your opinion.", "What do you think about this?"]
+
     def _generate_connector_example(self, keywords: List[str], scenario: str) -> str:
         """根据关键词动态生成连接词示例句子 - 支持中英文场景名"""
         if not keywords or len(keywords) < 2:
             return ""
-        
+
         kw1, kw2 = keywords[0], keywords[1]
-        
+
         # 根据场景生成连接词示例
         scenario_lower = scenario.lower() if scenario else ""
-        
-        # 问候场景（支持中英文）
+
+        # 问候场景（支持中英文）- 使用更实用的模板
         if '问候' in scenario_lower or 'greeting' in scenario_lower or 'hello' in scenario_lower or 'meet' in scenario_lower:
-            return f"Hi, I'm {kw1}, and {kw2}?"
-        
+            templates = [
+                f"Hello! I'm interested in {kw1}, and I'd love to know about {kw2}.",
+                f"Hi there! Let's talk about {kw1}, and then we can discuss {kw2}.",
+                f"Nice to meet you! I enjoy {kw1}, and how about {kw2}?",
+                f"Good morning! What do you think of {kw1}, and have you been to {kw2}?",
+            ]
+            import random
+            return random.choice(templates)
+
         # 电话场景（支持中英文）
         if '电话' in scenario_lower or 'phone' in scenario_lower or 'call' in scenario_lower:
             return f"This is {kw1}, and I'd like to {kw2}."
-        
+
         # 咖啡/餐厅场景（支持中英文）
         if '咖啡' in scenario_lower or '餐厅' in scenario_lower or 'coffee' in scenario_lower or 'restaurant' in scenario_lower or 'order' in scenario_lower:
             return f"I'd like {kw1}, and could I also have {kw2}?"
-        
+
         # 购物场景（支持中英文）
         if '购物' in scenario_lower or 'shopping' in scenario_lower or 'buy' in scenario_lower or 'price' in scenario_lower:
             return f"How much is {kw1}, and do you have {kw2}?"
-        
+
         # 方向场景（支持中英文）
         if '方向' in scenario_lower or 'direction' in scenario_lower or 'where' in scenario_lower:
             return f"Where is {kw1}, and how do I get to {kw2}?"
-        
+
         # 旅行场景（支持中英文）
         if '旅行' in scenario_lower or 'travel' in scenario_lower or 'flight' in scenario_lower or 'hotel' in scenario_lower:
             return f"I'd like to {kw1}, and I need {kw2}."
-        
+
         # 商务场景（支持中英文）
         if '商务' in scenario_lower or 'business' in scenario_lower or 'meeting' in scenario_lower:
-            return f"Let's discuss {kw1}, and I suggest {kw2}."
-        
+            return f"Let's discuss {kw1}, and then we can move on to {kw2}."
+
         # 天气场景（支持中英文）
         if '天气' in scenario_lower or 'weather' in scenario_lower:
-            return f"The {kw1} is nice today, and I like {kw2}."
-        
-        # 通用模板 - 使用更自然的连接词
-        connectors = ['and', 'also', 'plus']
-        import random
-        connector = random.choice(connectors)
-        
-        if connector == 'and':
-            return f"I like {kw1}, and I enjoy {kw2}."
-        elif connector == 'also':
-            return f"I know {kw1}, and I also know {kw2}."
-        else:
-            return f"Let's talk about {kw1}, plus {kw2}."
+            return f"The weather is {kw1}, and I hope it stays {kw2}."
+
+        # 默认：使用通用模板
+        return f"Let's talk about {kw1}, and I'd also like to mention {kw2}."
 
     def _get_task_specific_suggestion(self, scenario_title: str, task_desc: str) -> str:
         """根据具体任务提供针对性建议"""
@@ -918,8 +988,8 @@ class ProficiencyScoringWorkflow:
         # 场景关键词映射（作为 AI 调用失败的 fallback）- 支持中文场景名匹配
         scene_keywords_map = {
             # 中文场景名
-            "问候": ["hello", "hi", "nice to meet you", "my name is", "how are you", "where are you from", "pleased to meet you", "let me introduce", "good morning", "good afternoon"],
-            "日常问候": ["hello", "hi", "nice to meet you", "my name is", "how are you", "where are you from", "pleased to meet you", "let me introduce", "good morning", "good afternoon"],
+            "问候": ["your hometown", "your job", "your hobbies", "your family", "your studies", "your interests", "your weekend", "your plans", "your friends", "your city"],
+            "日常问候": ["your hometown", "your job", "your hobbies", "your family", "your studies", "your interests", "your weekend", "your plans", "your friends", "your city"],
             "电话": ["phone", "call", "calling", "speaking", "hold on", "one moment", "may I ask", "who's calling", "call back", "leave a message"],
             "通话": ["phone", "call", "calling", "speaking", "hold on", "one moment", "may I ask", "who's calling", "call back", "leave a message"],
             "咖啡": ["coffee", "latte", "cappuccino", "espresso", "order", "menu", "size", "milk", "sugar", "hot", "ice", "to go"],
@@ -930,7 +1000,7 @@ class ProficiencyScoringWorkflow:
             "商务": ["business", "meeting", "project", "team", "client", "deadline", "report", "presentation", "schedule"],
             "天气": ["weather", "sunny", "rainy", "cloudy", "temperature", "hot", "cold", "windy", "forecast"],
             # 英文场景名
-            "greeting": ["hello", "hi", "nice to meet you", "my name is", "how are you", "where are you from", "pleased to meet you", "let me introduce", "good morning", "good afternoon"],
+            "greeting": ["your hometown", "your job", "your hobbies", "your family", "your studies", "your interests", "your weekend", "your plans", "your friends", "your city"],
             "phone": ["phone", "call", "calling", "speaking", "hold on", "one moment", "may I ask", "who's calling", "call back", "leave a message"],
             "coffee": ["coffee", "latte", "cappuccino", "espresso", "order", "menu", "size", "milk", "sugar", "hot", "ice", "to go"],
             "restaurant": ["restaurant", "table", "reservation", "menu", "order", "bill", "tip", "food", "dish", "delicious", "hungry"],

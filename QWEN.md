@@ -73,6 +73,30 @@ Repository: `git@github.com:happepls/oral_app.git` (master branch)
 - **AudioUrl Persistence (Mar 2026)**: Fixed issue where AI audio URLs were lost after page refresh. Backend fix: `services/ai-omni-service/app/main.py` now saves messages in `response.audio.done` event (line ~392). Frontend fix: `client/src/pages/Conversation.js` sets `audioPlayed: true` when loading history, and useEffect condition checks `audioPlayed === false` (minified as `!1===e.audioPlayed`).
 - **Audio Playback Queue (Mar 2026)**: Fixed issue where clicking replay button caused all audio to play together. Added audio source to `audioQueueRef` queue in `playFullAudio` and `fetchAudioViaProxy` functions. `stopAudioPlayback` now iterates through queue to stop all audio sources.
 - **Docker Build Optimization**: Recommended adding `.dockerignore` in `client/` directory to exclude `build/`, `node_modules/`, `.git` - ensures Docker builds from source and reduces context size. Development override in `docker-compose.override.yml` still mounts local build for convenience.
+- **Task Completion & Transition Fix (Mar 11, 2026)**: Fixed issue where task progress showed 100% but AI prompt didn't switch to next task after completion.
+  - **Root causes identified**:
+    1. Task completion threshold mismatch: `proficiency_scoring.py` used `score >= 9` but frontend calculated progress as `taskScore / 9 * 100`, causing confusion when `interaction_count < 3`
+    2. `user_service_url` undefined error in task completion handler prevented fetching new task data
+    3. `active_goal['current_task']` not updated in `_update_session_prompt`, causing prompt_manager to use stale task info
+    4. Redundant `execute_action_with_response("update_task_score", ...)` call with wrong parameter names (`scenarioTitle` vs `scenario`)
+    5. `task_id` lookup used wrong key (`current_task_id` instead of `active_goal.current_task.id`)
+    6. `keywords` variable referenced before assignment in `_generate_improvement_tips` for non-English scenarios
+    7. Poor example sentences in `_generate_connector_example` for greeting scenarios (e.g., "Hi, I'm hello, and hi?")
+    8. `proficiency_scoring.py` workflow missing `task_id` in return result, causing frontend to show `task_id=None`
+    9. `_score_task_relevance` failed to extract keywords from Chinese task descriptions (e.g., "聊聊你喜欢的奥特曼")
+    10. Keyword matching was language-specific, failing for third-party languages (Spanish, French, etc.)
+  - **Fixes applied**:
+    1. Unified completion standard: `score >= 9 AND interaction_count >= 3` in both backend and frontend
+    2. Added `user_service_url = os.getenv("USER_SERVICE_URL", "http://user-service:3000")` in task refresh logic
+    3. Updated `full_ctx['active_goal']['current_task']` in `_update_session_prompt` for prompt_manager
+    4. Removed redundant manual scoring logic - proficiency workflow handles all score updates
+    5. Fixed task_id lookup: `self.user_context.get('active_goal', {}).get('current_task', {}).get('id')`
+    6. Pre-loaded `keywords` at start of `_generate_improvement_tips` to support non-English scenarios (e.g., "日常问候")
+    7. Improved greeting scenario templates with practical examples like "Hello! I'm interested in {kw1}, and I'd love to know about {kw2}."
+    8. Added `task_id`, `task_score`, `task_title`, `scenario_title` to proficiency workflow result dictionary
+    9. For Chinese task descriptions, use scene keywords as task keywords in `_score_task_relevance`
+    10. Implemented cross-language keyword matching using substring matching and generic word extraction (space-split) with stop-word filtering
+  - **Files modified**: `services/workflow-service/src/workflows/proficiency_scoring.py`, `services/ai-omni-service/app/main.py`, `client/src/pages/Conversation.js`
 
 ## Workflow Integration (Feb 2026)
 
