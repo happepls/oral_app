@@ -113,6 +113,32 @@ Repository: `git@github.com:happepls/oral_app.git` (master branch)
     5. Added explicit current task indicator in system prompt
     6. Changed ping/pong log level from INFO to DEBUG
   - **Files modified**: `services/workflow-service/src/workflows/proficiency_scoring.py`, `services/ai-omni-service/app/main.py`
+- **Magic Passcode "急急如律令" Support (Mar 12, 2026)**: Fixed issues with magic passcode detection and user transcript display.
+  - **Root causes identified**:
+    1. `import re` referenced before assignment: `import re` was placed inside conditional branch in `conversation.item.input_audio_transcription.completed` event handler
+    2. Chinese punctuation not matched: Regex `[,.!?.,!?]` only supported English punctuation, not Chinese `。！？`
+    3. User transcript not displayed: Normal input (non-passcode) didn't send `user_transcript` message to frontend
+    4. AI response not cancelled: Magic passcode detection didn't prevent AI from replying to the passcode
+    5. Task context not updated: After completing task via passcode, `user_context` and AI session prompt weren't refreshed
+  - **Fixes applied**:
+    1. Removed duplicate `import re` - use global import at file top
+    2. Updated regex to `[,.!?.,!?;:;:。！？；：]` supporting both Chinese and English punctuation
+    3. Added `else` branch for normal input to send `user_transcript` and save to history
+    4. Added `conversation.cancel_response()` call after detecting passcode to prevent AI reply
+    5. Fetch next task via `/api/users/goals/next-task` and update `user_context['current_task']` and `user_context['custom_topic']`
+    6. Call `_update_session_prompt()` to refresh AI context with new task
+    7. Frontend: `test_scenario_review` message only logs to console, doesn't auto-show completion modal (passcode completes single task, not entire scenario)
+  - **Files modified**: `services/ai-omni-service/app/main.py`, `client/src/pages/Conversation.js`
+  - **Testing**:
+    ```bash
+    # Test magic passcode (with Chinese punctuation)
+    # 1. Refresh page: http://localhost:3000/conversation?scenario=日常问候
+    # 2. Click microphone and say "急急如律令。"
+    # 3. Expected: User message displayed, task completed, AI no reply, console shows "🧪 [Test Scenario Review] 通关口令生效！"
+    
+    # Verify code deployment
+    docker exec oral_app_ai_omni_service grep "。！？" /app/app/main.py
+    ```
 
 ## Workflow Integration (Feb 2026)
 

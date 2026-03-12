@@ -995,9 +995,12 @@ function Conversation() {
            break;
         case 'test_scenario_review':
            // Handle test scenario review data (for debugging)
+           console.log('🧪 [Test Scenario Review] 通关口令生效！');
            console.log('🧪 Test Scenario Review:', data.payload);
            if (data.payload) {
                window.currentScenarioReview = data.payload;
+               // Don't auto-show completion modal - only complete single task, not entire scenario
+               console.log('🧪 测试数据已存储到 window.currentScenarioReview，可通过控制台查看');
            }
            break;
         case 'dashscope_response':
