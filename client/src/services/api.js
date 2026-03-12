@@ -129,6 +129,21 @@ export const userAPI = {
     return handleResponse(response);
   },
 
+  // Get scenario review for completion modal
+  async getScenarioReview(scenarioTitle) {
+    try {
+      const response = await fetch(`${API_BASE_URL}/users/goals/active`, {
+        headers: getAuthHeaders()
+      });
+      const data = await handleResponse(response);
+      // The scenario review is stored in the active_goal's scenario_review field
+      return data?.goal?.scenario_review || null;
+    } catch (error) {
+      console.error('Failed to get scenario review:', error);
+      return null;
+    }
+  },
+
   async getCheckinHistory(days = 30) {
     const response = await fetch(`${API_BASE_URL}/users/checkin/history?days=${days}`, {
       headers: getAuthHeaders()

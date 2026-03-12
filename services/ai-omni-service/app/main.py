@@ -341,6 +341,37 @@ async def call_proficiency_workflow(user_id: str, goal_id: int, task_id: int, co
                             logger.info(f"All tasks completed in scenario: {scenario_title}")
                             user_context['custom_topic'] = f"{scenario_title} (All tasks completed!)"
                             user_context['next_task_text'] = None
+                            
+                            # 场景完成，调用 scenario review 工作流生成个性化点评
+                            logger.info("Scenario completed, calling scenario review workflow...")
+                            try:
+                                review_resp = await client.post(
+                                    f"{WORKFLOW_SERVICE_URL}/api/workflows/scenario-review/generate",
+                                    json={
+                                        "user_id": user_id,
+                                        "goal_id": goal_id,
+                                        "scenario_title": scenario_title,
+                                        "completed_tasks": [],  # 由 workflow 从数据库获取
+                                        "conversation_history": conversation_history[-50:]  # 最近 50 轮对话
+                                    },
+                                    headers={"Authorization": f"Bearer {token}"}
+                                )
+                                if review_resp.status_code == 200:
+                                    review_data = review_resp.json()
+                                    logger.info(f"Scenario review generated: {review_data.get('recommendations', {})}")
+                                    # 将点评信息存储在 user_context 中供前端使用
+                                    user_context['scenario_review'] = review_data.get('data', {})
+                                    
+                                    # 发送 scenario_review 消息到前端
+                                    await websocket.send_json({
+                                        "type": "scenario_review",
+                                        "payload": review_data.get('data', {})
+                                    })
+                                    logger.info("Sent scenario_review to frontend")
+                                else:
+                                    logger.error(f"Failed to generate scenario review: {review_resp.status_code}")
+                            except Exception as e:
+                                logger.error(f"Error calling scenario review: {e}")
 
                 return result_data
             else:
@@ -722,11 +753,105 @@ class WebSocketCallback(OmniRealtimeCallback):
                     # Handle user audio transcription - send immediately to ensure correct UI order
                     user_transcript = response.get('transcript', '')
                     if user_transcript:
-                        await self._safe_send({"type": "user_transcript", "payload": {"text": user_transcript}})
-                        msg = {"role": "user", "content": user_transcript, "timestamp": datetime.utcnow().isoformat()}
-                        if self.last_user_audio_url: msg['audioUrl'] = self.last_user_audio_url; self.last_user_audio_url = None
-                        self.messages.append(msg)
-                        await save_single_message(self.session_id, self.user_id, "user", user_transcript, msg.get('audioUrl'))
+                        # Check for magic passcode "急急如律令" (support both Chinese and English punctuation)
+                        clean_text = re.sub(r'[,.!?.,!?;:;:。！？；：]', '', user_transcript).strip()
+                        if clean_text == '急急如律令':
+                            logger.info(f"Magic passcode detected in transcript! (original: '{user_transcript}', cleaned: '{clean_text}') Auto-completing current task...")
+
+                            # Send test scenario review data to frontend
+                            test_review = {
+                                "workflow": "scenario_review",
+                                "scenario_title": self.scenario or "Test Scenario",
+                                "review_report": "# Test Review\n\n## 表现\n- 流利度：优秀\n- 词汇量：良好\n- 语法：准确\n\n## 建议\n- 继续练习复杂句型\n- 增加连接词使用",
+                                "recommendations": {
+                                    "overall": "🎉 表现出色！你的口语表达流畅自然，词汇使用准确。建议继续练习更复杂的句型结构。",
+                                    "specific": [
+                                        "📚 **词汇扩展**: 尝试学习更多场景相关的高级词汇",
+                                        "💬 **表达扩展**: 尝试给出更长、更详细的回答，使用'because'、'for example'等连接词",
+                                        "🗣️ **流利度**: 继续保持当前的流利度，尝试使用更多连接词如'however'、'therefore'"
+                                    ]
+                                },
+                                "analysis": {
+                                    "summary": "🎉 表现出色！你的口语表达流畅自然，词汇使用准确。",
+                                    "total_messages": 15,
+                                    "user_messages": 8,
+                                    "vocabulary_diversity": 0.85,
+                                    "strengths": ["流利度优秀", "词汇丰富", "语法准确"],
+                                    "weaknesses": ["可以增加复杂句型"]
+                                }
+                            }
+                            await self._safe_send({
+                                "type": "test_scenario_review",
+                                "payload": test_review
+                            })
+                            logger.info("Sent test scenario review to frontend")
+
+                            # Complete current task and fetch next task
+                            goal_id = self.user_context.get('active_goal', {}).get('id')
+                            if goal_id:
+                                try:
+                                    user_service_url = os.getenv("USER_SERVICE_URL", "http://user-service:3000")
+                                    async with httpx.AsyncClient() as client:
+                                        # Complete current task
+                                        complete_resp = await client.post(
+                                            f"{user_service_url}/api/users/internal/users/{self.user_id}/tasks/complete",
+                                            json={"scenario": self.scenario, "task": "NEXT_PENDING_TASK"},
+                                            headers={"Authorization": f"Bearer {self.token}"}
+                                        )
+                                        if complete_resp.status_code == 200:
+                                            logger.info("Auto-completed current task via magic passcode")
+
+                                            # Fetch next pending task to update user_context
+                                            next_task_resp = await client.get(
+                                                f"{user_service_url}/api/users/goals/next-task?scenario_title={self.scenario}",
+                                                headers={"Authorization": f"Bearer {self.token}"}
+                                            )
+                                            if next_task_resp.status_code == 200:
+                                                next_task_data = next_task_resp.json().get('data', {})
+                                                next_task = next_task_data.get('task')
+
+                                                if next_task:
+                                                    # Update user_context with new task
+                                                    self.user_context['current_task'] = next_task
+                                                    self.user_context['custom_topic'] = f"{self.scenario} (Next task: {next_task.get('text', 'N/A')})"
+                                                    self.user_context['next_task_text'] = next_task.get('text', '')
+                                                    logger.info(f"Next task loaded via magic passcode: {next_task.get('text')}")
+
+                                                    # Refresh AI session prompt with new task context
+                                                    self._update_session_prompt()
+                                                else:
+                                                    logger.info(f"All tasks completed in scenario: {self.scenario}")
+                                                    self.user_context['custom_topic'] = f"{self.scenario} (All tasks completed!)"
+                                                    self.user_context['next_task_text'] = None
+                                            else:
+                                                logger.error(f"Failed to fetch next task: {next_task_resp.status_code}")
+                                        else:
+                                            logger.error(f"Failed to complete task: {complete_resp.status_code}")
+                                except Exception as e:
+                                    logger.error(f"Failed to auto-complete task: {e}")
+
+                            # Send user transcript to frontend (for display)
+                            await self._safe_send({"type": "user_transcript", "payload": {"text": user_transcript}})
+
+                            # Cancel AI response to prevent it from replying to the magic passcode
+                            # This must be done AFTER sending user_transcript to frontend
+                            if self.conversation and self.is_connected:
+                                try:
+                                    self.conversation.cancel_response()
+                                    logger.info("Cancelled AI response for magic passcode")
+                                except Exception as e:
+                                    logger.error(f"Failed to cancel response: {e}")
+
+                            # Don't add magic passcode to conversation history
+                            logger.info("Magic passcode skipped from conversation history")
+                            return  # Exit early
+                        else:
+                            # Normal input (not magic passcode) - send transcript and add to history
+                            await self._safe_send({"type": "user_transcript", "payload": {"text": user_transcript}})
+                            msg = {"role": "user", "content": user_transcript, "timestamp": datetime.utcnow().isoformat()}
+                            if self.last_user_audio_url: msg['audioUrl'] = self.last_user_audio_url; self.last_user_audio_url = None
+                            self.messages.append(msg)
+                            await save_single_message(self.session_id, self.user_id, "user", user_transcript, msg.get('audioUrl'))
                 elif event_name in ['response.audio_transcript.done', 'response.text.done']:
                     if not self.full_response_text:
                         transcript = response.get('transcript') or response.get('text')
@@ -880,6 +1005,58 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query(None), ses
                         callback.welcome_muted = True
                         logger.info('Welcome message muted for this session')
                     continue
+
+                # Handle user transcription - check for magic passcode "急急如律令"
+                if msg_type == 'user_transcript':
+                    text = payload.get('text', '').strip()
+                    # Remove punctuation for matching (supports Chinese and English: 。！？,.!?)
+                    clean_text = re.sub(r'[,.!?.,!?;:;:。！？；：]', '', text).strip()
+
+                    if clean_text == '急急如律令':
+                        logger.info(f"Magic passcode detected in transcript! (original: '{text}', cleaned: '{clean_text}') Auto-completing current task...")
+                        # Send test scenario review data to frontend
+                        test_review = {
+                            "workflow": "scenario_review",
+                            "scenario_title": callback.scenario or "Test Scenario",
+                            "review_report": "# Test Review\n\n## 表现\n- 流利度：优秀\n- 词汇量：良好\n- 语法：准确\n\n## 建议\n- 继续练习复杂句型\n- 增加连接词使用",
+                            "recommendations": {
+                                "overall": "🎉 表现出色！你的口语表达流畅自然，词汇使用准确。建议继续练习更复杂的句型结构。",
+                                "specific": [
+                                    "📚 **词汇扩展**: 尝试学习更多场景相关的高级词汇",
+                                    "💬 **表达扩展**: 尝试给出更长、更详细的回答，使用'because'、'for example'等连接词",
+                                    "🗣️ **流利度**: 继续保持当前的流利度，尝试使用更多连接词如'however'、'therefore'"
+                                ]
+                            },
+                            "analysis": {
+                                "summary": "🎉 表现出色！你的口语表达流畅自然，词汇使用准确。",
+                                "total_messages": 15,
+                                "user_messages": 8,
+                                "vocabulary_diversity": 0.85,
+                                "strengths": ["流利度优秀", "词汇丰富", "语法准确"],
+                                "weaknesses": ["可以增加复杂句型"]
+                            }
+                        }
+                        await websocket.send_json({
+                            "type": "test_scenario_review",
+                            "payload": test_review
+                        })
+                        logger.info("Sent test scenario review to frontend")
+                        
+                        # Also complete current task
+                        goal_id = callback.user_context.get('active_goal', {}).get('id')
+                        if goal_id:
+                            try:
+                                user_service_url = os.getenv("USER_SERVICE_URL", "http://user-service:3000")
+                                async with httpx.AsyncClient() as client:
+                                    await client.post(
+                                        f"{user_service_url}/api/users/internal/users/{callback.user_id}/tasks/complete",
+                                        json={"scenario": callback.scenario, "task": "NEXT_PENDING_TASK"},
+                                        headers={"Authorization": f"Bearer {callback.token}"}
+                                    )
+                                    logger.info("Auto-completed current task via magic passcode")
+                            except Exception as e:
+                                logger.error(f"Failed to auto-complete task: {e}")
+                    # Continue to forward transcript to frontend (don't break the flow)
 
                 # Handle ping from client - respond with pong
                 if msg_type == 'ping':

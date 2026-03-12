@@ -178,7 +178,7 @@ function Conversation() {
 
           // Check if all tasks are completed to show completion modal
           // Only show if user hasn't already viewed and closed the modal
-          if (objectTaskCount > 0 && completedCount === objectTaskCount && 
+          if (objectTaskCount > 0 && completedCount === objectTaskCount &&
               !completionCheckedRef.current && !hasViewedCompletionModalRef.current) {
               completionCheckedRef.current = true;
               setTimeout(() => setShowCompletionModal(true), 1000); // Delay to show final task completion
@@ -983,6 +983,21 @@ function Conversation() {
                        console.error('Failed to refresh tasks after completion:', err);
                    }
                }, 1500);
+           }
+           break;
+        case 'scenario_review':
+           // Handle scenario review data from backend
+           console.log('📚 Scenario Review:', data.payload);
+           if (data.payload) {
+               // Store review data for display in completion modal
+               window.currentScenarioReview = data.payload;
+           }
+           break;
+        case 'test_scenario_review':
+           // Handle test scenario review data (for debugging)
+           console.log('🧪 Test Scenario Review:', data.payload);
+           if (data.payload) {
+               window.currentScenarioReview = data.payload;
            }
            break;
         case 'dashscope_response':
