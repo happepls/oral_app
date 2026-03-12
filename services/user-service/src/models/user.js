@@ -1,5 +1,6 @@
 const db = require('./db');
 const bcrypt = require('bcryptjs');
+const fetch = require('node-fetch');
 
 const User = {};
 
@@ -21,7 +22,7 @@ User.create = async (username, email, password) => {
     );
 
     return { id: userId, username, email };
-};
+}
 
 User.findById = async (id) => {
     const { rows } = await db.query('SELECT * FROM users WHERE id = $1', [id]);
@@ -424,7 +425,7 @@ User.updateTaskScore = async (userId, scenarioTitle, taskText, scoreDelta, feedb
         newScore: newScore,
         taskName: task.task_description
     };
-};
+}
 
 
 User.findByEmail = async (email) => {
@@ -496,7 +497,7 @@ User.checkin = async (userId) => {
     );
     
     return { alreadyCheckedIn: false, checkin: checkinRes.rows[0] };
-};
+}
 
 User.getCheckinHistory = async (userId, days = 30) => {
     const res = await db.query(
@@ -545,7 +546,7 @@ User.getCheckinStats = async (userId) => {
         totalCheckins: parseInt(totalRes.rows[0].total) || 0,
         totalPointsFromCheckins: parseInt(totalRes.rows[0].total_points) || 0
     };
-};
+}
 
 User.findOrCreateFromGoogle = async ({ googleId, email, name }) => {
   try {
@@ -562,7 +563,7 @@ User.findOrCreateFromGoogle = async ({ googleId, email, name }) => {
     } else {
       // User does not exist, create them.
       // Note: In a production app, you'd wrap this in a transaction.
-      
+
       // 1. Create user in users table, using 'name' for the 'username' column
       const newUserRes = await db.query(
         'INSERT INTO users (username, email) VALUES ($1, $2) RETURNING id, username, email',
@@ -582,6 +583,175 @@ User.findOrCreateFromGoogle = async ({ googleId, email, name }) => {
     console.error('Error in findOrCreateFromGoogle:', error);
     throw error;
   }
+};
+
+// ===== Task Keywords Management =====
+
+/**
+ * Get keywords for a specific task
+ * @param {number} taskId - Task ID
+ * @returns {Promise<string[]>} - Array of keywords
+ */
+User.getTaskKeywords = async (taskId) => {
+  try {
+    const res = await db.query(
+      'SELECT keywords FROM user_task_keywords WHERE task_id = $1',
+      [taskId]
+    );
+    
+    if (res.rows.length > 0) {
+      return res.rows[0].keywords || [];
+    }
+    return [];
+  } catch (error) {
+    console.error('Error fetching task keywords:', error);
+    return [];
+  }
+};
+
+/**
+ * Save keywords for a specific task
+ * @param {number} taskId - Task ID
+ * @param {string[]} keywords - Array of keywords
+ * @returns {Promise<boolean>} - Success status
+ */
+User.saveTaskKeywords = async (taskId, keywords) => {
+  try {
+    await db.query(
+      `INSERT INTO user_task_keywords (task_id, keywords, created_at, updated_at)
+       VALUES ($1, $2::jsonb, NOW(), NOW())
+       ON CONFLICT (task_id) 
+       DO UPDATE SET keywords = $2::jsonb, updated_at = NOW()`,
+      [taskId, JSON.stringify(keywords)]
+    );
+    return true;
+  } catch (error) {
+    console.error('Error saving task keywords:', error);
+    return false;
+  }
+};
+
+/**
+ * Delete keywords for a specific task
+ * @param {number} taskId - Task ID
+ * @returns {Promise<boolean>} - Success status
+ */
+User.deleteTaskKeywords = async (taskId) => {
+  try {
+    await db.query(
+      'DELETE FROM user_task_keywords WHERE task_id = $1',
+      [taskId]
+    );
+    return true;
+  } catch (error) {
+    console.error('Error deleting task keywords:', error);
+    return false;
+  }
+};
+
+/**
+ * Generate keywords for a task using AI
+ * @param {string} taskDescription - Task description
+ * @param {string} scenarioTitle - Scenario title
+ * @param {string} targetLanguage - Target language (default: English)
+ * @returns {Promise<string[]>} - Array of generated keywords
+ */
+User.generateTaskKeywords = async (taskDescription, scenarioTitle, targetLanguage = 'English') => {
+  console.log(`Generating keywords for task: ${taskDescription}, scenario: ${scenarioTitle}`);
+  try {
+    const apiKey = process.env.QWEN3_OMNI_API_KEY;
+    console.log(`API Key present: ${!!apiKey}`);
+    if (!apiKey) {
+      console.warn('QWEN3_OMNI_API_KEY not set, using fallback keywords');
+      return User._getFallbackKeywords(taskDescription, scenarioTitle);
+    }
+
+    const prompt = `You are an English language teaching expert. For the following speaking practice scenario and task, generate 12-15 essential English keywords/phrases that students should use when practicing this task.
+
+Scenario: ${scenarioTitle || "General Conversation"}
+Task: ${taskDescription || "Practice speaking English"}
+Target Language: ${targetLanguage}
+
+Return ONLY a JSON array of strings, like: ["keyword1", "keyword2", ...]
+
+The keywords should be:
+- Practical and commonly used in this scenario
+- Include both single words and short phrases
+- Appropriate for the task context
+- Easy to remember and use in conversation`;
+
+    const response = await fetch(
+      'https://dashscope.aliyuncs.com/api/v1/services/aigc/text-generation/generation',
+      {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${apiKey}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          model: 'qwen-turbo',
+          input: {
+            messages: [{ role: 'user', content: prompt }]
+          }
+        })
+      }
+    );
+    console.log(`AI API response status: ${response.status}`);
+
+    if (response.status === 200) {
+      const result = await response.json();
+      // Qwen API returns text in output.text, not output.choices[0].message.content
+      const content = result.output?.text || result.output?.choices?.[0]?.message?.content || '[]';
+      console.log(`AI API response content: ${content.substring(0, 200)}`);
+      
+      // Extract JSON array from response
+      const jsonMatch = content.match(/\[.*\]/s);
+      if (jsonMatch) {
+        const keywords = JSON.parse(jsonMatch[0]);
+        console.log(`Parsed keywords: ${keywords.length} items`);
+        return keywords
+          .filter(kw => typeof kw === 'string' && kw.trim().length > 0)
+          .map(kw => kw.toLowerCase().trim())
+          .slice(0, 15);
+      } else {
+        console.log('No JSON array found in response, using fallback');
+      }
+    } else {
+      console.log(`AI API error status: ${response.status}`);
+    }
+    
+    // Fallback to simple keyword generation
+    console.log('Using fallback keywords');
+    return User._getFallbackKeywords(taskDescription, scenarioTitle);
+  } catch (error) {
+    console.error('Error generating task keywords:', error.message);
+    return User._getFallbackKeywords(taskDescription, scenarioTitle);
+  }
+};
+
+/**
+ * Fallback keyword generation when AI is not available
+ * @param {string} taskDescription - Task description
+ * @param {string} scenarioTitle - Scenario title
+ * @returns {string[]} - Array of fallback keywords
+ */
+User._getFallbackKeywords = (taskDescription, scenarioTitle) => {
+  const keywords = new Set();
+  const text = `${taskDescription} ${scenarioTitle}`.toLowerCase();
+  
+  // Extract English words
+  const englishWords = text.match(/\b[a-zA-Z]{3,}\b/g) || [];
+  englishWords.forEach(word => {
+    if (!['the', 'and', 'for', 'with', 'about', 'your', 'you', 'that', 'this', 'have', 'has'].includes(word)) {
+      keywords.add(word);
+    }
+  });
+  
+  // Add common conversation starters
+  const starters = ['hello', 'hi', 'thank you', 'please', 'excuse me', 'can you', 'could you', 'i would like'];
+  starters.forEach(starter => keywords.add(starter));
+
+  return Array.from(keywords).slice(0, 15);
 };
 
 module.exports = User;

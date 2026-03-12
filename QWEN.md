@@ -97,6 +97,22 @@ Repository: `git@github.com:happepls/oral_app.git` (master branch)
     9. For Chinese task descriptions, use scene keywords as task keywords in `_score_task_relevance`
     10. Implemented cross-language keyword matching using substring matching and generic word extraction (space-split) with stop-word filtering
   - **Files modified**: `services/workflow-service/src/workflows/proficiency_scoring.py`, `services/ai-omni-service/app/main.py`, `client/src/pages/Conversation.js`
+- **Proficiency Scoring Refinement (Mar 11, 2026)**: Fixed issues with progress evaluation being too lenient and context confusion during task switching.
+  - **Root causes identified**:
+    1. Grammar scoring didn't consider target language - Chinese input received full English grammar score
+    2. Invalid input patterns (pure interjections, short phrases) received high scores
+    3. Task relevance threshold was too low (< 2), allowing off-topic input to earn points
+    4. Conversation history wasn't cleared on task switch, causing AI context confusion
+    5. System prompt didn't emphasize current task clearly enough
+    6. Ping/pong messages flooded logs (10 per second)
+  - **Fixes applied**:
+    1. Added target language detection in `_score_grammar()` - returns 2 if input language doesn't match target
+    2. Added invalid input patterns detection (pure interjections, punctuation, 1-4 Chinese characters)
+    3. Raised task relevance threshold from < 2 to < 3 - topic relevance is core metric
+    4. Clear conversation history on task completion (keep last 2 messages only)
+    5. Added explicit current task indicator in system prompt
+    6. Changed ping/pong log level from INFO to DEBUG
+  - **Files modified**: `services/workflow-service/src/workflows/proficiency_scoring.py`, `services/ai-omni-service/app/main.py`
 
 ## Workflow Integration (Feb 2026)
 

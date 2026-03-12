@@ -664,16 +664,20 @@ class WebSocketCallback(OmniRealtimeCallback):
                                         
                                         # 发送task_completed到前端
                                         if task_completed:
+                                            # 获取下一个任务信息
+                                            next_task_text = self.user_context.get('next_task_text')
+                                            
                                             await self._safe_send({
                                                 "type": "task_completed",
                                                 "payload": {
                                                     "task_title": workflow_result.get('task_title', 'Task'),
                                                     "scenario_title": self.user_context.get('custom_topic', 'General Practice').split(" (Tasks:")[0].strip(),
                                                     "score": task_score,
-                                                    "message": workflow_result.get('message', 'Task completed!')
+                                                    "message": workflow_result.get('message', 'Task completed!'),
+                                                    "next_task": next_task_text  # 添加下一个任务信息
                                                 }
                                             })
-                                            logger.info(f"Task completed: {workflow_result.get('task_title')}")
+                                            logger.info(f"Task completed: {workflow_result.get('task_title')}, Next: {next_task_text}")
 
                                             # 刷新 AI 的 session prompt 以更新任务上下文
                                             logger.info("Refreshing AI session prompt with new task context...")

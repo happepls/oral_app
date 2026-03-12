@@ -915,9 +915,15 @@ function Conversation() {
            console.log('✅ Task Completed:', data.payload);
            const taskPayload = data.payload || {};
            if (taskPayload.task_title) {
+               // 构建提示消息，包含下一个任务预告
+               let completionMessage = `✅ 任务完成：${taskPayload.task_title}`;
+               if (taskPayload.next_task) {
+                   completionMessage += ` | 下个任务：${taskPayload.next_task}`;
+               }
+               
                setMessages(prev => [...prev, {
                    type: 'system',
-                   content: `✅ 任务完成：${taskPayload.task_title}`,
+                   content: completionMessage,
                    isFinal: true
                }]);
                // Update completed tasks

@@ -25,7 +25,9 @@
     "helmet": "^7.0.0",
     "hpp": "^0.2.3",
     "jsonwebtoken": "^9.0.2",
+    "node-fetch": "2.7.0",
     "pg": "^8.16.3",
+    "stripe": "^20.4.1",
     "stripe-replit-sync": "^1.0.0",
     "validator": "^13.9.0",
     "xss-clean": "^0.1.4"

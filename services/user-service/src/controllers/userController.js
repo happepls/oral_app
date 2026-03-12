@@ -724,3 +724,111 @@ exports.getCheckinStats = async (req, res) => {
         res.status(500).json({ success: false, message: 'Server Error' });
     }
 };
+// ===== Task Keywords Endpoints =====
+
+/**
+ * Get keywords for a task (internal service call, no auth)
+ */
+exports.getTaskKeywords = async (req, res) => {
+    try {
+        const { taskId } = req.params;
+        
+        if (!taskId) {
+            return res.status(400).json({ 
+                success: false, 
+                message: 'Task ID required' 
+            });
+        }
+
+        const keywords = await User.getTaskKeywords(taskId);
+        
+        res.json({ 
+            success: true, 
+            data: { 
+                taskId,
+                keywords 
+            } 
+        });
+    } catch (error) {
+        console.error('Get Task Keywords Error:', error);
+        res.status(500).json({ success: false, message: 'Server Error' });
+    }
+};
+
+/**
+ * Generate and save keywords for a task
+ */
+exports.generateTaskKeywords = async (req, res) => {
+    try {
+        const { taskId, taskDescription, scenarioTitle, targetLanguage } = req.body;
+        
+        if (!taskId || !taskDescription) {
+            return res.status(400).json({ 
+                success: false, 
+                message: 'Task ID and description required' 
+            });
+        }
+
+        // Generate keywords using AI
+        const keywords = await User.generateTaskKeywords(
+            taskDescription, 
+            scenarioTitle || 'General', 
+            targetLanguage || 'English'
+        );
+
+        // Save to database
+        await User.saveTaskKeywords(taskId, keywords);
+        
+        res.json({ 
+            success: true, 
+            data: { 
+                taskId,
+                keywords,
+                generated: true
+            } 
+        });
+    } catch (error) {
+        console.error('Generate Task Keywords Error:', error);
+        res.status(500).json({ success: false, message: 'Server Error' });
+    }
+};
+
+module.exports = exports;
+
+/**
+ * Generate keywords for a task (internal endpoint, no auth)
+ */
+exports.generateTaskKeywordsInternal = async (req, res) => {
+    try {
+        const { taskId, taskDescription, scenarioTitle, targetLanguage } = req.body;
+        
+        if (!taskId || !taskDescription) {
+            return res.status(400).json({ 
+                success: false, 
+                message: 'Task ID and description required' 
+            });
+        }
+
+        // Generate keywords using AI
+        const keywords = await User.generateTaskKeywords(
+            taskDescription, 
+            scenarioTitle || 'General', 
+            targetLanguage || 'English'
+        );
+
+        // Save to database
+        await User.saveTaskKeywords(taskId, keywords);
+        
+        res.json({ 
+            success: true, 
+            data: { 
+                taskId,
+                keywords,
+                generated: true
+            } 
+        });
+    } catch (error) {
+        console.error('Generate Task Keywords Internal Error:', error);
+        res.status(500).json({ success: false, message: 'Server Error' });
+    }
+};

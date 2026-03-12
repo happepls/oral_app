@@ -40,4 +40,9 @@ router.post('/api/users/internal/users/:id/tasks/complete', userController.compl
 router.post('/api/users/internal/users/:id/tasks/score', userController.updateTaskScoreInternal);
 router.get('/api/users/internal/users/:id', userController.getUserInternal);
 
+// Task keywords routes (internal, no auth for now)
+router.get('/api/users/tasks/:taskId/keywords', userController.getTaskKeywords);
+router.post('/api/users/tasks/:taskId/keywords', userController.generateTaskKeywords);
+router.post('/api/users/internal/users/:id/tasks/generate-keywords', userController.generateTaskKeywordsInternal);
+
 module.exports = router;

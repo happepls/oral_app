@@ -122,8 +122,8 @@ class ProficiencyScoringWorkflow:
         # Grammar: 基于语法错误检测（基于目标语言）
         scores["grammar"] = self._score_grammar(recent_turns, target_language)
 
-        # Task Relevance: 基于任务/场景相关性
-        scores["task_relevance"] = self._score_task_relevance(
+        # Task Relevance: 基于任务/场景相关性（异步调用）
+        scores["task_relevance"] = await self._score_task_relevance(
             recent_turns,
             current_task
         )
@@ -300,15 +300,15 @@ class ProficiencyScoringWorkflow:
 
         return min(10, max(0, score))
 
-    def _score_task_relevance(
+    async def _score_task_relevance(
         self,
         turns: List[Dict[str, Any]],
         current_task: Dict[str, Any]
     ) -> int:
         """
         任务相关性评分 (0-10) - 支持跨语言匹配
-        - 包含任务关键词 : +4
-        - 包含场景关键词 : +3
+        - 包含任务特定关键词 : +5
+        - 包含场景关键词 : +2
         - 偏离话题 : -3
         - 无关内容 : -5
         """
@@ -334,17 +334,9 @@ class ProficiencyScoringWorkflow:
         if not user_content:
             return score
 
-        # 跨语言关键词匹配策略：
-        # 1. 使用场景关键词与用户对话内容进行子串匹配（不依赖特定语言）
-        # 2. 关键词可能是短语（如 "your hometown"），需要检查是否包含
-        matched_scene_keywords = sum(1 for kw in scene_keywords if kw.lower() in user_content)
-
-        # 3. 从任务描述中提取关键词（支持任何语言）
-        # 尝试提取英文单词
+        # 1. 从任务描述中提取任务特定关键词（支持任何语言）
         task_keywords_en = set(re.findall(r'\b[a-zA-Z]{3,}\b', task_desc.lower()))
-        # 尝试提取其他语言的词（简单策略：按空格分割）
         task_keywords_generic = set(task_desc.lower().split())
-        # 合并关键词
         task_keywords = task_keywords_en | task_keywords_generic
         # 过滤掉太短的词（<3 字符）和无意义词（中英文停用词）
         stop_words = {'the', 'a', 'an', 'is', 'are', 'was', 'were', 'be', 'been', 'being',
@@ -356,23 +348,50 @@ class ProficiencyScoringWorkflow:
                       '了', '在', '是', '我', '有', '和', '就', '不', '人', '都', '一', '一个'}
         task_keywords = {kw for kw in task_keywords if len(kw) >= 3 and kw not in stop_words}
 
-        # 如果没有提取到任务关键词，使用场景关键词（转为 set）
-        if not task_keywords:
-            task_keywords = set(scene_keywords) if isinstance(scene_keywords, list) else scene_keywords
-
-        # 检查任务关键词匹配（严格匹配，不支持部分匹配）
-        matched_task_keywords = sum(1 for kw in task_keywords if kw.lower() in user_content)
+        # 2. 如果任务描述是中文，尝试匹配预定义的任务特定关键词
+        task_specific_keywords = await self._get_task_specific_keywords(
+            task_desc, 
+            scenario_title,
+            current_task.get("id"),
+            None,  # user_id - 暂不需要
+            None   # token - 暂不需要
+        )
+        
+        # 3. 检查任务特定关键词匹配（高权重）
+        matched_task_specific = sum(1 for kw in task_specific_keywords if kw.lower() in user_content)
+        
+        # 4. 检查场景关键词匹配（低权重）
         matched_scene_keywords = sum(1 for kw in scene_keywords if kw.lower() in user_content)
 
-        # 计算得分 - 严格阈值
-        if matched_task_keywords >= 2:
-            score += 4
-        elif matched_task_keywords >= 1:
-            score += 3
+        # 检测用户输入语言是否与目标语言匹配
+        target_language = current_task.get("target_language", "English").lower()
+        input_language = self._detect_input_language(user_content)
+        
+        # 如果输入语言与目标语言不匹配，判定为话题无关
+        if input_language and input_language != target_language:
+            # 语言不匹配，直接给最低分并扣分
+            return max(0, 5 - 3)  # 基础分 5 分，扣 3 分
+
+        # 检测无效输入（无意义字符、重复字符等）
+        # 检测纯符号、重复字符、无意义输入（如"xxxx"、"。。。"、"!!!"等）
+        if re.match(r'^[\x00-\x1f\W]{1,10}$', user_content.strip()) or \
+           re.match(r'^(.)\1{2,}$', user_content.strip().lower()) or \
+           len(user_content.strip()) < 3:
+            # 无效输入，直接给最低分
+            return 1
+
+        # 计算得分 - 任务特定关键词权重更高
+        if matched_task_specific >= 2:
+            score += 5  # 高度相关
+        elif matched_task_specific >= 1:
+            score += 3  # 中等相关
         elif matched_scene_keywords >= 2:
-            score += 2
+            score += 2  # 低度相关
         elif matched_scene_keywords >= 1:
-            score += 1
+            score += 1  # 微弱相关
+        else:
+            # 没有匹配到任何关键词，说明偏离话题
+            score = max(0, score - 3)
 
         # 检测偏离话题（用户谈论完全不相关的内容）
         # 1. 检测明显的无关话题关键词
@@ -384,22 +403,60 @@ class ProficiencyScoringWorkflow:
             "eat", "food", "dinner", "lunch", "breakfast", "cook", "recipe",
             "吃", "饭", "晚餐", "午餐", "早餐", "做饭", "菜", "面", "面条", "下面"
         ]
-        
-        # 2. 检测用户输入是否包含任务/场景关键词
-        task_related = task_keywords | (set(scene_keywords) if isinstance(scene_keywords, list) else scene_keywords)
-        has_task_keywords = any(kw.lower() in user_content for kw in task_related)
-        
+
+        # 2. 检测用户输入是否包含任务特定关键词或场景关键词
+        has_task_specific = any(kw.lower() in user_content for kw in task_specific_keywords)
+        has_scene_keywords = any(kw.lower() in user_content for kw in scene_keywords)
+
         # 3. 检测是否有明显的无关内容
         has_off_topic = any(word in user_content for word in off_topic_indicators)
-        
-        # 4. 如果用户说的内容和任务场景完全无关，且有明显的无关话题
-        if not has_task_keywords and has_off_topic:
-            score = max(0, score - 5)  # 严重偏离话题，扣 5 分
-        elif not has_task_keywords and matched_scene_keywords == 0 and matched_task_keywords == 0:
-            # 完全没有匹配到关键词，轻度偏离话题
-            score = max(0, score - 3)  # 扣 3 分
+
+        # 4. 如果用户说的内容和任务场景完全无关，且有明显的无关话题（额外扣分）
+        if not has_task_specific and not has_scene_keywords and has_off_topic:
+            score = max(0, score - 2)  # 严重偏离话题，再扣 2 分
 
         return min(10, max(0, score))
+
+    async def _get_task_specific_keywords(self, task_desc: str, scenario_title: str, task_id: int = None, user_id: str = None, token: str = None) -> List[str]:
+        """根据任务描述获取任务特定关键词 - 从 user-service API 读取"""
+        import os
+        import httpx
+        
+        # 优先从 user-service API 获取关键词
+        if task_id and user_id and token:
+            try:
+                user_service_url = os.getenv("USER_SERVICE_URL", "http://user-service:3000")
+                async with httpx.AsyncClient(timeout=5.0) as client:
+                    # 调用 user-service 的关键词 API
+                    resp = await client.get(
+                        f"{user_service_url}/api/users/tasks/{task_id}/keywords",
+                        headers={"Authorization": f"Bearer {token}"}
+                    )
+                    if resp.status_code == 200:
+                        keywords_data = resp.json().get('data', {}).get('keywords', [])
+                        if keywords_data:
+                            return keywords_data
+            except Exception as e:
+                # API 调用失败，降级到动态生成
+                pass
+        
+        # 动态生成关键词（不再使用预定义映射）
+        # 基于任务描述和场景标题提取关键词
+        keywords = set()
+        
+        # 1. 提取英文单词
+        en_words = re.findall(r'\b[a-zA-Z]{3,}\b', f"{task_desc} {scenario_title}".lower())
+        stop_words = {'the', 'and', 'for', 'with', 'about', 'your', 'you', 'that', 'this', 'have', 'has', 'are', 'was', 'were'}
+        for word in en_words:
+            if word not in stop_words:
+                keywords.add(word)
+        
+        # 2. 添加通用对话关键词
+        common_keywords = ['hello', 'hi', 'thank you', 'please', 'excuse me', 'can you', 'could you', 'i would like']
+        for kw in common_keywords:
+            keywords.add(kw)
+        
+        return list(keywords)[:15]
 
     def _calculate_proficiency_delta_with_feedback(
         self,
@@ -1134,6 +1191,47 @@ Return ONLY a JSON array: ["keyword1", "keyword2", ...]"""
         # 去重并保持顺序
         unique_keywords = list(dict.fromkeys(keywords))
         return unique_keywords[:10] if unique_keywords else ["practice", "conversation", "English", "speak", "learn"]
+
+    def _detect_input_language(self, text: str) -> Optional[str]:
+        """
+        检测用户输入的主要语言
+        返回：'english', 'chinese', 'spanish', 'french', 'german', 'japanese', 'korean' 或 None（无法检测）
+        """
+        if not text or len(text.strip()) < 3:
+            return None
+        
+        text_lower = text.lower()
+        
+        # 检测中文字符
+        chinese_chars = len(re.findall(r'[\u4e00-\u9fff]', text))
+        if chinese_chars > len(text) * 0.3:  # 30% 以上是中文
+            return 'chinese'
+        
+        # 检测日文字符
+        japanese_chars = len(re.findall(r'[\u3040-\u309f\u30a0-\u30ff]', text))
+        if japanese_chars > len(text) * 0.2:  # 20% 以上是日文
+            return 'japanese'
+        
+        # 检测韩文字符
+        korean_chars = len(re.findall(r'[\uac00-\ud7af]', text))
+        if korean_chars > len(text) * 0.2:  # 20% 以上是韩文
+            return 'korean'
+        
+        # 检测西文字符（英文、法文、德文、西班牙文等使用拉丁字母）
+        latin_chars = len(re.findall(r'[a-zA-Z]', text))
+        if latin_chars > len(text) * 0.5:  # 50% 以上是拉丁字母
+            # 尝试区分具体语言
+            if re.search(r'\b(el|la|los|las|de|que|en|es|por|para|con)\b', text_lower):
+                return 'spanish'
+            elif re.search(r'\b(le|la|les|de|et|est|dans|pour|avec)\b', text_lower):
+                return 'french'
+            elif re.search(r'\b(der|die|das|und|ist|ein|mit)\b', text_lower):
+                return 'german'
+            else:
+                return 'english'
+        
+        # 无法确定具体语言
+        return None
 
     def _generate_completion_feedback(
         self,
