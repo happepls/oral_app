@@ -83,7 +83,7 @@ class ScenarioReviewWorkflow:
         )
         
         # 生成改进建议
-        recommendations = self._generate_recommendations(analysis)
+        recommendations = self._generate_recommendations(analysis, conversation_history)
         
         # 保存复盘报告到数据库
         await self._save_review_to_db(
@@ -122,7 +122,8 @@ class ScenarioReviewWorkflow:
             "task_keyword_matches": 0,
             "completion_time_minutes": 0,
             "strengths": [],
-            "weaknesses": []
+            "weaknesses": [],
+            "summary": ""  # 添加总结字段
         }
         
         if not conversation_history:
@@ -193,7 +194,23 @@ class ScenarioReviewWorkflow:
                     analysis["completion_time_minutes"] = int((last_dt - first_dt).total_seconds() / 60)
                 except:
                     analysis["completion_time_minutes"] = 0
-        
+
+        # 生成总结
+        if analysis["user_messages"] > 0:
+            avg_score = sum(t.get("score", 0) for t in completed_tasks) / len(completed_tasks) if completed_tasks else 0
+            if avg_score >= 9:
+                analysis["summary"] = f"🎉 表现出色！完成了 {len(completed_tasks)} 个任务，平均得分 {avg_score:.1f}。" + (
+                    " 对话流利自然，词汇使用准确。" if analysis["vocabulary_diversity"] > 0.5 else " 建议继续扩展词汇量。"
+                )
+            elif avg_score >= 7:
+                analysis["summary"] = f"👍 表现良好！完成了 {len(completed_tasks)} 个任务，平均得分 {avg_score:.1f}。" + (
+                    " 表达清晰，可以继续练习复杂句型。" if analysis["avg_message_length"] < 10 else " 保持当前的表达水平。"
+                )
+            else:
+                analysis["summary"] = f"✅ 场景完成！建议重新练习以获得更高分数。" + (
+                    " 尝试使用更多连接词和完整句子。" if analysis["avg_message_length"] < 8 else ""
+                )
+
         return analysis
     
     def _generate_review_report(
@@ -244,44 +261,87 @@ class ScenarioReviewWorkflow:
         
         return report
     
-    def _generate_recommendations(self, analysis: Dict[str, Any]) -> List[str]:
-        """生成针对性建议"""
+    def _generate_recommendations(self, analysis: Dict[str, Any], conversation_history: List[Dict[str, Any]] = None) -> List[str]:
+        """生成针对性建议 - 基于统计分析和实际对话内容"""
         recommendations = []
-        
+
         # 基于词汇多样性
         vocab_diversity = analysis.get("vocabulary_diversity", 0)
         if vocab_diversity < 0.4:
             recommendations.append(
-                "📚 **Vocabulary**: Try learning 5-10 new words related to this scenario before retrying."
+                "尝试学习更多本场景相关的高级词汇，并在对话中主动使用"
             )
-        
+
         # 基于平均回复长度
         avg_length = analysis.get("avg_message_length", 0)
         if avg_length < 8:
             recommendations.append(
-                "💬 **Elaboration**: Try to give longer, more detailed responses. Add 'because', 'for example', or describe feelings."
+                "尝试给出更长、更详细的回答，使用'because'、'for example'、'I think'等连接词"
             )
-        
+
         # 基于语法错误
         grammar_errors = analysis.get("grammar_errors", 0)
         if grammar_errors > 2:
             recommendations.append(
-                "📝 **Grammar**: Review past tense forms and subject-verb agreement. Practice with grammar exercises."
+                "注意主谓一致和时态使用，建议复习一般现在时和过去时的用法"
             )
-        
+
         # 基于互动次数
         user_messages = analysis.get("user_messages", 0)
         if user_messages < 10:
             recommendations.append(
-                "🗣️ **Practice More**: Try to have longer conversations. Ask follow-up questions and share more details."
+                "尝试提出更多后续问题，分享更多个人细节和感受，让对话更自然流畅"
             )
-        
+
+        # 分析实际对话内容，生成具体建议
+        if conversation_history and len(conversation_history) > 0:
+            user_msgs = [m for m in conversation_history if m.get("role") == "user"]
+            
+            # 检测是否使用连接词
+            connectors = ['and', 'but', 'because', 'so', 'however', 'therefore', 'also', 'then', 'well', 'actually']
+            connector_usage = 0
+            for msg in user_msgs:
+                content = msg.get("content", "").lower()
+                if any(connector in content for connector in connectors):
+                    connector_usage += 1
+            
+            if connector_usage < len(user_msgs) * 0.3:  # 少于 30% 的消息使用连接词
+                recommendations.append(
+                    "多使用'and', 'but', 'because', 'however'等连接词，让句子更连贯自然"
+                )
+
+            # 检测是否使用完整句子
+            short_responses = 0
+            for msg in user_msgs:
+                content = msg.get("content", "").strip()
+                # 检测是否为短语或单词（少于 3 个词且无动词）
+                words = content.split()
+                if len(words) <= 3 and not any(v in content.lower() for v in ['is', 'are', 'was', 'were', 'have', 'has', 'do', 'does', 'can', 'will', 'would', 'like']):
+                    short_responses += 1
+            
+            if short_responses > len(user_msgs) * 0.5:  # 超过 50% 是短句
+                recommendations.append(
+                    "尝试用完整句子回答，而不是单词或短语，例如：'Yes, I think...' 而不是 'Yes'"
+                )
+
+            # 检测是否使用疑问句（提问能力）
+            question_usage = 0
+            for msg in user_msgs:
+                content = msg.get("content", "").strip()
+                if content.endswith('?') or content.lower().startswith(('can ', 'could ', 'do ', 'does ', 'is ', 'are ', 'what ', 'where ', 'how ', 'when ', 'why ')):
+                    question_usage += 1
+            
+            if question_usage < 2 and len(user_msgs) > 5:
+                recommendations.append(
+                    "尝试主动提问，如'Can you tell me...?', 'What do you think about...?'，让对话更互动"
+                )
+
         # 默认建议
         if not recommendations:
             recommendations.append(
-                "🎉 **Excellent Work!** Ready to move to the next scenario or try this one again for a higher score!"
+                "表现出色！你的表达流畅自然，词汇使用准确，建议继续练习更复杂的句型结构"
             )
-        
+
         return recommendations
     
     async def _save_review_to_db(

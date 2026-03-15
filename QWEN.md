@@ -62,83 +62,26 @@ Repository: `git@github.com:happepls/oral_app.git` (master branch)
 - **Recent Fixes**: Scoring loop, Scenario logic, Interruption handling (barge-in), Bilingual strategy, AudioUrl persistence, Audio playback queue management.
 
 ## Recent Issues and Solutions
-- **WebSocket Connection Issue**: Fixed by updating the API Gateway WebSocket configuration and ensuring proper routing from frontend to comms-service to ai-omni-service
-- **JWT Token Validation Issue**: Resolved by standardizing JWT_SECRET across all services and ensuring consistent token validation
-- **Service Communication Issue**: Fixed by configuring correct USER_SERVICE_URL in ai-omni-service to allow proper user context fetching
-- **Environment Configuration**: Ensured all services use consistent environment variables and network configurations
-- **AI Response Persistence**: Fixed issue where AI responses disappeared after page refresh by modifying save logic in `Conversation.js` to include non-final AI messages in conversation history
-- **Client App Port Configuration**: Fixed nginx configuration in client-app to listen on correct port (5000) matching docker-compose.yml mapping, resolving 502 Bad Gateway errors
-- **Rate Limiting for Internal Services**: Fixed 429 errors by skipping rate limiting for internal service communication (Docker network 172.x.x.x)
-- **Workflow Integration**: Successfully integrated 4 workflows for oral practice orchestration
-- **AudioUrl Persistence (Mar 2026)**: Fixed issue where AI audio URLs were lost after page refresh. Backend fix: `services/ai-omni-service/app/main.py` now saves messages in `response.audio.done` event (line ~392). Frontend fix: `client/src/pages/Conversation.js` sets `audioPlayed: true` when loading history, and useEffect condition checks `audioPlayed === false` (minified as `!1===e.audioPlayed`).
-- **Audio Playback Queue (Mar 2026)**: Fixed issue where clicking replay button caused all audio to play together. Added audio source to `audioQueueRef` queue in `playFullAudio` and `fetchAudioViaProxy` functions. `stopAudioPlayback` now iterates through queue to stop all audio sources.
-- **Docker Build Optimization**: Recommended adding `.dockerignore` in `client/` directory to exclude `build/`, `node_modules/`, `.git` - ensures Docker builds from source and reduces context size. Development override in `docker-compose.override.yml` still mounts local build for convenience.
-- **Task Completion & Transition Fix (Mar 11, 2026)**: Fixed issue where task progress showed 100% but AI prompt didn't switch to next task after completion.
-  - **Root causes identified**:
-    1. Task completion threshold mismatch: `proficiency_scoring.py` used `score >= 9` but frontend calculated progress as `taskScore / 9 * 100`, causing confusion when `interaction_count < 3`
-    2. `user_service_url` undefined error in task completion handler prevented fetching new task data
-    3. `active_goal['current_task']` not updated in `_update_session_prompt`, causing prompt_manager to use stale task info
-    4. Redundant `execute_action_with_response("update_task_score", ...)` call with wrong parameter names (`scenarioTitle` vs `scenario`)
-    5. `task_id` lookup used wrong key (`current_task_id` instead of `active_goal.current_task.id`)
-    6. `keywords` variable referenced before assignment in `_generate_improvement_tips` for non-English scenarios
-    7. Poor example sentences in `_generate_connector_example` for greeting scenarios (e.g., "Hi, I'm hello, and hi?")
-    8. `proficiency_scoring.py` workflow missing `task_id` in return result, causing frontend to show `task_id=None`
-    9. `_score_task_relevance` failed to extract keywords from Chinese task descriptions (e.g., "聊聊你喜欢的奥特曼")
-    10. Keyword matching was language-specific, failing for third-party languages (Spanish, French, etc.)
-  - **Fixes applied**:
-    1. Unified completion standard: `score >= 9 AND interaction_count >= 3` in both backend and frontend
-    2. Added `user_service_url = os.getenv("USER_SERVICE_URL", "http://user-service:3000")` in task refresh logic
-    3. Updated `full_ctx['active_goal']['current_task']` in `_update_session_prompt` for prompt_manager
-    4. Removed redundant manual scoring logic - proficiency workflow handles all score updates
-    5. Fixed task_id lookup: `self.user_context.get('active_goal', {}).get('current_task', {}).get('id')`
-    6. Pre-loaded `keywords` at start of `_generate_improvement_tips` to support non-English scenarios (e.g., "日常问候")
-    7. Improved greeting scenario templates with practical examples like "Hello! I'm interested in {kw1}, and I'd love to know about {kw2}."
-    8. Added `task_id`, `task_score`, `task_title`, `scenario_title` to proficiency workflow result dictionary
-    9. For Chinese task descriptions, use scene keywords as task keywords in `_score_task_relevance`
-    10. Implemented cross-language keyword matching using substring matching and generic word extraction (space-split) with stop-word filtering
-  - **Files modified**: `services/workflow-service/src/workflows/proficiency_scoring.py`, `services/ai-omni-service/app/main.py`, `client/src/pages/Conversation.js`
-- **Proficiency Scoring Refinement (Mar 11, 2026)**: Fixed issues with progress evaluation being too lenient and context confusion during task switching.
-  - **Root causes identified**:
-    1. Grammar scoring didn't consider target language - Chinese input received full English grammar score
-    2. Invalid input patterns (pure interjections, short phrases) received high scores
-    3. Task relevance threshold was too low (< 2), allowing off-topic input to earn points
-    4. Conversation history wasn't cleared on task switch, causing AI context confusion
-    5. System prompt didn't emphasize current task clearly enough
-    6. Ping/pong messages flooded logs (10 per second)
-  - **Fixes applied**:
-    1. Added target language detection in `_score_grammar()` - returns 2 if input language doesn't match target
-    2. Added invalid input patterns detection (pure interjections, punctuation, 1-4 Chinese characters)
-    3. Raised task relevance threshold from < 2 to < 3 - topic relevance is core metric
-    4. Clear conversation history on task completion (keep last 2 messages only)
-    5. Added explicit current task indicator in system prompt
-    6. Changed ping/pong log level from INFO to DEBUG
-  - **Files modified**: `services/workflow-service/src/workflows/proficiency_scoring.py`, `services/ai-omni-service/app/main.py`
-- **Magic Passcode "急急如律令" Support (Mar 12, 2026)**: Fixed issues with magic passcode detection and user transcript display.
-  - **Root causes identified**:
-    1. `import re` referenced before assignment: `import re` was placed inside conditional branch in `conversation.item.input_audio_transcription.completed` event handler
-    2. Chinese punctuation not matched: Regex `[,.!?.,!?]` only supported English punctuation, not Chinese `。！？`
-    3. User transcript not displayed: Normal input (non-passcode) didn't send `user_transcript` message to frontend
-    4. AI response not cancelled: Magic passcode detection didn't prevent AI from replying to the passcode
-    5. Task context not updated: After completing task via passcode, `user_context` and AI session prompt weren't refreshed
-  - **Fixes applied**:
-    1. Removed duplicate `import re` - use global import at file top
-    2. Updated regex to `[,.!?.,!?;:;:。！？；：]` supporting both Chinese and English punctuation
-    3. Added `else` branch for normal input to send `user_transcript` and save to history
-    4. Added `conversation.cancel_response()` call after detecting passcode to prevent AI reply
-    5. Fetch next task via `/api/users/goals/next-task` and update `user_context['current_task']` and `user_context['custom_topic']`
-    6. Call `_update_session_prompt()` to refresh AI context with new task
-    7. Frontend: `test_scenario_review` message only logs to console, doesn't auto-show completion modal (passcode completes single task, not entire scenario)
-  - **Files modified**: `services/ai-omni-service/app/main.py`, `client/src/pages/Conversation.js`
-  - **Testing**:
-    ```bash
-    # Test magic passcode (with Chinese punctuation)
-    # 1. Refresh page: http://localhost:3000/conversation?scenario=日常问候
-    # 2. Click microphone and say "急急如律令。"
-    # 3. Expected: User message displayed, task completed, AI no reply, console shows "🧪 [Test Scenario Review] 通关口令生效！"
-    
-    # Verify code deployment
-    docker exec oral_app_ai_omni_service grep "。！？" /app/app/main.py
-    ```
+
+### Mar 2026 Updates
+
+- **Scenario Completion "Continue Practice" (Mar 15)**: Added `resetProgress` parameter to `handleRetryCurrentScenario`. "继续练习" keeps progress/history/session; "重新开始" resets everything. Fixed `websocket` parameter missing in `call_proficiency_workflow`. Files: `client/src/pages/Conversation.js`, `services/ai-omni-service/app/main.py`
+
+- **Scenario Review AI Feedback (Mar 12)**: Enhanced `_generate_recommendations()` to analyze actual conversation (connector words, sentence length, questions). Fixed data extraction from `review_data.get('data', {})`. Files: `services/workflow-service/src/workflows/scenario_review.py`, `services/ai-omni-service/app/main.py`
+
+- **Magic Passcode "急急如律令" (Mar 12)**: Added regex support for Chinese punctuation `。！？`. Cancels AI response after passcode detection. Updates task context via `/api/users/goals/next-task`. Files: `services/ai-omni-service/app/main.py`
+
+- **Proficiency Scoring Refinement (Mar 11)**: Added target language detection in `_score_grammar()`. Raised task relevance threshold to < 3. Clear conversation history on task switch (keep last 2 messages). Files: `services/workflow-service/src/workflows/proficiency_scoring.py`, `services/ai-omni-service/app/main.py`
+
+- **Task Completion & Transition (Mar 11)**: Unified completion standard: `score >= 9 AND interaction_count >= 3`. Fixed task_id lookup and cross-language keyword matching. Files: `services/workflow-service/src/workflows/proficiency_scoring.py`, `services/ai-omni-service/app/main.py`, `client/src/pages/Conversation.js`
+
+- **Audio Fixes (Mar 2026)**: AudioUrl persistence in `response.audio.done` event. Audio playback queue management in `audioQueueRef`. Files: `services/ai-omni-service/app/main.py`, `client/src/pages/Conversation.js`
+
+### Earlier Fixes
+
+- **Workflow Integration**: 4 workflows integrated (Oral Tutor, Proficiency Scoring, Scenario Review, Goal Planning)
+- **Rate Limiting**: Skip rate limiting for internal Docker network (172.x.x.x)
+- **JWT/Environment**: Standardized JWT_SECRET and environment variables across services
 
 ## Workflow Integration (Feb 2026)
 

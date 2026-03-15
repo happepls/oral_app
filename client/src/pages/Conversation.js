@@ -130,13 +130,36 @@ function Conversation() {
   // Scenario Completion State
   const [showCompletionModal, setShowCompletionModal] = useState(false);
   const [scenarioScore, setScenarioScore] = useState(0);
+  const [scenarioReviewData, setScenarioReviewData] = useState(null); // Store review data for AI feedback
   const [allScenarios, setAllScenarios] = useState([]);
   const [currentScenarioIndex, setCurrentScenarioIndex] = useState(0);
   const [currentScenarioTitle, setCurrentScenarioTitle] = useState('');
   const completionCheckedRef = useRef(false); // Prevent duplicate modal triggers
   const hasViewedCompletionModalRef = useRef(false); // Track if user has already viewed and closed the modal
-  
+
   const getScoreFeedback = (score) => {
+    // If we have scenario review data (from test or workflow), use it for personalized feedback
+    if (scenarioReviewData) {
+        // Try to extract summary from analysis
+        const analysis = scenarioReviewData.analysis;
+        if (analysis?.summary && typeof analysis.summary === 'string') {
+            return { emoji: '🌟', text: analysis.summary, level: 'excellent' };
+        }
+        
+        // Try to use recommendations array (join first 2 recommendations)
+        const recommendations = scenarioReviewData.recommendations;
+        if (Array.isArray(recommendations) && recommendations.length > 0) {
+            // Join recommendations with semicolon (backend returns clean Chinese text)
+            return { emoji: '🌟', text: recommendations.slice(0, 2).join('；'), level: 'excellent' };
+        }
+        
+        // Try review_report if it has a summary field
+        const reviewReport = scenarioReviewData.review_report;
+        if (reviewReport?.summary && typeof reviewReport.summary === 'string') {
+            return { emoji: '🌟', text: reviewReport.summary, level: 'excellent' };
+        }
+    }
+    // Fallback to generic feedback based on score
     if (score >= 90) return { emoji: '🌟', text: '表现出色！你的表达非常流利自然，继续保持！', level: 'excellent' };
     if (score >= 75) return { emoji: '👍', text: '很棒！表达清晰准确，可以尝试更多复杂句型。', level: 'good' };
     if (score >= 60) return { emoji: '💪', text: '不错的进步！建议多练习口语表达的流畅度。', level: 'fair' };
@@ -181,7 +204,23 @@ function Conversation() {
           if (objectTaskCount > 0 && completedCount === objectTaskCount &&
               !completionCheckedRef.current && !hasViewedCompletionModalRef.current) {
               completionCheckedRef.current = true;
-              setTimeout(() => setShowCompletionModal(true), 1000); // Delay to show final task completion
+              
+              // Fetch scenario review from backend for personalized AI feedback
+              const fetchReviewAndShowModal = async () => {
+                  try {
+                      const review = await userAPI.getScenarioReview(currentScenarioTitle);
+                      if (review) {
+                          console.log('📊 Fetched scenario review:', review);
+                          setScenarioReviewData(review);
+                      }
+                  } catch (error) {
+                      console.error('Failed to fetch scenario review:', error);
+                  } finally {
+                      // Show modal after 1 second delay
+                      setTimeout(() => setShowCompletionModal(true), 1000);
+                  }
+              };
+              fetchReviewAndShowModal();
           }
       }
   }, [tasks, allScenarios]);
@@ -360,8 +399,11 @@ function Conversation() {
   };
 
   // Handle retry current scenario
+  // Options: { keepHistory: boolean, resetProgress: boolean }
+  // - keepHistory: 是否保留对话历史
+  // - resetProgress: 是否重置进度（true=重新开始，false=继续练习）
   const handleRetryCurrentScenario = async (options = {}) => {
-    const { keepHistory = true } = options; // Default to keeping conversation history
+    const { keepHistory = true, resetProgress = false } = options;
     
     // Get scenario from URL params or state
     const searchParams = new URLSearchParams(window.location.search);
@@ -369,25 +411,38 @@ function Conversation() {
     const scenarioFromState = location.state?.scenario;
     const scenarioTitle = scenarioFromState || scenarioFromUrl;
 
-    console.log('Retrying scenario:', scenarioTitle, 'Keep history:', keepHistory);
+    console.log('Retrying scenario:', scenarioTitle, 'Keep history:', keepHistory, 'Reset progress:', resetProgress);
 
-    // Reset all tasks in the current scenario
-    try {
-      if (scenarioTitle) {
-        console.log('Resetting all tasks in scenario:', scenarioTitle);
-        await userAPI.resetTask(null, scenarioTitle);
+    // Only reset tasks if user explicitly wants to start over
+    if (resetProgress) {
+      try {
+        if (scenarioTitle) {
+          console.log('Resetting all tasks in scenario:', scenarioTitle);
+          await userAPI.resetTask(null, scenarioTitle);
+        }
+      } catch (err) {
+        console.error('Failed to reset scenario:', err);
       }
-    } catch (err) {
-      console.error('Failed to reset scenario:', err);
     }
 
     setShowCompletionModal(false);
-    setCompletedTasks(new Set());
-    completionCheckedRef.current = false;
-    hasViewedCompletionModalRef.current = false; // Reset modal view tracking
-    setCurrentTaskProgress(0);
-    setCurrentTaskScore(0);
-    previousProgressRef.current = 0; // Reset progress tracking
+    // Keep completedTasks if not resetting progress
+    if (resetProgress) {
+      setCompletedTasks(new Set());
+    }
+    completionCheckedRef.current = resetProgress ? false : true;
+    // Keep modal view tracking to prevent re-showing on refresh
+    hasViewedCompletionModalRef.current = true;
+    // Keep progress at 100% if not resetting, otherwise reset to 0
+    if (resetProgress) {
+      setCurrentTaskProgress(0);
+      setCurrentTaskScore(0);
+    } else {
+      // Continue practice: show 100% progress
+      setCurrentTaskProgress(100);
+      setCurrentTaskScore(9); // Max score for completed tasks
+    }
+    previousProgressRef.current = resetProgress ? 0 : 100; // Reset progress tracking
     lastProficiencyUpdateRef.current = null; // Reset deduplication
 
     // Optionally clear messages (default: keep history)
@@ -418,62 +473,68 @@ function Conversation() {
     }
 
     // Reset session to clear AI context and restart with first task prompt
-    try {
-      if (sessionId) {
-        // Properly cleanup WebSocket connection
-        if (socketRef.current) {
-          // Clear ping interval first to prevent errors
-          if (socketRef.current.pingInterval) {
-            clearInterval(socketRef.current.pingInterval);
-            socketRef.current.pingInterval = null;
+    // Only reset session when user wants to start over
+    if (resetProgress) {
+      try {
+        if (sessionId) {
+          // Properly cleanup WebSocket connection
+          if (socketRef.current) {
+            // Clear ping interval first to prevent errors
+            if (socketRef.current.pingInterval) {
+              clearInterval(socketRef.current.pingInterval);
+              socketRef.current.pingInterval = null;
+            }
+
+            // Stop heartbeat if the method exists
+            if (socketRef.current._stopHeartbeat) {
+              socketRef.current._stopHeartbeat();
+            }
+
+            // Remove all event listeners to prevent callbacks after close
+            socketRef.current.removeAllListeners();
+
+            // Close the connection
+            socketRef.current.close();
+            socketRef.current = null;
           }
 
-          // Stop heartbeat if the method exists
-          if (socketRef.current._stopHeartbeat) {
-            socketRef.current._stopHeartbeat();
+          // Clear old session from sessionStorage and localStorage
+          sessionStorage.removeItem('session_id');
+
+          // Clear scenario-specific session from localStorage to prevent history reload on refresh
+          if (scenarioTitle) {
+            localStorage.removeItem(`session_${scenarioTitle}`);
+            console.log('Cleared localStorage session for scenario:', scenarioTitle);
           }
 
-          // Remove all event listeners to prevent callbacks after close
-          socketRef.current.removeAllListeners();
+          setSessionId(null);
 
-          // Close the connection
-          socketRef.current.close();
-          socketRef.current = null;
+          // Create new session which will trigger AI to use first task prompt
+          const newSessionId = 'sess_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
+          sessionStorage.setItem('session_id', newSessionId);
+          setSessionId(newSessionId);
+
+          console.log('New session created for retry:', newSessionId);
         }
-
-        // Clear old session from sessionStorage and localStorage
-        sessionStorage.removeItem('session_id');
-
-        // Clear scenario-specific session from localStorage to prevent history reload on refresh
-        if (scenarioTitle) {
-          localStorage.removeItem(`session_${scenarioTitle}`);
-          console.log('Cleared localStorage session for scenario:', scenarioTitle);
-        }
-
-        setSessionId(null);
-
-        // Create new session which will trigger AI to use first task prompt
-        const newSessionId = 'sess_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
-        sessionStorage.setItem('session_id', newSessionId);
-        setSessionId(newSessionId);
-
-        console.log('New session created for retry:', newSessionId);
+      } catch (err) {
+        console.error('Failed to reset session:', err);
       }
-    } catch (err) {
-      console.error('Failed to reset session:', err);
     }
 
     // Clear localStorage for this scenario to prevent old progress restoration
-    if (scenarioTitle) {
+    if (resetProgress && scenarioTitle) {
       localStorage.removeItem(`task_progress_${scenarioTitle}`);
       // Mark that welcome message should not be played after refresh
       localStorage.setItem(`welcome_muted_${scenarioTitle}`, 'true');
       console.log('Cleared localStorage progress for scenario:', scenarioTitle);
     }
 
-    // Refresh page to ensure clean WebSocket connection (same as connection timeout retry)
-    console.log('Refreshing page to establish new connection...');
-    window.location.reload();
+    // Only refresh page when resetting progress (to establish new WebSocket connection)
+    // For "continue practice", just close the modal and keep current state
+    if (resetProgress) {
+      console.log('Refreshing page to establish new connection...');
+      window.location.reload();
+    }
   };
 
   // Handle select other scenario
@@ -986,11 +1047,13 @@ function Conversation() {
            }
            break;
         case 'scenario_review':
-           // Handle scenario review data from backend
-           console.log('📚 Scenario Review:', data.payload);
+           // Handle scenario review data from backend (when all tasks in scenario are completed)
+           console.log('📚 [Scenario Review] 场景完成，获取 AI 点评：', data.payload);
            if (data.payload) {
-               // Store review data for display in completion modal
+               // Store review data for personalized AI feedback in completion modal
+               setScenarioReviewData(data.payload);
                window.currentScenarioReview = data.payload;
+               console.log('📚 AI 点评数据已存储，场景完成时将显示个性化点评');
            }
            break;
         case 'test_scenario_review':
@@ -998,9 +1061,10 @@ function Conversation() {
            console.log('🧪 [Test Scenario Review] 通关口令生效！');
            console.log('🧪 Test Scenario Review:', data.payload);
            if (data.payload) {
+               // Store review data for personalized AI feedback in completion modal
+               setScenarioReviewData(data.payload);
                window.currentScenarioReview = data.payload;
-               // Don't auto-show completion modal - only complete single task, not entire scenario
-               console.log('🧪 测试数据已存储到 window.currentScenarioReview，可通过控制台查看');
+               console.log('🧪 测试数据已存储，场景完成时将显示个性化 AI 点评');
            }
            break;
         case 'dashscope_response':
@@ -1889,7 +1953,7 @@ function Conversation() {
               
               <div className="space-y-3">
                 {currentScenarioIndex < allScenarios.length - 1 && (
-                  <button 
+                  <button
                     onClick={handleNextScenario}
                     className="w-full py-3 bg-primary text-white rounded-xl font-medium flex items-center justify-center gap-2 hover:bg-primary/90 transition"
                   >
@@ -1897,23 +1961,31 @@ function Conversation() {
                     <span className="material-symbols-outlined">arrow_forward</span>
                   </button>
                 )}
-                
+
                 <button
-                  onClick={() => handleRetryCurrentScenario({ keepHistory: true })}
+                  onClick={() => handleRetryCurrentScenario({ keepHistory: true, resetProgress: false })}
+                  className="w-full py-3 bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-300 rounded-xl font-medium flex items-center justify-center gap-2 hover:bg-green-200 dark:hover:bg-green-900/50 transition"
+                >
+                  <span className="material-symbols-outlined">play_arrow</span>
+                  <span>继续练习</span>
+                </button>
+
+                <button
+                  onClick={() => handleRetryCurrentScenario({ keepHistory: false, resetProgress: true })}
                   className="w-full py-3 bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-300 rounded-xl font-medium flex items-center justify-center gap-2 hover:bg-amber-200 dark:hover:bg-amber-900/50 transition"
                 >
                   <span className="material-symbols-outlined">replay</span>
-                  <span>重新练习</span>
+                  <span>重新开始</span>
                 </button>
-                
-                <button 
+
+                <button
                   onClick={handleSelectOtherScenario}
                   className="w-full py-3 bg-slate-100 dark:bg-slate-700 text-slate-700 dark:text-slate-200 rounded-xl font-medium flex items-center justify-center gap-2 hover:bg-slate-200 dark:hover:bg-slate-600 transition"
                 >
                   <span className="material-symbols-outlined">grid_view</span>
                   <span>选择其他场景</span>
                 </button>
-                
+
                 <button
                   onClick={() => {
                     setShowCompletionModal(false);

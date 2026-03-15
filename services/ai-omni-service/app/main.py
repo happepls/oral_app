@@ -213,7 +213,7 @@ async def execute_action_with_response(action_name: str, params: dict, token: st
             logger.error(f"Failed to update task score: {e}")
 
     return None
-async def call_proficiency_workflow(user_id: str, goal_id: int, task_id: int, conversation_history: list, user_context: dict, token: str, scenario: str = None):
+async def call_proficiency_workflow(user_id: str, goal_id: int, task_id: int, conversation_history: list, user_context: dict, token: str, scenario: str = None, websocket = None):
     """
     调用工作流 2（熟练度打分）来分析对话并更新分数
     
@@ -358,16 +358,28 @@ async def call_proficiency_workflow(user_id: str, goal_id: int, task_id: int, co
                                 )
                                 if review_resp.status_code == 200:
                                     review_data = review_resp.json()
-                                    logger.info(f"Scenario review generated: {review_data.get('recommendations', {})}")
+                                    # API returns {"success": True, "data": {...}}
+                                    data = review_data.get('data', {})
+                                    logger.info(f"Scenario review generated: recommendations={data.get('recommendations', [])}")
+                                    logger.info(f"Scenario review analysis: {data.get('analysis', {})}")
                                     # 将点评信息存储在 user_context 中供前端使用
-                                    user_context['scenario_review'] = review_data.get('data', {})
-                                    
+                                    # workflow 返回结构：{workflow, scenario_title, review_report, recommendations, analysis}
+                                    review_payload = {
+                                        "review_report": data.get('review_report', ''),
+                                        "recommendations": data.get('recommendations', []),
+                                        "analysis": data.get('analysis', {})
+                                    }
+                                    user_context['scenario_review'] = review_payload
+
                                     # 发送 scenario_review 消息到前端
-                                    await websocket.send_json({
-                                        "type": "scenario_review",
-                                        "payload": review_data.get('data', {})
-                                    })
-                                    logger.info("Sent scenario_review to frontend")
+                                    if websocket:
+                                        await websocket.send_json({
+                                            "type": "scenario_review",
+                                            "payload": review_payload
+                                        })
+                                        logger.info(f"Sent scenario_review to frontend: payload={review_payload}")
+                                    else:
+                                        logger.warning("WebSocket not available, scenario_review not sent to frontend")
                                 else:
                                     logger.error(f"Failed to generate scenario review: {review_resp.status_code}")
                             except Exception as e:
@@ -665,7 +677,8 @@ class WebSocketCallback(OmniRealtimeCallback):
                                         self.messages,
                                         self.user_context,
                                         self.token,
-                                        self.scenario
+                                        self.scenario,
+                                        self.websocket
                                     )
                                     
                                     if workflow_result:
@@ -800,6 +813,10 @@ class WebSocketCallback(OmniRealtimeCallback):
                                         )
                                         if complete_resp.status_code == 200:
                                             logger.info("Auto-completed current task via magic passcode")
+                                            
+                                            # Get completed task info from response
+                                            complete_data = complete_resp.json().get('data', {})
+                                            completed_task_title = complete_data.get('task_title', 'Task completed')
 
                                             # Fetch next pending task to update user_context
                                             next_task_resp = await client.get(
@@ -816,6 +833,15 @@ class WebSocketCallback(OmniRealtimeCallback):
                                                     self.user_context['custom_topic'] = f"{self.scenario} (Next task: {next_task.get('text', 'N/A')})"
                                                     self.user_context['next_task_text'] = next_task.get('text', '')
                                                     logger.info(f"Next task loaded via magic passcode: {next_task.get('text')}")
+                                                    
+                                                    # Send task_completed message to frontend to update UI
+                                                    await self._safe_send({
+                                                        "type": "task_completed",
+                                                        "payload": {
+                                                            "task_title": completed_task_title,
+                                                            "next_task": next_task.get('text', '')
+                                                        }
+                                                    })
 
                                                     # Refresh AI session prompt with new task context
                                                     self._update_session_prompt()
@@ -823,6 +849,60 @@ class WebSocketCallback(OmniRealtimeCallback):
                                                     logger.info(f"All tasks completed in scenario: {self.scenario}")
                                                     self.user_context['custom_topic'] = f"{self.scenario} (All tasks completed!)"
                                                     self.user_context['next_task_text'] = None
+                                                    
+                                                    # All tasks completed, call scenario review workflow for personalized feedback
+                                                    logger.info("Scenario completed via magic passcode, calling scenario review workflow...")
+                                                    try:
+                                                        # Get conversation history for review
+                                                        conv_history = self.messages[-50:] if len(self.messages) > 50 else self.messages
+                                                        logger.info(f"Scenario review: conv_history length={len(conv_history)}, messages={self.messages[:3]}...")
+
+                                                        review_resp = await client.post(
+                                                            f"{os.getenv('WORKFLOW_SERVICE_URL', 'http://workflow-service:3006')}/api/workflows/scenario-review/generate",
+                                                            json={
+                                                                "user_id": self.user_id,
+                                                                "goal_id": goal_id,
+                                                                "scenario_title": self.scenario,
+                                                                "completed_tasks": [],
+                                                                "conversation_history": conv_history
+                                                            },
+                                                            headers={"Authorization": f"Bearer {self.token}"}
+                                                        )
+                                                        if review_resp.status_code == 200:
+                                                            review_data = review_resp.json()
+                                                            # API returns {"success": True, "data": {...}}
+                                                            data = review_data.get('data', {})
+                                                            logger.info(f"Scenario review generated: recommendations={data.get('recommendations', [])}")
+                                                            logger.info(f"Scenario review analysis: {data.get('analysis', {})}")
+                                                            
+                                                            # Build review payload for frontend
+                                                            review_payload = {
+                                                                "review_report": data.get('review_report', ''),
+                                                                "recommendations": data.get('recommendations', []),
+                                                                "analysis": data.get('analysis', {})
+                                                            }
+                                                            
+                                                            # Send scenario_review message to frontend
+                                                            await self._safe_send({
+                                                                "type": "scenario_review",
+                                                                "payload": review_payload
+                                                            })
+                                                            logger.info(f"Sent scenario_review to frontend (via magic passcode): payload={review_payload}")
+                                                            
+                                                            # Also send task_completed for the last task to trigger completion modal
+                                                            await self._safe_send({
+                                                                "type": "task_completed",
+                                                                "payload": {
+                                                                    "task_title": completed_task_title,
+                                                                    "next_task": None,
+                                                                    "scenario_completed": True
+                                                                }
+                                                            })
+                                                            logger.info("Sent task_completed (scenario completed) to frontend")
+                                                        else:
+                                                            logger.error(f"Failed to generate scenario review: {review_resp.status_code}")
+                                                    except Exception as e:
+                                                        logger.error(f"Error calling scenario review: {e}")
                                             else:
                                                 logger.error(f"Failed to fetch next task: {next_task_resp.status_code}")
                                         else:

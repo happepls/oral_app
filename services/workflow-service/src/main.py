@@ -223,19 +223,22 @@ async def generate_scenario_review(request: ScenarioReviewRequest, conn = Depend
     Workflow 3: Scenario Review - Generate review report for completed scenario
     """
     try:
+        logger.info(f"[SCENARIO_REVIEW] Request: user={request.user_id}, goal={request.goal_id}, scenario={request.scenario_title}, tasks={len(request.completed_tasks)}, history={len(request.conversation_history)}")
+        
         # Get completed tasks for this scenario
         tasks = await conn.fetch(
             """
-            SELECT * FROM user_tasks 
+            SELECT * FROM user_tasks
             WHERE goal_id = $1 AND scenario_title = $2 AND status = 'completed'
             ORDER BY completed_at DESC
             """,
             request.goal_id,
             request.scenario_title
         )
-        
+
         completed_tasks = [dict(task) for task in tasks]
-        
+        logger.info(f"[SCENARIO_REVIEW] Completed tasks from DB: {len(completed_tasks)}")
+
         result = await scenario_review_workflow.generate_scenario_review(
             user_id=request.user_id,
             goal_id=request.goal_id,
@@ -244,8 +247,10 @@ async def generate_scenario_review(request: ScenarioReviewRequest, conn = Depend
             conversation_history=request.conversation_history,
             db_connection=conn
         )
+        logger.info(f"[SCENARIO_REVIEW] Result: {result}")
         return {"success": True, "data": result}
     except Exception as e:
+        logger.error(f"[SCENARIO_REVIEW] Error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 

@@ -1001,7 +1001,22 @@ class ProficiencyScoringWorkflow:
         if not keywords or len(keywords) < 2:
             return ""
 
-        kw1, kw2 = keywords[0], keywords[1]
+        # 过滤掉不合理的关键词（短语、疑问句结构等）
+        valid_keywords = []
+        invalid_patterns = ['where is', 'how to', 'what is', 'can you', 'do you', 'is there']
+        for kw in keywords:
+            kw_lower = kw.lower().strip()
+            # 只保留单个实义词（2-15 个字符，不包含空格）
+            if 2 <= len(kw_lower) <= 15 and ' ' not in kw_lower:
+                # 检查是否包含无效模式
+                if not any(pattern in kw_lower for pattern in invalid_patterns):
+                    valid_keywords.append(kw)
+        
+        # 如果过滤后不足 2 个关键词，使用默认模板
+        if len(valid_keywords) < 2:
+            return "Try using connectors: 'I think...', 'In my opinion...', 'Actually...'"
+
+        kw1, kw2 = valid_keywords[0], valid_keywords[1]
 
         # 根据场景生成连接词示例
         scenario_lower = scenario.lower() if scenario else ""
@@ -1029,9 +1044,18 @@ class ProficiencyScoringWorkflow:
         if '购物' in scenario_lower or 'shopping' in scenario_lower or 'buy' in scenario_lower or 'price' in scenario_lower:
             return f"How much is {kw1}, and do you have {kw2}?"
 
-        # 方向场景（支持中英文）
+        # 方向场景（支持中英文）- 修复语法错误
         if '方向' in scenario_lower or 'direction' in scenario_lower or 'where' in scenario_lower:
-            return f"Where is {kw1}, and how do I get to {kw2}?"
+            # 避免生成 "Where is direction" 这种错误句子
+            # 使用更自然的表达方式
+            templates = [
+                f"Excuse me, could you tell me how to get to the {kw1}?",
+                f"Where can I find the {kw1}, and is it near the {kw2}?",
+                f"Could you show me the way to the {kw1}?",
+                f"How do I get to the {kw1} from here?",
+            ]
+            import random
+            return random.choice(templates)
 
         # 旅行场景（支持中英文）
         if '旅行' in scenario_lower or 'travel' in scenario_lower or 'flight' in scenario_lower or 'hotel' in scenario_lower:
@@ -1092,29 +1116,30 @@ class ProficiencyScoringWorkflow:
             return self._keyword_cache[cache_key]
 
         # 场景关键词映射（作为 AI 调用失败的 fallback）- 支持中文场景名匹配
+        # 注意：只包含名词/实义词，不包含短语或疑问句结构
         scene_keywords_map = {
             # 中文场景名
-            "问候": ["your hometown", "your job", "your hobbies", "your family", "your studies", "your interests", "your weekend", "your plans", "your friends", "your city"],
-            "日常问候": ["your hometown", "your job", "your hobbies", "your family", "your studies", "your interests", "your weekend", "your plans", "your friends", "your city"],
-            "电话": ["phone", "call", "calling", "speaking", "hold on", "one moment", "may I ask", "who's calling", "call back", "leave a message"],
-            "通话": ["phone", "call", "calling", "speaking", "hold on", "one moment", "may I ask", "who's calling", "call back", "leave a message"],
-            "咖啡": ["coffee", "latte", "cappuccino", "espresso", "order", "menu", "size", "milk", "sugar", "hot", "ice", "to go"],
-            "餐厅": ["restaurant", "table", "reservation", "menu", "order", "bill", "tip", "food", "dish", "delicious", "hungry"],
-            "购物": ["shopping", "buy", "price", "cost", "discount", "size", "color", "try on", "pay", "receipt"],
-            "方向": ["direction", "where is", "how to get", "street", "road", "turn left", "turn right", "straight", "map", "near"],
-            "旅行": ["travel", "flight", "hotel", "ticket", "airport", "booking", "destination", "trip", "passport", "visa"],
-            "商务": ["business", "meeting", "project", "team", "client", "deadline", "report", "presentation", "schedule"],
-            "天气": ["weather", "sunny", "rainy", "cloudy", "temperature", "hot", "cold", "windy", "forecast"],
+            "问候": ["hometown", "job", "hobbies", "family", "studies", "interests", "weekend", "plans", "friends", "city"],
+            "日常问候": ["hometown", "job", "hobbies", "family", "studies", "interests", "weekend", "plans", "friends", "city"],
+            "电话": ["phone", "call", "message", "number", "callback", "voicemail"],
+            "通话": ["phone", "call", "message", "number", "callback", "voicemail"],
+            "咖啡": ["coffee", "latte", "cappuccino", "espresso", "menu", "size", "milk", "sugar"],
+            "餐厅": ["restaurant", "table", "reservation", "menu", "bill", "food", "dish"],
+            "购物": ["shopping", "price", "discount", "size", "color", "receipt", "payment"],
+            "方向": ["street", "road", "station", "airport", "hotel", "restaurant", "map", "direction", "landmark", "building"],
+            "旅行": ["travel", "flight", "hotel", "ticket", "airport", "booking", "destination", "trip", "passport"],
+            "商务": ["business", "meeting", "project", "team", "client", "deadline", "report", "presentation"],
+            "天气": ["weather", "sunny", "rainy", "cloudy", "temperature", "forecast", "wind"],
             # 英文场景名
-            "greeting": ["your hometown", "your job", "your hobbies", "your family", "your studies", "your interests", "your weekend", "your plans", "your friends", "your city"],
-            "phone": ["phone", "call", "calling", "speaking", "hold on", "one moment", "may I ask", "who's calling", "call back", "leave a message"],
-            "coffee": ["coffee", "latte", "cappuccino", "espresso", "order", "menu", "size", "milk", "sugar", "hot", "ice", "to go"],
-            "restaurant": ["restaurant", "table", "reservation", "menu", "order", "bill", "tip", "food", "dish", "delicious", "hungry"],
-            "shopping": ["shopping", "buy", "price", "cost", "discount", "size", "color", "try on", "pay", "receipt"],
-            "direction": ["direction", "where is", "how to get", "street", "road", "turn left", "turn right", "straight", "map", "near"],
-            "travel": ["travel", "flight", "hotel", "ticket", "airport", "booking", "destination", "trip", "passport", "visa"],
-            "business": ["business", "meeting", "project", "team", "client", "deadline", "report", "presentation", "schedule"],
-            "weather": ["weather", "sunny", "rainy", "cloudy", "temperature", "hot", "cold", "windy", "forecast"],
+            "greeting": ["hometown", "job", "hobbies", "family", "studies", "interests", "weekend", "plans", "friends", "city"],
+            "phone": ["phone", "call", "message", "number", "callback", "voicemail"],
+            "coffee": ["coffee", "latte", "cappuccino", "espresso", "menu", "size", "milk", "sugar"],
+            "restaurant": ["restaurant", "table", "reservation", "menu", "bill", "food", "dish"],
+            "shopping": ["shopping", "price", "discount", "size", "color", "receipt", "payment"],
+            "direction": ["street", "road", "station", "airport", "hotel", "restaurant", "map", "direction", "landmark", "building"],
+            "travel": ["travel", "flight", "hotel", "ticket", "airport", "booking", "destination", "trip", "passport"],
+            "business": ["business", "meeting", "project", "team", "client", "deadline", "report", "presentation"],
+            "weather": ["weather", "sunny", "rainy", "cloudy", "temperature", "forecast", "wind"],
         }
 
         # 尝试匹配场景关键词 - 支持部分匹配
