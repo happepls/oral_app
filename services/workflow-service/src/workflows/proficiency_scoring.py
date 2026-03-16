@@ -368,9 +368,10 @@ class ProficiencyScoringWorkflow:
         input_language = self._detect_input_language(user_content)
         
         # 如果输入语言与目标语言不匹配，判定为话题无关
-        if input_language and input_language != target_language:
-            # 语言不匹配，直接给最低分并扣分
-            return max(0, 5 - 3)  # 基础分 5 分，扣 3 分
+        # 注意：如果无法检测语言（返回None），也视为不匹配（安全侧处理）
+        if input_language is None or (input_language and input_language != target_language):
+            # 语言不匹配或无法检测，直接给最低分
+            return 2  # 基础分 5 分，扣 3 分后最低为 2
 
         # 检测无效输入（无意义字符、重复字符等）
         # 检测纯符号、重复字符、无意义输入（如"xxxx"、"。。。"、"!!!"等）
@@ -1227,24 +1228,31 @@ Return ONLY a JSON array: ["keyword1", "keyword2", ...]"""
         
         text_lower = text.lower()
         
+        # 移除数字和空格，只保留实际字符用于语言检测
+        # 这样可以避免 "九四三七八三二，天天吃快餐" 这种数字占比高的情况
+        text_for_detection = re.sub(r'[0-9\s]', '', text)
+        if not text_for_detection:
+            return None
+        text_length = len(text_for_detection)
+
         # 检测中文字符
         chinese_chars = len(re.findall(r'[\u4e00-\u9fff]', text))
-        if chinese_chars > len(text) * 0.3:  # 30% 以上是中文
+        if chinese_chars > text_length * 0.25:  # 25% 以上是中文（降低阈值）
             return 'chinese'
-        
+
         # 检测日文字符
         japanese_chars = len(re.findall(r'[\u3040-\u309f\u30a0-\u30ff]', text))
-        if japanese_chars > len(text) * 0.2:  # 20% 以上是日文
+        if japanese_chars > text_length * 0.2:  # 20% 以上是日文
             return 'japanese'
-        
+
         # 检测韩文字符
         korean_chars = len(re.findall(r'[\uac00-\ud7af]', text))
-        if korean_chars > len(text) * 0.2:  # 20% 以上是韩文
+        if korean_chars > text_length * 0.2:  # 20% 以上是韩文
             return 'korean'
-        
+
         # 检测西文字符（英文、法文、德文、西班牙文等使用拉丁字母）
         latin_chars = len(re.findall(r'[a-zA-Z]', text))
-        if latin_chars > len(text) * 0.5:  # 50% 以上是拉丁字母
+        if latin_chars > text_length * 0.5:  # 50% 以上是拉丁字母
             # 尝试区分具体语言
             if re.search(r'\b(el|la|los|las|de|que|en|es|por|para|con)\b', text_lower):
                 return 'spanish'
@@ -1254,7 +1262,7 @@ Return ONLY a JSON array: ["keyword1", "keyword2", ...]"""
                 return 'german'
             else:
                 return 'english'
-        
+
         # 无法确定具体语言
         return None
 
