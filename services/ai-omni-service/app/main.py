@@ -762,6 +762,16 @@ class WebSocketCallback(OmniRealtimeCallback):
                                             self._update_session_prompt()
                                         
                         asyncio.create_task(upload_ai_task(data, self.current_response_id))
+
+                    # Send response.audio.done to client so it knows AI finished speaking
+                    # This should be sent regardless of whether there's audio in the buffer
+                    await self._safe_send({
+                        "type": "response.audio.done",
+                        "payload": {
+                            "responseId": self.current_response_id
+                        }
+                    })
+                    logger.info(f"Sent response.audio.done to client for response {self.current_response_id}")
                 elif event_name == 'conversation.item.input_audio_transcription.completed':
                     # Handle user audio transcription - send immediately to ensure correct UI order
                     user_transcript = response.get('transcript', '')

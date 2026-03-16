@@ -7,8 +7,8 @@ import requests
 import uuid
 
 # Configuration
-API_BASE = "http://localhost:8080/api"
-WS_URL = "ws://localhost:8080/api/ws/"
+API_BASE = "http://localhost:8081/api"
+WS_URL = "ws://localhost:8081/api/ws/"
 
 class Color:
     GREEN = '\033[92m'
@@ -19,7 +19,7 @@ def register_and_login():
     timestamp = int(time.time())
     email = f"auto_{timestamp}@example.com"
     username = f"AutoTest_{timestamp}"
-    password = "password123"
+    password = "TestPass123!"  # Meets validation: 8+ chars, upper, lower, number, special
     
     print(f"1. Registering user: {email}")
     try:

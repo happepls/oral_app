@@ -1,3 +1,5 @@
+--- Context from: /Users/sgcc-work/.qwen/QWEN.md ---
+
 # Oral AI Project Context for Qwen Code
 
 ## Project Overview
@@ -221,7 +223,7 @@ docker compose exec postgres psql -U user -d oral_app -c \
 - **Docker Security**: Updated Docker configurations to use non-root users and secure defaults
 - **Security Audit**: Created automated security audit script to identify vulnerabilities and track security improvements
 
-## Important
+## 容器更新验证流程
 在完成容器镜像的构建或更新部署后，应利用 `docker exec` 命令进入运行中的容器环境，执行必要的验证操作，以确认容器内应用程序的代码已成功更新至最新版本，并避免继续执行旧代码逻辑。
 
 ### 验证客户端容器更新
