@@ -316,6 +316,51 @@ const cleanupExpiredTokens = () => {
 // Run cleanup every hour
 setInterval(cleanupExpiredTokens, 60 * 60 * 1000);
 
+// Internal service authentication middleware
+// Used for service-to-service communication (e.g., ai-omni-service calling user-service)
+const internalAuth = (req, res, next) => {
+  const internalKey = req.headers['x-internal-service-key'];
+  
+  // Check for internal service key in environment
+  const expectedKey = process.env.INTERNAL_SERVICE_KEY;
+  
+  if (!expectedKey) {
+    console.warn('INTERNAL_SERVICE_KEY not configured - internal API security disabled');
+    // In development, allow without key if not configured
+    if (process.env.NODE_ENV !== 'production') {
+      return next();
+    }
+  }
+  
+  if (!internalKey || internalKey !== expectedKey) {
+    return res.status(403).json({
+      code: 403,
+      message: 'Forbidden - Invalid internal service key',
+      data: null
+    });
+  }
+  
+  next();
+};
+
+// Skip internal auth for Docker internal network (172.x.x.x)
+const internalAuthWithNetworkSkip = (req, res, next) => {
+  // Get client IP from various headers (behind proxy/gateway)
+  const clientIp = req.headers['x-real-ip'] || 
+                   req.headers['x-forwarded-for']?.split(',')[0]?.trim() ||
+                   req.connection?.remoteAddress ||
+                   req.socket?.remoteAddress;
+  
+  // Skip auth for Docker internal network (172.x.x.x)
+  if (clientIp && clientIp.startsWith('172.')) {
+    console.log(`Internal auth skipped for Docker internal network: ${clientIp}`);
+    return next();
+  }
+  
+  // Apply internal auth for external requests
+  return internalAuth(req, res, next);
+};
+
 module.exports = {
   protect,
   refresh,
@@ -326,5 +371,7 @@ module.exports = {
   validatePassword,
   generateAccessToken,
   generateRefreshToken,
-  JWT_CONFIG
+  JWT_CONFIG,
+  internalAuth,
+  internalAuthWithNetworkSkip
 };

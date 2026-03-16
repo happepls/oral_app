@@ -67,6 +67,20 @@ Repository: `git@github.com:happepls/oral_app.git` (master branch)
 
 ### Mar 2026 Updates
 
+- **System Security & Stability Improvements (Mar 16)**:
+  - **Internal API Authentication**: Added `internalAuthWithNetworkSkip` middleware for service-to-service communication. Docker internal network (172.x.x.x) auto-skips auth for backward compatibility.
+  - **Rate Limiting for Auth**: Added 5 req/min/IP rate limiting for `/api/users/login` and `/api/users/register` endpoints.
+  - **API Gateway Headers**: Added `X-Real-IP`, `X-Forwarded-For`, `X-Forwarded-Proto` headers for AI WebSocket.
+  - **DB Connection Pool**: Configurable pool size via `DB_POOL_MAX`/`DB_POOL_MIN` env vars, added pool pressure monitoring.
+  - **WebSocket Error Handling**: Improved `connection_closed` event with reconnect info.
+  - **Frontend Cleanup**: Added useEffect cleanup to prevent memory leaks, removed duplicate ping mechanism.
+  - Files: `services/user-service/src/middleware/enhancedAuthMiddleware.js`, `api-gateway/nginx.conf`, `services/user-service/src/models/db.js`, `services/conversation-service/src/models/db.js`, `services/comms-service/src/index.js`, `client/src/pages/Conversation.js`
+
+- **Bug Fixes (Mar 16)**:
+  - **BUG-001**: Fixed `Cannot read properties of null (reading 'pingInterval')` using optional chaining `?.`.
+  - **BUG-002/003**: Fixed "重新开始"/"重新练习" buttons not resetting session properly. Now correctly passes `{ keepHistory: false, resetProgress: true }`.
+  - Files: `client/src/pages/Conversation.js`, `client/src/__tests__/conversation-bugfix.test.js`
+
 - **Scenario Completion "Continue Practice" (Mar 15)**: Added `resetProgress` parameter to `handleRetryCurrentScenario`. "继续练习" keeps progress/history/session; "重新开始" resets everything. Fixed `websocket` parameter missing in `call_proficiency_workflow`. Files: `client/src/pages/Conversation.js`, `services/ai-omni-service/app/main.py`
 
 - **Scenario Review AI Feedback (Mar 12)**: Enhanced `_generate_recommendations()` to analyze actual conversation (connector words, sentence length, questions). Fixed data extraction from `review_data.get('data', {})`. Files: `services/workflow-service/src/workflows/scenario_review.py`, `services/ai-omni-service/app/main.py`

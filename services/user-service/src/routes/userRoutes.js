@@ -1,12 +1,12 @@
 const express = require('express');
 const router = express.Router();
 const userController = require('../controllers/userController');
-const { protect } = require('../middleware/enhancedAuthMiddleware'); // Updated to enhanced auth
-const { 
-  authRateLimiter, 
-  validateRegistration, 
-  validateLogin, 
-  handleValidationErrors 
+const { protect, internalAuthWithNetworkSkip } = require('../middleware/enhancedAuthMiddleware'); // Updated to enhanced auth
+const {
+  authRateLimiter,
+  validateRegistration,
+  validateLogin,
+  handleValidationErrors
 } = require('../middleware/securityMiddleware');
 
 // Register and login routes with rate limiting and validation
@@ -34,15 +34,16 @@ router.post('/api/users/checkin', protect, userController.checkin);
 router.get('/api/users/checkin/history', protect, userController.getCheckinHistory);
 router.get('/api/users/checkin/stats', protect, userController.getCheckinStats);
 
-// Internal Routes (No auth middleware for simplicity in MVP, should use internal key in prod)
-router.post('/api/users/internal/users/:id/proficiency', userController.updateProficiencyInternal);
-router.post('/api/users/internal/users/:id/tasks/complete', userController.completeTaskInternal);
-router.post('/api/users/internal/users/:id/tasks/score', userController.updateTaskScoreInternal);
-router.get('/api/users/internal/users/:id', userController.getUserInternal);
+// Internal Routes (Protected with internalAuthWithNetworkSkip for service-to-service communication)
+// Uses network-based skip for Docker internal network (172.x.x.x) for backward compatibility
+router.post('/api/users/internal/users/:id/proficiency', internalAuthWithNetworkSkip, userController.updateProficiencyInternal);
+router.post('/api/users/internal/users/:id/tasks/complete', internalAuthWithNetworkSkip, userController.completeTaskInternal);
+router.post('/api/users/internal/users/:id/tasks/score', internalAuthWithNetworkSkip, userController.updateTaskScoreInternal);
+router.get('/api/users/internal/users/:id', internalAuthWithNetworkSkip, userController.getUserInternal);
 
-// Task keywords routes (internal, no auth for now)
-router.get('/api/users/tasks/:taskId/keywords', userController.getTaskKeywords);
-router.post('/api/users/tasks/:taskId/keywords', userController.generateTaskKeywords);
-router.post('/api/users/internal/users/:id/tasks/generate-keywords', userController.generateTaskKeywordsInternal);
+// Task keywords routes (internal, protected with network skip)
+router.get('/api/users/tasks/:taskId/keywords', internalAuthWithNetworkSkip, userController.getTaskKeywords);
+router.post('/api/users/tasks/:taskId/keywords', internalAuthWithNetworkSkip, userController.generateTaskKeywords);
+router.post('/api/users/internal/users/:id/tasks/generate-keywords', internalAuthWithNetworkSkip, userController.generateTaskKeywordsInternal);
 
 module.exports = router;

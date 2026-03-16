@@ -479,8 +479,8 @@ function Conversation() {
         if (sessionId) {
           // Properly cleanup WebSocket connection
           if (socketRef.current) {
-            // Clear ping interval first to prevent errors
-            if (socketRef.current.pingInterval) {
+            // Clear ping interval first to prevent errors - use optional chaining
+            if (socketRef.current?.pingInterval) {
               clearInterval(socketRef.current.pingInterval);
               socketRef.current.pingInterval = null;
             }
@@ -1194,47 +1194,36 @@ function Conversation() {
 
     // Register event listeners BEFORE connecting to avoid missing events
     socketRef.current.addEventListener('open', () => {
-      console.log('WS Open (Optimized)');
-      setIsConnected(true);
-      setWebSocketError(null);
+    console.log('WS Open (Optimized)');
+    setIsConnected(true);
+    setWebSocketError(null);
 
-      // Start ping interval to keep connection alive
-      const pingInterval = setInterval(() => {
-        if (socketRef.current && socketRef.current.readyState === WebSocket.OPEN) {
-          socketRef.current.send(JSON.stringify({
-            type: 'ping',
-            timestamp: Date.now(),
-            sequence: Math.floor(Math.random() * 1000)
-          }));
-        }
-      }, 10000); // Send ping every 10 seconds
+    // Note: Ping/heartbeat is handled by OptimizedWebSocket internally
+    // No need for manual ping interval here
 
-      // Store interval reference for cleanup
-      socketRef.current.pingInterval = pingInterval;
+    // Send session_start handshake
+    const searchParams = new URLSearchParams(window.location.search);
+    const scenario = searchParams.get('scenario');
 
-      // Send session_start handshake
-      const searchParams = new URLSearchParams(window.location.search);
-      const scenario = searchParams.get('scenario');
-      
-      // Check if welcome message should be muted (after retry)
-      const welcomeMuted = scenario ? localStorage.getItem(`welcome_muted_${scenario}`) === 'true' : false;
-      
+    // Check if welcome message should be muted (after retry)
+    const welcomeMuted = scenario ? localStorage.getItem(`welcome_muted_${scenario}`) === 'true' : false;
+
       const payload = {
-          type: 'session_start',
-          userId: user.id,
+        type: 'session_start',
+        userId: user.id,
           sessionId: sessionId,
-          token: token,
-          scenario: scenario,
-          topic: searchParams.get('topic'),
+        token: token,
+        scenario: scenario,
+        topic: searchParams.get('topic'),
           isRestoration: true,
-          welcomeMuted: welcomeMuted,  // Flag to suppress welcome message
-          clientInfo: {
+        welcomeMuted: welcomeMuted,  // Flag to suppress welcome message
+        clientInfo: {
             optimized: true,
-            version: '2.0',
-            features: ['adaptive_streaming', 'compression', 'low_latency']
-          }
-      };
-      socketRef.current.send(JSON.stringify(payload));
+          version: '2.0',
+      features: ['adaptive_streaming', 'compression', 'low_latency']
+    }
+    };
+    socketRef.current.send(JSON.stringify(payload));
     });
 
     socketRef.current.addEventListener('message', async (event) => {
@@ -1275,8 +1264,8 @@ function Conversation() {
         console.log('WebSocket Closed (Optimized):', event.code, event.reason);
         setIsConnected(false);
 
-        // Clear ping interval
-        if (socketRef.current.pingInterval) {
+        // Clear ping interval - safely check socketRef.current first
+        if (socketRef.current?.pingInterval) {
           clearInterval(socketRef.current.pingInterval);
           socketRef.current.pingInterval = null;
         }
@@ -1520,6 +1509,31 @@ function Conversation() {
     };
 
     init();
+    
+    // Cleanup function to prevent memory leaks and stale callbacks
+    return () => {
+      console.log('[Cleanup] Conversation component unmounting, cleaning up resources...');
+      
+      // Close WebSocket connection
+      if (socketRef.current) {
+        console.log('[Cleanup] Closing WebSocket connection');
+        socketRef.current.close(1000, 'Component unmounting');
+        socketRef.current = null;
+      }
+      
+      // Stop any ongoing audio playback
+      stopAudioPlayback();
+      
+      // Stop network monitoring
+      if (window.networkAdaptiveManager) {
+        window.networkAdaptiveManager.stopMonitoring();
+      }
+      
+      // Clear any pending audio queue
+      if (audioQueueRef.current) {
+        audioQueueRef.current = [];
+      }
+    };
   }, [token, user, isManualDisconnect]); // Removed connectWebSocket from dependencies to prevent infinite loop
 
   // Auto-scroll to bottom when messages change
@@ -1870,7 +1884,7 @@ function Conversation() {
                 {/* Restart Practice Button - Icon only */}
                 {(tasks.length > 0 || location.state?.scenario || new URLSearchParams(window.location.search).get('scenario')) && (
                     <button
-                      onClick={() => handleRetryCurrentScenario({ keepHistory: true })}
+                      onClick={() => handleRetryCurrentScenario({ keepHistory: false, resetProgress: true })}
                       className="flex-shrink-0 w-12 h-12 bg-amber-100 dark:bg-amber-900/30 hover:bg-amber-200 dark:hover:bg-amber-900/50 text-amber-700 dark:text-amber-300 rounded-xl flex items-center justify-center transition border border-amber-200 dark:border-amber-700"
                       title="重新练习"
                     >

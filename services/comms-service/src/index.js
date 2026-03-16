@@ -246,23 +246,27 @@ wss.on('connection', async function connection(clientWs, req) {
 
       aiServiceWs.on('close', (code, reason) => {
         console.log(`Connection to AI service closed for user ${userId}. Code: ${code}, Reason: ${reason?.toString()}`);
-        // Only close client connection if it wasn't already closed
+        
+        // Send connection_closed event to client for proper handling
         if (clientWs.readyState === WebSocket.OPEN) {
-          clientWs.close(1011, 'AI service connection lost.');
+          clientWs.send(JSON.stringify({
+            type: 'connection_closed',
+            payload: {
+              code: code,
+              reason: reason?.toString() || 'AI service connection closed',
+              reconnectable: code !== 1008 && code !== 1011  // Protocol errors are not reconnectable
+            }
+          }));
+          
+          // Only close client connection for fatal errors
+          if (code === 1008 || code === 1011) {
+            clientWs.close(code, reason?.toString() || 'AI service connection lost.');
+          }
         }
       });
 
-      aiServiceWs.on('error', (error) => {
-        console.error(`Error on AI service connection for user ${userId}:`, error.message);
-        console.error(`Error details:`, error);
-        // Only send error to client if connection is still open
-        if (clientWs.readyState === WebSocket.OPEN) {
-          clientWs.send(JSON.stringify({
-            type: 'error',
-            message: `AI service connection failed: ${error.message}. Please try again later.`
-          }));
-        }
-      });
+      // Remove duplicate error handler - already handled above
+      // aiServiceWs.on('error', ...) is already registered
 
       // Add ping/pong mechanism to keep connection alive
       aiServiceWs.on('ping', () => {
