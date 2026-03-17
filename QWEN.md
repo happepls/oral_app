@@ -61,11 +61,20 @@ Repository: `git@github.com:happepls/oral_app.git` (master branch)
 ## Current Status (Mar 2026)
 - **Features**: Proficiency Scoring, Scenario-based Training, Dynamic Curriculum, Real-time Task Tracking.
 - **AI Integration**: Qwen3-Omni with streaming ASR/TTS.
-- **Recent Fixes**: Scoring loop, Scenario logic, Interruption handling (barge-in), Bilingual strategy, AudioUrl persistence, Audio playback queue management.
+- **Recent Fixes**: Scoring loop, Scenario logic, Interruption handling (barge-in), Bilingual strategy, AudioUrl persistence, Audio playback queue management, Task relevance keyword matching, Redis caching for user data.
 
 ## Recent Issues and Solutions
 
 ### Mar 2026 Updates
+
+- **Proficiency Scoring & Task Relevance Fixes (Mar 17)**:
+  - **AI Review Feedback Optimization**: Modified scenario completion modal to show personalized AI feedback instead of fixed templates. Removed emojis, using concise Chinese feedback.
+  - **Redis Cache Integration**: Added Redis caching for user information to reduce database queries. Created `cache.py` module with user language/info caching.
+  - **Language Detection Fix**: Lowered Latin character threshold (50% → 30%), short texts (<20 chars) default to English.
+  - **Task-Specific Keyword Matching**: Added `task_desc_keywords_map` to prioritize task description over scenario title for keyword extraction. Fixed issue where "聊聊天气" task was matched with greeting keywords.
+  - **Generic Words Filter**: Removed generic polite words (please, can you, thank you, hello, hi, hey) from task relevance scoring to prevent false positives.
+  - **Simplified Feedback**: Streamlined improvement tips to only show task description and suggested keywords, removing verbose examples and grammar corrections.
+  - Files: `services/workflow-service/src/workflows/proficiency_scoring.py`, `services/workflow-service/src/cache.py`, `services/workflow-service/src/main.py`, `services/workflow-service/requirements.txt`, `docker-compose.yml`, `client/src/pages/Conversation.js`
 
 - **System Security & Stability Improvements (Mar 16)**:
   - **Internal API Authentication**: Added `internalAuthWithNetworkSkip` middleware for service-to-service communication. Docker internal network (172.x.x.x) auto-skips auth for backward compatibility.

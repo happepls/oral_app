@@ -53,6 +53,13 @@ class ProficiencyScoringWorkflow:
         Returns:
             包含分数变化、是否完成任务、改进建议等信息
         """
+        # 获取用户的母语
+        user = await db_connection.fetchrow(
+            "SELECT native_language FROM users WHERE id = $1",
+            user_id
+        )
+        native_language = user["native_language"] if user and user["native_language"] else "English"
+
         # 提取最近 3-5 轮对话
         recent_turns = self._extract_recent_turns(conversation_history, limit=5)
 
@@ -62,7 +69,7 @@ class ProficiencyScoringWorkflow:
         # 计算本轮熟练度增量（可正可负）
         proficiency_delta, feedback = self._calculate_proficiency_delta_with_feedback(scores)
 
-        # 更新累计分数
+        # 更新累计分数（传递 native_language 用于生成母语反馈）
         result = await self._update_user_proficiency(
             user_id=user_id,
             goal_id=goal_id,
@@ -72,7 +79,8 @@ class ProficiencyScoringWorkflow:
             feedback=feedback,
             db_connection=db_connection,
             current_task=current_task,
-            conversation_history=conversation_history
+            conversation_history=conversation_history,
+            native_language=native_language
         )
 
         return result
@@ -96,13 +104,26 @@ class ProficiencyScoringWorkflow:
         self,
         recent_turns: List[Dict[str, Any]],
         current_task: Dict[str, Any]
-    ) -> Dict[str, int]:
-        """计算各维度分数 (0-10)"""
+    ) -> Dict[str, Any]:
+        """计算各维度分数 (0-10)
+        
+        Returns:
+            {
+                "fluency": int,
+                "vocabulary": int,
+                "grammar": int,
+                "task_relevance": int,
+                "suggested_keywords": List[str],  # 建议的关键词（当task_relevance低时）
+                "matched_keywords": List[str]  # 已匹配的关键词
+            }
+        """
         scores = {
             "fluency": 5,  # 默认中等
             "vocabulary": 5,
             "grammar": 5,
-            "task_relevance": 5
+            "task_relevance": 5,
+            "suggested_keywords": [],
+            "matched_keywords": []
         }
 
         if not recent_turns:
@@ -123,10 +144,13 @@ class ProficiencyScoringWorkflow:
         scores["grammar"] = self._score_grammar(recent_turns, target_language)
 
         # Task Relevance: 基于任务/场景相关性（异步调用）
-        scores["task_relevance"] = await self._score_task_relevance(
+        task_relevance_result = await self._score_task_relevance(
             recent_turns,
             current_task
         )
+        scores["task_relevance"] = task_relevance_result["score"]
+        scores["suggested_keywords"] = task_relevance_result.get("suggested_keywords", [])
+        scores["matched_keywords"] = task_relevance_result.get("matched_keywords", [])
 
         return scores
 
@@ -304,18 +328,27 @@ class ProficiencyScoringWorkflow:
         self,
         turns: List[Dict[str, Any]],
         current_task: Dict[str, Any]
-    ) -> int:
+    ) -> Dict[str, Any]:
         """
         任务相关性评分 (0-10) - 支持跨语言匹配
         - 包含任务特定关键词 : +5
         - 包含场景关键词 : +2
         - 偏离话题 : -3
         - 无关内容 : -5
+        
+        Returns:
+            {
+                "score": int,  # 0-10 的分数
+                "suggested_keywords": List[str],  # 建议的关键词（当分数低时）
+                "matched_keywords": List[str]  # 已匹配的关键词
+            }
         """
         score = 5  # 基础分
+        suggested_keywords = []
+        matched_keywords = []
 
         if not current_task:
-            return score
+            return {"score": score, "suggested_keywords": suggested_keywords, "matched_keywords": matched_keywords}
 
         # 获取任务描述和场景标题
         task_desc = current_task.get("task_description", "")
@@ -332,7 +365,7 @@ class ProficiencyScoringWorkflow:
         )
 
         if not user_content:
-            return score
+            return {"score": score, "suggested_keywords": scene_keywords[:5], "matched_keywords": matched_keywords}
 
         # 1. 从任务描述中提取任务特定关键词（支持任何语言）
         task_keywords_en = set(re.findall(r'\b[a-zA-Z]{3,}\b', task_desc.lower()))
@@ -357,29 +390,44 @@ class ProficiencyScoringWorkflow:
             None   # token - 暂不需要
         )
         
-        # 3. 检查任务特定关键词匹配（高权重）
-        matched_task_specific = sum(1 for kw in task_specific_keywords if kw.lower() in user_content)
+        # 定义通用礼貌用语（这些词不应该作为任务相关性评分依据）
+        generic_polite_words = {'please', 'can you', 'could you', 'thank you', 'thanks', 'excuse me', 'sorry', 'pardon', 'hello', 'hi', 'hey'}
         
+        # 3. 检查任务特定关键词匹配（高权重）
+        # 过滤掉通用礼貌用语，只保留场景特定关键词
+        for kw in task_specific_keywords:
+            if kw.lower() in user_content and kw.lower() not in generic_polite_words:
+                matched_keywords.append(kw)
+        matched_task_specific = len(matched_keywords)
+
         # 4. 检查场景关键词匹配（低权重）
-        matched_scene_keywords = sum(1 for kw in scene_keywords if kw.lower() in user_content)
+        # 同样过滤掉通用礼貌用语
+        matched_scene_keywords_list = []
+        for kw in scene_keywords:
+            if kw.lower() in user_content and kw.lower() not in generic_polite_words:
+                matched_scene_keywords_list.append(kw)
+        matched_scene_keywords = len(matched_scene_keywords_list)
 
         # 检测用户输入语言是否与目标语言匹配
         target_language = current_task.get("target_language", "English").lower()
         input_language = self._detect_input_language(user_content)
-        
-        # 如果输入语言与目标语言不匹配，判定为话题无关
-        # 注意：如果无法检测语言（返回None），也视为不匹配（安全侧处理）
-        if input_language is None or (input_language and input_language != target_language):
-            # 语言不匹配或无法检测，直接给最低分
-            return 2  # 基础分 5 分，扣 3 分后最低为 2
+
+        # 语言不匹配时降低分数，但不直接给最低分（继续关键词匹配）
+        language_mismatch = False
+        if input_language and input_language != target_language:
+            # 明确检测到语言不匹配（如中文vs英文）
+            language_mismatch = True
+            score -= 2  # 扣2分
+        # 注意：如果无法检测语言（返回None），不扣分，继续关键词匹配
+        # 这避免短文本如"Hi", "Good morning"等被误判
 
         # 检测无效输入（无意义字符、重复字符等）
         # 检测纯符号、重复字符、无意义输入（如"xxxx"、"。。。"、"!!!"等）
         if re.match(r'^[\x00-\x1f\W]{1,10}$', user_content.strip()) or \
            re.match(r'^(.)\1{2,}$', user_content.strip().lower()) or \
            len(user_content.strip()) < 3:
-            # 无效输入，直接给最低分
-            return 1
+            # 无效输入，直接给最低分，返回前5个场景关键词作为建议
+            return {"score": 1, "suggested_keywords": scene_keywords[:5], "matched_keywords": []}
 
         # 计算得分 - 任务特定关键词权重更高
         if matched_task_specific >= 2:
@@ -405,9 +453,9 @@ class ProficiencyScoringWorkflow:
             "吃", "饭", "晚餐", "午餐", "早餐", "做饭", "菜", "面", "面条", "下面"
         ]
 
-        # 2. 检测用户输入是否包含任务特定关键词或场景关键词
-        has_task_specific = any(kw.lower() in user_content for kw in task_specific_keywords)
-        has_scene_keywords = any(kw.lower() in user_content for kw in scene_keywords)
+        # 2. 检测用户输入是否包含任务特定关键词或场景关键词（排除通用礼貌用语）
+        has_task_specific = any(kw.lower() in user_content for kw in task_specific_keywords if kw.lower() not in generic_polite_words)
+        has_scene_keywords = any(kw.lower() in user_content for kw in scene_keywords if kw.lower() not in generic_polite_words)
 
         # 3. 检测是否有明显的无关内容
         has_off_topic = any(word in user_content for word in off_topic_indicators)
@@ -416,7 +464,21 @@ class ProficiencyScoringWorkflow:
         if not has_task_specific and not has_scene_keywords and has_off_topic:
             score = max(0, score - 2)  # 严重偏离话题，再扣 2 分
 
-        return min(10, max(0, score))
+        final_score = min(10, max(0, score))
+        
+        # 准备建议关键词（当分数较低时）
+        suggested_keywords = []
+        if final_score < 5:
+            # 取未匹配的场景关键词作为建议
+            suggested_keywords = [kw for kw in scene_keywords if kw not in matched_scene_keywords_list][:5]
+            if not suggested_keywords:
+                suggested_keywords = scene_keywords[:5]
+        
+        return {
+            "score": final_score,
+            "suggested_keywords": suggested_keywords,
+            "matched_keywords": matched_keywords + matched_scene_keywords_list
+        }
 
     async def _get_task_specific_keywords(self, task_desc: str, scenario_title: str, task_id: int = None, user_id: str = None, token: str = None) -> List[str]:
         """根据任务描述获取任务特定关键词 - 从 user-service API 读取"""
@@ -444,30 +506,71 @@ class ProficiencyScoringWorkflow:
         # 动态生成关键词（不再使用预定义映射）
         # 基于任务描述和场景标题提取关键词
         keywords = set()
-        
+        combined_text = f"{task_desc} {scenario_title}".lower()
+
         # 1. 提取英文单词
-        en_words = re.findall(r'\b[a-zA-Z]{3,}\b', f"{task_desc} {scenario_title}".lower())
-        stop_words = {'the', 'and', 'for', 'with', 'about', 'your', 'you', 'that', 'this', 'have', 'has', 'are', 'was', 'were'}
+        en_words = re.findall(r'\b[a-zA-Z]{3,}\b', combined_text)
+        stop_words = {'the', 'and', 'for', 'with', 'about', 'your', 'you', 'that', 'this', 'have', 'has', 'are', 'was', 'were', 'just', 'new', 'old'}
         for word in en_words:
             if word not in stop_words:
                 keywords.add(word)
+
+        # 2. 根据任务描述内容添加特定关键词（严格匹配，不包含通用礼貌用语）
+        # 问候相关任务
+        if any(word in combined_text for word in ['问候', 'greet', 'meeting', 'meet', 'introduction', 'introduce']):
+            keywords.update(['nice to meet', 'pleased to meet', 'good to meet', 'great to meet', 'hello', 'hi', 'hey', 'greetings', 'welcome', 'nice', 'meet', 'pleased', 'good', 'great', 'finally', 'excited', 'exciting'])
         
-        # 2. 添加通用对话关键词
-        common_keywords = ['hello', 'hi', 'thank you', 'please', 'excuse me', 'can you', 'could you', 'i would like']
-        for kw in common_keywords:
-            keywords.add(kw)
+        # 电话相关任务
+        if any(word in combined_text for word in ['电话', 'phone', 'call', '通话']):
+            keywords.update(['speaking', 'call', 'phone', 'number', 'message', 'hold on', 'take a message'])
         
-        return list(keywords)[:15]
+        # 餐厅相关任务
+        if any(word in combined_text for word in ['餐厅', 'restaurant', 'dining', 'eat']):
+            keywords.update(['table', 'menu', 'order', 'bill', 'check', 'food', 'delicious'])
+        
+        # 购物相关任务
+        if any(word in combined_text for word in ['购物', 'shopping', 'buy']):
+            keywords.update(['price', 'discount', 'size', 'color', 'how much', 'i\'ll take', 'looking for'])
+        
+        # 方向相关任务
+        if any(word in combined_text for word in ['方向', 'direction', 'way', 'where']):
+            keywords.update(['where is', 'how do i get', 'go straight', 'turn left', 'turn right', 'excuse me'])
+        
+        # 旅行相关任务
+        if any(word in combined_text for word in ['旅行', 'travel', 'trip', 'hotel']):
+            keywords.update(['booking', 'reservation', 'check in', 'check out', 'flight', 'ticket'])
+        
+        # 天气相关任务 - 新增
+        if any(word in combined_text for word in ['天气', 'weather', 'sunny', 'rainy', 'temperature']):
+            keywords.update(['weather', 'sunny', 'rainy', 'cloudy', 'temperature', 'forecast', 'wind', 'hot', 'cold', 'warm', 'cool', 'raining', 'snowing', 'jacket', 'wear', 'outside'])
+        
+        # 商务相关任务 - 新增
+        if any(word in combined_text for word in ['商务', 'business', 'meeting', 'project']):
+            keywords.update(['business', 'meeting', 'project', 'team', 'client', 'deadline', 'report', 'presentation', 'schedule', 'appointment'])
+
+        # 注意：不再添加通用对话关键词，确保严格匹配场景特定词汇
+        # 通用礼貌用语（please, can you, thank you等）不应作为任务相关性评分依据
+
+        return list(keywords)[:20]
 
     def _calculate_proficiency_delta_with_feedback(
         self,
-        scores: Dict[str, int]
+        scores: Dict[str, Any]
     ) -> Tuple[int, str]:
         """
         计算熟练度增量（可正可负）
         返回: (delta, feedback_message)
+        
+        注意：建议关键词会通过 scores 字典传递，不需要在此函数中返回
         """
-        avg_score = sum(scores.values()) / len(scores)
+        # 只计算整数分数的平均值
+        numeric_scores = [
+            scores.get("fluency", 5),
+            scores.get("vocabulary", 5),
+            scores.get("grammar", 5),
+            scores.get("task_relevance", 5)
+        ]
+        avg_score = sum(numeric_scores) / len(numeric_scores)
         task_relevance = scores.get("task_relevance", 5)
 
         # 如果话题偏离（task_relevance < 3），不加分并给出反馈
@@ -490,11 +593,12 @@ class ProficiencyScoringWorkflow:
         goal_id: int,
         task_id: int,
         proficiency_delta: int,
-        scores: Dict[str, int],
+        scores: Dict[str, Any],
         feedback: str,
         db_connection: Any,
         current_task: Dict[str, Any] = None,
-        conversation_history: List[Dict[str, Any]] = None
+        conversation_history: List[Dict[str, Any]] = None,
+        native_language: str = "English"
     ) -> Dict[str, Any]:
         """
         更新用户熟练度，检查是否完成任务
@@ -509,11 +613,15 @@ class ProficiencyScoringWorkflow:
                 "improvement_tips": List[str]
             }
         """
-        # 生成改进建议（传入对话历史以生成更针对性的建议）
+        # 提取建议关键词（从scores中获取）
+        suggested_keywords = scores.get("suggested_keywords", [])
+        
+        # 生成改进建议（传入对话历史和建议关键词以生成更针对性的建议）
         improvement_tips = self._generate_improvement_tips(
-            scores, 
+            scores,
             current_task,
-            conversation_history
+            conversation_history,
+            suggested_keywords
         )
 
         result = {
@@ -574,8 +682,8 @@ class ProficiencyScoringWorkflow:
         # 注意：分数范围是 0-10，但 9 分即表示 100% 进度（与前端保持一致）
         # 需要至少 3 次交互，确保用户有足够的练习
         if current_task_score >= 9 and task_result.get("interaction_count", 0) >= 3 and task_result.get("status") != "completed":
-            # 生成任务完成的详细反馈
-            completion_feedback = self._generate_completion_feedback(scores, improvement_tips)
+            # 生成任务完成的详细反馈（根据用户母语）
+            completion_feedback = self._generate_completion_feedback(scores, improvement_tips, native_language)
 
             # 更新 task 状态为 completed
             await db_connection.execute(
@@ -623,209 +731,29 @@ class ProficiencyScoringWorkflow:
 
     def _generate_improvement_tips(
         self,
-        scores: Dict[str, int],
+        scores: Dict[str, Any],
         current_task: Dict[str, Any] = None,
-        conversation_history: List[Dict[str, Any]] = None
+        conversation_history: List[Dict[str, Any]] = None,
+        suggested_keywords: List[str] = None
     ) -> List[str]:
-        """根据评分、当前任务和对话历史生成灵活的改进建议"""
+        """生成精简的改进建议，只保留关键信息"""
         tips = []
 
-        fluency = scores.get("fluency", 5)
-        vocabulary = scores.get("vocabulary", 5)
-        grammar = scores.get("grammar", 5)
         task_relevance = scores.get("task_relevance", 5)
 
         # 获取当前任务信息
         task_desc = current_task.get("task_description", "") if current_task else ""
-        scenario_title = current_task.get("scenario_title", "") if current_task else ""
 
-        # 预加载场景关键词（供后续使用）
-        keywords = self._get_scene_keywords(scenario_title, task_desc)
-
-        # 分析用户最近的输入
-        user_inputs = self._extract_user_inputs(conversation_history)
-        common_errors = self._analyze_common_errors(user_inputs) if user_inputs else {}
-
-        # 流利度建议 - 根据用户实际输入生成
-        if fluency < 5:
-            if user_inputs and len(user_inputs) > 0:
-                short_inputs = [u for u in user_inputs if len(u.split()) <= 3]
-                if short_inputs:
-                    tips.append(f"💬 你刚才说了 '{short_inputs[0][:30]}...'，试着扩展成完整句子")
-                    tips.append(f"   例如：'I would like to...' 或 'Can you tell me where...?'")
-                else:
-                    tips.append("💬 试着用完整句子表达，不要只说单词")
-                    tips.append(f"   例如：'I think...' 或 'In my opinion...'")
-            else:
-                tips.append("💬 你可以尝试这样表达：'I think...' 或 'In my opinion...' 来开始你的回答")
-        # fluency 5-7 分时，只在确实需要改进时才给建议
-        elif fluency < 8:
-            # 检查用户输入是否已经很好（完整句子 + 有连接词）
-            if user_inputs:
-                good_sentences = [
-                    u for u in user_inputs
-                    if len(u.split()) >= 5 and re.search(r'\b(and|but|because|so|however)\b', u.lower())
-                ]
-                # 如果用户已经能说出好的句子，不给建议或给更高级的建议
-                if good_sentences:
-                    tips.append("💬 表达很流畅！继续保持")
-                else:
-                    tips.append("💬 试着用连接词把句子连起来，让表达更流畅")
-                    # 动态生成场景相关的示例
-                    if keywords and len(keywords) >= 2:
-                        example = self._generate_connector_example(keywords[:2], scenario_title)
-                        if example:
-                            tips.append(f"   例如：'{example}'")
-            else:
-                tips.append("💬 试着用连接词把句子连起来，让表达更流畅")
-
-        # 词汇量建议 - 结合用户实际使用的词汇
-        if vocabulary < 5:
-            if keywords and user_inputs:
-                # 检查用户是否使用了场景关键词
-                used_keywords = []
-                missing_keywords = []
-                user_text = ' '.join(user_inputs).lower()
-                for kw in keywords[:5]:
-                    if kw.lower() in user_text:
-                        used_keywords.append(kw)
-                    else:
-                        missing_keywords.append(kw)
-                
-                if used_keywords and missing_keywords:
-                    tips.append(f"📚 很好！你已经用了 {', '.join(used_keywords[:2])}")
-                    tips.append(f"   试试再加入这些词：{', '.join(missing_keywords[:2])}")
-                elif missing_keywords:
-                    example_sentence = self._generate_example_sentence(missing_keywords[:3], scenario_title)
-                    tips.append(f"📚 试试用这些词：{', '.join(missing_keywords[:3])}")
-                    if example_sentence:
-                        tips.append(f"   例如：{example_sentence}")
-                else:
-                    tips.append("📚 词汇使用不错！试试更多高级表达")
-            elif keywords:
-                example_sentence = self._generate_example_sentence(keywords[:3], scenario_title)
-                tips.append(f"📚 试试用这些词：{', '.join(keywords[:3])}")
-                if example_sentence:
-                    tips.append(f"   例如：{example_sentence}")
-        elif vocabulary < 8:
-            # 给出场景相关的高级表达建议，而不是通用建议
-            keywords = self._get_scene_keywords(scenario_title, task_desc)
-            if keywords:
-                # 根据场景给出具体的高级表达建议
-                if '问候' in scenario_title.lower() or 'greeting' in scenario_title.lower() or 'greet' in scenario_title.lower():
-                    tips.append("📚 试试更自然的问候方式")
-                    tips.append(f"   • 用 'How's it going?' 代替 'How are you?'")
-                    tips.append(f"   • 用 'Great to meet you!' 代替 'Nice to meet you'")
-                    tips.append(f"   • 用 'What brings you here?' 开始对话")
-                elif '电话' in scenario_title.lower() or 'phone' in scenario_title.lower() or 'call' in scenario_title.lower():
-                    tips.append("📚 试试更专业的电话用语")
-                    tips.append(f"   • 用 'May I ask who's calling?' 代替 'Who is this?'")
-                    tips.append(f"   • 用 'Hold on, please' 代替 'Wait'")
-                    tips.append(f"   • 用 'I'll put you through' 代替 'I'll transfer'")
-                elif '咖啡' in scenario_title.lower() or 'coffee' in scenario_title.lower():
-                    tips.append("📚 试试更礼貌的点单方式")
-                    tips.append(f"   • 用 'Could I get...' 代替 'I want...'")
-                    tips.append(f"   • 用 'I'd like...' 代替 'Give me...'")
-                    tips.append(f"   • 用 'For here or to go?' 询问用餐方式")
-                elif '餐厅' in scenario_title.lower() or 'restaurant' in scenario_title.lower():
-                    tips.append("📚 试试更优雅的餐厅用语")
-                    tips.append(f"   • 用 'I'd like to order...' 代替 'I want...'")
-                    tips.append(f"   • 用 'Could we have...' 代替 'Give us...'")
-                    tips.append(f"   • 用 'This is delicious!' 表达赞美")
-                elif '购物' in scenario_title.lower() or 'shopping' in scenario_title.lower():
-                    tips.append("📚 试试更地道的购物表达")
-                    tips.append(f"   • 用 'I'm just looking' 代替 'I don't need help'")
-                    tips.append(f"   • 用 'Do you have this in...?' 询问尺寸/颜色")
-                    tips.append(f"   • 用 'Is this on sale?' 询问折扣")
-                elif '方向' in scenario_title.lower() or 'direction' in scenario_title.lower():
-                    tips.append("📚 试试更礼貌的问路方式")
-                    tips.append(f"   • 用 'Excuse me, could you tell me...' 开始问路")
-                    tips.append(f"   • 用 'Is it far from here?' 询问距离")
-                    tips.append(f"   • 用 'Can you show me on the map?' 请求帮助")
-                elif '旅行' in scenario_title.lower() or 'travel' in scenario_title.lower():
-                    tips.append("📚 试试更流畅的旅行表达")
-                    tips.append(f"   • 用 'I'd like to book...' 代替 'I want...'")
-                    tips.append(f"   • 用 'What time is my flight?' 询问时间")
-                    tips.append(f"   • 用 'Is breakfast included?' 询问服务")
-                elif '商务' in scenario_title.lower() or 'business' in scenario_title.lower():
-                    tips.append("📚 试试更专业的商务表达")
-                    tips.append(f"   • 用 'Let me introduce myself' 开始介绍")
-                    tips.append(f"   • 用 'What do you think about...?' 征求意见")
-                    tips.append(f"   • 用 'I suggest we...' 提出建议")
-                elif '天气' in scenario_title.lower() or 'weather' in scenario_title.lower():
-                    tips.append("📚 试试更生动的天气描述")
-                    tips.append(f"   • 用 'It's pouring' 代替 'It's raining hard'")
-                    tips.append(f"   • 用 'It's a beautiful day' 代替 'It's sunny'")
-                    tips.append(f"   • 用 'It's chilly today' 代替 'It's cold'")
-                else:
-                    # 通用场景 - 给出与场景相关的高级表达
-                    tips.append("📚 试试更高级的表达方式")
-                    tips.append(f"   • 用 'I'd prefer' 代替 'I want'")
-                    tips.append(f"   • 用 'Could you' 代替 'Can you'")
-                    tips.append(f"   • 用完整句子表达想法")
-            else:
-                tips.append("📚 试试更高级的表达方式")
-                tips.append(f"   • 用 'I'd prefer' 代替 'I want'")
-                tips.append(f"   • 用 'Could you' 代替 'Can you'")
-
-        # 语法建议 - 根据实际错误生成
-        if grammar < 5:
-            if common_errors:
-                if common_errors.get('subject_verb'):
-                    tips.append("✏️ 注意主谓一致")
-                    tips.append(f"   ❌ 你说：'{common_errors['subject_verb']}'")
-                    tips.append(f"   ✓ 应该说：'I have' 或 'He has'")
-                if common_errors.get('article'):
-                    tips.append("✏️ 记得加冠词 'the' 或 'a'")
-                    tips.append(f"   ❌ 你说：'{common_errors['article']}'")
-                    # 动态生成场景相关示例
-                    if keywords:
-                        kw = keywords[0] if keywords else "item"
-                        tips.append(f"   ✓ 应该说：'Where is the {kw}?'")
-                if common_errors.get('plural'):
-                    tips.append("✏️ 注意名词复数")
-                    tips.append(f"   ❌ 你说：'{common_errors['plural']}'")
-                    # 动态生成场景相关示例
-                    if keywords:
-                        kw = keywords[0] if keywords else "item"
-                        tips.append(f"   ✓ 应该说：'I need {kw}s'")
-            else:
-                tips.append("✏️ 注意基本语法规则")
-                tips.append(f"   • 主谓一致：'I have' ✓ 不是 'I has' ✗")
-                # 动态生成场景相关示例
-                if keywords and len(keywords) >= 2:
-                    tips.append(f"   • 试试这样说：'I need {keywords[0]}...' 或 'I would like {keywords[1]}...'")
-                else:
-                    tips.append(f"   • 试试这样说：'I need...' 或 'I would like...'")
-        elif grammar < 8:
-            tips.append("✏️ 注意句子完整性")
-            tips.append(f"   确保每个句子都有主语和动词")
-            # 动态生成场景相关示例
-            if keywords:
-                kw = keywords[0] if keywords else "something"
-                tips.append(f"   例如：'Can I have {kw}?' 是完整的问句")
-            else:
-                tips.append(f"   例如：使用完整句子，不要只说单词")
-
-        # 任务相关性建议 - 结合用户实际话题
+        # 任务相关性建议 - 精简版，只保留关键词展示
         if task_relevance < 5:
-            # 针对具体任务生成建议，而不是通用场景关键词
-            task_examples = self._generate_task_specific_examples(task_desc, scenario_title)
-            tips.append(f"🎯 专注于当前任务：{task_desc}")
-            tips.append(f"   试试这样说：")
-            if task_examples:
-                tips.append(f"   例如：{task_examples[0]}")
-            else:
-                # Fallback to scene keywords
-                keywords = self._get_scene_keywords(scenario_title, task_desc)
-                if keywords:
-                    example_sentence = self._generate_example_sentence(keywords[:3], scenario_title)
-                    if example_sentence:
-                        tips.append(f"   例如：{example_sentence}")
+            tips.append(f"🎯 {task_desc}")
+            # 如果有建议关键词，显示它们
+            if suggested_keywords and len(suggested_keywords) > 0:
+                tips.append(f"💡 {', '.join(suggested_keywords[:5])}")
         elif task_relevance < 8:
-            task_suggestion = self._get_task_specific_suggestion(scenario_title, task_desc)
-            if task_suggestion:
-                tips.append(f"🎯 {task_suggestion}")
+            # 中等相关性，简要提示
+            if suggested_keywords and len(suggested_keywords) > 0:
+                tips.append(f"💡 {', '.join(suggested_keywords[:3])}")
 
         return tips
 
@@ -1116,42 +1044,106 @@ class ProficiencyScoringWorkflow:
         if cache_key in self._keyword_cache:
             return self._keyword_cache[cache_key]
 
-        # 场景关键词映射（作为 AI 调用失败的 fallback）- 支持中文场景名匹配
-        # 注意：只包含名词/实义词，不包含短语或疑问句结构
-        scene_keywords_map = {
-            # 中文场景名
-            "问候": ["hometown", "job", "hobbies", "family", "studies", "interests", "weekend", "plans", "friends", "city"],
-            "日常问候": ["hometown", "job", "hobbies", "family", "studies", "interests", "weekend", "plans", "friends", "city"],
-            "电话": ["phone", "call", "message", "number", "callback", "voicemail"],
-            "通话": ["phone", "call", "message", "number", "callback", "voicemail"],
-            "咖啡": ["coffee", "latte", "cappuccino", "espresso", "menu", "size", "milk", "sugar"],
-            "餐厅": ["restaurant", "table", "reservation", "menu", "bill", "food", "dish"],
-            "购物": ["shopping", "price", "discount", "size", "color", "receipt", "payment"],
-            "方向": ["street", "road", "station", "airport", "hotel", "restaurant", "map", "direction", "landmark", "building"],
-            "旅行": ["travel", "flight", "hotel", "ticket", "airport", "booking", "destination", "trip", "passport"],
-            "商务": ["business", "meeting", "project", "team", "client", "deadline", "report", "presentation"],
-            "天气": ["weather", "sunny", "rainy", "cloudy", "temperature", "forecast", "wind"],
-            # 英文场景名
-            "greeting": ["hometown", "job", "hobbies", "family", "studies", "interests", "weekend", "plans", "friends", "city"],
-            "phone": ["phone", "call", "message", "number", "callback", "voicemail"],
+        # 任务描述关键词映射 - 用于从任务描述中提取具体场景
+        # 键：任务描述中的关键词，值：对应的场景关键词列表
+        task_desc_keywords_map = {
+            # 天气相关任务
+            "天气": ["weather", "sunny", "rainy", "cloudy", "temperature", "forecast", "wind", "hot", "cold", "warm", "cool", "raining", "snowing", "nice day", "beautiful day"],
+            "weather": ["weather", "sunny", "rainy", "cloudy", "temperature", "forecast", "wind", "hot", "cold", "warm", "cool", "raining", "snowing"],
+            # 电话相关任务
+            "电话": ["phone", "call", "speaking", "number", "message", "hold on", "take a message"],
+            "phone": ["phone", "call", "speaking", "number", "message"],
+            # 咖啡相关任务
+            "咖啡": ["coffee", "latte", "cappuccino", "espresso", "menu", "size", "milk", "sugar", "order"],
             "coffee": ["coffee", "latte", "cappuccino", "espresso", "menu", "size", "milk", "sugar"],
+            # 餐厅相关任务
+            "餐厅": ["restaurant", "table", "reservation", "menu", "bill", "food", "dish", "order"],
             "restaurant": ["restaurant", "table", "reservation", "menu", "bill", "food", "dish"],
+            # 购物相关任务
+            "购物": ["shopping", "price", "discount", "size", "color", "receipt", "payment", "how much"],
             "shopping": ["shopping", "price", "discount", "size", "color", "receipt", "payment"],
-            "direction": ["street", "road", "station", "airport", "hotel", "restaurant", "map", "direction", "landmark", "building"],
-            "travel": ["travel", "flight", "hotel", "ticket", "airport", "booking", "destination", "trip", "passport"],
-            "business": ["business", "meeting", "project", "team", "client", "deadline", "report", "presentation"],
-            "weather": ["weather", "sunny", "rainy", "cloudy", "temperature", "forecast", "wind"],
+            # 方向相关任务
+            "方向": ["street", "road", "station", "map", "direction", "where is", "how do i get", "excuse me"],
+            "direction": ["street", "road", "station", "map", "direction", "where is", "how do i get"],
+            # 旅行相关任务
+            "旅行": ["travel", "flight", "hotel", "ticket", "airport", "booking", "destination", "trip"],
+            "travel": ["travel", "flight", "hotel", "ticket", "airport", "booking", "destination"],
+            # 商务相关任务
+            "商务": ["business", "meeting", "project", "team", "client", "deadline", "report", "presentation"],
+            "business": ["business", "meeting", "project", "team", "client", "deadline", "report"],
+            # 问候相关任务
+            "问候": ["hello", "hi", "nice", "meet", "pleased", "good morning", "how are you", "greetings"],
+            "greet": ["hello", "hi", "nice", "meet", "pleased", "good morning", "how are you"],
         }
 
-        # 尝试匹配场景关键词 - 支持部分匹配
-        matched_keywords = []
-        for scene_key, keywords in scene_keywords_map.items():
-            if scene_key in combined or combined in scene_key:
-                matched_keywords.extend(keywords)
+        # 场景关键词映射（作为 AI 调用失败的 fallback）- 支持中文场景名匹配
+        # 包含问候语、常用表达和话题关键词
+        scene_keywords_map = {
+            # 中文场景名 - 问候场景
+            "问候": ["hello", "hi", "hey", "nice", "meet", "pleased", "good morning", "good afternoon", "good evening", "how are you", "how do you do", "greetings", "welcome", "hometown", "job", "hobbies", "family", "studies", "interests", "weekend", "plans", "friends", "city"],
+            "日常问候": ["hello", "hi", "hey", "nice", "meet", "pleased", "good morning", "good afternoon", "good evening", "how are you", "how do you do", "greetings", "welcome", "great to see", "nice to see", "hometown", "job", "hobbies", "family", "studies", "interests", "weekend", "plans", "friends", "city"],
+            "电话": ["phone", "call", "message", "number", "callback", "voicemail", "hello", "speaking", "may i speak", "is this", "who is calling", "hold on", "take a message"],
+            "通话": ["phone", "call", "message", "number", "callback", "voicemail", "hello", "speaking", "may i speak", "is this", "who is calling", "hold on", "take a message"],
+            "咖啡": ["coffee", "latte", "cappuccino", "espresso", "menu", "size", "milk", "sugar", "order", "please", "would like", "can i get", "i'll have", "for here", "to go"],
+            "餐厅": ["restaurant", "table", "reservation", "menu", "bill", "food", "dish", "order", "please", "would like", "can i have", "i'll have", "check please", "delicious"],
+            "购物": ["shopping", "price", "discount", "size", "color", "receipt", "payment", "how much", "can i try", "i'll take", "do you have", "looking for", "expensive", "cheap"],
+            "方向": ["street", "road", "station", "airport", "hotel", "restaurant", "map", "direction", "landmark", "building", "excuse me", "how do i get", "where is", "can you tell me", "go straight", "turn left", "turn right"],
+            "旅行": ["travel", "flight", "hotel", "ticket", "airport", "booking", "destination", "trip", "passport", "check in", "check out", "reservation", "suitcase", "luggage"],
+            "商务": ["business", "meeting", "project", "team", "client", "deadline", "report", "presentation", "schedule", "appointment", "discuss", "agenda", "proposal", "contract"],
+            "天气": ["weather", "sunny", "rainy", "cloudy", "temperature", "forecast", "wind", "hot", "cold", "warm", "cool", "raining", "snowing", "jacket", "wear", "outside", "umbrella"],
+            # 英文场景名
+            "greeting": ["hello", "hi", "hey", "nice", "meet", "pleased", "good morning", "good afternoon", "good evening", "how are you", "how do you do", "greetings", "welcome", "great to see", "nice to see", "hometown", "job", "hobbies", "family", "studies", "interests", "weekend", "plans", "friends", "city"],
+            "phone": ["phone", "call", "message", "number", "callback", "voicemail", "hello", "speaking", "may i speak", "is this", "who is calling", "hold on", "take a message"],
+            "coffee": ["coffee", "latte", "cappuccino", "espresso", "menu", "size", "milk", "sugar", "order", "please", "would like", "can i get", "i'll have", "for here", "to go"],
+            "restaurant": ["restaurant", "table", "reservation", "menu", "bill", "food", "dish", "order", "please", "would like", "can i have", "i'll have", "check please", "delicious"],
+            "shopping": ["shopping", "price", "discount", "size", "color", "receipt", "payment", "how much", "can i try", "i'll take", "do you have", "looking for", "expensive", "cheap"],
+            "direction": ["street", "road", "station", "airport", "hotel", "restaurant", "map", "direction", "landmark", "building", "excuse me", "how do i get", "where is", "can you tell me", "go straight", "turn left", "turn right"],
+            "travel": ["travel", "flight", "hotel", "ticket", "airport", "booking", "destination", "trip", "passport", "check in", "check out", "reservation", "suitcase", "luggage"],
+            "business": ["business", "meeting", "project", "team", "client", "deadline", "report", "presentation", "schedule", "appointment", "discuss", "agenda", "proposal", "contract"],
+            "weather": ["weather", "sunny", "rainy", "cloudy", "temperature", "forecast", "wind", "nice day", "beautiful day", "hot", "cold", "warm", "cool", "raining", "snowing"],
+        }
+
+        # 步骤1: 首先检查任务描述关键词映射（最优先）
+        # 这用于处理"日常问候"场景下的"聊聊天气"这类子任务
+        for task_key, keywords in task_desc_keywords_map.items():
+            if task_key in task_lower:
+                # 找到了任务描述中的具体场景关键词
+                unique_keywords = list(dict.fromkeys(keywords))
+                self._keyword_cache[cache_key] = unique_keywords[:15]
+                return unique_keywords[:15]
         
-        # 如果匹配到关键词，返回去重后的结果
-        if matched_keywords:
-            unique_keywords = list(dict.fromkeys(matched_keywords))
+        # 步骤2: 尝试匹配场景关键词映射
+        # 任务描述优先：如果任务描述中包含具体场景关键词（如"天气"），优先使用该场景
+        task_specific_matched_keywords = []
+        scenario_matched_keywords = []
+        combined_matched_keywords = []
+        
+        for scene_key, keywords in scene_keywords_map.items():
+            # 首先检查任务描述中是否包含具体场景关键词
+            if scene_key in task_lower:
+                task_specific_matched_keywords.extend(keywords)
+            # 然后检查场景标题
+            elif scene_key in scenario_lower:
+                scenario_matched_keywords.extend(keywords)
+            # 最后检查组合
+            elif scene_key in combined:
+                combined_matched_keywords.extend(keywords)
+        
+        # 优先使用任务描述匹配到的关键词（更具体）
+        if task_specific_matched_keywords:
+            unique_keywords = list(dict.fromkeys(task_specific_matched_keywords))
+            self._keyword_cache[cache_key] = unique_keywords[:15]
+            return unique_keywords[:15]
+        
+        # 如果任务描述没有匹配到，使用场景标题匹配的关键词
+        if scenario_matched_keywords:
+            unique_keywords = list(dict.fromkeys(scenario_matched_keywords))
+            self._keyword_cache[cache_key] = unique_keywords[:15]
+            return unique_keywords[:15]
+        
+        # 最后尝试组合匹配（兼容旧逻辑）
+        if combined_matched_keywords:
+            unique_keywords = list(dict.fromkeys(combined_matched_keywords))
             self._keyword_cache[cache_key] = unique_keywords[:15]
             return unique_keywords[:15]
 
@@ -1223,36 +1215,38 @@ Return ONLY a JSON array: ["keyword1", "keyword2", ...]"""
         检测用户输入的主要语言
         返回：'english', 'chinese', 'spanish', 'french', 'german', 'japanese', 'korean' 或 None（无法检测）
         """
-        if not text or len(text.strip()) < 3:
+        if not text or len(text.strip()) < 2:
             return None
-        
+
         text_lower = text.lower()
-        
+        text_stripped = text.strip()
+
+        # 检测中文字符（优先检测，因为中文最明确）
+        chinese_chars = len(re.findall(r'[\u4e00-\u9fff]', text))
+        if chinese_chars > 0:
+            # 只要有中文字符，就认为是中文
+            return 'chinese'
+
+        # 检测日文字符
+        japanese_chars = len(re.findall(r'[\u3040-\u309f\u30a0-\u30ff]', text))
+        if japanese_chars > 0:
+            return 'japanese'
+
+        # 检测韩文字符
+        korean_chars = len(re.findall(r'[\uac00-\ud7af]', text))
+        if korean_chars > 0:
+            return 'korean'
+
         # 移除数字和空格，只保留实际字符用于语言检测
-        # 这样可以避免 "九四三七八三二，天天吃快餐" 这种数字占比高的情况
         text_for_detection = re.sub(r'[0-9\s]', '', text)
         if not text_for_detection:
             return None
         text_length = len(text_for_detection)
 
-        # 检测中文字符
-        chinese_chars = len(re.findall(r'[\u4e00-\u9fff]', text))
-        if chinese_chars > text_length * 0.25:  # 25% 以上是中文（降低阈值）
-            return 'chinese'
-
-        # 检测日文字符
-        japanese_chars = len(re.findall(r'[\u3040-\u309f\u30a0-\u30ff]', text))
-        if japanese_chars > text_length * 0.2:  # 20% 以上是日文
-            return 'japanese'
-
-        # 检测韩文字符
-        korean_chars = len(re.findall(r'[\uac00-\ud7af]', text))
-        if korean_chars > text_length * 0.2:  # 20% 以上是韩文
-            return 'korean'
-
         # 检测西文字符（英文、法文、德文、西班牙文等使用拉丁字母）
         latin_chars = len(re.findall(r'[a-zA-Z]', text))
-        if latin_chars > text_length * 0.5:  # 50% 以上是拉丁字母
+        # 降低阈值：只要有拉丁字母且占比超过30%，或纯拉丁字母文本，就认为是西文
+        if latin_chars > 0 and (latin_chars > text_length * 0.3 or latin_chars == text_length):
             # 尝试区分具体语言
             if re.search(r'\b(el|la|los|las|de|que|en|es|por|para|con)\b', text_lower):
                 return 'spanish'
@@ -1261,7 +1255,13 @@ Return ONLY a JSON array: ["keyword1", "keyword2", ...]"""
             elif re.search(r'\b(der|die|das|und|ist|ein|mit)\b', text_lower):
                 return 'german'
             else:
+                # 默认英文（最常见情况）
                 return 'english'
+
+        # 如果文本主要是拉丁字母但检测比例不够，仍然默认英文
+        # 这处理短文本如 "Hi", "OK", "Yes" 等情况
+        if latin_chars > 0 and text_length < 20:
+            return 'english'
 
         # 无法确定具体语言
         return None
@@ -1269,47 +1269,224 @@ Return ONLY a JSON array: ["keyword1", "keyword2", ...]"""
     def _generate_completion_feedback(
         self,
         scores: Dict[str, int],
-        improvement_tips: List[str]
+        improvement_tips: List[str],
+        native_language: str = "English"
     ) -> str:
-        """生成任务完成时的AI点评"""
+        """生成任务完成时的AI点评 - 支持多语言（15种语言）"""
+        # 多语言模板
+        templates = {
+            "Chinese": {
+                "excellent": "任务完成！表现优秀，继续保持。",
+                "good": "任务完成！整体表现良好，仍有提升空间。",
+                "completed": "任务完成！继续加油，多练习会有进步。",
+                "fluency": "流利度",
+                "vocabulary": "词汇量",
+                "grammar": "语法",
+                "task_relevance": "任务相关性",
+                "improve": "建议重点提升：",
+                "suggestion": "练习建议：",
+            },
+            "English": {
+                "excellent": "Task completed! Excellent performance, keep it up!",
+                "good": "Task completed! Good performance overall, still room for improvement.",
+                "completed": "Task completed! Keep practicing and you'll improve.",
+                "fluency": "fluency",
+                "vocabulary": "vocabulary",
+                "grammar": "grammar",
+                "task_relevance": "task relevance",
+                "improve": "Focus on improving: ",
+                "suggestion": "Practice suggestions: ",
+            },
+            "Japanese": {
+                "excellent": "タスク完了！素晴らしいパフォーマンスです、この調子で続けてください。",
+                "good": "タスク完了！全体的に良いパフォーマンスですが、まだ向上の余地があります。",
+                "completed": "タスク完了！練習を続ければ上達します。",
+                "fluency": "流暢さ",
+                "vocabulary": "語彙",
+                "grammar": "文法",
+                "task_relevance": "タスク関連性",
+                "improve": "改善に焦点を当ててください：",
+                "suggestion": "練習のアドバイス：",
+            },
+            "Spanish": {
+                "excellent": "¡Tarea completada! Desempeño excelente, ¡sigue así!",
+                "good": "¡Tarea completada! Buen desempeño en general, aún hay margen de mejora.",
+                "completed": "¡Tarea completada! Sigue practicando y mejorarás.",
+                "fluency": "fluidez",
+                "vocabulary": "vocabulario",
+                "grammar": "gramática",
+                "task_relevance": "relevancia de la tarea",
+                "improve": "Enfócate en mejorar: ",
+                "suggestion": "Sugerencias de práctica: ",
+            },
+            "French": {
+                "excellent": "Tâche terminée ! Excellente performance, continuez comme ça !",
+                "good": "Tâche terminée ! Bonne performance globale, il reste encore de la marge de progression.",
+                "completed": "Tâche terminée ! Continuez à pratiquer et vous vous améliorerez.",
+                "fluency": "fluidité",
+                "vocabulary": "vocabulaire",
+                "grammar": "grammaire",
+                "task_relevance": "pertinence de la tâche",
+                "improve": "Concentrez-vous sur l'amélioration de : ",
+                "suggestion": "Suggestions de pratique : ",
+            },
+            "German": {
+                "excellent": "Aufgabe abgeschlossen! Ausgezeichnete Leistung, machen Sie weiter so!",
+                "good": "Aufgabe abgeschlossen! Gute Gesamtleistung, es gibt noch Verbesserungspotenzial.",
+                "completed": "Aufgabe abgeschlossen! Üben Sie weiter und Sie werden sich verbessern.",
+                "fluency": "Flüssigkeit",
+                "vocabulary": "Wortschatz",
+                "grammar": "Grammatik",
+                "task_relevance": "Aufgabenrelevanz",
+                "improve": "Konzentrieren Sie sich auf die Verbesserung von: ",
+                "suggestion": "Übungsvorschläge: ",
+            },
+            "Korean": {
+                "excellent": "과제 완료! 훌륭한 성과입니다, 계속 유지하세요!",
+                "good": "과제 완료! 전반적으로 좋은 성과이지만, 여전히 개선의 여지가 있습니다.",
+                "completed": "과제 완료! 계속 연습하면 실력이 늘 것입니다.",
+                "fluency": "유창성",
+                "vocabulary": "어휘",
+                "grammar": "문법",
+                "task_relevance": "과제 관련성",
+                "improve": "개선에 집중하세요: ",
+                "suggestion": "연습 제안: ",
+            },
+            "Portuguese": {
+                "excellent": "Tarefa concluída! Desempenho excelente, continue assim!",
+                "good": "Tarefa concluída! Bom desempenho geral, ainda há espaço para melhorias.",
+                "completed": "Tarefa concluída! Continue praticando e você vai melhorar.",
+                "fluency": "fluência",
+                "vocabulary": "vocabulário",
+                "grammar": "gramática",
+                "task_relevance": "relevância da tarefa",
+                "improve": "Concentre-se em melhorar: ",
+                "suggestion": "Sugestões de prática: ",
+            },
+            "Russian": {
+                "excellent": "Задание выполнено! Отличная работа, продолжайте в том же духе!",
+                "good": "Задание выполнено! Хорошая общая работа, есть ещё возможности для улучшения.",
+                "completed": "Задание выполнено! Продолжайте практиковаться, и вы улучшитесь.",
+                "fluency": "беглость",
+                "vocabulary": "словарный запас",
+                "grammar": "грамматика",
+                "task_relevance": "соответствие заданию",
+                "improve": "Сосредоточьтесь на улучшении: ",
+                "suggestion": "Предложения по практике: ",
+            },
+            "Italian": {
+                "excellent": "Compito completato! Prestazione eccellente, continua così!",
+                "good": "Compito completato! Buona prestazione complessiva, c'è ancora spazio per migliorare.",
+                "completed": "Compito completato! Continua a praticare e migliorerai.",
+                "fluency": "fluidità",
+                "vocabulary": "vocabolario",
+                "grammar": "grammatica",
+                "task_relevance": "rilevanza del compito",
+                "improve": "Concentrati sul miglioramento di: ",
+                "suggestion": "Suggerimenti per la pratica: ",
+            },
+            "Arabic": {
+                "excellent": "اكتملت المهمة! أداء ممتاز، استمر على هذا النحو!",
+                "good": "اكتملت المهمة! أداء جيد بشكل عام، لا يزال هناك مجال للتحسن.",
+                "completed": "اكتملت المهمة! استمر في الممارسة وستتحسن.",
+                "fluency": "الطلاقة",
+                "vocabulary": "المفردات",
+                "grammar": "القواعد",
+                "task_relevance": "مدى ملاءمة المهمة",
+                "improve": "ركز على تحسين: ",
+                "suggestion": "اقتراحات الممارسة: ",
+            },
+            "Hindi": {
+                "excellent": "कार्य पूरा हुआ! उत्कृष्ट प्रदर्शन, ऐसे ही जारी रखें!",
+                "good": "कार्य पूरा हुआ! समग्र रूप से अच्छा प्रदर्शन, अभी भी सुधार की गुंजाइश है।",
+                "completed": "कार्य पूरा हुआ! अभ्यास जारी रखें और आप सुधरेंगे।",
+                "fluency": "धाराप्रवाहता",
+                "vocabulary": "शब्दावली",
+                "grammar": "व्याकरण",
+                "task_relevance": "कार्य प्रासंगिकता",
+                "improve": "इस पर सुधार करने पर ध्यान दें: ",
+                "suggestion": "अभ्यास के सुझाव: ",
+            },
+            "Thai": {
+                "excellent": "ภารกิจเสร็จสมบูรณ์! ผลงานยอดเยี่ยม ทำต่อไป!",
+                "good": "ภารกิจเสร็จสมบูรณ์! ผลงานโดยรวมดี ยังมีที่ว่างให้ปรับปรุง",
+                "completed": "ภารกิจเสร็จสมบูรณ์! ฝึกฝนต่อไปและคุณจะดีขึ้น",
+                "fluency": "ความคล่องแคล่ว",
+                "vocabulary": "คำศัพท์",
+                "grammar": "ไวยากรณ์",
+                "task_relevance": "ความเกี่ยวข้องของภารกิจ",
+                "improve": "มุ่งเน้นที่การปรับปรุง: ",
+                "suggestion": "คำแนะนำการฝึกฝน: ",
+            },
+            "Vietnamese": {
+                "excellent": "Nhiệm vụ hoàn thành! Hiệu suất xuất sắc, hãy tiếp tục!",
+                "good": "Nhiệm vụ hoàn thành! Hiệu suất tốt nói chung, vẫn còn chỗ để cải thiện.",
+                "completed": "Nhiệm vụ hoàn thành! Tiếp tục luyện tập và bạn sẽ tiến bộ.",
+                "fluency": "sự trôi chảy",
+                "vocabulary": "từ vựng",
+                "grammar": "ngữ pháp",
+                "task_relevance": "mức độ liên quan của nhiệm vụ",
+                "improve": "Tập trung cải thiện: ",
+                "suggestion": "Đề xuất luyện tập: ",
+            },
+            "Indonesian": {
+                "excellent": "Tugas selesai! Performa sangat baik, teruskan!",
+                "good": "Tugas selesai! Performa baik secara keseluruhan, masih ada ruang untuk perbaikan.",
+                "completed": "Tugas selesai! Terus berlatih dan Anda akan meningkat.",
+                "fluency": "kelancaran",
+                "vocabulary": "kosakata",
+                "grammar": "tata bahasa",
+                "task_relevance": "relevansi tugas",
+                "improve": "Fokus pada peningkatan: ",
+                "suggestion": "Saran praktik: ",
+            },
+        }
+
+        lang = templates.get(native_language, templates["English"])
+        
         # 根据各维度得分生成针对性点评
         feedback_parts = []
 
-        # 整体评价
+        # 整体评价（简洁，无表情符号）
         avg_score = sum(scores.values()) / len(scores)
         if avg_score >= 8:
-            feedback_parts.append("🎉 恭喜完成本任务！你的表现非常出色！")
+            feedback_parts.append(lang["excellent"])
         elif avg_score >= 6:
-            feedback_parts.append("✅ 任务完成！整体表现不错，还有提升空间。")
+            feedback_parts.append(lang["good"])
         else:
-            feedback_parts.append("✅ 任务完成！继续加油！")
+            feedback_parts.append(lang["completed"])
 
-        # 具体维度评价
+        # 具体维度评价（简洁）
         fluency = scores.get("fluency", 5)
         vocabulary = scores.get("vocabulary", 5)
         grammar = scores.get("grammar", 5)
         task_relevance = scores.get("task_relevance", 5)
 
-        if fluency >= 8:
-            feedback_parts.append("流利度很好，表达自然流畅。")
-        elif fluency < 5:
-            feedback_parts.append("流利度需要提高，建议多练习使用连接词。")
+        # 只显示需要改进的维度，简洁呈现
+        areas_to_improve = []
+        if fluency < 6:
+            areas_to_improve.append(lang["fluency"])
+        if vocabulary < 6:
+            areas_to_improve.append(lang["vocabulary"])
+        if grammar < 6:
+            areas_to_improve.append(lang["grammar"])
+        if task_relevance < 6:
+            areas_to_improve.append(lang["task_relevance"])
 
-        if vocabulary >= 8:
-            feedback_parts.append("词汇丰富，能准确使用场景相关词汇。")
-        elif vocabulary < 5:
-            feedback_parts.append("词汇量有待增加，建议背诵更多场景词汇。")
+        if areas_to_improve:
+            feedback_parts.append(f"{lang['improve']}{', '.join(areas_to_improve)}。")
 
-        if grammar >= 8:
-            feedback_parts.append("语法准确，句子结构完整。")
-        elif grammar < 5:
-            feedback_parts.append("语法需要加强，注意时态和主谓一致。")
-
-        # 添加改进建议
+        # 添加改进建议（最多2条，简洁）
         if improvement_tips:
-            feedback_parts.append("\n💡 建议：")
-            for tip in improvement_tips[:3]:  # 最多3条建议
-                feedback_parts.append(f"  • {tip}")
+            # 过滤掉带表情符号的建议，只取核心内容
+            clean_tips = []
+            for tip in improvement_tips[:2]:
+                # 移除表情符号和多余空格
+                clean_tip = re.sub(r'[💬📚✏️🎯💡•\s]+', '', tip).strip()
+                if clean_tip:
+                    clean_tips.append(clean_tip)
+            if clean_tips:
+                feedback_parts.append(f"{lang['suggestion']}{'; '.join(clean_tips)}")
 
         return "\n".join(feedback_parts)
 

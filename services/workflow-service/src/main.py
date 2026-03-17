@@ -22,6 +22,7 @@ from workflows.oral_tutor import oral_tutor_workflow
 from workflows.proficiency_scoring import proficiency_scoring_workflow
 from workflows.scenario_review import scenario_review_workflow
 from workflows.goal_planning import goal_planning_workflow
+from cache import cache, get_user_language_with_cache
 
 
 app = FastAPI(
@@ -81,6 +82,14 @@ async def startup_db_pool():
     if not db_pool:
         raise RuntimeError("Failed to establish database connection pool")
 
+    # Initialize Redis connection (non-blocking, will fallback to DB if failed)
+    logger.info("Initializing Redis cache...")
+    cache.connect()
+    if cache.is_connected():
+        logger.info("✅ Redis cache initialized successfully")
+    else:
+        logger.warning("⚠️ Redis cache not available, will use database fallback")
+
 
 @app.on_event("shutdown")
 async def shutdown_db_pool():
@@ -97,14 +106,23 @@ async def health_check():
     try:
         if db_pool is None:
             return {"status": "unhealthy", "detail": "Database pool not initialized"}
-        
+
         # Test database connection
         async with db_pool.acquire() as conn:
             result = await conn.fetchval("SELECT 1")
-            if result == 1:
-                return {"status": "healthy", "database": "connected"}
-            else:
+            if result != 1:
                 return {"status": "unhealthy", "detail": "Database test query failed"}
+        
+        # Get Redis status
+        redis_status = "connected" if cache.is_connected() else "disconnected"
+        cache_stats = cache.get_cache_stats() if cache.is_connected() else {}
+        
+        return {
+            "status": "healthy",
+            "database": "connected",
+            "redis": redis_status,
+            "cache_stats": cache_stats
+        }
     except Exception as e:
         logger.error(f"Health check failed: {str(e)}")
         return {"status": "unhealthy", "detail": str(e)}
@@ -224,7 +242,11 @@ async def generate_scenario_review(request: ScenarioReviewRequest, conn = Depend
     """
     try:
         logger.info(f"[SCENARIO_REVIEW] Request: user={request.user_id}, goal={request.goal_id}, scenario={request.scenario_title}, tasks={len(request.completed_tasks)}, history={len(request.conversation_history)}")
-        
+
+        # Get user's native language from cache or database
+        native_language = await get_user_language_with_cache(request.user_id, conn, cache)
+        logger.info(f"[SCENARIO_REVIEW] User native language: {native_language} (from {'cache' if cache.get_user_language(request.user_id) else 'database'})")
+
         # Get completed tasks for this scenario
         tasks = await conn.fetch(
             """
@@ -245,7 +267,8 @@ async def generate_scenario_review(request: ScenarioReviewRequest, conn = Depend
             scenario_title=request.scenario_title,
             completed_tasks=completed_tasks,
             conversation_history=request.conversation_history,
-            db_connection=conn
+            db_connection=conn,
+            native_language=native_language
         )
         logger.info(f"[SCENARIO_REVIEW] Result: {result}")
         return {"success": True, "data": result}

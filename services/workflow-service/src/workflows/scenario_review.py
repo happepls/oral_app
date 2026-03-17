@@ -20,29 +20,293 @@ class ScenarioReviewWorkflow:
     
     def __init__(self):
         self.review_template = self._build_review_template()
+        self.language_templates = self._build_language_templates()
+
+    def _build_language_templates(self) -> Dict[str, Dict[str, str]]:
+        """构建多语言模板 - 支持15种语言"""
+        return {
+            "Chinese": {
+                "title": "【{scenario_title}】练习总结",
+                "overview": "练习概况",
+                "completion_time": "完成时间",
+                "interactions": "对话轮数",
+                "avg_score": "综合评分",
+                "tasks": "任务完成情况",
+                "strengths": "表现亮点",
+                "improvements": "待提升方面",
+                "recommendations": "针对性建议",
+                "excellent": "表现优秀！已掌握该场景。",
+                "good": "表现良好！可挑战下一个场景。",
+                "completed": "场景完成！建议复习后重试以获得更高分数。",
+                "no_strengths": "坚持练习，持续进步",
+                "no_weaknesses": "无明显问题，继续保持",
+                "minutes": "分钟",
+            },
+            "English": {
+                "title": "[{scenario_title}] Practice Summary",
+                "overview": "Overview",
+                "completion_time": "Completion Time",
+                "interactions": "Interactions",
+                "avg_score": "Average Score",
+                "tasks": "Task Completion",
+                "strengths": "Strengths",
+                "improvements": "Areas for Improvement",
+                "recommendations": "Recommendations",
+                "excellent": "Excellent! You've mastered this scenario.",
+                "good": "Great job! Ready for the next challenge.",
+                "completed": "Scenario completed! Consider reviewing for a higher score.",
+                "no_strengths": "Keep practicing and improving",
+                "no_weaknesses": "No major issues, keep it up",
+                "minutes": "minutes",
+            },
+            "Japanese": {
+                "title": "【{scenario_title}】練習まとめ",
+                "overview": "練習概要",
+                "completion_time": "完了時間",
+                "interactions": "対話回数",
+                "avg_score": "総合評価",
+                "tasks": "タスク完了状況",
+                "strengths": "良かった点",
+                "improvements": "改善点",
+                "recommendations": "アドバイス",
+                "excellent": "素晴らしい！このシナリオをマスターしました。",
+                "good": "良い出来です！次のシナリオに挑戦しましょう。",
+                "completed": "シナリオ完了！より高得点を目指して復習しましょう。",
+                "no_strengths": "練習を続けて、上達しています",
+                "no_weaknesses": "大きな問題はありません、この調子で",
+                "minutes": "分",
+            },
+            "Spanish": {
+                "title": "Resumen de práctica: {scenario_title}",
+                "overview": "Resumen general",
+                "completion_time": "Tiempo de finalización",
+                "interactions": "Interacciones",
+                "avg_score": "Puntuación promedio",
+                "tasks": "Completación de tareas",
+                "strengths": "Puntos fuertes",
+                "improvements": "Áreas a mejorar",
+                "recommendations": "Recomendaciones",
+                "excellent": "¡Excelente! Has dominado este escenario.",
+                "good": "¡Buen trabajo! Listo para el siguiente desafío.",
+                "completed": "¡Escenario completado! Considera revisar para una puntuación más alta.",
+                "no_strengths": "Sigue practicando y mejorando",
+                "no_weaknesses": "Sin problemas importantes, sigue así",
+                "minutes": "minutos",
+            },
+            "French": {
+                "title": "Résumé de la pratique : {scenario_title}",
+                "overview": "Vue d'ensemble",
+                "completion_time": "Temps de réalisation",
+                "interactions": "Interactions",
+                "avg_score": "Score moyen",
+                "tasks": "Achèvement des tâches",
+                "strengths": "Points forts",
+                "improvements": "Points à améliorer",
+                "recommendations": "Recommandations",
+                "excellent": "Excellent ! Vous maîtrisez ce scénario.",
+                "good": "Bon travail ! Prêt pour le prochain défi.",
+                "completed": "Scénario terminé ! Envisagez de réviser pour un meilleur score.",
+                "no_strengths": "Continuez à pratiquer et à vous améliorer",
+                "no_weaknesses": "Pas de problèmes majeurs, continuez comme ça",
+                "minutes": "minutes",
+            },
+            "German": {
+                "title": "Übungszusammenfassung: {scenario_title}",
+                "overview": "Übersicht",
+                "completion_time": "Abschlusszeit",
+                "interactions": "Interaktionen",
+                "avg_score": "Durchschnittspunktzahl",
+                "tasks": "Aufgabenabschluss",
+                "strengths": "Stärken",
+                "improvements": "Verbesserungsbereiche",
+                "recommendations": "Empfehlungen",
+                "excellent": "Ausgezeichnet! Sie haben dieses Szenario gemeistert.",
+                "good": "Gute Arbeit! Bereit für die nächste Herausforderung.",
+                "completed": "Szenario abgeschlossen! Überlegen Sie, zu wiederholen für eine höhere Punktzahl.",
+                "no_strengths": "Üben Sie weiter und verbessern Sie sich",
+                "no_weaknesses": "Keine größeren Probleme, machen Sie weiter so",
+                "minutes": "Minuten",
+            },
+            "Korean": {
+                "title": "【{scenario_title}】연습 요약",
+                "overview": "연습 개요",
+                "completion_time": "완료 시간",
+                "interactions": "대화 횟수",
+                "avg_score": "종합 평가",
+                "tasks": "과제 완료 현황",
+                "strengths": "잘한 점",
+                "improvements": "개선할 점",
+                "recommendations": "추천 사항",
+                "excellent": "훌륭합니다! 이 시나리오를 마스터했습니다.",
+                "good": "잘했습니다! 다음 시나리오에 도전하세요.",
+                "completed": "시나리오 완료! 더 높은 점수를 위해 복습하세요.",
+                "no_strengths": "계속 연습하여 실력을 키우세요",
+                "no_weaknesses": "큰 문제 없음, 계속 유지하세요",
+                "minutes": "분",
+            },
+            "Portuguese": {
+                "title": "Resumo da prática: {scenario_title}",
+                "overview": "Visão geral",
+                "completion_time": "Tempo de conclusão",
+                "interactions": "Interações",
+                "avg_score": "Pontuação média",
+                "tasks": "Conclusão de tarefas",
+                "strengths": "Pontos fortes",
+                "improvements": "Áreas a melhorar",
+                "recommendations": "Recomendações",
+                "excellent": "Excelente! Você dominou este cenário.",
+                "good": "Bom trabalho! Pronto para o próximo desafio.",
+                "completed": "Cenário concluído! Considere revisar para uma pontuação mais alta.",
+                "no_strengths": "Continue praticando e melhorando",
+                "no_weaknesses": "Sem problemas importantes, continue assim",
+                "minutes": "minutos",
+            },
+            "Russian": {
+                "title": "Обзор практики: {scenario_title}",
+                "overview": "Общий обзор",
+                "completion_time": "Время завершения",
+                "interactions": "Взаимодействия",
+                "avg_score": "Средний балл",
+                "tasks": "Выполнение заданий",
+                "strengths": "Сильные стороны",
+                "improvements": "Области для улучшения",
+                "recommendations": "Рекомендации",
+                "excellent": "Отлично! Вы освоили этот сценарий.",
+                "good": "Хорошая работа! Готовы к следующему испытанию.",
+                "completed": "Сценарий завершён! Рассмотрите возможность повторения для более высокого балла.",
+                "no_strengths": "Продолжайте практиковаться и совершенствоваться",
+                "no_weaknesses": "Нет серьёзных проблем, продолжайте в том же духе",
+                "minutes": "минут",
+            },
+            "Italian": {
+                "title": "Riepilogo pratica: {scenario_title}",
+                "overview": "Panoramica",
+                "completion_time": "Tempo di completamento",
+                "interactions": "Interazioni",
+                "avg_score": "Punteggio medio",
+                "tasks": "Completamento attività",
+                "strengths": "Punti di forza",
+                "improvements": "Aree da migliorare",
+                "recommendations": "Raccomandazioni",
+                "excellent": "Eccellente! Hai padroneggiato questo scenario.",
+                "good": "Ottimo lavoro! Pronto per la prossima sfida.",
+                "completed": "Scenario completato! Considera di ripassare per un punteggio più alto.",
+                "no_strengths": "Continua a praticare e migliorare",
+                "no_weaknesses": "Nessun problema importante, continua così",
+                "minutes": "minuti",
+            },
+            "Arabic": {
+                "title": "ملخص التمرين: {scenario_title}",
+                "overview": "نظرة عامة",
+                "completion_time": "وقت الإنجاز",
+                "interactions": "التفاعلات",
+                "avg_score": "الدرجة المتوسطة",
+                "tasks": "إنجاز المهام",
+                "strengths": "نقاط القوة",
+                "improvements": "مجالات التحسين",
+                "recommendations": "التوصيات",
+                "excellent": "ممتاز! لقد أتقنت هذا السيناريو.",
+                "good": "عمل جيد! جاهز للتحدي التالي.",
+                "completed": "اكتمل السيناريو! فكر في المراجعة للحصول على درجة أعلى.",
+                "no_strengths": "استمر في الممارسة والتحسن",
+                "no_weaknesses": "لا توجد مشاكل كبيرة، استمر على هذا النحو",
+                "minutes": "دقيقة",
+            },
+            "Hindi": {
+                "title": "अभ्यास सारांश: {scenario_title}",
+                "overview": "सामान्य अवलोकन",
+                "completion_time": "पूरा करने का समय",
+                "interactions": "इंटरैक्शन",
+                "avg_score": "औसत स्कोर",
+                "tasks": "कार्य पूर्णता",
+                "strengths": "ताकत",
+                "improvements": "सुधार के क्षेत्र",
+                "recommendations": "सुझाव",
+                "excellent": "उत्कृष्ट! आपने इस परिदृश्य में महारत हासिल कर ली है।",
+                "good": "अच्छा काम! अगली चुनौती के लिए तैयार।",
+                "completed": "परिदृश्य पूरा हुआ! उच्च स्कोर के लिए पुनरावृत्ति पर विचार करें।",
+                "no_strengths": "अभ्यास जारी रखें और सुधार करें",
+                "no_weaknesses": "कोई बड़ी समस्या नहीं, ऐसे ही जारी रखें",
+                "minutes": "मिनट",
+            },
+            "Thai": {
+                "title": "สรุปการฝึกซ้อม: {scenario_title}",
+                "overview": "ภาพรวม",
+                "completion_time": "เวลาที่ใช้",
+                "interactions": "การโต้ตอบ",
+                "avg_score": "คะแนนเฉลี่ย",
+                "tasks": "การทำงานที่เสร็จสิ้น",
+                "strengths": "จุดเด่น",
+                "improvements": "จุดที่ต้องปรับปรุง",
+                "recommendations": "คำแนะนำ",
+                "excellent": "ยอดเยี่ยม! คุณเชี่ยวชาญสถานการณ์นี้แล้ว",
+                "good": "ทำได้ดี! พร้อมสำหรับความท้าทายถัดไป",
+                "completed": "สถานการณ์เสร็จสมบูรณ์! พิจารณาทบทวนเพื่อคะแนนที่สูงขึ้น",
+                "no_strengths": "ฝึกฝนต่อไปและพัฒนาขึ้น",
+                "no_weaknesses": "ไม่มีปัญหาร้ายแรง ทำต่อไป",
+                "minutes": "นาที",
+            },
+            "Vietnamese": {
+                "title": "Tóm tắt luyện tập: {scenario_title}",
+                "overview": "Tổng quan",
+                "completion_time": "Thời gian hoàn thành",
+                "interactions": "Tương tác",
+                "avg_score": "Điểm trung bình",
+                "tasks": "Hoàn thành nhiệm vụ",
+                "strengths": "Điểm mạnh",
+                "improvements": "Cần cải thiện",
+                "recommendations": "Đề xuất",
+                "excellent": "Xuất sắc! Bạn đã thành thạo tình huống này.",
+                "good": "Làm tốt! Sẵn sàng cho thử thách tiếp theo.",
+                "completed": "Hoàn thành tình huống! Hãy xem xét ôn tập để đạt điểm cao hơn.",
+                "no_strengths": "Tiếp tục luyện tập và cải thiện",
+                "no_weaknesses": "Không có vấn đề lớn, tiếp tục như vậy",
+                "minutes": "phút",
+            },
+            "Indonesian": {
+                "title": "Ringkasan Latihan: {scenario_title}",
+                "overview": "Ikhtisar",
+                "completion_time": "Waktu Penyelesaian",
+                "interactions": "Interaksi",
+                "avg_score": "Skor Rata-rata",
+                "tasks": "Penyelesaian Tugas",
+                "strengths": "Kekuatan",
+                "improvements": "Area yang Perlu Ditingkatkan",
+                "recommendations": "Rekomendasi",
+                "excellent": "Sangat bagus! Anda telah menguasai skenario ini.",
+                "good": "Kerja bagus! Siap untuk tantangan berikutnya.",
+                "completed": "Skenario selesai! Pertimbangkan untuk meninjau kembali untuk skor yang lebih tinggi.",
+                "no_strengths": "Terus berlatih dan meningkat",
+                "no_weaknesses": "Tidak ada masalah besar, teruskan seperti ini",
+                "minutes": "menit",
+            },
+        }
+
+    def _get_template(self, native_language: str) -> Dict[str, str]:
+        """获取指定语言的模板"""
+        return self.language_templates.get(native_language, self.language_templates["English"])
     
     def _build_review_template(self) -> str:
-        """构建复盘报告模板"""
-        return """# Scenario Review: {scenario_title}
+        """构建复盘报告模板 - 简洁中文版本"""
+        return """【{scenario_title}】练习总结
 
-## 📊 Overall Performance
-- **Completion Time**: {completion_time}
-- **Total Interactions**: {total_interactions}
-- **Average Score**: {avg_score}/10
+练习概况
+- 完成时间：{completion_time}
+- 对话轮数：{total_interactions}
+- 综合评分：{avg_score}/10
 
-## 🎯 Task Breakdown
+任务完成情况
 {task_breakdown}
 
-## 💪 Strengths
+表现亮点
 {strengths}
 
-## 📈 Areas for Improvement
+待提升方面
 {improvements}
 
-## 💡 Specific Recommendations
+针对性建议
 {recommendations}
 
-## 🏆 Achievement
 {achievement_message}
 """
     
@@ -53,11 +317,12 @@ class ScenarioReviewWorkflow:
         scenario_title: str,
         completed_tasks: List[Dict[str, Any]],
         conversation_history: List[Dict[str, Any]],
-        db_connection: Any
+        db_connection: Any,
+        native_language: str = "English"
     ) -> Dict[str, Any]:
         """
         生成场景练习总结
-        
+
         Args:
             user_id: 用户 ID
             goal_id: 目标 ID
@@ -65,26 +330,28 @@ class ScenarioReviewWorkflow:
             completed_tasks: 已完成的 3 个任务
             conversation_history: 该场景的所有对话历史
             db_connection: 数据库连接
-            
+            native_language: 用户母语，用于生成对应语言的反馈
+
         Returns:
             包含复盘报告、建议等信息
         """
         # 分析对话历史
         analysis = await self._analyze_scenario_conversation(
-            conversation_history, 
+            conversation_history,
             completed_tasks
         )
-        
-        # 生成复盘报告
+
+        # 生成复盘报告（根据用户母语）
         review_report = self._generate_review_report(
             scenario_title,
             completed_tasks,
-            analysis
+            analysis,
+            native_language
         )
-        
-        # 生成改进建议
-        recommendations = self._generate_recommendations(analysis, conversation_history)
-        
+
+        # 生成改进建议（根据用户母语）
+        recommendations = self._generate_recommendations(analysis, conversation_history, native_language)
+
         # 保存复盘报告到数据库
         await self._save_review_to_db(
             user_id=user_id,
@@ -95,7 +362,7 @@ class ScenarioReviewWorkflow:
             analysis=analysis,
             db_connection=db_connection
         )
-        
+
         return {
             "workflow": "scenario_review",
             "scenario_title": scenario_title,
@@ -169,19 +436,19 @@ class ScenarioReviewWorkflow:
             
             # 判断优点和缺点
             if analysis["vocabulary_diversity"] > 0.6:
-                analysis["strengths"].append("Good vocabulary diversity")
+                analysis["strengths"].append("词汇丰富多样")
             elif analysis["vocabulary_diversity"] < 0.3:
-                analysis["weaknesses"].append("Limited vocabulary range")
-            
+                analysis["weaknesses"].append("词汇量有待扩展")
+
             if analysis["avg_message_length"] > 15:
-                analysis["strengths"].append("Detailed responses")
+                analysis["strengths"].append("回答详细完整")
             elif analysis["avg_message_length"] < 5:
-                analysis["weaknesses"].append("Responses too short")
-            
+                analysis["weaknesses"].append("回答过于简短")
+
             if analysis["grammar_errors"] == 0:
-                analysis["strengths"].append("Excellent grammar")
+                analysis["strengths"].append("语法准确无误")
             elif analysis["grammar_errors"] > 3:
-                analysis["weaknesses"].append("Frequent grammar mistakes")
+                analysis["weaknesses"].append("语法错误较多")
         
         # 计算完成时间
         if conversation_history:
@@ -195,20 +462,20 @@ class ScenarioReviewWorkflow:
                 except:
                     analysis["completion_time_minutes"] = 0
 
-        # 生成总结
+        # 生成总结（简洁中文，无表情符号）
         if analysis["user_messages"] > 0:
             avg_score = sum(t.get("score", 0) for t in completed_tasks) / len(completed_tasks) if completed_tasks else 0
             if avg_score >= 9:
-                analysis["summary"] = f"🎉 表现出色！完成了 {len(completed_tasks)} 个任务，平均得分 {avg_score:.1f}。" + (
-                    " 对话流利自然，词汇使用准确。" if analysis["vocabulary_diversity"] > 0.5 else " 建议继续扩展词汇量。"
+                analysis["summary"] = f"表现出色！完成 {len(completed_tasks)} 个任务，平均得分 {avg_score:.1f}。" + (
+                    "对话流利自然，词汇使用准确。" if analysis["vocabulary_diversity"] > 0.5 else "建议继续扩展词汇量。"
                 )
             elif avg_score >= 7:
-                analysis["summary"] = f"👍 表现良好！完成了 {len(completed_tasks)} 个任务，平均得分 {avg_score:.1f}。" + (
-                    " 表达清晰，可以继续练习复杂句型。" if analysis["avg_message_length"] < 10 else " 保持当前的表达水平。"
+                analysis["summary"] = f"表现良好！完成 {len(completed_tasks)} 个任务，平均得分 {avg_score:.1f}。" + (
+                    "表达清晰，可继续练习复杂句型。" if analysis["avg_message_length"] < 10 else "保持当前的表达水平。"
                 )
             else:
-                analysis["summary"] = f"✅ 场景完成！建议重新练习以获得更高分数。" + (
-                    " 尝试使用更多连接词和完整句子。" if analysis["avg_message_length"] < 8 else ""
+                analysis["summary"] = f"场景完成！建议重新练习以获得更高分数。" + (
+                    "尝试使用更多连接词和完整句子。" if analysis["avg_message_length"] < 8 else ""
                 )
 
         return analysis
@@ -217,86 +484,252 @@ class ScenarioReviewWorkflow:
         self,
         scenario_title: str,
         completed_tasks: List[Dict[str, Any]],
-        analysis: Dict[str, Any]
+        analysis: Dict[str, Any],
+        native_language: str = "English"
     ) -> str:
-        """生成复盘报告"""
+        """生成复盘报告（支持多语言）"""
+        # 获取语言模板
+        lang = self._get_template(native_language)
+        
         # 计算平均分
         task_scores = [task.get("score", 0) for task in completed_tasks]
         avg_score = sum(task_scores) / len(task_scores) if task_scores else 0
-        
+
         # 生成任务分解
         task_breakdown = ""
         for i, task in enumerate(completed_tasks, 1):
-            task_name = task.get("task_description", f"Task {i}")
+            task_name = task.get("task_description", f"{lang['tasks']} {i}")
             task_score = task.get("score", 0)
-            task_breakdown += f"- **Task {i}**: {task_name[:50]}... (Score: {task_score}/10)\n"
-        
+            task_breakdown += f"- {lang['tasks']}{i}：{task_name[:30]}... ({lang['avg_score']}：{task_score}/10)\n"
+
         # 生成优点列表
-        strengths = "\n".join(f"- {s}" for s in analysis.get("strengths", ["Keep practicing!"]))
-        
+        strengths_list = analysis.get("strengths", [])
+        if not strengths_list:
+            strengths_list = [lang["no_strengths"]]
+        strengths = "\n".join(f"- {s}" for s in strengths_list)
+
         # 生成改进点
-        improvements = "\n".join(f"- {w}" for w in analysis.get("weaknesses", []))
-        if not improvements:
-            improvements = "- No major issues detected!"
-        
-        # 生成成就信息
+        weaknesses_list = analysis.get("weaknesses", [])
+        if not weaknesses_list:
+            weaknesses_list = [lang["no_weaknesses"]]
+        improvements = "\n".join(f"- {w}" for w in weaknesses_list)
+
+        # 生成成就信息（根据语言）
         if avg_score >= 9:
-            achievement = "🌟 Outstanding! You've mastered this scenario!"
+            achievement = lang["excellent"]
         elif avg_score >= 7:
-            achievement = "🎯 Great job! Ready for the next challenge!"
+            achievement = lang["good"]
         else:
-            achievement = "✅ Scenario completed! Consider reviewing and retrying for higher score."
-        
-        report = self.review_template.format(
-            scenario_title=scenario_title,
-            completion_time=f"{analysis.get('completion_time_minutes', 0)} minutes",
-            total_interactions=analysis.get("user_messages", 0),
-            avg_score=f"{avg_score:.1f}",
-            task_breakdown=task_breakdown,
-            strengths=strengths,
-            improvements=improvements,
-            recommendations="",  # 单独生成
-            achievement_message=achievement
-        )
-        
+            achievement = lang["completed"]
+
+        # 构建报告（使用语言模板）
+        report = f"""{lang['title'].format(scenario_title=scenario_title)}
+
+{lang['overview']}
+- {lang['completion_time']}：{analysis.get('completion_time_minutes', 0)} {lang['minutes']}
+- {lang['interactions']}：{analysis.get('user_messages', 0)}
+- {lang['avg_score']}：{avg_score:.1f}/10
+
+{lang['tasks']}
+{task_breakdown}
+
+{lang['strengths']}
+{strengths}
+
+{lang['improvements']}
+{improvements}
+
+{lang['recommendations']}
+（见下方建议列表）
+
+{achievement}
+"""
+
         return report
     
-    def _generate_recommendations(self, analysis: Dict[str, Any], conversation_history: List[Dict[str, Any]] = None) -> List[str]:
-        """生成针对性建议 - 基于统计分析和实际对话内容"""
+    def _generate_recommendations(self, analysis: Dict[str, Any], conversation_history: List[Dict[str, Any]] = None, native_language: str = "English") -> List[str]:
+        """生成针对性建议 - 基于统计分析和实际对话内容（支持多语言）"""
+        # 多语言建议模板 - 支持15种语言
+        recommendation_templates = {
+            "Chinese": {
+                "vocab": "尝试学习更多本场景相关的高级词汇，并在对话中主动使用",
+                "length": "尝试给出更长、更详细的回答，使用'because'、'for example'、'I think'等连接词",
+                "grammar": "注意主谓一致和时态使用，建议复习一般现在时和过去时的用法",
+                "interaction": "尝试提出更多后续问题，分享更多个人细节和感受，让对话更自然流畅",
+                "connectors": "多使用'and', 'but', 'because', 'however'等连接词，让句子更连贯自然",
+                "complete_sentences": "尝试用完整句子回答，而不是单词或短语，例如：'Yes, I think...' 而不是 'Yes'",
+                "questions": "尝试主动提问，如'Can you tell me...?', 'What do you think about...?'，让对话更互动",
+                "default": "表现出色！你的表达流畅自然，词汇使用准确，建议继续练习更复杂的句型结构",
+            },
+            "English": {
+                "vocab": "Try to learn more advanced vocabulary related to this scenario and use them actively in conversations",
+                "length": "Try to give longer, more detailed responses using connectors like 'because', 'for example', 'I think'",
+                "grammar": "Pay attention to subject-verb agreement and tense usage. Review simple present and past tenses",
+                "interaction": "Try to ask more follow-up questions and share more personal details to make the conversation flow naturally",
+                "connectors": "Use more connectors like 'and', 'but', 'because', 'however' to make your sentences more coherent",
+                "complete_sentences": "Try to answer in complete sentences rather than single words or phrases, e.g., 'Yes, I think...' instead of just 'Yes'",
+                "questions": "Try to ask questions proactively like 'Can you tell me...?', 'What do you think about...?' to make the conversation more interactive",
+                "default": "Excellent performance! Your expression is fluent and natural with accurate vocabulary usage. Continue practicing more complex sentence structures",
+            },
+            "Japanese": {
+                "vocab": "このシナリオに関連するより高度な語彙を学び、会話で積極的に使用してみましょう",
+                "length": "'because'、'for example'、'I think'などの接続詞を使って、より長く詳細な回答を心がけましょう",
+                "grammar": "主語と動詞の一致、時制の使い方に注意してください。現在形と過去形の復習をお勧めします",
+                "interaction": "より多くのフォローアップ質問をし、個人的な詳細や感想を共有して、会話をより自然にしましょう",
+                "connectors": "'and'、'but'、'because'、'however'などの接続詞を多く使い、文をより一貫性のあるものにしましょう",
+                "complete_sentences": "単語や短句ではなく、完全な文で答えるようにしましょう。例：'Yes'ではなく'Yes, I think...'",
+                "questions": "'Can you tell me...?'、'What do you think about...?'などの質問を積極的にして、会話をより対話的にしましょう",
+                "default": "素晴らしいパフォーマンスです！表現が流暢で自然で、語彙の使い方も正確です。より複雑な文構造の練習を続けましょう",
+            },
+            "Spanish": {
+                "vocab": "Intenta aprender más vocabulario avanzado relacionado con este escenario y úsalo activamente en las conversaciones",
+                "length": "Intenta dar respuestas más largas y detalladas usando conectores como 'because', 'for example', 'I think'",
+                "grammar": "Presta atención a la concordancia sujeto-verbo y al uso de los tiempos. Revisa los tiempos simples presente y pasado",
+                "interaction": "Intenta hacer más preguntas de seguimiento y compartir más detalles personales para que la conversación fluya naturalmente",
+                "connectors": "Usa más conectores como 'and', 'but', 'because', 'however' para hacer tus oraciones más coherentes",
+                "complete_sentences": "Intenta responder en oraciones completas en lugar de palabras o frases sueltas, p. ej., 'Yes, I think...' en lugar de solo 'Yes'",
+                "questions": "Intenta hacer preguntas proactivamente como 'Can you tell me...?', 'What do you think about...?' para hacer la conversación más interactiva",
+                "default": "¡Excelente desempeño! Tu expresión es fluida y natural con uso preciso del vocabulario. Continúa practicando estructuras de oraciones más complejas",
+            },
+            "French": {
+                "vocab": "Essayez d'apprendre plus de vocabulaire avancé lié à ce scénario et utilisez-le activement dans les conversations",
+                "length": "Essayez de donner des réponses plus longues et détaillées en utilisant des connecteurs comme 'because', 'for example', 'I think'",
+                "grammar": "Faites attention à l'accord sujet-verbe et à l'utilisation des temps. Révisez les temps simples présent et passé",
+                "interaction": "Essayez de poser plus de questions de suivi et de partager plus de détails personnels pour que la conversation se déroule naturellement",
+                "connectors": "Utilisez plus de connecteurs comme 'and', 'but', 'because', 'however' pour rendre vos phrases plus cohérentes",
+                "complete_sentences": "Essayez de répondre en phrases complètes plutôt qu'en mots ou phrases isolés, par ex. 'Yes, I think...' au lieu de simplement 'Yes'",
+                "questions": "Essayez de poser des questions de manière proactive comme 'Can you tell me...?', 'What do you think about...?' pour rendre la conversation plus interactive",
+                "default": "Excellente performance! Votre expression est fluide et naturelle avec une utilisation précise du vocabulaire. Continuez à pratiquer des structures de phrases plus complexes",
+            },
+            "German": {
+                "vocab": "Versuchen Sie, mehr fortgeschrittenen Wortschatz zu lernen, der mit diesem Szenario zusammenhängt, und verwenden Sie ihn aktiv in Gesprächen",
+                "length": "Versuchen Sie, längere, detailliertere Antworten zu geben, indem Sie Konnektoren wie 'because', 'for example', 'I think' verwenden",
+                "grammar": "Achten Sie auf die Subjekt-Verb-Übereinstimmung und die Zeitformen. Überprüfen Sie die einfachen Gegenwarts- und Vergangenheitszeiten",
+                "interaction": "Versuchen Sie, mehr Folgefragen zu stellen und mehr persönliche Details zu teilen, damit das Gespräch natürlich verläuft",
+                "connectors": "Verwenden Sie mehr Konnektoren wie 'and', 'but', 'because', 'however', um Ihre Sätze kohärenter zu machen",
+                "complete_sentences": "Versuchen Sie, in vollständigen Sätzen zu antworten, anstatt in einzelnen Wörtern oder Phrasen, z.B. 'Yes, I think...' statt nur 'Yes'",
+                "questions": "Versuchen Sie, proaktiv Fragen zu stellen wie 'Can you tell me...?', 'What do you think about...?', um das Gespräch interaktiver zu gestalten",
+                "default": "Ausgezeichnete Leistung! Ihr Ausdruck ist flüssig und natürlich mit präziser Verwendung des Wortschatzes. Üben Sie weiter komplexere Satzstrukturen",
+            },
+            "Korean": {
+                "vocab": "이 시나리오와 관련된 더 고급 어휘를 배우고 대화에서 적극적으로 사용해 보세요",
+                "length": "'because', 'for example', 'I think' 등의 접속사를 사용하여 더 길고 자세한 답변을 해보세요",
+                "grammar": "주어와 동사의 일치 및 시제 사용에 주의하세요. 일반 현재시제와 과거시제를 복습하세요",
+                "interaction": "더 많은 후속 질문을 하고 더 많은 개인적인 세부 정보와 감정을 공유하여 대화가 자연스럽게 흘러가도록 해보세요",
+                "connectors": "'and', 'but', 'because', 'however' 등의 접속사를 더 많이 사용하여 문장을 더 일관되게 만드세요",
+                "complete_sentences": "단어나 구문이 아닌 완전한 문장으로 답변하세요. 예: 'Yes' 대신 'Yes, I think...'",
+                "questions": "'Can you tell me...?', 'What do you think about...?'와 같은 질문을 적극적으로 하여 대화를 더 상호작용적으로 만드세요",
+                "default": "훌륭한 성과입니다! 표현이 유창하고 자연스럽으며 어휘 사용이 정확합니다. 더 복잡한 문장 구조를 계속 연습하세요",
+            },
+            "Portuguese": {
+                "vocab": "Tente aprender mais vocabulário avançado relacionado a este cenário e use-o ativamente nas conversas",
+                "length": "Tente dar respostas mais longas e detalhadas usando conectores como 'because', 'for example', 'I think'",
+                "grammar": "Preste atenção à concordância sujeito-verbo e ao uso dos tempos. Revise os tempos simples presente e passado",
+                "interaction": "Tente fazer mais perguntas de acompanhamento e compartilhar mais detalhes pessoais para fazer a conversa fluir naturalmente",
+                "connectors": "Use mais conectores como 'and', 'but', 'because', 'however' para tornar suas frases mais coerentes",
+                "complete_sentences": "Tente responder em frases completas em vez de palavras ou frases soltas, por ex. 'Yes, I think...' em vez de apenas 'Yes'",
+                "questions": "Tente fazer perguntas proativamente como 'Can you tell me...?', 'What do you think about...?' para tornar a conversa mais interativa",
+                "default": "Desempenho excelente! Sua expressão é fluente e natural com uso preciso do vocabulário. Continue praticando estruturas de frases mais complexas",
+            },
+            "Russian": {
+                "vocab": "Попробуйте выучить больше продвинутой лексики, связанной с этим сценарием, и активно используйте её в разговорах",
+                "length": "Попробуйте давать более длинные, детальные ответы, используя союзы типа 'because', 'for example', 'I think'",
+                "grammar": "Обратите внимание на согласование подлежащего и сказуемого, а также на использование времён. Повторите простые настоящее и прошедшее время",
+                "interaction": "Попробуйте задавать больше уточняющих вопросов и делиться более личными подробностями, чтобы разговор протекал естественно",
+                "connectors": "Используйте больше союзов типа 'and', 'but', 'because', 'however', чтобы ваши предложения были более связными",
+                "complete_sentences": "Попробуйте отвечать полными предложениями, а не отдельными словами или фразами, например, 'Yes, I think...' вместо просто 'Yes'",
+                "questions": "Попробуйте задавать вопросы проактивно, например, 'Can you tell me...?', 'What do you think about...?', чтобы сделать разговор более интерактивным",
+                "default": "Отличная работа! Ваше выражение мыслей плавное и естественное с точным использованием словарного запаса. Продолжайте практиковать более сложные структуры предложений",
+            },
+            "Italian": {
+                "vocab": "Prova a imparare più vocabolario avanzato relativo a questo scenario e usalo attivamente nelle conversazioni",
+                "length": "Prova a dare risposte più lunghe e dettagliate usando connettori come 'because', 'for example', 'I think'",
+                "grammar": "Presta attenzione alla concordanza soggetto-verbo e all'uso dei tempi. Ripassa i tempi semplici presente e passato",
+                "interaction": "Prova a fare più domande di approfondimento e a condividere più dettagli personali per far scorrere la conversazione naturalmente",
+                "connectors": "Usa più connettori come 'and', 'but', 'because', 'however' per rendere le tue frasi più coerenti",
+                "complete_sentences": "Prova a rispondere in frasi complete piuttosto che in parole o frasi isolate, ad es. 'Yes, I think...' invece di solo 'Yes'",
+                "questions": "Prova a fare domande in modo proattivo come 'Can you tell me...?', 'What do you think about...?' per rendere la conversazione più interattiva",
+                "default": "Eccellente prestazione! La tua espressione è fluida e naturale con un uso preciso del vocabolario. Continua a praticare strutture di frasi più complesse",
+            },
+            "Arabic": {
+                "vocab": "حاول تعلم المزيد من المفردات المتقدمة المتعلقة بهذا السيناريو واستخدمها بنشاط في المحادثات",
+                "length": "حاول إعطاء إجابات أطول وأكثر تفصيلاً باستخدام روابط مثل 'because', 'for example', 'I think'",
+                "grammar": "انتبه إلى تطابق الفعل مع الفاعل واستخدام الأزمنة. راجع المضارع والماضي البسيطين",
+                "interaction": "حاول طرح المزيد من الأسئلة المتابعة ومشاركة المزيد من التفاصيل الشخصية لجعل المحادثة تسير بشكل طبيعي",
+                "connectors": "استخدم المزيد من الروابط مثل 'and', 'but', 'because', 'however' لجمل أكثر تماسكاً",
+                "complete_sentences": "حاول الإجابة بجمل كاملة بدلاً من كلمات أو عبارات منفصلة، مثل 'Yes, I think...' بدلاً من 'Yes' فقط",
+                "questions": "حاول طرح الأسئلة بشكل استباقي مثل 'Can you tell me...?', 'What do you think about...?' لجعل المحادثة أكثر تفاعلية",
+                "default": "أداء ممتاز! تعبيرك سلس وطبيعي مع استخدام دقيق للمفردات. استمر في ممارسة هياكل الجمل الأكثر تعقيداً",
+            },
+            "Hindi": {
+                "vocab": "इस परिदृश्य से संबंधित अधिक उन्नत शब्दावली सीखने का प्रयास करें और उन्हें बातचीत में सक्रिय रूप से उपयोग करें",
+                "length": "'because', 'for example', 'I think' जैसे कनेक्टर्स का उपयोग करके अधिक लंबे, विस्तृत उत्तर देने का प्रयास करें",
+                "grammar": "कर्ता-क्रिया के संबंध और काल के उपयोग पर ध्यान दें। सामान्य वर्तमान और भूतकाल का पुनरावृत्ति करें",
+                "interaction": "अधिक अनुवर्ती प्रश्न पूछने और अधिक व्यक्तिगत विवरण साझा करने का प्रयास करें ताकि बातचीत स्वाभाविक रूप से बहे",
+                "connectors": "अपने वाक्यों को अधिक सुसंगत बनाने के लिए 'and', 'but', 'because', 'however' जैसे अधिक कनेक्टर्स का उपयोग करें",
+                "complete_sentences": "शब्दों या वाक्यांशों के बजाय पूर्ण वाक्यों में उत्तर देने का प्रयास करें, जैसे 'Yes' के बजाय 'Yes, I think...'",
+                "questions": "बातचीत को अधिक इंटरैक्टिव बनाने के लिए 'Can you tell me...?', 'What do you think about...?' जैसे प्रश्न सक्रिय रूप से पूछने का प्रयास करें",
+                "default": "उत्कृष्ट प्रदर्शन! आपका अभिव्यक्ति सहज और प्राकृतिक है, शब्दावली का सटीक उपयोग है। अधिक जटिल वाक्य संरचनाओं का अभ्यास जारी रखें",
+            },
+            "Thai": {
+                "vocab": "พยายามเรียนรู้คำศัพท์ขั้นสูงเพิ่มเติมที่เกี่ยวข้องกับสถานการณ์นี้และใช้อย่างแข็งขันในการสนทนา",
+                "length": "พยายามตอบให้ยาวและละเอียดขึ้นโดยใช้คำเชื่อมเช่น 'because', 'for example', 'I think'",
+                "grammar": "ให้ความสนใจกับการสอดคล้องระหว่างประธอกับกริยาและการใช้กาล ทบทวนกาลปัจจุบันและอดีตอย่างง่าย",
+                "interaction": "พยายามถามคำถามต่อเนื่องเพิ่มเติมและแบ่งปันรายละเอียดส่วนตัวมากขึ้นเพื่อให้การสนทนาไหลลื่นเป็นธรรมชาติ",
+                "connectors": "ใช้คำเชื่อมเพิ่มขึ้นเช่น 'and', 'but', 'because', 'however' เพื่อให้ประโยคของคุณสอดคล้องกันมากขึ้น",
+                "complete_sentences": "พยายามตอบเป็นประโยคสมบูรณ์แทนที่จะเป็นคำหรือวลีเดี่ยว เช่น 'Yes, I think...' แทนที่จะเป็นแค่ 'Yes'",
+                "questions": "พยายามถามคำถามเชิงรุกเช่น 'Can you tell me...?', 'What do you think about...?' เพื่อให้การสนทนามีปฏิสัมพันธ์มากขึ้น",
+                "default": "ผลงานยอดเยี่ยม! การแสดงออกของคุณคล่องแคล่วและเป็นธรรมชาติโดยใช้คำศัพท์อย่างถูกต้อง ฝึกฝนโครงสร้างประโยคที่ซับซ้อนขึ้นต่อไป",
+            },
+            "Vietnamese": {
+                "vocab": "Hãy cố gắng học thêm từ vựng nâng cao liên quan đến tình huống này và sử dụng chúng một cách chủ động trong các cuộc trò chuyện",
+                "length": "Hãy cố gắng đưa ra câu trả lời dài và chi tiết hơn bằng cách sử dụng các liên từ như 'because', 'for example', 'I think'",
+                "grammar": "Chú ý đến sự hòa hợp giữa chủ ngữ và động từ cũng như cách sử dụng thì. Ôn tập thì hiện tại và quá khứ đơn",
+                "interaction": "Hãy cố gắng đặt thêm câu hỏi tiếp theo và chia sẻ thêm chi tiết cá nhân để cuộc trò chuyện diễn ra tự nhiên",
+                "connectors": "Sử dụng nhiều liên từ hơn như 'and', 'but', 'because', 'however' để câu của bạn mạch lạc hơn",
+                "complete_sentences": "Hãy cố gắng trả lời bằng câu hoàn chỉnh thay vì từ hoặc cụm từ riêng lẻ, ví dụ: 'Yes, I think...' thay vì chỉ 'Yes'",
+                "questions": "Hãy cố gắng đặt câu hỏi một cách chủ động như 'Can you tell me...?', 'What do you think about...?' để cuộc trò chuyện tương tác hơn",
+                "default": "Hiệu suất xuất sắc! Cách diễn đạt của bạn trôi chảy và tự nhiên với việc sử dụng từ vựng chính xác. Tiếp tục luyện tập các cấu trúc câu phức tạp hơn",
+            },
+            "Indonesian": {
+                "vocab": "Cobalah untuk mempelajari lebih banyak kosakata tingkat lanjut yang terkait dengan skenario ini dan gunakan secara aktif dalam percakapan",
+                "length": "Cobalah untuk memberikan respons yang lebih panjang dan detail dengan menggunakan konektor seperti 'because', 'for example', 'I think'",
+                "grammar": "Perhatikan kesesuaian subjek-kata kerja dan penggunaan kala. Tinjau kala sederhana sekarang dan lampau",
+                "interaction": "Cobalah untuk mengajukan lebih banyak pertanyaan lanjutan dan membagikan lebih banyak detail pribadi agar percakapan berjalan secara alami",
+                "connectors": "Gunakan lebih banyak konektor seperti 'and', 'but', 'because', 'however' untuk membuat kalimat Anda lebih koheren",
+                "complete_sentences": "Cobalah untuk menjawab dalam kalimat lengkap daripada kata atau frasa tunggal, misalnya 'Yes, I think...' alih-alih hanya 'Yes'",
+                "questions": "Cobalah untuk mengajukan pertanyaan secara proaktif seperti 'Can you tell me...?', 'What do you think about...?' untuk membuat percakapan lebih interaktif",
+                "default": "Performa sangat baik! Ekspresi Anda lancar dan alami dengan penggunaan kosakata yang akurat. Terus berlatih struktur kalimat yang lebih kompleks",
+            },
+        }
+        
+        lang = recommendation_templates.get(native_language, recommendation_templates["English"])
         recommendations = []
 
         # 基于词汇多样性
         vocab_diversity = analysis.get("vocabulary_diversity", 0)
         if vocab_diversity < 0.4:
-            recommendations.append(
-                "尝试学习更多本场景相关的高级词汇，并在对话中主动使用"
-            )
+            recommendations.append(lang["vocab"])
 
         # 基于平均回复长度
         avg_length = analysis.get("avg_message_length", 0)
         if avg_length < 8:
-            recommendations.append(
-                "尝试给出更长、更详细的回答，使用'because'、'for example'、'I think'等连接词"
-            )
+            recommendations.append(lang["length"])
 
         # 基于语法错误
         grammar_errors = analysis.get("grammar_errors", 0)
         if grammar_errors > 2:
-            recommendations.append(
-                "注意主谓一致和时态使用，建议复习一般现在时和过去时的用法"
-            )
+            recommendations.append(lang["grammar"])
 
         # 基于互动次数
         user_messages = analysis.get("user_messages", 0)
         if user_messages < 10:
-            recommendations.append(
-                "尝试提出更多后续问题，分享更多个人细节和感受，让对话更自然流畅"
-            )
+            recommendations.append(lang["interaction"])
 
         # 分析实际对话内容，生成具体建议
         if conversation_history and len(conversation_history) > 0:
             user_msgs = [m for m in conversation_history if m.get("role") == "user"]
-            
+
             # 检测是否使用连接词
             connectors = ['and', 'but', 'because', 'so', 'however', 'therefore', 'also', 'then', 'well', 'actually']
             connector_usage = 0
@@ -304,11 +737,9 @@ class ScenarioReviewWorkflow:
                 content = msg.get("content", "").lower()
                 if any(connector in content for connector in connectors):
                     connector_usage += 1
-            
+
             if connector_usage < len(user_msgs) * 0.3:  # 少于 30% 的消息使用连接词
-                recommendations.append(
-                    "多使用'and', 'but', 'because', 'however'等连接词，让句子更连贯自然"
-                )
+                recommendations.append(lang["connectors"])
 
             # 检测是否使用完整句子
             short_responses = 0
@@ -318,11 +749,9 @@ class ScenarioReviewWorkflow:
                 words = content.split()
                 if len(words) <= 3 and not any(v in content.lower() for v in ['is', 'are', 'was', 'were', 'have', 'has', 'do', 'does', 'can', 'will', 'would', 'like']):
                     short_responses += 1
-            
+
             if short_responses > len(user_msgs) * 0.5:  # 超过 50% 是短句
-                recommendations.append(
-                    "尝试用完整句子回答，而不是单词或短语，例如：'Yes, I think...' 而不是 'Yes'"
-                )
+                recommendations.append(lang["complete_sentences"])
 
             # 检测是否使用疑问句（提问能力）
             question_usage = 0
@@ -330,17 +759,13 @@ class ScenarioReviewWorkflow:
                 content = msg.get("content", "").strip()
                 if content.endswith('?') or content.lower().startswith(('can ', 'could ', 'do ', 'does ', 'is ', 'are ', 'what ', 'where ', 'how ', 'when ', 'why ')):
                     question_usage += 1
-            
+
             if question_usage < 2 and len(user_msgs) > 5:
-                recommendations.append(
-                    "尝试主动提问，如'Can you tell me...?', 'What do you think about...?'，让对话更互动"
-                )
+                recommendations.append(lang["questions"])
 
         # 默认建议
         if not recommendations:
-            recommendations.append(
-                "表现出色！你的表达流畅自然，词汇使用准确，建议继续练习更复杂的句型结构"
-            )
+            recommendations.append(lang["default"])
 
         return recommendations
     

@@ -137,33 +137,38 @@ function Conversation() {
   const completionCheckedRef = useRef(false); // Prevent duplicate modal triggers
   const hasViewedCompletionModalRef = useRef(false); // Track if user has already viewed and closed the modal
 
-  const getScoreFeedback = (score) => {
+  const getScoreFeedback = (score, reviewData = null) => {
     // If we have scenario review data (from test or workflow), use it for personalized feedback
-    if (scenarioReviewData) {
-        // Try to extract summary from analysis
-        const analysis = scenarioReviewData.analysis;
-        if (analysis?.summary && typeof analysis.summary === 'string') {
-            return { emoji: '🌟', text: analysis.summary, level: 'excellent' };
-        }
-        
-        // Try to use recommendations array (join first 2 recommendations)
-        const recommendations = scenarioReviewData.recommendations;
+    if (reviewData) {
+        // Try to use recommendations array first (most personalized)
+        const recommendations = reviewData.recommendations;
         if (Array.isArray(recommendations) && recommendations.length > 0) {
-            // Join recommendations with semicolon (backend returns clean Chinese text)
-            return { emoji: '🌟', text: recommendations.slice(0, 2).join('；'), level: 'excellent' };
+            // Use first recommendation only for concise feedback, remove emoji
+            const text = recommendations[0];
+            // Remove any emoji from the text
+            const cleanText = text.replace(/[\u{1F600}-\u{1F64F}]|[\u{1F300}-\u{1F5FF}]|[\u{1F680}-\u{1F6FF}]|[\u{1F1E0}-\u{1F1FF}]|[\u{2600}-\u{26FF}]|[\u{2700}-\u{27BF}]/gu, '').trim();
+            return { emoji: '', text: cleanText, level: 'excellent' };
         }
-        
+
+        // Try to extract summary from analysis
+        const analysis = reviewData.analysis;
+        if (analysis?.summary && typeof analysis.summary === 'string') {
+            const cleanText = analysis.summary.replace(/[\u{1F600}-\u{1F64F}]|[\u{1F300}-\u{1F5FF}]|[\u{1F680}-\u{1F6FF}]|[\u{1F1E0}-\u{1F1FF}]|[\u{2600}-\u{26FF}]|[\u{2700}-\u{27BF}]/gu, '').trim();
+            return { emoji: '', text: cleanText, level: 'excellent' };
+        }
+
         // Try review_report if it has a summary field
-        const reviewReport = scenarioReviewData.review_report;
+        const reviewReport = reviewData.review_report;
         if (reviewReport?.summary && typeof reviewReport.summary === 'string') {
-            return { emoji: '🌟', text: reviewReport.summary, level: 'excellent' };
+            const cleanText = reviewReport.summary.replace(/[\u{1F600}-\u{1F64F}]|[\u{1F300}-\u{1F5FF}]|[\u{1F680}-\u{1F6FF}]|[\u{1F1E0}-\u{1F1FF}]|[\u{2600}-\u{26FF}]|[\u{2700}-\u{27BF}]/gu, '').trim();
+            return { emoji: '', text: cleanText, level: 'excellent' };
         }
     }
-    // Fallback to generic feedback based on score
-    if (score >= 90) return { emoji: '🌟', text: '表现出色！你的表达非常流利自然，继续保持！', level: 'excellent' };
-    if (score >= 75) return { emoji: '👍', text: '很棒！表达清晰准确，可以尝试更多复杂句型。', level: 'good' };
-    if (score >= 60) return { emoji: '💪', text: '不错的进步！建议多练习口语表达的流畅度。', level: 'fair' };
-    return { emoji: '📚', text: '继续努力！多听多说，熟能生巧。', level: 'needsWork' };
+    // Fallback to concise Chinese feedback without emojis
+    if (score >= 90) return { emoji: '', text: '表现优秀，表达流利自然，词汇使用准确。', level: 'excellent' };
+    if (score >= 75) return { emoji: '', text: '表现良好，表达清晰准确，可继续练习复杂句型。', level: 'good' };
+    if (score >= 60) return { emoji: '', text: '进步明显，建议多练习口语表达的流畅度。', level: 'fair' };
+    return { emoji: '', text: '建议继续练习，多听多说以提高表达能力。', level: 'needsWork' };
   };
 
   // Initialize completed tasks set and check for scenario completion
@@ -1955,11 +1960,10 @@ function Conversation() {
               
               <div className="bg-slate-50 dark:bg-slate-700/50 rounded-xl p-4 mb-6">
                 <div className="flex items-start gap-3">
-                  <span className="text-2xl">{getScoreFeedback(scenarioScore).emoji}</span>
-                  <div>
-                    <p className="text-sm font-medium text-slate-700 dark:text-slate-200">AI点评</p>
-                    <p className="text-sm text-slate-600 dark:text-slate-400 mt-1">
-                      {getScoreFeedback(scenarioScore).text}
+                  <div className="flex-1">
+                    <p className="text-sm font-medium text-slate-700 dark:text-slate-200 mb-2">AI点评</p>
+                    <p className="text-sm text-slate-600 dark:text-slate-400 leading-relaxed">
+                      {getScoreFeedback(scenarioScore, scenarioReviewData).text}
                     </p>
                   </div>
                 </div>
