@@ -3,68 +3,6 @@ import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { userAPI, aiAPI } from '../services/api';
 
-const PRESET_SCENARIOS = {
-  daily_conversation: [
-    { title: "Casual Greetings", tasks: ["Greet someone you just met", "Ask how someone is doing", "Make small talk about the weather"] },
-    { title: "Coffee Shop Order", tasks: ["Order your favorite drink", "Ask about menu items", "Request modifications"] },
-    { title: "Grocery Shopping", tasks: ["Ask for item locations", "Request quantity and price", "Handle checkout conversation"] },
-    { title: "Directions", tasks: ["Ask for directions to a location", "Clarify route details", "Thank for help"] },
-    { title: "Phone Call Basics", tasks: ["Answer a phone call properly", "Ask who is calling", "End a call politely"] },
-    { title: "Restaurant Dining", tasks: ["Make a reservation", "Order food from menu", "Ask for the bill"] },
-    { title: "Public Transport", tasks: ["Ask about schedules", "Buy a ticket", "Confirm your stop"] },
-    { title: "Weekend Plans", tasks: ["Discuss weekend activities", "Make suggestions", "Accept or decline invitations"] },
-    { title: "Hobbies Discussion", tasks: ["Share your hobbies", "Ask about others' interests", "Make related plans"] },
-    { title: "Small Talk (Culture)", tasks: ["Discuss local customs", "Share interesting facts", "Express opinions politely"] }
-  ],
-  business_meeting: [
-    { title: "Self Introduction", tasks: ["Introduce yourself professionally", "Share your role and company", "Exchange contact information"] },
-    { title: "Meeting Scheduling", tasks: ["Propose meeting times", "Confirm availability", "Send meeting invites"] },
-    { title: "Project Status Update", tasks: ["Summarize current progress", "Discuss blockers", "Plan next steps"] },
-    { title: "Client Presentation", tasks: ["Open a presentation", "Explain key points", "Handle Q&A"] },
-    { title: "Negotiation Basics", tasks: ["State your position", "Listen to counteroffers", "Reach a compromise"] },
-    { title: "Email Discussion", tasks: ["Reference an important email", "Clarify email contents", "Agree on follow-up actions"] },
-    { title: "Team Collaboration", tasks: ["Assign tasks to team members", "Check on task progress", "Provide feedback"] },
-    { title: "Conference Call", tasks: ["Join a video call", "Share your screen", "Wrap up the call"] },
-    { title: "Deadline Management", tasks: ["Discuss timeline constraints", "Request deadline extension", "Commit to new dates"] },
-    { title: "Professional Small Talk", tasks: ["Chat about industry news", "Discuss career journeys", "Build rapport"] }
-  ],
-  travel_survival: [
-    { title: "Airport Check-in", tasks: ["Check in for your flight", "Ask about seat preferences", "Handle baggage check"] },
-    { title: "Immigration Control", tasks: ["Answer officer questions", "Explain your trip purpose", "Provide required documents"] },
-    { title: "Hotel Reservation", tasks: ["Book a room", "Ask about amenities", "Request early check-in"] },
-    { title: "Taxi & Rideshare", tasks: ["Request a ride", "Give your destination", "Handle payment"] },
-    { title: "Asking Directions", tasks: ["Ask how to get somewhere", "Understand landmark references", "Confirm the route"] },
-    { title: "Restaurant Ordering", tasks: ["Ask for recommendations", "Order local cuisine", "Handle dietary requirements"] },
-    { title: "Shopping Abroad", tasks: ["Ask prices", "Negotiate or bargain", "Request tax refund info"] },
-    { title: "Emergency Situations", tasks: ["Ask for help", "Explain your situation", "Contact emergency services"] },
-    { title: "Sightseeing Tours", tasks: ["Book a tour", "Ask tour guide questions", "Express interest or concerns"] },
-    { title: "Cultural Small Talk", tasks: ["Discuss local culture", "Share your impressions", "Learn local expressions"] }
-  ],
-  exam_prep: [
-    { title: "Self Introduction (Exam)", tasks: ["Introduce yourself clearly", "Mention your background", "State your goals"] },
-    { title: "Describing Pictures", tasks: ["Describe a photo in detail", "Compare two images", "Express your opinion"] },
-    { title: "Opinion Questions", tasks: ["State your opinion clearly", "Give supporting reasons", "Conclude your answer"] },
-    { title: "Problem Solving", tasks: ["Identify the problem", "Suggest solutions", "Evaluate options"] },
-    { title: "Role-play Scenarios", tasks: ["Understand the situation", "Respond appropriately", "Handle follow-ups"] },
-    { title: "Discussion & Debate", tasks: ["Express agreement/disagreement", "Build on others' points", "Summarize the discussion"] },
-    { title: "Long Turn Speaking", tasks: ["Speak for 1-2 minutes fluently", "Structure your answer", "Manage your time"] },
-    { title: "Pronunciation Practice", tasks: ["Practice difficult sounds", "Work on intonation", "Reduce accent interference"] },
-    { title: "Vocabulary Expansion", tasks: ["Use academic vocabulary", "Explain complex terms", "Paraphrase effectively"] },
-    { title: "Mock Exam Practice", tasks: ["Complete a timed practice", "Self-evaluate performance", "Identify improvement areas"] }
-  ],
-  presentation: [
-    { title: "Opening Strong", tasks: ["Grab audience attention", "Introduce your topic", "Preview main points"] },
-    { title: "Explaining Data", tasks: ["Present statistics clearly", "Interpret chart information", "Draw conclusions"] },
-    { title: "Storytelling", tasks: ["Share a relevant story", "Connect to your message", "Engage emotionally"] },
-    { title: "Handling Q&A", tasks: ["Listen carefully to questions", "Provide clear answers", "Handle difficult questions"] },
-    { title: "Visual Aid Description", tasks: ["Reference your slides", "Explain diagrams", "Guide audience attention"] },
-    { title: "Transitions", tasks: ["Move between topics smoothly", "Recap previous points", "Preview next sections"] },
-    { title: "Persuasion Techniques", tasks: ["Present your argument", "Address counter-arguments", "Call to action"] },
-    { title: "Closing Impact", tasks: ["Summarize key takeaways", "End with a memorable statement", "Thank your audience"] },
-    { title: "Team Presentation", tasks: ["Coordinate with co-presenters", "Handle handoffs", "Support each other"] },
-    { title: "Impromptu Speaking", tasks: ["Speak on unexpected topics", "Organize thoughts quickly", "Deliver confidently"] }
-  ]
-};
 
 function GoalSetting() {
   const navigate = useNavigate();
@@ -79,7 +17,6 @@ function GoalSetting() {
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
   const [isGenerating, setIsGenerating] = useState(false);
-  const [useAI, setUseAI] = useState(true);
   const [editingScenario, setEditingScenario] = useState(null);
   const [showAddScenario, setShowAddScenario] = useState(false);
   const [newScenario, setNewScenario] = useState({ title: '', tasks: ['', '', ''] });
@@ -118,35 +55,27 @@ function GoalSetting() {
       console.error('Failed to update profile:', err);
     }
     
-    if (useAI) {
-      try {
-        const result = await aiAPI.generateScenarios({
-          type,
-          target_language: targetLanguage,
-          target_level: targetLevel,
-          interests: interests,
-          description,
-          native_language: nativeLanguage  // Pass native language for localized output
-        });
-        
-        if (result.scenarios && result.scenarios.length > 0) {
-          setScenarios(result.scenarios.map((s, idx) => ({ ...s, id: idx })));
-          setStep(2);
-        } else {
-          throw new Error('No scenarios returned');
-        }
-      } catch (err) {
-        console.error('AI generation failed, using presets:', err);
-        const presetList = PRESET_SCENARIOS[type] || PRESET_SCENARIOS.daily_conversation;
-        setScenarios(presetList.map((s, idx) => ({ ...s, id: idx })));
+    try {
+      const result = await aiAPI.generateScenarios({
+        type,
+        target_language: targetLanguage,
+        target_level: targetLevel,
+        interests: interests,
+        description,
+        native_language: nativeLanguage
+      });
+
+      if (result.scenarios && result.scenarios.length > 0) {
+        setScenarios(result.scenarios.map((s, idx) => ({ ...s, id: idx })));
         setStep(2);
+      } else {
+        setError('AI 未返回有效场景，请重试。');
       }
-    } else {
-      const presetList = PRESET_SCENARIOS[type] || PRESET_SCENARIOS.daily_conversation;
-      setScenarios(presetList.map((s, idx) => ({ ...s, id: idx })));
-      setStep(2);
+    } catch (err) {
+      console.error('AI generation failed:', err);
+      setError('场景生成失败，请检查网络后重试。');
     }
-    
+
     setIsGenerating(false);
   };
 
@@ -242,7 +171,7 @@ function GoalSetting() {
     try {
       const goalData = {
         type,
-        description: description || `Practice ${targetLanguage} for ${type.replace(/_/g, ' ')}`,
+        description: description || `${targetLanguage} ${type.replace(/_/g, ' ')} 练习`,
         target_language: targetLanguage,
         target_level: targetLevel,
         current_proficiency: parseInt(currentProficiency),
@@ -414,19 +343,6 @@ function GoalSetting() {
                   </div>
                 </div>
 
-                <div className="flex items-center space-x-3">
-                  <input
-                    type="checkbox"
-                    id="useAI"
-                    checked={useAI}
-                    onChange={(e) => setUseAI(e.target.checked)}
-                    className="w-4 h-4 rounded border-slate-300"
-                  />
-                  <label htmlFor="useAI" className="text-sm text-slate-600 dark:text-slate-400">
-                    使用AI生成个性化练习场景
-                  </label>
-                </div>
-
                 <button
                   type="button"
                   onClick={handleGenerateScenarios}
@@ -441,16 +357,16 @@ function GoalSetting() {
           {step === 2 && !editingScenario && !showAddScenario && (
             <>
               <div className="flex items-center justify-between mb-6">
-                <h1 className="text-slate-900 dark:text-white text-2xl font-bold">Your Practice Scenarios</h1>
+                <h1 className="text-slate-900 dark:text-white text-2xl font-bold">练习场景</h1>
                 <button
                   onClick={() => setStep(1)}
                   className="text-primary text-sm hover:underline"
                 >
-                  Back
+                  返回修改
                 </button>
               </div>
               <p className="text-slate-600 dark:text-slate-400 mb-4">
-                {scenarios.length} scenarios tailored for your goal. Edit, add, or remove as needed.
+                已为你生成 {scenarios.length} 个专属练习场景，可自由编辑、添加或删除。
               </p>
 
               {error && (
@@ -469,7 +385,7 @@ function GoalSetting() {
                 className="w-full mb-4 flex items-center justify-center gap-2 rounded-lg h-10 px-4 border-2 border-dashed border-slate-400 dark:border-slate-600 text-slate-600 dark:text-slate-400 hover:border-primary hover:text-primary transition-colors"
               >
                 <span className="material-symbols-outlined text-xl">add</span>
-                Add New Scenario
+                添加场景
               </button>
 
               <div className="space-y-3 max-h-[50vh] overflow-y-auto mb-6">
@@ -523,12 +439,12 @@ function GoalSetting() {
           {step === 2 && editingScenario && (
             <>
               <div className="flex items-center justify-between mb-6">
-                <h1 className="text-slate-900 dark:text-white text-2xl font-bold">Edit Scenario</h1>
+                <h1 className="text-slate-900 dark:text-white text-2xl font-bold">编辑场景</h1>
                 <button
                   onClick={() => { setEditingScenario(null); setError(''); }}
                   className="text-primary text-sm hover:underline"
                 >
-                  Cancel
+                  取消
                 </button>
               </div>
 
@@ -541,20 +457,20 @@ function GoalSetting() {
               <div className="space-y-4">
                 <div>
                   <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">
-                    Scenario Title
+                    场景标题
                   </label>
                   <input
                     type="text"
                     value={editingScenario.title}
                     onChange={(e) => setEditingScenario({ ...editingScenario, title: e.target.value })}
                     className="w-full px-4 py-3 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white focus:border-primary focus:ring-2 focus:ring-primary/50 outline-none"
-                    placeholder="Scenario title"
+                    placeholder="场景标题"
                   />
                 </div>
 
                 <div>
                   <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">
-                    Practice Tasks
+                    练习子任务
                   </label>
                   <div className="space-y-2">
                     {editingScenario.tasks.map((task, idx) => (
@@ -569,7 +485,7 @@ function GoalSetting() {
                             setEditingScenario({ ...editingScenario, tasks: newTasks });
                           }}
                           className="flex-1 px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white focus:border-primary outline-none text-sm"
-                          placeholder={`Task ${idx + 1}`}
+                          placeholder={`子任务 ${idx + 1}`}
                         />
                         {editingScenario.tasks.length > 1 && (
                           <button
@@ -587,7 +503,7 @@ function GoalSetting() {
                     className="mt-2 text-primary text-sm flex items-center gap-1 hover:underline"
                   >
                     <span className="material-symbols-outlined text-lg">add</span>
-                    Add Task
+                    添加子任务
                   </button>
                 </div>
 
@@ -596,7 +512,7 @@ function GoalSetting() {
                   onClick={handleSaveEdit}
                   className="w-full mt-4 flex items-center justify-center rounded-lg h-12 px-5 bg-primary text-white text-base font-bold hover:bg-primary/90 transition-colors"
                 >
-                  Save Changes
+                  保存修改
                 </button>
               </div>
             </>
@@ -605,12 +521,12 @@ function GoalSetting() {
           {step === 2 && showAddScenario && (
             <>
               <div className="flex items-center justify-between mb-6">
-                <h1 className="text-slate-900 dark:text-white text-2xl font-bold">Add New Scenario</h1>
+                <h1 className="text-slate-900 dark:text-white text-2xl font-bold">添加新场景</h1>
                 <button
                   onClick={() => { setShowAddScenario(false); setNewScenario({ title: '', tasks: ['', '', ''] }); setError(''); }}
                   className="text-primary text-sm hover:underline"
                 >
-                  Cancel
+                  取消
                 </button>
               </div>
 
@@ -623,20 +539,20 @@ function GoalSetting() {
               <div className="space-y-4">
                 <div>
                   <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">
-                    Scenario Title
+                    场景标题
                   </label>
                   <input
                     type="text"
                     value={newScenario.title}
                     onChange={(e) => setNewScenario({ ...newScenario, title: e.target.value })}
                     className="w-full px-4 py-3 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white focus:border-primary focus:ring-2 focus:ring-primary/50 outline-none"
-                    placeholder="e.g., Job Interview"
+                    placeholder="例如：职场面试"
                   />
                 </div>
 
                 <div>
                   <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">
-                    Practice Tasks
+                    练习子任务
                   </label>
                   <div className="space-y-2">
                     {newScenario.tasks.map((task, idx) => (
@@ -651,7 +567,7 @@ function GoalSetting() {
                             setNewScenario({ ...newScenario, tasks: newTasks });
                           }}
                           className="flex-1 px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white focus:border-primary outline-none text-sm"
-                          placeholder={`Task ${idx + 1}`}
+                          placeholder={`子任务 ${idx + 1}`}
                         />
                         {newScenario.tasks.length > 1 && (
                           <button
@@ -669,7 +585,7 @@ function GoalSetting() {
                     className="mt-2 text-primary text-sm flex items-center gap-1 hover:underline"
                   >
                     <span className="material-symbols-outlined text-lg">add</span>
-                    Add Task
+                    添加子任务
                   </button>
                 </div>
 
@@ -678,7 +594,7 @@ function GoalSetting() {
                   onClick={handleAddNewScenario}
                   className="w-full mt-4 flex items-center justify-center rounded-lg h-12 px-5 bg-primary text-white text-base font-bold hover:bg-primary/90 transition-colors"
                 >
-                  Add Scenario
+                  添加场景
                 </button>
               </div>
             </>

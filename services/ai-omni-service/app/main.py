@@ -581,12 +581,14 @@ class WebSocketCallback(OmniRealtimeCallback):
                     or full_ctx.get('next_task_text')
                     or 'the next task'
                 )
+                target_lang_for_switch = self.user_context.get('target_language') or full_ctx.get('target_language', 'the target language')
                 system_prompt += (
                     f"\n\n## TASK SWITCH — OVERRIDE ALL PREVIOUS CONTEXT\n"
                     f"The previous task is FULLY COMPLETED. Do NOT mention it again under any circumstances.\n"
                     f"You are now starting a completely fresh conversation for the NEW task: \"{new_task}\".\n"
                     f"Greet the student briefly and invite them to start this new task immediately.\n"
                     f"NEVER say 'Let's finish this task first' — it is already done.\n"
+                    f"REMINDER: Conduct this transition and ALL subsequent responses entirely in {target_lang_for_switch}.\n"
                 )
                 self.just_switched_task = False
                 logger.info(f"[TASK_SWITCH] Injected override directive for new task: {new_task}")
@@ -1310,8 +1312,79 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query(None), ses
             except: pass
 
 @app.get("/health")
-async def health_check(): 
+async def health_check():
     return {"status": "ok"}
+
+
+# ---------------------------------------------------------------------------
+# POST /generate-scenarios  (proxied from /api/ai/generate-scenarios via Nginx)
+# ---------------------------------------------------------------------------
+from fastapi import Body
+
+@app.post("/generate-scenarios")
+async def generate_scenarios(payload: dict = Body(...)):
+    """Dynamically generate 10 oral-practice scenarios via qwen-turbo LLM."""
+    target_language = (payload.get("target_language") or "English").strip()[:50]
+    target_level    = (payload.get("target_level")    or "Intermediate").strip()[:30]
+    goal_type       = (payload.get("type")            or "daily_conversation").strip()[:50]
+    interests       = (payload.get("interests")       or "").strip()[:200]
+    native_language = (payload.get("native_language") or "Chinese").strip()[:50]
+
+    if not target_language or not target_level:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=400, detail="Missing required fields")
+
+    ds_api_key = os.getenv("QWEN3_OMNI_API_KEY") or os.getenv("DASHSCOPE_API_KEY")
+    if not ds_api_key:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=503, detail="AI service not configured")
+
+    prompt = (
+        f"你是一位专业的口语学习课程设计师。请为一位学习{target_language}的用户生成恰好10个口语练习场景。\n\n"
+        f"用户信息：\n"
+        f"- 母语：{native_language}\n"
+        f"- 学习语言：{target_language}\n"
+        f"- 目标等级：{target_level}\n"
+        f"- 目标类型：{goal_type}\n"
+        f"- 兴趣爱好：{interests or '无特别说明'}\n\n"
+        f"要求：\n"
+        f"1. 生成10个与目标类型高度相关的实用场景\n"
+        f"2. 每个场景包含清晰的标题和恰好3个具体的口语练习子任务\n"
+        f"3. 子任务是用户需要用{target_language}完成的对话目标\n"
+        f"4. 包含1个关于{target_language}文化小聊的场景\n"
+        f"5. 场景从易到难排列\n"
+        f"6. **所有场景标题和子任务描述必须用{native_language}书写**，让用户能用母语理解练习内容\n\n"
+        f'仅输出如下格式的合法JSON，不要有任何多余内容：\n'
+        f'{{"scenarios":[{{"title":"场景标题","tasks":["子任务1","子任务2","子任务3"]}}]}}'
+    )
+
+    try:
+        import httpx as _httpx
+        async with _httpx.AsyncClient(timeout=30) as client:
+            resp = await client.post(
+                "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions",
+                headers={
+                    "Authorization": f"Bearer {ds_api_key}",
+                    "Content-Type": "application/json"
+                },
+                json={
+                    "model": "qwen-turbo",
+                    "messages": [{"role": "user", "content": prompt}],
+                    "max_tokens": 2048,
+                    "response_format": {"type": "json_object"}
+                }
+            )
+            resp.raise_for_status()
+            content = resp.json()["choices"][0]["message"]["content"]
+            parsed = json.loads(content)
+            scenarios = parsed.get("scenarios", [])
+            if not scenarios:
+                raise ValueError("Empty scenarios list")
+            return {"code": 200, "message": "Success", "data": {"scenarios": scenarios}}
+    except Exception as e:
+        logger.error(f"[generate_scenarios] LLM call failed: {e}")
+        from fastapi import HTTPException
+        raise HTTPException(status_code=500, detail="场景生成失败，请重试")
 
 if __name__ == "__main__":
     import uvicorn

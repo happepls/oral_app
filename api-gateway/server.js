@@ -124,67 +124,54 @@ app.use('/api/ai/generate-scenarios',
         type: type?.replace(/[<>]/g, '')?.substring(0, 50) || 'daily_conversation',
         target_language: target_language.replace(/[<>]/g, '').substring(0, 50),
         target_level: target_level.replace(/[<>]/g, '').substring(0, 30),
-        interests: interests?.replace(/[<>]/g, '')?.substring(0, 200) || 'general topics',
-        description: description?.replace(/[<>]/g, '')?.substring(0, 500) || 'none',
+        interests: interests?.replace(/[<>]/g, '')?.substring(0, 200) || '',
+        description: description?.replace(/[<>]/g, '')?.substring(0, 500) || '',
         native_language: native_language?.replace(/[<>]/g, '')?.substring(0, 50) || 'Chinese'
       };
-      
-      // Initialize OpenAI client if API key is available
-      if (!process.env.AI_INTEGRATIONS_OPENROUTER_API_KEY) {
+
+      const dashscopeApiKey = process.env.QWEN3_OMNI_API_KEY || process.env.DASHSCOPE_API_KEY;
+      if (!dashscopeApiKey) {
         return res.status(503).json({
           code: 503,
           message: 'AI service not configured',
           data: null
         });
       }
-      
-      const openrouter = new OpenAI({
-        baseURL: process.env.AI_INTEGRATIONS_OPENROUTER_BASE_URL,
-        apiKey: process.env.AI_INTEGRATIONS_OPENROUTER_API_KEY,
+
+      const dashscope = new OpenAI({
+        baseURL: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
+        apiKey: dashscopeApiKey,
       });
-      
-      const outputLang = sanitizedData.native_language;
-      const outputLangInstruction = outputLang === 'Chinese' ? '用中文输出所有场景标题和任务描述' : 
-                                     outputLang === 'Japanese' ? '日本語で全てのシナリオタイトルとタスクを出力してください' :
-                                     outputLang === 'French' ? 'Générez tous les titres et tâches en français' :
-                                     'Output all scenario titles and tasks in English';
-      
-      const prompt = `You are an expert language learning curriculum designer. Generate exactly 10 practice scenarios for a ${sanitizedData.target_language} learner.
 
-IMPORTANT: ${outputLangInstruction}
+      const { target_language: tl, target_level: level, type: goalType, interests: ints, native_language: nl } = sanitizedData;
 
-User Profile:
-- Goal Type: ${sanitizedData.type}
-- Target Level: ${sanitizedData.target_level}
-- Interests: ${sanitizedData.interests}
-- Additional Notes: ${sanitizedData.description}
-- Native Language: ${outputLang}
+      const prompt = `你是一位专业的口语学习课程设计师。请为一位学习${tl}的用户生成恰好10个口语练习场景。
 
-Requirements:
-1. Create 10 unique, practical scenarios relevant to the goal type
-2. Each scenario must have a clear title and exactly 3 specific practice tasks
-3. Tasks should be conversational goals the learner can practice in ${sanitizedData.target_language}
-4. Include 1 scenario about cultural small talk in ${sanitizedData.target_language}-speaking regions
-5. Order scenarios from easier to more challenging
-6. IMPORTANT: Write scenario titles and task descriptions in ${outputLang} so the learner can understand them easily
+用户信息：
+- 母语：${nl}
+- 学习语言：${tl}
+- 目标等级：${level}
+- 目标类型：${goalType}
+- 兴趣爱好：${ints || '无特别说明'}
 
-Respond ONLY with valid JSON in this exact format:
-{
-  "scenarios": [
-    {
-      "title": "场景标题(用${outputLang})",
-      "tasks": ["任务1(用${outputLang})", "任务2(用${outputLang})", "任务3(用${outputLang})"]
-    }
-  ]
-}`;
-      
-      const response = await openrouter.chat.completions.create({
-        model: 'meta-llama/llama-3.3-70b-instruct',
+要求：
+1. 生成10个与目标类型高度相关的实用场景
+2. 每个场景包含清晰的标题和恰好3个具体的口语练习子任务
+3. 子任务是用户需要用${tl}完成的对话目标
+4. 包含1个关于${tl}文化小聊的场景
+5. 场景从易到难排列
+6. **所有场景标题和子任务描述必须用${nl}书写**，让用户能用母语理解练习内容
+
+仅输出如下格式的合法JSON，不要有任何多余内容：
+{"scenarios":[{"title":"场景标题","tasks":["子任务1","子任务2","子任务3"]}]}`;
+
+      const response = await dashscope.chat.completions.create({
+        model: 'qwen-turbo',
         messages: [{ role: 'user', content: prompt }],
         max_tokens: 2048,
         response_format: { type: 'json_object' }
       });
-      
+
       const content = response.choices[0]?.message?.content || '{}';
       const parsed = JSON.parse(content);
       

@@ -67,6 +67,13 @@ Repository: `git@github.com:happepls/oral_app.git` (master branch)
 
 ### Mar 2026 Updates
 
+- **AI教学语言 & 场景生成国际化 (Mar 18)**:
+  - **AI教学语言动态适配**: `prompt_manager.py` OralTutor模板新增 `CRITICAL: Language of Instruction` 章节，明确 `YOU MUST RESPOND ENTIRELY IN {target_language}`。同时传入 `native_language`，仅在学生完全无法理解时允许用母语辅助解释。删除所有英语硬编码示例句。TASK SWITCH override指令末尾追加目标语言提醒。
+  - **场景生成国际化**: `ai-omni-service/main.py` 新增 `POST /generate-scenarios` 端点（Nginx将 `/api/ai/generate-scenarios` rewrite到此）。调用DashScope qwen-turbo，prompt要求所有场景标题和子任务用 `native_language` 输出。**注意**：`api-gateway/server.js` 是死代码，gateway是纯Nginx。
+  - **GoalSetting页去英文化**: 删除整个 `PRESET_SCENARIOS` 英文硬编码预设；删除 `useAI` toggle；AI失败显示中文错误而非回退英文预设；Step 2所有UI文字汉化。
+  - **Discovery成就徽章**: `progress===100`时显示🏆成就modal（localStorage去重，key: `goal_all_completed_${goal.id}`）+ 常驻CTA横幅，均跳转 `/goal-setting` 设定新目标。
+  - Files: `services/ai-omni-service/app/main.py`, `services/ai-omni-service/app/prompt_manager.py`, `client/src/pages/GoalSetting.js`, `client/src/pages/Discovery.js`
+
 - **Proficiency Scoring & Task Relevance Fixes (Mar 17)**:
   - **AI Review Feedback Optimization**: Modified scenario completion modal to show personalized AI feedback instead of fixed templates. Removed emojis, using concise Chinese feedback.
   - **Redis Cache Integration**: Added Redis caching for user information to reduce database queries. Created `cache.py` module with user language/info caching.

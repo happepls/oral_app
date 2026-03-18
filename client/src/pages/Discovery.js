@@ -72,7 +72,8 @@ function Discovery() {
   const [stats, setStats] = useState(null);
   const [userProficiency, setUserProficiency] = useState(0);
   const [loading, setLoading] = useState(true);
-  
+  const [showAchievement, setShowAchievement] = useState(false);
+
   // Scenarios State
   const [scenarios, setScenarios] = useState([]);
 
@@ -92,7 +93,8 @@ function Discovery() {
                 return;
             }
             setActiveGoal(goalRes.goal);
-            
+            checkAchievement(goalRes.goal);
+
             // Set Scenarios
             if (goalRes.goal.scenarios && goalRes.goal.scenarios.length > 0) {
                 setScenarios(goalRes.goal.scenarios);
@@ -121,6 +123,20 @@ function Discovery() {
             console.error('Error fetching discovery data:', e);
         } finally {
             setLoading(false);
+        }
+    };
+
+    const checkAchievement = (goal) => {
+        if (!goal || !goal.scenarios || goal.scenarios.length === 0) return;
+        const allDone = goal.scenarios.every(s =>
+            s.tasks && s.tasks.length > 0 && s.tasks.every(t => typeof t === 'object' && t.status === 'completed')
+        );
+        if (allDone) {
+            const key = `goal_all_completed_${goal.id}`;
+            if (!localStorage.getItem(key)) {
+                localStorage.setItem(key, 'true');
+                setShowAchievement(true);
+            }
         }
     };
     
@@ -210,7 +226,39 @@ function Discovery() {
 
   return (
     <div className="relative flex flex-col min-h-screen w-full bg-background-light dark:bg-background-dark">
-      
+
+      {/* Achievement Badge Modal */}
+      {showAchievement && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
+          <div className="bg-white dark:bg-slate-800 rounded-2xl p-6 max-w-sm w-full text-center shadow-2xl">
+            <div className="text-7xl mb-3">🏆</div>
+            <div className="flex justify-center gap-1 mb-3">
+              {['🌟','🌟','🌟'].map((s, i) => <span key={i} className="text-2xl">{s}</span>)}
+            </div>
+            <h2 className="text-2xl font-bold text-slate-900 dark:text-white mb-1">目标全部完成！</h2>
+            <p className="text-sm text-indigo-600 font-semibold mb-2">Achievement Unlocked</p>
+            <p className="text-slate-600 dark:text-slate-400 text-sm mb-6">
+              太棒了！你已完成所有 {scenarios.length} 个场景练习，成功达到 <span className="font-bold text-indigo-600">{activeGoal?.target_level}</span> 水平目标！<br />
+              是时候挑战下一个更高的目标了！
+            </p>
+            <div className="flex gap-3">
+              <button
+                onClick={() => setShowAchievement(false)}
+                className="flex-1 py-3 rounded-xl border border-slate-300 dark:border-slate-600 text-slate-700 dark:text-slate-300 font-medium text-sm hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors"
+              >
+                稍后再说
+              </button>
+              <button
+                onClick={() => { setShowAchievement(false); navigate('/goal-setting'); }}
+                className="flex-1 py-3 rounded-xl bg-gradient-to-r from-indigo-500 to-purple-500 text-white font-medium text-sm hover:opacity-90 transition-opacity"
+              >
+                制定新目标
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       <main className="flex-grow pb-28">
         {/* Header */}
         <div className="flex flex-col gap-2 p-4 pb-2">
@@ -285,6 +333,23 @@ function Discovery() {
                     </div>
                 </div>
             </div>
+        )}
+
+        {/* All Complete CTA Banner */}
+        {progress === 100 && (
+          <div className="px-4 pt-2 pb-0">
+            <div
+              onClick={() => navigate('/goal-setting')}
+              className="flex items-center gap-3 bg-gradient-to-r from-yellow-400/20 to-orange-400/20 border-2 border-yellow-400/60 rounded-xl p-4 cursor-pointer hover:shadow-md transition-all"
+            >
+              <span className="text-3xl">🏆</span>
+              <div className="flex-1">
+                <p className="font-bold text-slate-800 dark:text-slate-100 text-sm">所有场景已完成！</p>
+                <p className="text-xs text-slate-500 dark:text-slate-400">点击制定下一阶段新目标 →</p>
+              </div>
+              <span className="material-symbols-outlined text-yellow-500">arrow_forward</span>
+            </div>
+          </div>
         )}
 
         {/* Scenario List (Grid Layout) */}
