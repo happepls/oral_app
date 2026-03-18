@@ -8,8 +8,8 @@ const client = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
 
 // Enhanced JWT configuration (matching enhancedAuthMiddleware.js)
 const JWT_CONFIG = {
-  accessTokenExpiry: '24h', // Extended to 24 hours for better user experience
-  refreshTokenExpiry: '7d', // Longer-lived refresh tokens
+  accessTokenExpiry: '7d', // 7-day token — users stay logged in across daily sessions
+  refreshTokenExpiry: '30d', // Longer-lived refresh tokens
   algorithm: 'HS256',
   issuer: 'oral-app',
   audience: 'oral-app-users'

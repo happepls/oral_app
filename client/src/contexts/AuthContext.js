@@ -12,19 +12,39 @@ export const AuthProvider = ({ children }) => {
   useEffect(() => {
     const savedToken = localStorage.getItem('authToken');
     const savedUser = localStorage.getItem('user');
-    
+
+    const clearAuth = () => {
+      localStorage.removeItem('authToken');
+      localStorage.removeItem('token');
+      localStorage.removeItem('user');
+    };
+
     if (savedToken && savedUser) {
+      // Validate token expiry before trusting it
+      try {
+        const payload = JSON.parse(atob(savedToken.split('.')[1]));
+        const now = Math.floor(Date.now() / 1000);
+        if (payload.exp && payload.exp < now) {
+          clearAuth();
+          setLoading(false);
+          return;
+        }
+      } catch (e) {
+        clearAuth();
+        setLoading(false);
+        return;
+      }
+
       setToken(savedToken);
       try {
         setUser(JSON.parse(savedUser));
       } catch (err) {
         console.error('Failed to parse user data:', err);
-        localStorage.removeItem('authToken');
-        localStorage.removeItem('user');
+        clearAuth();
         setToken(null);
       }
     }
-    
+
     setLoading(false);
   }, []);
 

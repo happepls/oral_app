@@ -28,6 +28,15 @@ const handleResponse = async (response) => {
     }
   }
   
+  if (response.status === 401) {
+    // Token expired or invalid — clear auth state and redirect to login
+    localStorage.removeItem('authToken');
+    localStorage.removeItem('token');
+    localStorage.removeItem('user');
+    window.location.href = '/login';
+    throw new Error('登录已过期，请重新登录');
+  }
+
   if (!response.ok) {
     throw new Error(data.message || `请求失败 (状态码: ${response.status})`);
   }

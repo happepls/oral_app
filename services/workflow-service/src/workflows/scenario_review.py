@@ -5,8 +5,13 @@ Workflow 3: Scenario Review (场景练习总结)
 """
 import json
 import re
+import os
+import logging
+import httpx
 from typing import Dict, List, Any, Optional, Tuple
 from datetime import datetime, timedelta
+
+logger = logging.getLogger(__name__)
 
 
 class ScenarioReviewWorkflow:
@@ -310,6 +315,89 @@ class ScenarioReviewWorkflow:
 {achievement_message}
 """
     
+    async def _generate_ai_feedback(
+        self,
+        scenario_title: str,
+        completed_tasks: List[Dict[str, Any]],
+        conversation_history: List[Dict[str, Any]],
+        native_language: str = "English"
+    ) -> Optional[Dict[str, str]]:
+        """
+        Call DashScope text LLM to generate personalized, scenario-specific feedback.
+        Returns {"summary": str, "recommendation": str} or None on failure.
+        """
+        api_key = os.getenv("QWEN3_OMNI_API_KEY") or os.getenv("DASHSCOPE_API_KEY")
+        if not api_key:
+            logger.warning("[SCENARIO_REVIEW] No API key for AI feedback, using template fallback")
+            return None
+
+        # Build a concise conversation excerpt (user turns only, last 12)
+        user_turns = [
+            m.get("content", "").strip()
+            for m in conversation_history
+            if m.get("role") == "user" and m.get("content", "").strip()
+        ][-12:]
+
+        if not user_turns:
+            return None
+
+        tasks_text = "\n".join(
+            f"- {t.get('task_description', t.get('text', ''))}"
+            for t in completed_tasks
+        ) or "- (tasks completed)"
+
+        conversation_text = "\n".join(f"Student: {t}" for t in user_turns)
+
+        prompt = f"""You are an expert oral English coach reviewing a student's practice session.
+
+Scenario: "{scenario_title}"
+Tasks the student completed:
+{tasks_text}
+
+Student's actual responses (selected):
+{conversation_text}
+
+Student's native language: {native_language}
+
+Write a short, personalized performance review in {native_language}. Requirements:
+- 2 sentences max for summary: mention something SPECIFIC from what they actually said
+- 1 sentence for recommendation: give ONE concrete, scenario-specific improvement tip (e.g. a phrase they could have used, a topic they avoided, a grammar pattern to practice)
+- No emojis, no generic praise, no filler
+- Respond ONLY with valid JSON, no extra text:
+{{"summary": "...", "recommendation": "..."}}"""
+
+        try:
+            async with httpx.AsyncClient(timeout=20.0) as client:
+                resp = await client.post(
+                    "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions",
+                    headers={
+                        "Authorization": f"Bearer {api_key}",
+                        "Content-Type": "application/json",
+                    },
+                    json={
+                        "model": "qwen-turbo",
+                        "messages": [{"role": "user", "content": prompt}],
+                        "temperature": 0.7,
+                        "max_tokens": 200,
+                    },
+                )
+                if resp.status_code == 200:
+                    content = resp.json()["choices"][0]["message"]["content"].strip()
+                    # Strip markdown code fences if present
+                    content = re.sub(r"^```json\s*|\s*```$", "", content, flags=re.DOTALL).strip()
+                    parsed = json.loads(content)
+                    summary = parsed.get("summary", "").strip()
+                    recommendation = parsed.get("recommendation", "").strip()
+                    if summary and recommendation:
+                        logger.info(f"[SCENARIO_REVIEW] AI feedback generated successfully")
+                        return {"summary": summary, "recommendation": recommendation}
+                else:
+                    logger.warning(f"[SCENARIO_REVIEW] LLM API error {resp.status_code}: {resp.text[:200]}")
+        except Exception as e:
+            logger.warning(f"[SCENARIO_REVIEW] AI feedback failed: {e}, falling back to template")
+
+        return None
+
     async def generate_scenario_review(
         self,
         user_id: str,
@@ -342,6 +430,19 @@ class ScenarioReviewWorkflow:
             native_language
         )
 
+        # 尝试用 LLM 生成个性化点评（基于实际对话内容）
+        ai_feedback = await self._generate_ai_feedback(
+            scenario_title,
+            completed_tasks,
+            conversation_history,
+            native_language
+        )
+
+        if ai_feedback:
+            # Replace template-generated summary and lead recommendation with AI output
+            analysis["summary"] = ai_feedback["summary"]
+            logger.info(f"[SCENARIO_REVIEW] Using AI-generated summary: {ai_feedback['summary'][:80]}...")
+
         # 生成复盘报告（根据用户母语）
         review_report = self._generate_review_report(
             scenario_title,
@@ -352,6 +453,10 @@ class ScenarioReviewWorkflow:
 
         # 生成改进建议（根据用户母语）
         recommendations = self._generate_recommendations(analysis, conversation_history, native_language)
+
+        # Override first recommendation with AI-generated one if available
+        if ai_feedback and ai_feedback.get("recommendation"):
+            recommendations = [ai_feedback["recommendation"]] + (recommendations[1:] if len(recommendations) > 1 else [])
 
         # 保存复盘报告到数据库
         await self._save_review_to_db(

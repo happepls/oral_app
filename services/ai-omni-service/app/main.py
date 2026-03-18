@@ -448,6 +448,9 @@ class WebSocketCallback(OmniRealtimeCallback):
         self.current_response_id = None
         self.ignored_response_ids = set()
         self.messages = history_messages
+        # Mark the boundary of pre-loaded history so we never inject old task context into prompts.
+        # Only messages appended AFTER this index (new turns in current session) go into system prompt.
+        self.task_history_cutoff = len(history_messages)
         self.user_audio_buffer = bytearray()
         self.ai_audio_buffer = bytearray()
         self.last_user_audio_url = None
@@ -459,6 +462,7 @@ class WebSocketCallback(OmniRealtimeCallback):
         self.ai_responding = False  # Track if AI is currently responding
         self.connection_established_sent = False  # Track if we've sent connection_established
         self.last_detected_language = None  # Language detected by DashScope for last user utterance
+        self.just_switched_task = False  # True immediately after a task completes; cleared after prompt update
 
     async def _safe_send(self, message: dict):
         """Safely send a WebSocket message, ignoring errors if client is disconnected."""
@@ -567,18 +571,38 @@ class WebSocketCallback(OmniRealtimeCallback):
             system_prompt = prompt_manager.generate_system_prompt(full_ctx, role=self.role)
             selected_voice = self.user_context.get('voice') or os.getenv("QWEN3_OMNI_VOICE", "Cherry")
 
-            if self.messages:
-                history_text = "\n\n# Previous Conversation Context (READ-ONLY):\n"
-                history_text += "**CRITICAL**: This is HISTORY only. Do NOT auto-complete tasks. Wait for user to speak first.\n"
-                history_text += "**Do NOT say 'Perfect!' or 'Excellent!' until user attempts a NEW task in THIS session.**\n"
-                history_text += f"**CURRENT TASK**: {full_ctx.get('task_description', 'Practice conversation')} in scenario: {self.scenario}\n"
-                history_text += "**If user asks about the topic, tell them the current task clearly.**\n\n"
-                recent_msgs = self.messages[-10:]
-                for msg in recent_msgs:
-                    role_label = "User" if msg['role'] == 'user' else "AI"
-                    history_text += f"{role_label}: {msg.get('content', '')}\n"
-                history_text += "\n**NOW**: Wait silently for user to speak. Greet briefly if needed, then listen.\n"
-                system_prompt += history_text
+            if getattr(self, 'just_switched_task', False):
+                # Use next_task_text set by call_proficiency_workflow — it's already the correct next task.
+                # Do NOT use full_ctx.get('task_description') here as it may still reflect the old task
+                # due to user_context update race conditions.
+                new_task = (
+                    self.user_context.get('next_task_text')
+                    or self.user_context.get('current_task', {}).get('text')
+                    or full_ctx.get('next_task_text')
+                    or 'the next task'
+                )
+                system_prompt += (
+                    f"\n\n## TASK SWITCH — OVERRIDE ALL PREVIOUS CONTEXT\n"
+                    f"The previous task is FULLY COMPLETED. Do NOT mention it again under any circumstances.\n"
+                    f"You are now starting a completely fresh conversation for the NEW task: \"{new_task}\".\n"
+                    f"Greet the student briefly and invite them to start this new task immediately.\n"
+                    f"NEVER say 'Let's finish this task first' — it is already done.\n"
+                )
+                self.just_switched_task = False
+                logger.info(f"[TASK_SWITCH] Injected override directive for new task: {new_task}")
+            else:
+                # Only inject messages from the current task period (after the cutoff)
+                cutoff = getattr(self, 'task_history_cutoff', 0)
+                current_task_msgs = self.messages[cutoff:][-10:]  # max 10 from current task
+                if current_task_msgs:
+                    history_text = "\n\n# Current Session Context (READ-ONLY):\n"
+                    history_text += "**CRITICAL**: This is HISTORY only. Do NOT auto-complete tasks. Wait for user to speak first.\n"
+                    history_text += f"**CURRENT TASK**: {full_ctx.get('task_description', 'Practice conversation')} in scenario: {self.scenario}\n\n"
+                    for msg in current_task_msgs:
+                        role_label = "User" if msg['role'] == 'user' else "AI"
+                        history_text += f"{role_label}: {msg.get('content', '')}\n"
+                    history_text += "\n**NOW**: Wait silently for user to speak. Greet briefly if needed, then listen.\n"
+                    system_prompt += history_text
 
             logger.info(f"Sending System Prompt ({self.role}): {system_prompt[:100]}...")
             try:
@@ -782,12 +806,12 @@ class WebSocketCallback(OmniRealtimeCallback):
                                             except Exception as e:
                                                 logger.error(f"Failed to fetch updated task data: {e}")
 
-                                            # Clear conversation history to prevent context confusion when switching tasks
-                                            # Keep only the last 2 messages for context continuity
-                                            if len(self.messages) > 2:
-                                                old_messages = self.messages[-2:]  # Keep last 2 messages
-                                                self.messages = old_messages
-                                                logger.info(f"Cleared conversation history, kept last {len(old_messages)} messages")
+                                            # Clear ALL conversation history on task switch to prevent
+                                            # the AI from referencing the completed task's context.
+                                            self.messages = []
+                                            self.task_history_cutoff = 0
+                                            self.just_switched_task = True
+                                            logger.info("Cleared ALL conversation history on task switch")
 
                                             # Now refresh AI session prompt with updated task data
                                             self._update_session_prompt()
@@ -888,7 +912,10 @@ class WebSocketCallback(OmniRealtimeCallback):
                                                         }
                                                     })
 
-                                                    # Refresh AI session prompt with new task context
+                                                    # Clear history and refresh prompt for new task
+                                                    self.messages = []
+                                                    self.task_history_cutoff = 0
+                                                    self.just_switched_task = True
                                                     self._update_session_prompt()
                                                 else:
                                                     logger.info(f"All tasks completed in scenario: {self.scenario}")
