@@ -42,6 +42,12 @@ curl http://localhost:3006/health
 docker compose logs workflow-service
 docker compose logs ai-omni-service | grep -i "proficiency\|task_completed"
 ```
+### 快捷指令
+
+/build - 运行 npm run build 并分析错误
+/lint - 运行 eslint 并自动修复可修复的问题
+/preview - 生成组件预览说明（props/用法/示例）
+
 
 ### Database (PostgreSQL)
 ```bash

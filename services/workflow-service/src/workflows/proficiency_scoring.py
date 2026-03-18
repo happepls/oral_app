@@ -1448,7 +1448,9 @@ Return ONLY a JSON array: ["keyword1", "keyword2", ...]"""
         feedback_parts = []
 
         # 整体评价（简洁，无表情符号）
-        avg_score = sum(scores.values()) / len(scores)
+        # 只对数值维度求均值，排除 suggested_keywords / matched_keywords 等列表字段
+        numeric_keys = ["fluency", "vocabulary", "grammar", "task_relevance"]
+        avg_score = sum(scores.get(k, 5) for k in numeric_keys) / len(numeric_keys)
         if avg_score >= 8:
             feedback_parts.append(lang["excellent"])
         elif avg_score >= 6:

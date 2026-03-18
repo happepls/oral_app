@@ -213,15 +213,44 @@ async def execute_action_with_response(action_name: str, params: dict, token: st
             logger.error(f"Failed to update task score: {e}")
 
     return None
-async def call_proficiency_workflow(user_id: str, goal_id: int, task_id: int, conversation_history: list, user_context: dict, token: str, scenario: str = None, websocket = None):
+_TARGET_LANGUAGE_CODES = {
+    'English': ['en'],
+    'Chinese': ['zh'],
+    'Japanese': ['ja'],
+    'Spanish': ['es'],
+    'French': ['fr'],
+    'Korean': ['ko'],
+    'German': ['de'],
+    'Portuguese': ['pt'],
+    'Russian': ['ru'],
+    'Italian': ['it'],
+    'Arabic': ['ar'],
+    'Hindi': ['hi'],
+    'Thai': ['th'],
+    'Vietnamese': ['vi'],
+    'Indonesian': ['id'],
+}
+
+async def call_proficiency_workflow(user_id: str, goal_id: int, task_id: int, conversation_history: list, user_context: dict, token: str, scenario: str = None, websocket = None, detected_language: str = None):
     """
     调用工作流 2（熟练度打分）来分析对话并更新分数
-    
+
     改进：
     - 任务完成后自动获取下一个待完成任务
     - 更新 user_context 以便 AI 切换到新任务
+    - 语言校验：非目标练习语言输入不计入熟练度
     """
     try:
+        # Language guard: skip scoring if user spoke in a non-target language
+        if detected_language:
+            target_language = user_context.get('active_goal', {}).get('target_language', 'English')
+            expected_codes = _TARGET_LANGUAGE_CODES.get(target_language, [])
+            if expected_codes and detected_language.lower() not in expected_codes:
+                logger.warning(
+                    f"[LANG_GUARD] User spoke {detected_language}, target is {target_language} ({expected_codes}). "
+                    f"Skipping proficiency scoring."
+                )
+                return None
         # 如果没有 task_id，需要从 user-service 获取当前任务 ID
         task_description = user_context.get('custom_topic', 'General Practice')
         scenario_title = user_context.get('custom_topic', 'General Practice').split(" (Tasks:")[0].strip()
@@ -429,6 +458,7 @@ class WebSocketCallback(OmniRealtimeCallback):
         self.pending_user_transcript = None  # Buffer user transcript until AI response completes
         self.ai_responding = False  # Track if AI is currently responding
         self.connection_established_sent = False  # Track if we've sent connection_established
+        self.last_detected_language = None  # Language detected by DashScope for last user utterance
 
     async def _safe_send(self, message: dict):
         """Safely send a WebSocket message, ignoring errors if client is disconnected."""
@@ -678,7 +708,8 @@ class WebSocketCallback(OmniRealtimeCallback):
                                         self.user_context,
                                         self.token,
                                         self.scenario,
-                                        self.websocket
+                                        self.websocket,
+                                        detected_language=self.last_detected_language
                                     )
                                     
                                     if workflow_result:
@@ -775,6 +806,10 @@ class WebSocketCallback(OmniRealtimeCallback):
                 elif event_name == 'conversation.item.input_audio_transcription.completed':
                     # Handle user audio transcription - send immediately to ensure correct UI order
                     user_transcript = response.get('transcript', '')
+                    # Capture DashScope-detected language (e.g. 'zh', 'en', 'ja')
+                    self.last_detected_language = response.get('language', '') or ''
+                    if self.last_detected_language:
+                        logger.info(f"Detected input language: {self.last_detected_language}")
                     if user_transcript:
                         # Check for magic passcode "急急如律令" (support both Chinese and English punctuation)
                         clean_text = re.sub(r'[,.!?.,!?;:;:。！？；：]', '', user_transcript).strip()

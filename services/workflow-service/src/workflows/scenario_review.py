@@ -338,7 +338,8 @@ class ScenarioReviewWorkflow:
         # 分析对话历史
         analysis = await self._analyze_scenario_conversation(
             conversation_history,
-            completed_tasks
+            completed_tasks,
+            native_language
         )
 
         # 生成复盘报告（根据用户母语）
@@ -375,7 +376,8 @@ class ScenarioReviewWorkflow:
     async def _analyze_scenario_conversation(
         self,
         conversation_history: List[Dict[str, Any]],
-        completed_tasks: List[Dict[str, Any]]
+        completed_tasks: List[Dict[str, Any]],
+        native_language: str = "English"
     ) -> Dict[str, Any]:
         """分析场景对话"""
         analysis = {
@@ -462,21 +464,65 @@ class ScenarioReviewWorkflow:
                 except:
                     analysis["completion_time_minutes"] = 0
 
-        # 生成总结（简洁中文，无表情符号）
+        # 生成总结（语言感知，无表情符号）
         if analysis["user_messages"] > 0:
             avg_score = sum(t.get("score", 0) for t in completed_tasks) / len(completed_tasks) if completed_tasks else 0
+            n = len(completed_tasks)
+            turns = analysis["user_messages"]
+            fluent = analysis["vocabulary_diversity"] > 0.5
+            short = analysis["avg_message_length"] < 10
+
+            # 各语言的 summary 模板：(excellent, excellent_extra_fluent, excellent_extra_vocab,
+            #                          good, good_extra_short, good_extra_long,
+            #                          basic, basic_extra)
+            # NOTE: avg_score is a cumulative task score (0-3 pts per interaction, completion threshold=9).
+            # Do NOT display the raw number — branch selection is correct but the value is not a /10 rating.
+            _summary_t = {
+                "Chinese":    ("表现出色！共 {turns} 轮对话，完成 {n} 个任务。",
+                               "表达流利自然，词汇使用准确。", "建议继续扩展词汇量。",
+                               "表现良好！共 {turns} 轮对话，完成 {n} 个任务。",
+                               "表达清晰，可继续练习复杂句型。", "保持当前的表达水平。",
+                               "场景完成！共 {turns} 轮对话，建议重新练习以获得更好的效果。",
+                               "尝试使用更多连接词和完整句子。"),
+                "English":    ("Great work! {turns} exchanges, {n} tasks completed.",
+                               "Your speech is fluent and vocabulary accurate.", "Keep expanding your vocabulary.",
+                               "Well done! {turns} exchanges, {n} tasks completed.",
+                               "Clear expression — try practicing more complex sentences.", "Keep up your current expression level.",
+                               "Scenario complete! {turns} exchanges. Try again for a better result.",
+                               "Use more connectors and complete sentences."),
+                "Japanese":   ("素晴らしい！{turns} 回の対話、{n} タスク完了。",
+                               "表現が流暢で語彙の使い方も正確です。", "引き続き語彙を広げてください。",
+                               "よくできました！{turns} 回の対話、{n} タスク完了。",
+                               "明確な表現 — より複雑な文型を練習しましょう。", "現在の表現レベルを維持してください。",
+                               "シナリオ完了！{turns} 回の対話。より良い結果を目指して再挑戦しましょう。",
+                               "接続詞と完全な文をもっと使いましょう。"),
+                "Spanish":    ("¡Excelente! {turns} intercambios, {n} tareas completadas.",
+                               "Tu expresión es fluida y el vocabulario es preciso.", "Sigue ampliando tu vocabulario.",
+                               "¡Bien hecho! {turns} intercambios, {n} tareas completadas.",
+                               "Expresión clara — practica frases más complejas.", "Mantén tu nivel actual de expresión.",
+                               "¡Escenario completado! {turns} intercambios. Inténtalo de nuevo para mejorar.",
+                               "Usa más conectores y oraciones completas."),
+                "French":     ("Excellent ! {turns} échanges, {n} tâches accomplies.",
+                               "Votre expression est fluide et le vocabulaire précis.", "Continuez à élargir votre vocabulaire.",
+                               "Bien joué ! {turns} échanges, {n} tâches accomplies.",
+                               "Expression claire — entraînez-vous sur des phrases plus complexes.", "Maintenez votre niveau actuel.",
+                               "Scénario terminé ! {turns} échanges. Réessayez pour un meilleur résultat.",
+                               "Utilisez plus de connecteurs et de phrases complètes."),
+                "Korean":     ("훌륭합니다! {turns}번의 대화, {n}개 작업 완료.",
+                               "표현이 유창하고 어휘 사용이 정확합니다.", "계속해서 어휘를 확장하세요.",
+                               "잘 했습니다! {turns}번의 대화, {n}개 작업 완료.",
+                               "명확한 표현 — 더 복잡한 문장을 연습하세요.", "현재 표현 수준을 유지하세요.",
+                               "시나리오 완료! {turns}번의 대화. 더 나은 결과를 위해 다시 도전하세요.",
+                               "연결어와 완전한 문장을 더 많이 사용하세요."),
+            }
+            t = _summary_t.get(native_language, _summary_t["English"])
+
             if avg_score >= 9:
-                analysis["summary"] = f"表现出色！完成 {len(completed_tasks)} 个任务，平均得分 {avg_score:.1f}。" + (
-                    "对话流利自然，词汇使用准确。" if analysis["vocabulary_diversity"] > 0.5 else "建议继续扩展词汇量。"
-                )
+                analysis["summary"] = t[0].format(turns=turns, n=n) + (t[1] if fluent else t[2])
             elif avg_score >= 7:
-                analysis["summary"] = f"表现良好！完成 {len(completed_tasks)} 个任务，平均得分 {avg_score:.1f}。" + (
-                    "表达清晰，可继续练习复杂句型。" if analysis["avg_message_length"] < 10 else "保持当前的表达水平。"
-                )
+                analysis["summary"] = t[3].format(turns=turns, n=n) + (t[4] if short else t[5])
             else:
-                analysis["summary"] = f"场景完成！建议重新练习以获得更高分数。" + (
-                    "尝试使用更多连接词和完整句子。" if analysis["avg_message_length"] < 8 else ""
-                )
+                analysis["summary"] = t[6].format(turns=turns, n=n) + (t[7] if analysis["avg_message_length"] < 8 else "")
 
         return analysis
     
@@ -495,12 +541,11 @@ class ScenarioReviewWorkflow:
         task_scores = [task.get("score", 0) for task in completed_tasks]
         avg_score = sum(task_scores) / len(task_scores) if task_scores else 0
 
-        # 生成任务分解
+        # 生成任务分解（score 是累计积分，用完成状态代替原始数值显示）
         task_breakdown = ""
         for i, task in enumerate(completed_tasks, 1):
             task_name = task.get("task_description", f"{lang['tasks']} {i}")
-            task_score = task.get("score", 0)
-            task_breakdown += f"- {lang['tasks']}{i}：{task_name[:30]}... ({lang['avg_score']}：{task_score}/10)\n"
+            task_breakdown += f"- {lang['tasks']}{i}：{task_name[:30]}...\n"
 
         # 生成优点列表
         strengths_list = analysis.get("strengths", [])
@@ -528,7 +573,6 @@ class ScenarioReviewWorkflow:
 {lang['overview']}
 - {lang['completion_time']}：{analysis.get('completion_time_minutes', 0)} {lang['minutes']}
 - {lang['interactions']}：{analysis.get('user_messages', 0)}
-- {lang['avg_score']}：{avg_score:.1f}/10
 
 {lang['tasks']}
 {task_breakdown}

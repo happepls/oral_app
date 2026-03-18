@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import BottomNav from '../components/BottomNav';
 import { useAuth } from '../contexts/AuthContext';
-import { historyAPI } from '../services/api';
+import { historyAPI, feedbackAPI } from '../services/api';
 
 function Profile() {
   const navigate = useNavigate();
@@ -13,6 +13,12 @@ function Profile() {
     messages: '0 条'
   });
   const [loading, setLoading] = useState(true);
+  const [showFeedbackModal, setShowFeedbackModal] = useState(false);
+  const [feedbackCategory, setFeedbackCategory] = useState('功能建议');
+  const [feedbackText, setFeedbackText] = useState('');
+  const [feedbackSubmitting, setFeedbackSubmitting] = useState(false);
+  const [feedbackSubmitted, setFeedbackSubmitted] = useState(false);
+  const [feedbackError, setFeedbackError] = useState('');
 
   useEffect(() => {
     if (refreshProfile) refreshProfile();
@@ -42,8 +48,37 @@ function Profile() {
     { icon: 'person', label: '账户设置', path: '/settings' },
     { icon: 'notifications', label: '通知', path: '/notifications' },
     { icon: 'workspace_premium', label: '订阅', path: '/subscription' },
-    { icon: 'palette', label: '主题', value: '深色' }
+    { icon: 'palette', label: '主题', value: '深色' },
+    { icon: 'feedback', label: '意见反馈', onPress: () => setShowFeedbackModal(true) }
   ];
+
+  const FEEDBACK_CATEGORIES = ['功能建议', '问题反馈', '其他'];
+  const FEEDBACK_MAX_LENGTH = 500;
+
+  const handleFeedbackSubmit = async () => {
+    if (!feedbackText.trim()) {
+      setFeedbackError('请输入反馈内容');
+      return;
+    }
+    setFeedbackError('');
+    setFeedbackSubmitting(true);
+    try {
+      await feedbackAPI.submit({ category: feedbackCategory, message: feedbackText.trim() });
+      setFeedbackSubmitted(true);
+    } catch (err) {
+      setFeedbackError('提交失败，请稍后重试');
+    } finally {
+      setFeedbackSubmitting(false);
+    }
+  };
+
+  const handleFeedbackClose = () => {
+    setShowFeedbackModal(false);
+    setFeedbackText('');
+    setFeedbackCategory('功能建议');
+    setFeedbackError('');
+    setFeedbackSubmitted(false);
+  };
 
   useEffect(() => {
     const fetchStats = async () => {
@@ -201,9 +236,9 @@ function Profile() {
         {/* Menu Items */}
         <div className="p-4 flex flex-col gap-2">
           {menuItems.map((item, index) => (
-            <div 
+            <div
               key={index}
-              onClick={() => item.path && navigate(item.path)}
+              onClick={() => item.onPress ? item.onPress() : item.path && navigate(item.path)}
               className="flex items-center p-4 rounded-xl bg-white dark:bg-slate-800 shadow-sm w-full cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors">
               <span className="material-symbols-outlined text-primary mr-4">{item.icon}</span>
               <span className="text-slate-900 dark:text-white font-medium flex-1">{item.label}</span>
@@ -225,6 +260,78 @@ function Profile() {
           </button>
         </div>
       </main>
+
+      {/* Feedback Modal */}
+      {showFeedbackModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm px-4">
+          <div className="bg-white dark:bg-slate-800 rounded-2xl shadow-2xl w-full max-w-md p-6">
+            {feedbackSubmitted ? (
+              <div className="flex flex-col items-center gap-4 py-4">
+                <span className="material-symbols-outlined text-5xl text-green-500">check_circle</span>
+                <p className="text-lg font-bold text-slate-900 dark:text-white">感谢你的反馈！</p>
+                <p className="text-sm text-slate-500 dark:text-slate-400 text-center">你的意见对我们非常重要，我们会认真查看。</p>
+                <button
+                  onClick={handleFeedbackClose}
+                  className="mt-2 w-full py-3 rounded-xl bg-primary text-white font-medium hover:opacity-90 transition-opacity">
+                  关闭
+                </button>
+              </div>
+            ) : (
+              <>
+                <div className="flex items-center justify-between mb-5">
+                  <h2 className="text-lg font-bold text-slate-900 dark:text-white">意见反馈</h2>
+                  <button onClick={handleFeedbackClose} className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200">
+                    <span className="material-symbols-outlined">close</span>
+                  </button>
+                </div>
+
+                {/* Category */}
+                <p className="text-sm font-medium text-slate-600 dark:text-slate-400 mb-2">反馈类型</p>
+                <div className="flex gap-2 mb-4">
+                  {FEEDBACK_CATEGORIES.map((cat) => (
+                    <button
+                      key={cat}
+                      onClick={() => setFeedbackCategory(cat)}
+                      className={`flex-1 py-2 rounded-lg text-sm font-medium border transition-colors ${
+                        feedbackCategory === cat
+                          ? 'border-primary bg-primary/10 text-primary'
+                          : 'border-slate-200 dark:border-slate-600 text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-700'
+                      }`}>
+                      {cat}
+                    </button>
+                  ))}
+                </div>
+
+                {/* Message */}
+                <p className="text-sm font-medium text-slate-600 dark:text-slate-400 mb-2">反馈内容</p>
+                <textarea
+                  value={feedbackText}
+                  onChange={(e) => {
+                    if (e.target.value.length <= FEEDBACK_MAX_LENGTH) setFeedbackText(e.target.value);
+                  }}
+                  placeholder="请描述你的建议或遇到的问题…"
+                  rows={4}
+                  className="w-full rounded-xl border border-slate-200 dark:border-slate-600 bg-slate-50 dark:bg-slate-700 text-slate-900 dark:text-white text-sm p-3 resize-none focus:outline-none focus:ring-2 focus:ring-primary/50"
+                />
+                <p className="text-xs text-slate-400 dark:text-slate-500 text-right mt-1">
+                  {feedbackText.length}/{FEEDBACK_MAX_LENGTH}
+                </p>
+
+                {feedbackError && (
+                  <p className="text-sm text-red-500 mt-2">{feedbackError}</p>
+                )}
+
+                <button
+                  onClick={handleFeedbackSubmit}
+                  disabled={feedbackSubmitting}
+                  className="mt-4 w-full py-3 rounded-xl bg-primary text-white font-medium hover:opacity-90 disabled:opacity-50 transition-opacity">
+                  {feedbackSubmitting ? '提交中…' : '提交反馈'}
+                </button>
+              </>
+            )}
+          </div>
+        </div>
+      )}
 
       <BottomNav currentPage="profile" />
     </div>

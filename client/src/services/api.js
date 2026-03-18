@@ -334,6 +334,17 @@ export const historyAPI = {
   }
 };
 
+export const feedbackAPI = {
+  async submit({ category, message }) {
+    const response = await fetch(`${API_BASE_URL}/feedback`, {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      body: JSON.stringify({ category, message })
+    });
+    return handleResponse(response);
+  }
+};
+
 export { getAuthHeaders };
 
 export default {
@@ -341,5 +352,6 @@ export default {
   user: userAPI,
   ai: aiAPI,
   conversation: conversationAPI,
-  history: historyAPI
+  history: historyAPI,
+  feedback: feedbackAPI
 };

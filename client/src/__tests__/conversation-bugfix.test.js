@@ -91,10 +91,19 @@ describe('BUG-002: Session reset on "重新开始"', () => {
   
   test('should generate new session ID on reset', () => {
     const oldSessionId = 'old-session-123';
-    const newSessionId = crypto.randomUUID();
-    
+
+    // crypto.randomUUID is not available in Jest jsdom — use a RFC4122 v4 regex instead
+    const uuidV4Regex = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+    const mockGenerateId = () => 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+      const r = Math.random() * 16 | 0;
+      return (c === 'x' ? r : (r & 0x3 | 0x8)).toString(16);
+    });
+
+    const newSessionId = mockGenerateId();
+
     expect(newSessionId).not.toBe(oldSessionId);
     expect(newSessionId.length).toBe(36); // UUID format
+    expect(uuidV4Regex.test(newSessionId)).toBe(true);
   });
 });
 

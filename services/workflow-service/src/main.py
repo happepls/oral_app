@@ -241,7 +241,7 @@ async def generate_scenario_review(request: ScenarioReviewRequest, conn = Depend
     Workflow 3: Scenario Review - Generate review report for completed scenario
     """
     try:
-        logger.info(f"[SCENARIO_REVIEW] Request: user={request.user_id}, goal={request.goal_id}, scenario={request.scenario_title}, tasks={len(request.completed_tasks)}, history={len(request.conversation_history)}")
+        logger.info(f"[SCENARIO_REVIEW] Request: user={request.user_id}, goal={request.goal_id}, scenario={request.scenario_title}, history={len(request.conversation_history)}")
 
         # Get user's native language from cache or database
         native_language = await get_user_language_with_cache(request.user_id, conn, cache)

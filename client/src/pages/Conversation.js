@@ -138,33 +138,35 @@ function Conversation() {
   const hasViewedCompletionModalRef = useRef(false); // Track if user has already viewed and closed the modal
 
   const getScoreFeedback = (score, reviewData = null) => {
-    // If we have scenario review data (from test or workflow), use it for personalized feedback
+    const stripEmoji = (s) => s.replace(
+      /[\u{1F600}-\u{1F64F}\u{1F300}-\u{1F5FF}\u{1F680}-\u{1F6FF}\u{1F1E0}-\u{1F1FF}\u{2600}-\u{26FF}\u{2700}-\u{27BF}]/gu, ''
+    ).trim();
+
     if (reviewData) {
-        // Try to use recommendations array first (most personalized)
-        const recommendations = reviewData.recommendations;
-        if (Array.isArray(recommendations) && recommendations.length > 0) {
-            // Use first recommendation only for concise feedback, remove emoji
-            const text = recommendations[0];
-            // Remove any emoji from the text
-            const cleanText = text.replace(/[\u{1F600}-\u{1F64F}]|[\u{1F300}-\u{1F5FF}]|[\u{1F680}-\u{1F6FF}]|[\u{1F1E0}-\u{1F1FF}]|[\u{2600}-\u{26FF}]|[\u{2700}-\u{27BF}]/gu, '').trim();
-            return { emoji: '', text: cleanText, level: 'excellent' };
+        const parts = [];
+
+        // 1. analysis.summary — 最个性化：含实际轮数、任务数、平均分，后端已语言感知
+        const summary = reviewData.analysis?.summary;
+        if (summary && typeof summary === 'string') {
+            parts.push(stripEmoji(summary));
         }
 
-        // Try to extract summary from analysis
-        const analysis = reviewData.analysis;
-        if (analysis?.summary && typeof analysis.summary === 'string') {
-            const cleanText = analysis.summary.replace(/[\u{1F600}-\u{1F64F}]|[\u{1F300}-\u{1F5FF}]|[\u{1F680}-\u{1F6FF}]|[\u{1F1E0}-\u{1F1FF}]|[\u{2600}-\u{26FF}]|[\u{2700}-\u{27BF}]/gu, '').trim();
-            return { emoji: '', text: cleanText, level: 'excellent' };
+        // 2. 首条 recommendations — 具体改进建议，后端已按 native_language 生成
+        const recs = reviewData.recommendations;
+        if (Array.isArray(recs) && recs.length > 0) {
+            const rec = stripEmoji(recs[0]);
+            // 只在与 summary 不同时追加，避免重复
+            if (rec && rec !== parts[0]) {
+                parts.push(rec);
+            }
         }
 
-        // Try review_report if it has a summary field
-        const reviewReport = reviewData.review_report;
-        if (reviewReport?.summary && typeof reviewReport.summary === 'string') {
-            const cleanText = reviewReport.summary.replace(/[\u{1F600}-\u{1F64F}]|[\u{1F300}-\u{1F5FF}]|[\u{1F680}-\u{1F6FF}]|[\u{1F1E0}-\u{1F1FF}]|[\u{2600}-\u{26FF}]|[\u{2700}-\u{27BF}]/gu, '').trim();
-            return { emoji: '', text: cleanText, level: 'excellent' };
+        if (parts.length > 0) {
+            return { emoji: '', text: parts.join('\n'), level: 'excellent' };
         }
     }
-    // Fallback to concise Chinese feedback without emojis
+
+    // Fallback：无 reviewData 时按分数给出简洁反馈
     if (score >= 90) return { emoji: '', text: '表现优秀，表达流利自然，词汇使用准确。', level: 'excellent' };
     if (score >= 75) return { emoji: '', text: '表现良好，表达清晰准确，可继续练习复杂句型。', level: 'good' };
     if (score >= 60) return { emoji: '', text: '进步明显，建议多练习口语表达的流畅度。', level: 'fair' };
@@ -997,18 +999,27 @@ function Conversation() {
                    setCompletedTasks(prev => new Set([...prev, taskPayload.task_title]));
                }
                
-               // Reset progress bar for next task
-               setCurrentTaskProgress(0);
-               setCurrentTaskScore(0);
-               setEngagementLevel('中');
-               previousProgressRef.current = 0; // Reset progress tracking
                lastProficiencyUpdateRef.current = null; // Reset deduplication for next task
-               
-               // Clear localStorage for this scenario (will be refreshed from backend)
+
+               // next_task is null/undefined when this was the last task in the scenario.
+               // In that case keep progress at 100% until the completion modal appears.
+               const isLastTask = !taskPayload.next_task;
                const searchParams = new URLSearchParams(window.location.search);
                const scenario = searchParams.get('scenario') || location.state?.scenario;
-               if (scenario) {
-                   localStorage.removeItem(`task_progress_${scenario}`);
+               if (isLastTask) {
+                   setCurrentTaskProgress(100);
+                   previousProgressRef.current = 100;
+               } else {
+                   // Reset progress bar for the next task
+                   setCurrentTaskProgress(0);
+                   setCurrentTaskScore(0);
+                   setEngagementLevel('中');
+                   previousProgressRef.current = 0;
+
+                   // Clear localStorage for this scenario (will be refreshed from backend)
+                   if (scenario) {
+                       localStorage.removeItem(`task_progress_${scenario}`);
+                   }
                }
                
                // Refresh tasks from backend to get next task

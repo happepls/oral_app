@@ -167,23 +167,45 @@ function Discovery() {
 
   // Calculate overall progress based on scenario completion
   let progress = 0;
+  let nextMission = null; // { index, title, nextTask } of first incomplete scenario
   if (activeGoal && activeGoal.scenarios && activeGoal.scenarios.length > 0) {
     const totalScenarios = activeGoal.scenarios.length;
     let completedScenarios = 0;
-    
-    activeGoal.scenarios.forEach(scenario => {
-      if (scenario.tasks && scenario.tasks.length > 0) {
-        const allTasksCompleted = scenario.tasks.every(task => task.status === 'completed');
-        if (allTasksCompleted) {
-          completedScenarios++;
-        }
+
+    activeGoal.scenarios.forEach((scenario, idx) => {
+      const hasTasks = scenario.tasks && scenario.tasks.length > 0;
+      const allDone = hasTasks && scenario.tasks.every(task =>
+        typeof task === 'object' && task.status === 'completed'
+      );
+      if (allDone) {
+        completedScenarios++;
+      } else if (!nextMission) {
+        // Find the first incomplete task within this scenario
+        const firstIncompleteTask = scenario.tasks && scenario.tasks.find(task =>
+          typeof task === 'object' ? task.status !== 'completed' : true
+        );
+        const nextTaskText = firstIncompleteTask
+          ? (typeof firstIncompleteTask === 'object' ? firstIncompleteTask.text || firstIncompleteTask.description : firstIncompleteTask)
+          : null;
+        nextMission = { index: idx + 1, title: scenario.title, nextTask: nextTaskText };
       }
     });
-    
+
     progress = Math.round((completedScenarios / totalScenarios) * 100);
   } else {
     // Fallback to proficiency if no scenarios
     progress = Math.min(100, userProficiency);
+  }
+
+  // Calculate remaining days
+  let remainingDays = null;
+  if (activeGoal) {
+    const durationDays = activeGoal.duration_days || 60;
+    const createdAt = activeGoal.created_at ? new Date(activeGoal.created_at) : null;
+    if (createdAt) {
+      const daysElapsed = Math.floor((Date.now() - createdAt.getTime()) / (1000 * 60 * 60 * 24));
+      remainingDays = Math.max(0, durationDays - daysElapsed);
+    }
   }
 
   return (
@@ -212,24 +234,38 @@ function Discovery() {
                     
                     <div className="relative z-10">
                         <div className="flex justify-between items-start mb-6">
-                            <div>
+                            <div className="flex-1 min-w-0 pr-4">
                                 <p className="text-xs font-medium text-indigo-100 mb-1">当前目标 (Goal)</p>
                                 <h2 className="text-2xl font-bold tracking-tight mb-1">{activeGoal.target_language}</h2>
-                                <p className="text-sm text-indigo-100 opacity-90 mb-2">{activeGoal.description}</p>
-                                <div className="flex flex-wrap gap-2 mt-2">
-                                    <span className="bg-white/20 px-2 py-0.5 rounded text-xs backdrop-blur-sm">
-                                        Level: {activeGoal.target_level}
-                                    </span>
-                                    {activeGoal.interests && (
-                                        <span className="bg-white/20 px-2 py-0.5 rounded text-xs backdrop-blur-sm">
-                                            Topic: {activeGoal.interests}
-                                        </span>
-                                    )}
-                                </div>
+                                {nextMission ? (
+                                    <div className="mb-2">
+                                        <p className="text-xs text-indigo-200 opacity-80">
+                                            Mission {nextMission.index}: {nextMission.title}
+                                        </p>
+                                        {nextMission.nextTask && (
+                                            <p
+                                                className="text-sm font-semibold text-yellow-300 mt-0.5 cursor-pointer hover:text-yellow-100 transition-colors underline-offset-2 hover:underline"
+                                                onClick={() => {
+                                                    const scenario = scenarios[nextMission.index - 1];
+                                                    if (scenario) handleScenarioClick(scenario);
+                                                }}
+                                            >
+                                                → {nextMission.nextTask}
+                                            </p>
+                                        )}
+                                    </div>
+                                ) : (
+                                    <p className="text-sm text-emerald-300 font-semibold mb-2">🎉 所有任务已完成！</p>
+                                )}
                             </div>
-                            <div className="text-right">
-                                <p className="text-3xl font-bold text-white">{userProficiency}</p>
-                                <p className="text-xs text-indigo-200">熟练度</p>
+                            <div className="text-right shrink-0">
+                                <p className="text-2xl font-bold text-white">{activeGoal.target_level || 'B1'}</p>
+                                <p className="text-xs text-indigo-200">目标水平</p>
+                                {remainingDays !== null && (
+                                    <div className={`mt-2 text-xs font-semibold px-2 py-0.5 rounded-full ${remainingDays <= 7 ? 'bg-red-400/40 text-red-100' : remainingDays <= 14 ? 'bg-yellow-400/30 text-yellow-100' : 'bg-white/20 text-indigo-100'}`}>
+                                        剩 {remainingDays} 天
+                                    </div>
+                                )}
                             </div>
                         </div>
 
@@ -262,50 +298,63 @@ function Discovery() {
              
              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                  {scenarios.map((scenario, index) => {
-                     // MVP Status Logic: Unlock 1 by 1 or all unlocked?
-                     // Let's assume all unlocked for now to reduce complexity, or unlock based on index <= progress/10
-                     const isLocked = false; 
+                     const isLocked = false;
+                     const hasTasks = scenario.tasks && scenario.tasks.length > 0;
+                     const isCompleted = hasTasks && scenario.tasks.every(task =>
+                         typeof task === 'object' && task.status === 'completed'
+                     );
 
                      return (
-                         <div 
+                         <div
                             key={index}
                             onClick={() => !isLocked && handleScenarioClick(scenario)}
                             className={`relative p-4 rounded-xl border-2 transition-all duration-200 cursor-pointer overflow-hidden group hover:shadow-lg
-                                ${isLocked 
+                                ${isLocked
                                     ? 'bg-slate-50 dark:bg-slate-900 border-slate-100 dark:border-slate-800 opacity-60'
-                                    : 'bg-white dark:bg-slate-800 border-indigo-100 dark:border-indigo-900/30 hover:border-indigo-300' 
+                                    : isCompleted
+                                        ? 'bg-emerald-50 dark:bg-emerald-900/20 border-emerald-300 dark:border-emerald-700'
+                                        : 'bg-white dark:bg-slate-800 border-indigo-100 dark:border-indigo-900/30 hover:border-indigo-300'
                                 }
                             `}
                          >
                              <div className="flex justify-between items-start mb-3">
                                  <span className={`text-xs font-bold px-2 py-0.5 rounded-md
-                                     ${isLocked ? 'bg-slate-200 text-slate-500' : 'bg-indigo-50 text-indigo-600'}
+                                     ${isLocked ? 'bg-slate-200 text-slate-500' : isCompleted ? 'bg-emerald-100 text-emerald-700' : 'bg-indigo-50 text-indigo-600'}
                                  `}>
                                      Mission {index + 1}
                                  </span>
                                  {isLocked ? (
                                      <span className="material-symbols-outlined text-slate-400 text-lg">lock</span>
+                                 ) : isCompleted ? (
+                                     <span className="material-symbols-outlined text-emerald-500 text-lg">check_circle</span>
                                  ) : (
                                      <span className="material-symbols-outlined text-indigo-500 text-lg group-hover:scale-110 transition-transform">arrow_forward</span>
                                  )}
                              </div>
-                             
+
                              <h4 className="font-bold text-base mb-2 text-slate-800 dark:text-slate-100">
                                  {scenario.title}
                              </h4>
-                             
+
                              {/* Tasks Preview */}
                              <div className="space-y-1">
                                  {scenario.tasks && scenario.tasks.slice(0, 3).map((task, tIdx) => {
                                      const taskText = typeof task === 'object' ? (task.text || task.description || JSON.stringify(task)) : task;
+                                     const taskDone = typeof task === 'object' && task.status === 'completed';
                                      return (
                                          <div key={tIdx} className="flex items-center gap-2 text-xs text-slate-500">
-                                             <span className="w-1.5 h-1.5 rounded-full bg-slate-300"></span>
-                                             <span className="truncate">{taskText}</span>
+                                             <span className={`w-1.5 h-1.5 rounded-full ${taskDone ? 'bg-emerald-400' : 'bg-slate-300'}`}></span>
+                                             <span className={`truncate ${taskDone ? 'line-through text-slate-400' : ''}`}>{taskText}</span>
                                          </div>
                                      );
                                  })}
                              </div>
+
+                             {isCompleted && (
+                                 <div className="mt-3 text-xs font-semibold text-emerald-600 dark:text-emerald-400">
+                                     已完成 ✓
+                                 </div>
+                             )}
                          </div>
                      );
                  })}
