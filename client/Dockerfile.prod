@@ -11,6 +11,7 @@ RUN sed -i 's/dl-cdn.alpinelinux.org/mirrors.aliyun.com/g' /etc/apk/repositories
 # Build-time env vars (injected by docker-compose args)
 ARG REACT_APP_API_URL=/api
 ARG REACT_APP_API_GATEWAY
+ARG REACT_APP_GOOGLE_CLIENT_ID
 
 # --- Layer 1: deps (only invalidated when package*.json changes) ---
 COPY package*.json ./
@@ -23,7 +24,8 @@ COPY src/ ./src/
 
 # Write env AFTER npm install so ARG changes don't bust the dep layer
 RUN echo "REACT_APP_API_URL=${REACT_APP_API_URL}" > .env && \
-    echo "REACT_APP_API_GATEWAY=${REACT_APP_API_GATEWAY}" >> .env
+    echo "REACT_APP_API_GATEWAY=${REACT_APP_API_GATEWAY}" >> .env && \
+    echo "REACT_APP_GOOGLE_CLIENT_ID=${REACT_APP_GOOGLE_CLIENT_ID}" >> .env
 
 RUN npm run build
 

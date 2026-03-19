@@ -62,7 +62,7 @@ CREATE TABLE IF NOT EXISTS user_tasks (
 -- Create the user_checkins table (Daily Check-in Records)
 CREATE TABLE IF NOT EXISTS user_checkins (
     id SERIAL PRIMARY KEY,
-    user_id INT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     checkin_date DATE NOT NULL DEFAULT CURRENT_DATE,
     points_earned INT DEFAULT 10,
     streak_count INT DEFAULT 1,

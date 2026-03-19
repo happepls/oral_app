@@ -98,6 +98,27 @@ export const AuthProvider = ({ children }) => {
     }
   };
 
+  const loginWithGoogle = async (googleToken) => {
+    try {
+      setError(null);
+      setLoading(true);
+      const response = await authAPI.googleSignIn(googleToken);
+      const { user: userData, token: newToken } = response;
+      localStorage.setItem('authToken', newToken);
+      localStorage.setItem('token', newToken);
+      localStorage.setItem('user', JSON.stringify(userData));
+      setUser(userData);
+      setToken(newToken);
+      return { success: true };
+    } catch (err) {
+      const errorMessage = err.message || 'Google 登录失败，请稍后重试';
+      setError(errorMessage);
+      return { success: false, message: errorMessage };
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const updateProfile = async (updates) => {
     try {
       setLoading(true);
@@ -170,6 +191,7 @@ export const AuthProvider = ({ children }) => {
     loading,
     error,
     login,
+    loginWithGoogle,
     register,
     logout,
     updateProfile,

@@ -14,7 +14,7 @@ router.post('/api/users/register', authRateLimiter, validateRegistration, handle
 router.post('/api/users/login', authRateLimiter, validateLogin, handleValidationErrors, userController.login);
 
 // Google auth route
-router.post('/api/users/google', userController.googleSignIn);
+router.post('/api/users/google', authRateLimiter, userController.googleSignIn);
 router.post('/api/users/verify', userController.verifyToken);
 
 // Protected route to get user profile
@@ -23,10 +23,12 @@ router.put('/api/users/profile', protect, userController.updateProfile);
 
 // Goal routes
 router.post('/api/users/goals', protect, userController.createGoal);
+router.get('/api/users/goals', protect, userController.getUserGoals);
 router.get('/api/users/goals/active', protect, userController.getActiveGoal);
 router.get('/api/users/goals/current-task', protect, userController.getCurrentTask);
 router.get('/api/users/goals/next-task', protect, userController.getNextPendingTask);
 router.put('/api/users/goals/:id/complete', protect, userController.completeGoal);
+router.put('/api/users/goals/:id/activate', protect, userController.switchGoal);
 router.post('/api/users/goals/reset-task', protect, userController.resetTask);
 
 // Check-in routes

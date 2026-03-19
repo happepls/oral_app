@@ -73,6 +73,10 @@ function Discovery() {
   const [userProficiency, setUserProficiency] = useState(0);
   const [loading, setLoading] = useState(true);
   const [showAchievement, setShowAchievement] = useState(false);
+  const [showGoalSwitch, setShowGoalSwitch] = useState(false);
+  const [allGoals, setAllGoals] = useState([]);
+  const [switching, setSwitching] = useState(false);
+  const [hasOtherGoals, setHasOtherGoals] = useState(false);
 
   // Scenarios State
   const [scenarios, setScenarios] = useState([]);
@@ -94,6 +98,15 @@ function Discovery() {
             }
             setActiveGoal(goalRes.goal);
             checkAchievement(goalRes.goal);
+
+            // Check if user has other goals to enable the switch button
+            try {
+                const goalsRes = await userAPI.getUserGoals();
+                const otherGoals = (goalsRes.goals || []).filter(g => g.status !== 'active');
+                setHasOtherGoals(otherGoals.length > 0);
+            } catch (e) {
+                setHasOtherGoals(false);
+            }
 
             // Set Scenarios
             if (goalRes.goal.scenarios && goalRes.goal.scenarios.length > 0) {
@@ -142,6 +155,29 @@ function Discovery() {
     
     fetchData();
   }, [user, navigate, location.key]); // Trigger re-fetch on navigation back to this page
+
+  const handleOpenSwitch = async () => {
+    try {
+      const res = await userAPI.getUserGoals();
+      setAllGoals(res.goals || []);
+      setShowGoalSwitch(true);
+    } catch (e) {
+      console.error('Failed to load goals:', e);
+    }
+  };
+
+  const handleSwitchGoal = async (goalId) => {
+    setSwitching(true);
+    try {
+      await userAPI.switchGoal(goalId);
+      setShowGoalSwitch(false);
+      navigate(location.pathname, { replace: true });
+    } catch (e) {
+      console.error('Failed to switch goal:', e);
+    } finally {
+      setSwitching(false);
+    }
+  };
 
   const handleStartNewSession = () => {
       // Default to first scenario
@@ -259,6 +295,39 @@ function Discovery() {
         </div>
       )}
 
+      {/* Goal Switch Modal */}
+      {showGoalSwitch && (
+        <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/60"
+             onClick={() => setShowGoalSwitch(false)}>
+          <div className="bg-white dark:bg-slate-800 rounded-t-2xl w-full max-w-lg p-5 pb-8 max-h-[70vh] overflow-y-auto"
+               onClick={e => e.stopPropagation()}>
+            <h3 className="text-base font-bold text-slate-900 dark:text-white mb-4">切换学习目标</h3>
+            {allGoals.filter(g => g.status !== 'active').map(goal => {
+              const pct = goal.current_proficiency || 0;
+              const badgeColor = pct >= 80 ? 'bg-emerald-100 text-emerald-700'
+                               : pct >= 40 ? 'bg-indigo-100 text-indigo-600'
+                                           : 'bg-slate-100 text-slate-500';
+              return (
+                <button key={goal.id}
+                  onClick={() => handleSwitchGoal(goal.id)}
+                  disabled={switching}
+                  className="w-full text-left flex items-center gap-3 p-3 rounded-xl border border-slate-200 dark:border-slate-700 hover:bg-indigo-50 dark:hover:bg-slate-700 transition-colors mb-2"
+                >
+                  <div className="flex-1 min-w-0">
+                    <p className="font-semibold text-slate-900 dark:text-white text-sm">{goal.target_language}</p>
+                    <p className="text-xs text-slate-500">{goal.target_level} · {new Date(goal.created_at).toLocaleDateString('zh-CN')}</p>
+                  </div>
+                  <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${badgeColor}`}>{pct}%</span>
+                </button>
+              );
+            })}
+            {allGoals.filter(g => g.status !== 'active').length === 0 && (
+              <p className="text-sm text-slate-400 text-center py-6">暂无其他存量目标</p>
+            )}
+          </div>
+        </div>
+      )}
+
       <main className="flex-grow pb-28">
         {/* Header */}
         <div className="flex flex-col gap-2 p-4 pb-2">
@@ -283,7 +352,19 @@ function Discovery() {
                     <div className="relative z-10">
                         <div className="flex justify-between items-start mb-6">
                             <div className="flex-1 min-w-0 pr-4">
-                                <p className="text-xs font-medium text-indigo-100 mb-1">当前目标 (Goal)</p>
+                                <div className="flex items-center justify-between mb-1">
+                                  <p className="text-xs font-medium text-indigo-100">当前目标 (Goal)</p>
+                                  {hasOtherGoals && (
+                                    <button
+                                      onClick={handleOpenSwitch}
+                                      className="flex items-center gap-0.5 text-xs text-indigo-200 hover:text-white transition-colors"
+                                      title="切换目标"
+                                    >
+                                      <span className="material-symbols-outlined text-sm">swap_horiz</span>
+                                      <span>切换</span>
+                                    </button>
+                                  )}
+                                </div>
                                 <h2 className="text-2xl font-bold tracking-tight mb-1">{activeGoal.target_language}</h2>
                                 {nextMission ? (
                                     <div className="mb-2">

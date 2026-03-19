@@ -5,6 +5,9 @@ const bcrypt = require('bcryptjs');
 
 
 const client = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
+if (!process.env.GOOGLE_CLIENT_ID) {
+  console.warn('[userController] GOOGLE_CLIENT_ID is not set — Google Sign-In will fail');
+}
 
 // Enhanced JWT configuration (matching enhancedAuthMiddleware.js)
 const JWT_CONFIG = {
@@ -459,6 +462,28 @@ exports.resetTask = async (req, res) => {
             success: false,
             message: '重置任务时服务器错误'
         });
+    }
+};
+
+exports.getUserGoals = async (req, res) => {
+    try {
+        const goals = await User.getUserGoals(req.user.id);
+        res.json({ success: true, goals });
+    } catch (error) {
+        console.error('Get User Goals Error:', error);
+        res.status(500).json({ success: false, message: '获取目标列表时服务器错误' });
+    }
+};
+
+exports.switchGoal = async (req, res) => {
+    try {
+        const { id } = req.params;
+        const goal = await User.switchActiveGoal(req.user.id, parseInt(id));
+        if (!goal) return res.status(404).json({ success: false, message: '目标未找到' });
+        res.json({ success: true, goal });
+    } catch (error) {
+        console.error('Switch Goal Error:', error);
+        res.status(500).json({ success: false, message: '切换目标时服务器错误' });
     }
 };
 

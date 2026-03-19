@@ -146,7 +146,8 @@ class ProficiencyScoringWorkflow:
         # Task Relevance: 基于任务/场景相关性（异步调用）
         task_relevance_result = await self._score_task_relevance(
             recent_turns,
-            current_task
+            current_task,
+            target_language
         )
         scores["task_relevance"] = task_relevance_result["score"]
         scores["suggested_keywords"] = task_relevance_result.get("suggested_keywords", [])
@@ -327,7 +328,8 @@ class ProficiencyScoringWorkflow:
     async def _score_task_relevance(
         self,
         turns: List[Dict[str, Any]],
-        current_task: Dict[str, Any]
+        current_task: Dict[str, Any],
+        target_language: str = "English"
     ) -> Dict[str, Any]:
         """
         任务相关性评分 (0-10) - 支持跨语言匹配
@@ -355,7 +357,7 @@ class ProficiencyScoringWorkflow:
         scenario_title = current_task.get("scenario_title", "")
 
         # 使用动态生成的场景关键词（这是主要匹配依据，支持任何语言）
-        scene_keywords = self._get_scene_keywords(scenario_title, task_desc)
+        scene_keywords = self._get_scene_keywords(scenario_title, task_desc, target_language)
 
         # 获取用户对话内容（转为小写用于匹配）
         user_content = " ".join(
@@ -1031,14 +1033,14 @@ class ProficiencyScoringWorkflow:
         # 默认建议
         return "🎯 专注于当前任务，用完整的句子表达你的想法"
     
-    def _get_scene_keywords(self, scenario_title: str, task_desc: str) -> List[str]:
+    def _get_scene_keywords(self, scenario_title: str, task_desc: str, target_language: str = "English") -> List[str]:
         """根据场景和任务动态生成关键词列表 - 使用 AI 生成 + 智能 fallback"""
         scenario_lower = scenario_title.lower() if scenario_title else ""
         task_lower = task_desc.lower() if task_desc else ""
         combined = f"{scenario_lower} {task_lower}"
 
-        # 创建缓存键
-        cache_key = f"{scenario_lower}:{task_lower}"
+        # 创建缓存键（含语言，避免不同语言复用同一缓存）
+        cache_key = f"{scenario_lower}:{task_lower}:{target_language.lower()}"
 
         # 检查缓存
         if cache_key in self._keyword_cache:
@@ -1152,10 +1154,10 @@ class ProficiencyScoringWorkflow:
             import httpx
             import os
 
-            prompt = f"""You are an English language teaching expert. For the following speaking practice scenario and task, generate 10-15 essential English keywords/phrases.
+            prompt = f"""You are a language teaching expert for {target_language}. For the following speaking practice scenario and task, generate 10-15 essential keywords/phrases in {target_language}.
 
 Scenario: {scenario_title or "General Conversation"}
-Task: {task_desc or "Practice speaking English"}
+Task: {task_desc or f"Practice speaking {target_language}"}
 
 Return ONLY a JSON array: ["keyword1", "keyword2", ...]"""
 
@@ -1187,12 +1189,22 @@ Return ONLY a JSON array: ["keyword1", "keyword2", ...]"""
             pass  # AI 调用失败，使用 fallback
 
         # Fallback: 从文本提取关键词
-        return self._extract_keywords_from_text(f"{scenario_title} {task_desc}")
-    
-    def _extract_keywords_from_text(self, text: str) -> List[str]:
+        return self._extract_keywords_from_text(f"{scenario_title} {task_desc}", target_language)
+
+    def _extract_keywords_from_text(self, text: str, target_language: str = "English") -> List[str]:
         """从文本中提取关键词作为后备方案"""
+        lang_fallbacks = {
+            "japanese": ["練習", "会話", "表現", "話す", "聞く"],
+            "chinese":  ["练习", "对话", "表达", "说话", "学习"],
+            "french":   ["pratique", "conversation", "parler", "écouter", "apprendre"],
+            "spanish":  ["práctica", "conversación", "hablar", "escuchar", "aprender"],
+            "korean":   ["연습", "대화", "표현", "말하기", "듣기"],
+            "german":   ["Übung", "Gespräch", "sprechen", "hören", "lernen"],
+        }
+        default_fallback = lang_fallbacks.get(target_language.lower(), ["practice", "conversation", "speak", "listen", "learn"])
+
         if not text:
-            return ["practice", "conversation", "English", "speak", "learn", "express", "communicate"]
+            return default_fallback
         
         text_lower = text.lower()
         
@@ -1208,7 +1220,7 @@ Return ONLY a JSON array: ["keyword1", "keyword2", ...]"""
         
         # 去重并保持顺序
         unique_keywords = list(dict.fromkeys(keywords))
-        return unique_keywords[:10] if unique_keywords else ["practice", "conversation", "English", "speak", "learn"]
+        return unique_keywords[:10] if unique_keywords else default_fallback
 
     def _detect_input_language(self, text: str) -> Optional[str]:
         """

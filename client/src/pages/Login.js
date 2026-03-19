@@ -1,13 +1,23 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { GoogleLogin } from '@react-oauth/google';
 import { useAuth } from '../contexts/AuthContext';
 
 function Login() {
   const navigate = useNavigate();
-  const { login, loading } = useAuth();
+  const { login, loginWithGoogle, loading } = useAuth();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
+
+  const handleGoogleSuccess = async (credentialResponse) => {
+    const result = await loginWithGoogle(credentialResponse.credential);
+    if (result.success) {
+      navigate('/discovery');
+    } else {
+      setError(result.message || 'Google 登录失败');
+    }
+  };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -81,9 +91,25 @@ function Login() {
             </button>
           </form>
 
+          <div className="mt-6">
+            <div className="flex items-center gap-3 mb-4">
+              <hr className="flex-1 border-slate-300 dark:border-slate-700" />
+              <span className="text-sm text-slate-500">或</span>
+              <hr className="flex-1 border-slate-300 dark:border-slate-700" />
+            </div>
+            <div className="flex justify-center">
+              <GoogleLogin
+                onSuccess={handleGoogleSuccess}
+                onError={() => setError('Google 登录失败，请重试')}
+                useOneTap={false}
+                width="360"
+              />
+            </div>
+          </div>
+
           <p className="text-center text-slate-600 dark:text-slate-400 mt-6">
             还没有账户？{' '}
-            <button 
+            <button
               onClick={() => navigate('/register')}
               className="text-primary font-semibold hover:underline">
               立即注册

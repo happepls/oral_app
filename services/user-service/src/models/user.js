@@ -304,6 +304,36 @@ User.completeTask = async (userId, scenarioTitle, taskText) => {
     return await User.getActiveGoal(userId);
 };
 
+User.getUserGoals = async (userId) => {
+    const { rows } = await db.query(
+        `SELECT id, target_language, target_level, type, description,
+                current_proficiency, completion_time_days, interests,
+                scenarios, status, created_at, completed_at
+         FROM user_goals
+         WHERE user_id = $1
+         ORDER BY created_at DESC`,
+        [userId]
+    );
+    return rows;
+};
+
+User.switchActiveGoal = async (userId, goalId) => {
+    // Current active → paused (not abandoned, so user can switch back)
+    await db.query(
+        `UPDATE user_goals SET status = 'paused'
+         WHERE user_id = $1 AND status = 'active'`,
+        [userId]
+    );
+    // Target goal → active
+    const { rows } = await db.query(
+        `UPDATE user_goals SET status = 'active', completed_at = NULL
+         WHERE id = $1 AND user_id = $2
+         RETURNING *`,
+        [goalId, userId]
+    );
+    return rows[0];
+};
+
 User.completeGoal = async (goalId, userId) => {
     const query = `UPDATE user_goals SET status = 'completed', completed_at = NOW() WHERE id = $1 AND user_id = $2 RETURNING *`;
     const { rows } = await db.query(query, [goalId, userId]);

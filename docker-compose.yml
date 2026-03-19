@@ -46,6 +46,7 @@ services:
       args:
         - REACT_APP_API_URL=/api
         - REACT_APP_API_GATEWAY=http://oral_app_api_gateway:80
+        - REACT_APP_GOOGLE_CLIENT_ID=318339571759-ojcd3oamef8ohmu5g04luaoq2a8oiseu.apps.googleusercontent.com
     container_name: oral_app_client_app
     restart: unless-stopped
     ports:
@@ -122,12 +123,17 @@ services:
       - JWT_SECRET=your_jwt_secret_key_change_in_production
       - STRIPE_PUBLISHABLE_KEY=${STRIPE_PUBLISHABLE_KEY:-}
       - STRIPE_SECRET_KEY=${STRIPE_SECRET_KEY:-}
+      - HTTPS_PROXY=http://host.docker.internal:7890
+      - HTTP_PROXY=http://host.docker.internal:7890
+      - NO_PROXY=localhost,127.0.0.1,postgres,redis,mongo
     env_file:
       - ./.env
       - ./services/user-service/.env
     depends_on:
       postgres:
         condition: service_healthy
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     networks:
       - oral_app_net
 
