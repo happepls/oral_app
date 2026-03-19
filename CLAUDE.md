@@ -2,6 +2,33 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Dockerfile Rules
+
+### Node.js Services: Copy node_modules from Host (Do NOT run npm install)
+
+All Node.js service Dockerfiles **must** copy `node_modules` from the host machine
+instead of running `npm install` or `npm ci` during the Docker build. This avoids
+slow network downloads and ensures build reproducibility using locally installed packages.
+
+**Required pattern:**
+```dockerfile
+COPY package.json ./
+COPY node_modules ./node_modules
+# Do NOT add: RUN npm install
+```
+
+**Services that already follow this pattern:** user-service, media-processing-service
+**Services that still need updating:** comms-service, conversation-service, history-analytics-service
+
+**Before rebuilding a service**, ensure `node_modules` is present on the host:
+```bash
+cd services/<service-name> && npm install   # only needed once locally
+docker compose up -d --build <service-name>
+```
+
+> Exception: `client/Dockerfile.prod` uses `npm ci` in a multi-stage build and is
+> intentionally kept as-is for production frontend image reproducibility.
+
 ## Commands
 
 ### Start All Services
@@ -143,6 +170,10 @@ The string `急急如律令` (with Chinese punctuation variants `。！？`) in 
 ### Scenario Generation Endpoint
 
 `POST /generate-scenarios` is implemented in `ai-omni-service/app/main.py` (Nginx rewrites `/api/ai/generate-scenarios` → `/generate-scenarios` on ai-omni-service). Uses DashScope qwen-turbo. The prompt instructs the LLM to output all scenario titles and tasks in the user's `native_language`. **Note**: `api-gateway/server.js` is dead code — the gateway is pure Nginx; all `/api/ai/*` routes go to ai-omni-service.
+
+### TTS Endpoint
+
+`POST /tts` is implemented in `ai-omni-service/app/main.py` (Nginx rewrites `/api/ai/tts` → `/tts`). Uses `qwen3-tts-flash` via `dashscope.MultiModalConversation.call()` with voice `Serena`. Supports 10 languages (Chinese, English, Japanese, Korean, French, Spanish, German, Italian, Portuguese, Russian) and mixed-language text in a single call. Returns WAV audio bytes fetched from the OSS URL in the response. Called by `aiAPI.tts()` in `api.js` → `playSelectedText()` in `Conversation.js` for the floating speaker button on selected AI message text.
 
 ### Discovery Page: Goal Completion
 

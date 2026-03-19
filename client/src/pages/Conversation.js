@@ -357,10 +357,9 @@ function Conversation() {
     
     setIsSynthesizing(true);
     try {
-      const response = await aiAPI.synthesizeSpeech(selection.text);
-      if (response.audioUrl) {
-        playFullAudio(response.audioUrl);
-      }
+      const blob = await aiAPI.tts(selection.text);
+      const audioUrl = URL.createObjectURL(blob);
+      playFullAudio(audioUrl);
     } catch (error) {
       console.error('Speech synthesis error:', error);
     } finally {

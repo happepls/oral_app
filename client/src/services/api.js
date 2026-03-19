@@ -74,6 +74,15 @@ export const authAPI = {
       body: JSON.stringify(credentials)
     });
     return handleResponse(response);
+  },
+
+  async googleSignIn(token) {
+    const response = await fetch(`${API_BASE_URL}/users/google`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token })
+    });
+    return handleResponse(response);
   }
 };
 
@@ -165,6 +174,21 @@ export const userAPI = {
       headers: getAuthHeaders()
     });
     return handleResponse(response);
+  },
+
+  async getUserGoals() {
+    const response = await fetch(`${API_BASE_URL}/users/goals`, {
+      headers: getAuthHeaders()
+    });
+    return handleResponse(response);
+  },
+
+  async switchGoal(goalId) {
+    const response = await fetch(`${API_BASE_URL}/users/goals/${goalId}/activate`, {
+      method: 'PUT',
+      headers: getAuthHeaders()
+    });
+    return handleResponse(response);
   }
 };
 
@@ -187,11 +211,8 @@ export const aiAPI = {
     return handleResponse(response);
   },
 
-  async tts(text, voice = null) {
-    const body = { text };
-    if (voice) {
-        body.voice = voice;
-    }
+  async tts(text, voice = 'Serena') {
+    const body = { text, voice };
 
     const response = await fetch(`${API_BASE_URL}/ai/tts`, {
       method: 'POST',

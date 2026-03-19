@@ -1386,6 +1386,52 @@ async def generate_scenarios(payload: dict = Body(...)):
         from fastapi import HTTPException
         raise HTTPException(status_code=500, detail="场景生成失败，请重试")
 
+# ---------------------------------------------------------------------------
+# POST /tts  (proxied from /api/ai/tts via Nginx)
+# ---------------------------------------------------------------------------
+from fastapi.responses import Response as FastAPIResponse
+
+@app.post("/tts")
+async def text_to_speech(payload: dict = Body(...)):
+    """Synthesize speech via Qwen3-TTS — supports 10 languages + mixed text."""
+    text = (payload.get("text") or "").strip()[:500]
+    voice = (payload.get("voice") or "Serena").strip()
+
+    if not text:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=400, detail="Missing text")
+
+    ds_api_key = os.getenv("QWEN3_OMNI_API_KEY") or os.getenv("DASHSCOPE_API_KEY")
+    if not ds_api_key:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=503, detail="AI service not configured")
+
+    try:
+        def _synth():
+            dashscope.api_key = ds_api_key
+            response = dashscope.MultiModalConversation.call(
+                model="qwen3-tts-flash",
+                text=text,
+                voice=voice,
+            )
+            if not response or response.status_code != 200:
+                raise RuntimeError(f"TTS API error: {getattr(response, 'status_code', 'unknown')}")
+            audio_url = response.output.get("audio", {}).get("url")
+            if not audio_url:
+                raise RuntimeError("No audio URL in response")
+            import urllib.request
+            with urllib.request.urlopen(audio_url, timeout=15) as f:
+                return f.read()
+
+        loop = asyncio.get_event_loop()
+        audio_bytes = await loop.run_in_executor(None, _synth)
+        return FastAPIResponse(content=audio_bytes, media_type="audio/wav")
+    except Exception as e:
+        logger.error(f"[tts] synthesis failed: {e}")
+        from fastapi import HTTPException
+        raise HTTPException(status_code=500, detail="语音合成失败")
+
+
 if __name__ == "__main__":
     import uvicorn
 
