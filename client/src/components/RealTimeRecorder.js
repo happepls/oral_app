@@ -1,5 +1,29 @@
 import React, { useState, useRef, useEffect, useImperativeHandle, forwardRef } from 'react';
 
+const BAR_COUNT = 32;
+
+/** Generate waveform bar heights (0-100) driven by real audio level */
+const generateBars = (level, prevBars) => {
+  const t = Date.now() / 1000;
+  return Array.from({ length: BAR_COUNT }, (_, i) => {
+    // Organic multi-frequency movement per bar
+    const organic =
+      Math.sin(t * 4.2 + i * 0.65) * 0.35 +
+      Math.sin(t * 2.7 + i * 1.20) * 0.25 +
+      Math.sin(t * 1.3 + i * 0.40) * 0.15 +
+      0.75;                          // bias so organic ∈ [0.0, 1.5] approx
+
+    const clamped = Math.max(0, Math.min(1, organic));
+    const minH = 6;
+    const maxH = 88;
+
+    // At silence: tiny organic jitter (minH + small range)
+    // When loud:  full-height bars scaled by organic per-bar variance
+    const h = minH + (maxH - minH) * level * clamped + (1 - level) * clamped * 6;
+    return Math.round(Math.max(minH, Math.min(maxH, h)));
+  });
+};
+
 const RealTimeRecorder = forwardRef(({
   isConnected,
   onStart,
@@ -12,88 +36,57 @@ const RealTimeRecorder = forwardRef(({
   const [recordingTime, setRecordingTime] = useState(0);
   const [audioLevel, setAudioLevel] = useState(0);
   const [showControls, setShowControls] = useState(false);
+  const [waveformBars, setWaveformBars] = useState(Array(BAR_COUNT).fill(6));
 
-  const audioContextRef = useRef(null);
-  const analyserRef = useRef(null);
-  const audioWorkletNodeRef = useRef(null);
-  const audioStreamRef = useRef(null);
-  const isCancelledRef = useRef(false);
-  const isStartingRef = useRef(false);
+  const audioContextRef       = useRef(null);
+  const analyserRef           = useRef(null);
+  const audioWorkletNodeRef   = useRef(null);
+  const audioStreamRef        = useRef(null);
+  const isCancelledRef        = useRef(false);
+  const isStartingRef         = useRef(false);
   const recordingStartTimeRef = useRef(null);
-  const timerIntervalRef = useRef(null);
-  const animationFrameRef = useRef(null);
-  const audioBufferRef = useRef([]); // 缓存音频数据
+  const timerIntervalRef      = useRef(null);
+  const waveformRafRef        = useRef(null);   // dedicated RAF for waveform+level loop
+  const audioBufferRef        = useRef([]);
   const recordingSessionIdRef = useRef(null);
-
-  // Update onAudioData ref when prop changes
-  useEffect(() => {
-  }, []);
-
-  useImperativeHandle(ref, () => ({
-    startRecording: () => {
-      if (!isRecording && !isStartingRef.current) startRecording();
-    },
-    stopRecording: () => {
-      if (isRecording) return getAndClearAudioBuffer();
-    },
-    cancelRecording: () => {
-      internalCancelRecording();
-    },
-    getSessionId: () => recordingSessionIdRef.current,
-    setSessionId: (sessionId) => {
-      recordingSessionIdRef.current = sessionId;
-      console.log('🎤 Session ID set:', sessionId);
-    },
-    clearSessionId: () => {
-      recordingSessionIdRef.current = null;
-      console.log('🎤 Session ID cleared');
-    }
-  }));
+  const audioLevelRef         = useRef(0);      // live level accessible inside RAF
 
   useEffect(() => {
     return () => {
       cleanupAudioResources();
-      if (timerIntervalRef.current) {
-        clearInterval(timerIntervalRef.current);
-      }
-      if (animationFrameRef.current) {
-        cancelAnimationFrame(animationFrameRef.current);
-      }
+      if (timerIntervalRef.current) clearInterval(timerIntervalRef.current);
+      if (waveformRafRef.current) cancelAnimationFrame(waveformRafRef.current);
     };
   }, []);
 
+  useImperativeHandle(ref, () => ({
+    startRecording:  () => { if (!isRecording && !isStartingRef.current) startRecording(); },
+    stopRecording:   () => { if (isRecording) return getAndClearAudioBuffer(); },
+    cancelRecording: () => { internalCancelRecording(); },
+    getSessionId:    () => recordingSessionIdRef.current,
+    setSessionId:    (id) => { recordingSessionIdRef.current = id; },
+    clearSessionId:  () => { recordingSessionIdRef.current = null; }
+  }));
+
   const cleanupAudioResources = () => {
-    if (audioWorkletNodeRef.current) {
-      audioWorkletNodeRef.current.disconnect();
-      audioWorkletNodeRef.current = null;
-    }
-    if (audioContextRef.current) {
-      audioContextRef.current.close();
-      audioContextRef.current = null;
-    }
-    if (audioStreamRef.current) {
-      audioStreamRef.current.getTracks().forEach(track => track.stop());
-      audioStreamRef.current = null;
-    }
-    if (analyserRef.current) {
-      analyserRef.current = null;
-    }
+    if (audioWorkletNodeRef.current) { audioWorkletNodeRef.current.disconnect(); audioWorkletNodeRef.current = null; }
+    if (audioContextRef.current)     { audioContextRef.current.close();          audioContextRef.current = null; }
+    if (audioStreamRef.current)      { audioStreamRef.current.getTracks().forEach(t => t.stop()); audioStreamRef.current = null; }
+    analyserRef.current = null;
   };
 
-  // 获取并清空音频缓冲区
   const getAndClearAudioBuffer = () => {
-    const buffer = [...audioBufferRef.current];
-    audioBufferRef.current = []; // 清空缓冲区
-    console.log('🎤 Retrieved and cleared audio buffer, size:', buffer.length);
-    return buffer;
+    const buf = [...audioBufferRef.current];
+    audioBufferRef.current = [];
+    return buf;
   };
 
   const formatTime = (ms) => {
-    const totalSeconds = Math.floor(ms / 1000);
-    const minutes = Math.floor(totalSeconds / 60);
-    const seconds = totalSeconds % 60;
-    const centiseconds = Math.floor((ms % 1000) / 10);
-    return `${minutes}:${seconds.toString().padStart(2, '0')},${centiseconds.toString().padStart(2, '0')}`;
+    const s   = Math.floor(ms / 1000);
+    const min = Math.floor(s / 60);
+    const sec = s % 60;
+    const cs  = Math.floor((ms % 1000) / 10);
+    return `${min}:${sec.toString().padStart(2, '0')},${cs.toString().padStart(2, '0')}`;
   };
 
   const startTimer = () => {
@@ -105,255 +98,195 @@ const RealTimeRecorder = forwardRef(({
   };
 
   const stopTimer = () => {
-    if (timerIntervalRef.current) {
-      clearInterval(timerIntervalRef.current);
-      timerIntervalRef.current = null;
-    }
+    if (timerIntervalRef.current) { clearInterval(timerIntervalRef.current); timerIntervalRef.current = null; }
   };
 
-  const monitorAudioLevel = () => {
+  /** Single RAF loop: reads audio level AND updates waveform bars */
+  const startWaveformLoop = () => {
     if (!analyserRef.current) return;
-
     const dataArray = new Uint8Array(analyserRef.current.frequencyBinCount);
-    analyserRef.current.getByteFrequencyData(dataArray);
 
-    // Calculate average audio level
-    const sum = dataArray.reduce((a, b) => a + b, 0);
-    const average = sum / dataArray.length;
-    const normalizedLevel = Math.min(1, average / 128);
+    const loop = () => {
+      if (!analyserRef.current) return;
 
-    setAudioLevel(normalizedLevel);
+      analyserRef.current.getByteFrequencyData(dataArray);
+      const sum = dataArray.reduce((a, b) => a + b, 0);
+      const avg = sum / dataArray.length;
+      const level = Math.min(1, avg / 80); // /80 makes it more sensitive than /128
+      audioLevelRef.current = level;
+      setAudioLevel(level);
+      setWaveformBars(prev => generateBars(level, prev));
 
-    animationFrameRef.current = requestAnimationFrame(monitorAudioLevel);
+      waveformRafRef.current = requestAnimationFrame(loop);
+    };
+
+    waveformRafRef.current = requestAnimationFrame(loop);
+  };
+
+  const stopWaveformLoop = () => {
+    if (waveformRafRef.current) {
+      cancelAnimationFrame(waveformRafRef.current);
+      waveformRafRef.current = null;
+    }
+    setAudioLevel(0);
+    setWaveformBars(Array(BAR_COUNT).fill(6));
   };
 
   const startRecording = async () => {
     if (isStartingRef.current) return;
-
-    // Check if connected before starting
-    if (!isConnected) {
-      alert('AI 导师尚未连接，请稍后再试');
-      return;
-    }
+    if (!isConnected) { alert('AI 导师尚未连接，请稍后再试'); return; }
 
     isStartingRef.current = true;
-
-    // CRITICAL: Reset cancelled flag at the very beginning
     isCancelledRef.current = false;
-    console.log('🎤 Recording starting, cancelled flag reset');
 
-    // Generate session ID immediately so it's available when audio data arrives
     const sessionId = Date.now().toString(36) + Math.random().toString(36).substr(2);
     recordingSessionIdRef.current = sessionId;
-    console.log('🎤 Session ID generated:', sessionId);
 
     try {
-      // Get user media with optimized constraints
       const stream = await navigator.mediaDevices.getUserMedia({
         audio: {
-          echoCancellation: true,
-          noiseSuppression: true,
-          autoGainControl: true,
-          channelCount: 1,
-          sampleRate: 16000,
-          latency: 0.01,
-          googEchoCancellation: true,
-          googNoiseSuppression: true,
-          googAutoGainControl: true,
-          googHighpassFilter: false,
-          googTypingNoiseDetection: false
+          echoCancellation: true, noiseSuppression: true, autoGainControl: true,
+          channelCount: 1, sampleRate: 16000, latency: 0.01
         }
       });
       audioStreamRef.current = stream;
 
-      // Create audio context with optimized settings
       const audioContext = new (window.AudioContext || window.webkitAudioContext)({
-        sampleRate: 16000,
-        latencyHint: 'interactive',
-        bufferSize: 256
+        sampleRate: 16000, latencyHint: 'interactive'
       });
       audioContextRef.current = audioContext;
 
-      // Create analyser for real-time audio level monitoring
       const analyser = audioContext.createAnalyser();
       analyser.fftSize = 256;
+      analyser.smoothingTimeConstant = 0.75; // smooth out spikes
       analyserRef.current = analyser;
 
       const source = audioContext.createMediaStreamSource(stream);
       source.connect(analyser);
 
-      // Load optimized audio processor
       await audioContext.audioWorklet.addModule('/recorder-processor-optimized.js');
-
-      const audioWorkletNode = new AudioWorkletNode(audioContext, 'recorder-processor-optimized', {
-        processorOptions: {
-          bufferSize: 800,
-          energyThreshold: 0.02,
-          enableVAD: true
-        }
+      const workletNode = new AudioWorkletNode(audioContext, 'recorder-processor-optimized', {
+        processorOptions: { bufferSize: 800, energyThreshold: 0.02, enableVAD: true }
       });
-      audioWorkletNodeRef.current = audioWorkletNode;
+      audioWorkletNodeRef.current = workletNode;
+      analyser.connect(workletNode);
 
-      // Connect worklet for audio processing
-      analyser.connect(audioWorkletNode);
-
-      // Handle messages from audio worklet
-      audioWorkletNode.port.onmessage = (event) => {
-        if (isCancelledRef.current) {
-          console.log('Audio worklet message ignored (cancelled)');
-          return;
-        }
-
-        const data = event.data;
-        console.log('Audio worklet message received:', data?.type);
-
-        if (data.type === 'speech_start') {
-          console.log('Speech detected, energy:', data.energy);
-        } else if (data.type === 'speech_end') {
-          console.log('Speech ended, energy:', data.energy);
-        } else if (data.type === 'audio_data') {
-          console.log('Audio worklet sent audio_data:', data.buffer?.length, 'bytes');
-          // 缓存音频数据而不是立即发送
-          audioBufferRef.current.push(data.buffer);
-          console.log('Audio data cached, total buffers:', audioBufferRef.current.length);
+      workletNode.port.onmessage = (event) => {
+        if (isCancelledRef.current) return;
+        const { type, buffer } = event.data;
+        if (type === 'audio_data') {
+          audioBufferRef.current.push(buffer);
         }
       };
 
-      // Start monitoring audio level for waveform visualization
-      monitorAudioLevel();
+      // Start single unified waveform + level loop
+      startWaveformLoop();
 
       setIsRecording(true);
       setShowControls(true);
       isStartingRef.current = false;
-
       startTimer();
-
       if (onStart) onStart();
 
     } catch (error) {
-      console.error('Error starting recording:', error);
       isStartingRef.current = false;
       setShowControls(false);
-
-      let errorMessage = '无法启动录音';
-      if (error.name === 'NotAllowedError') {
-        errorMessage = '需要麦克风权限才能录音';
-      } else if (error.name === 'NotFoundError') {
-        errorMessage = '未找到麦克风设备';
-      } else if (error.name === 'NotReadableError') {
-        errorMessage = '麦克风被其他应用占用';
-      }
-
-      alert(errorMessage);
+      let msg = '无法启动录音';
+      if (error.name === 'NotAllowedError') msg = '需要麦克风权限才能录音';
+      else if (error.name === 'NotFoundError') msg = '未找到麦克风设备';
+      else if (error.name === 'NotReadableError') msg = '麦克风被其他应用占用';
+      alert(msg);
     }
   };
 
   const stopRecording = () => {
+    stopWaveformLoop();
     cleanupAudioResources();
     stopTimer();
     setIsRecording(false);
     setShowControls(false);
     setRecordingTime(0);
-    setAudioLevel(0);
     isStartingRef.current = false;
-
-    // Get buffered audio data
-    const audioBuffers = getAndClearAudioBuffer();
-    
-    // Call parent handler with buffered audio
-    if (onStop) onStop(audioBuffers);
+    const buffers = getAndClearAudioBuffer();
+    if (onStop) onStop(buffers);
   };
 
   const internalCancelRecording = () => {
     isCancelledRef.current = true;
-    recordingSessionIdRef.current = null; // Clear session ID to prevent audio data from being sent
-    audioBufferRef.current = []; // 清空音频缓冲区
-    console.log('🎤 Cancelled: cleared audio buffer');
+    recordingSessionIdRef.current = null;
+    audioBufferRef.current = [];
+    stopWaveformLoop();
     cleanupAudioResources();
     stopTimer();
     setIsRecording(false);
     setShowControls(false);
     setRecordingTime(0);
-    setAudioLevel(0);
     isStartingRef.current = false;
-
-    // Removed onCancel callback to prevent infinite loop with parent component
   };
 
-  // Generate dynamic waveform bars based on audio level
-  const generateWaveformBars = () => {
-    const numBars = 20;
-    const bars = [];
-    for (let i = 0; i < numBars; i++) {
-      // Create a wave pattern that responds to audio level
-      const waveHeight = Math.sin((i / numBars) * Math.PI * 2 + Date.now() / 100) * 0.5 + 0.5;
-      const height = Math.max(10, Math.min(100, (waveHeight * 0.5 + 0.5) * audioLevel * 100));
-      bars.push(height);
-    }
-    return bars;
+  // Bar color: interpolate from indigo-400 (silence) → rose-500 (loud)
+  const barColor = (idx) => {
+    const level = audioLevelRef.current;
+    if (level < 0.15) return '#818cf8';      // indigo-400
+    if (level < 0.45) return '#a78bfa';      // violet-400
+    if (level < 0.70) return '#f472b6';      // pink-400
+    return '#f43f5e';                        // rose-500
   };
-
-  const [waveformHeights, setWaveformHeights] = useState(Array(20).fill(30));
-
-  // Update waveform animation
-  useEffect(() => {
-    if (isRecording) {
-      const updateWaveform = () => {
-        setWaveformHeights(generateWaveformBars());
-        animationFrameRef.current = requestAnimationFrame(updateWaveform);
-      };
-      updateWaveform();
-    } else {
-      setWaveformHeights(Array(20).fill(30));
-    }
-
-    return () => {
-      if (animationFrameRef.current) {
-        cancelAnimationFrame(animationFrameRef.current);
-      }
-    };
-  }, [isRecording, audioLevel]);
 
   return (
-    <div className="flex flex-col items-center gap-3 w-full">
+    <div className="flex flex-col items-center gap-2 w-full">
       {isRecording && showControls ? (
-        // Recording controls UI
-        <div className="flex items-center gap-3 w-full max-w-xs">
-          {/* Timer display */}
-          <div className="flex-1 bg-white dark:bg-slate-800 rounded-full px-4 py-3 flex items-center gap-2 shadow-lg">
-            <div className="flex gap-0.5 items-center flex-grow">
-              {waveformHeights.map((height, idx) => (
+        <div className="flex items-center gap-2 w-full">
+
+          {/* Waveform + timer pill */}
+          <div className="flex-1 bg-slate-900 dark:bg-slate-800 rounded-2xl px-4 py-3 flex items-center gap-3 shadow-xl border border-slate-700/60 overflow-hidden">
+
+            {/* Waveform bars */}
+            <div className="flex items-center gap-[2px] flex-1 h-10">
+              {waveformBars.map((h, idx) => (
                 <div
                   key={idx}
-                  className="w-1 bg-red-500 rounded-full transition-all duration-75"
-                  style={{ height: `${height}%`, minHeight: '4px' }}
+                  style={{
+                    height: `${h}%`,
+                    minHeight: '3px',
+                    backgroundColor: barColor(idx),
+                    borderRadius: '9999px',
+                    flex: '1',
+                    transition: 'height 60ms ease-out, background-color 200ms ease',
+                  }}
                 />
               ))}
             </div>
-            <span className="text-lg font-mono font-medium text-slate-800 dark:text-slate-200 min-w-[80px] text-right">
-              {formatTime(recordingTime)}
-            </span>
-            <div className="w-2 h-2 bg-red-500 rounded-full animate-pulse"></div>
+
+            {/* Timer + pulse dot */}
+            <div className="flex items-center gap-1.5 shrink-0">
+              <div className="w-2 h-2 rounded-full bg-rose-500 animate-pulse" />
+              <span className="text-sm font-mono font-semibold text-white tabular-nums">
+                {formatTime(recordingTime)}
+              </span>
+            </div>
           </div>
 
-          {/* Cancel button */}
+          {/* Cancel */}
           <button
             onClick={internalCancelRecording}
-            className="w-14 h-14 bg-white dark:bg-slate-700 rounded-full flex items-center justify-center shadow-lg hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors"
+            className="w-12 h-12 bg-slate-800 dark:bg-slate-700 border border-slate-600 rounded-2xl flex items-center justify-center shadow-lg hover:bg-red-900/40 hover:border-red-500/60 transition-colors shrink-0"
+            title="取消"
           >
-            <span className="material-symbols-outlined text-red-500 text-2xl">delete</span>
+            <span className="material-symbols-outlined text-red-400 text-xl">delete</span>
           </button>
 
-          {/* Send button */}
+          {/* Send */}
           <button
             onClick={stopRecording}
-            className="w-14 h-14 bg-blue-500 rounded-full flex items-center justify-center shadow-lg hover:bg-blue-600 transition-colors"
+            className="w-12 h-12 bg-indigo-500 hover:bg-indigo-600 rounded-2xl flex items-center justify-center shadow-lg transition-colors shrink-0"
+            title="发送"
           >
-            <span className="material-symbols-outlined text-white text-2xl">send</span>
+            <span className="material-symbols-outlined text-white text-xl">send</span>
           </button>
         </div>
       ) : (
-        // Default microphone button - compact size matching avatar
+        /* Idle: mic button */
         <button
           onClick={startRecording}
           disabled={!isConnected}
@@ -369,7 +302,7 @@ const RealTimeRecorder = forwardRef(({
         </button>
       )}
 
-      <p className="text-xs text-slate-400 dark:text-slate-500 text-center min-h-[20px]">
+      <p className="text-xs text-slate-400 dark:text-slate-500 text-center min-h-[18px]">
         {isRecording && showControls ? '点击取消或发送' : !isConnected ? '连接中...' : '点击说话'}
       </p>
     </div>

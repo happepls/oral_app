@@ -1,37 +1,51 @@
-FROM node:18-alpine
+# ============================================================
+# Stage 1: Builder — install all deps & compile React app
+# ============================================================
+FROM node:18-alpine AS builder
 
 WORKDIR /app
 
-# Configure faster Alpine mirrors
+# Faster Alpine mirrors
 RUN sed -i 's/dl-cdn.alpinelinux.org/mirrors.aliyun.com/g' /etc/apk/repositories
 
-# Install minimal build dependencies
-RUN apk add --no-cache curl
-
-# Use build arguments for environment variables
-ARG REACT_APP_API_URL
+# Build-time env vars (injected by docker-compose args)
+ARG REACT_APP_API_URL=/api
 ARG REACT_APP_API_GATEWAY
 
-# Create .env file with build args
-RUN echo "REACT_APP_API_URL=$REACT_APP_API_URL" > .env && \
-    echo "REACT_APP_API_GATEWAY=$REACT_APP_API_GATEWAY" >> .env
-
-# Copy package files FIRST (better layer caching)
+# --- Layer 1: deps (only invalidated when package*.json changes) ---
 COPY package*.json ./
+RUN npm ci && npm cache clean --force
 
-# Install dependencies (this layer will be cached if packages don't change)
-RUN npm ci && \
-    npm cache clean --force
-
-# Copy source code (changes here won't invalidate npm layer)
+# --- Layer 2: source (invalidated only when source changes) ---
+COPY config-overrides.js ./
 COPY public/ ./public/
 COPY src/ ./src/
-COPY .dockerignore ./
-COPY server.js ./
-COPY *.json ./
 
-# Build the application
+# Write env AFTER npm install so ARG changes don't bust the dep layer
+RUN echo "REACT_APP_API_URL=${REACT_APP_API_URL}" > .env && \
+    echo "REACT_APP_API_GATEWAY=${REACT_APP_API_GATEWAY}" >> .env
+
 RUN npm run build
+
+# ============================================================
+# Stage 2: Runner — only production deps + compiled assets
+# ============================================================
+FROM node:18-alpine AS runner
+
+WORKDIR /app
+
+# Faster Alpine mirrors
+RUN sed -i 's/dl-cdn.alpinelinux.org/mirrors.aliyun.com/g' /etc/apk/repositories
+
+# Install ONLY runtime deps (express, http-proxy-middleware)
+COPY package*.json ./
+RUN npm ci --omit=dev && npm cache clean --force
+
+# Copy compiled React build from builder stage
+COPY --from=builder /app/build ./build
+
+# Copy Express proxy server
+COPY server.js ./
 
 EXPOSE 5001
 
