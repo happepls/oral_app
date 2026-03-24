@@ -133,6 +133,7 @@ class ProficiencyScoringWorkflow:
         target_language = current_task.get("target_language", "English")
         if not target_language:
             target_language = "English"
+        print(f"[DEBUG] target_language received: '{target_language}'")
 
         # Fluency: 基于回复长度、停顿次数
         scores["fluency"] = self._score_fluency(recent_turns)
@@ -358,6 +359,7 @@ class ProficiencyScoringWorkflow:
 
         # 使用动态生成的场景关键词（这是主要匹配依据，支持任何语言）
         scene_keywords = self._get_scene_keywords(scenario_title, task_desc, target_language)
+        print(f"[DEBUG] scene_keywords for lang='{target_language}': {scene_keywords}")
 
         # 获取用户对话内容（转为小写用于匹配）
         user_content = " ".join(
@@ -369,27 +371,31 @@ class ProficiencyScoringWorkflow:
         if not user_content:
             return {"score": score, "suggested_keywords": scene_keywords[:5], "matched_keywords": matched_keywords}
 
-        # 1. 从任务描述中提取任务特定关键词（支持任何语言）
-        task_keywords_en = set(re.findall(r'\b[a-zA-Z]{3,}\b', task_desc.lower()))
-        task_keywords_generic = set(task_desc.lower().split())
-        task_keywords = task_keywords_en | task_keywords_generic
-        # 过滤掉太短的词（<3 字符）和无意义词（中英文停用词）
-        stop_words = {'the', 'a', 'an', 'is', 'are', 'was', 'were', 'be', 'been', 'being',
-                      'have', 'has', 'had', 'do', 'does', 'did', 'will', 'would', 'could',
-                      'should', 'may', 'might', 'must', 'shall', 'can', 'need', 'dare',
-                      'ought', 'used', 'to', 'of', 'in', 'for', 'on', 'with', 'at', 'by',
-                      'from', 'as', 'into', 'through', 'during', 'before', 'after', 'above',
-                      'below', 'between', 'under', 'again', 'further', 'then', 'once', '的',
-                      '了', '在', '是', '我', '有', '和', '就', '不', '人', '都', '一', '一个'}
-        task_keywords = {kw for kw in task_keywords if len(kw) >= 3 and kw not in stop_words}
+        # 1. 从任务描述中提取任务特定关键词
+        # 非英语时英文正则提取结果为空，跳过无意义的提取，直接依赖 scene_keywords
+        if not target_language or target_language.lower() == "english":
+            task_keywords_en = set(re.findall(r'\b[a-zA-Z]{3,}\b', task_desc.lower()))
+            task_keywords_generic = set(task_desc.lower().split())
+            task_keywords = task_keywords_en | task_keywords_generic
+            stop_words = {'the', 'a', 'an', 'is', 'are', 'was', 'were', 'be', 'been', 'being',
+                          'have', 'has', 'had', 'do', 'does', 'did', 'will', 'would', 'could',
+                          'should', 'may', 'might', 'must', 'shall', 'can', 'need', 'dare',
+                          'ought', 'used', 'to', 'of', 'in', 'for', 'on', 'with', 'at', 'by',
+                          'from', 'as', 'into', 'through', 'during', 'before', 'after', 'above',
+                          'below', 'between', 'under', 'again', 'further', 'then', 'once', '的',
+                          '了', '在', '是', '我', '有', '和', '就', '不', '人', '都', '一', '一个'}
+            task_keywords = {kw for kw in task_keywords if len(kw) >= 3 and kw not in stop_words}
+        else:
+            task_keywords = set()
 
-        # 2. 如果任务描述是中文，尝试匹配预定义的任务特定关键词
+        # 2. 获取任务特定关键词（英语时走预定义映射，非英语返回空集合让 scene_keywords 主导）
         task_specific_keywords = await self._get_task_specific_keywords(
-            task_desc, 
+            task_desc,
             scenario_title,
             current_task.get("id"),
             None,  # user_id - 暂不需要
-            None   # token - 暂不需要
+            None,  # token - 暂不需要
+            target_language
         )
         
         # 定义通用礼貌用语（这些词不应该作为任务相关性评分依据）
@@ -482,11 +488,16 @@ class ProficiencyScoringWorkflow:
             "matched_keywords": matched_keywords + matched_scene_keywords_list
         }
 
-    async def _get_task_specific_keywords(self, task_desc: str, scenario_title: str, task_id: int = None, user_id: str = None, token: str = None) -> List[str]:
+    async def _get_task_specific_keywords(self, task_desc: str, scenario_title: str, task_id: int = None, user_id: str = None, token: str = None, target_language: str = "English") -> List[str]:
         """根据任务描述获取任务特定关键词 - 从 user-service API 读取"""
         import os
         import httpx
-        
+
+        # 非英语时，硬编码的英文关键词无法匹配用户输入，直接返回空集合
+        # 让 scene_keywords（AI 动态生成的目标语言关键词）承担主要匹配
+        if target_language and target_language.lower() != "english":
+            return []
+
         # 优先从 user-service API 获取关键词
         if task_id and user_id and token:
             try:
@@ -1105,61 +1116,66 @@ class ProficiencyScoringWorkflow:
             "weather": ["weather", "sunny", "rainy", "cloudy", "temperature", "forecast", "wind", "nice day", "beautiful day", "hot", "cold", "warm", "cool", "raining", "snowing"],
         }
 
-        # 步骤1: 首先检查任务描述关键词映射（最优先）
-        # 这用于处理"日常问候"场景下的"聊聊天气"这类子任务
-        for task_key, keywords in task_desc_keywords_map.items():
-            if task_key in task_lower:
-                # 找到了任务描述中的具体场景关键词
-                unique_keywords = list(dict.fromkeys(keywords))
+        # 步骤1: 仅英语时使用硬编码映射表；非英语直接走 AI 生成路径
+        if not target_language or target_language.lower() == "english":
+            # 步骤1a: 首先检查任务描述关键词映射（最优先）
+            # 这用于处理"日常问候"场景下的"聊聊天气"这类子任务
+            for task_key, keywords in task_desc_keywords_map.items():
+                if task_key in task_lower:
+                    # 找到了任务描述中的具体场景关键词
+                    unique_keywords = list(dict.fromkeys(keywords))
+                    self._keyword_cache[cache_key] = unique_keywords[:15]
+                    return unique_keywords[:15]
+
+            # 步骤1b: 尝试匹配场景关键词映射
+            # 任务描述优先：如果任务描述中包含具体场景关键词（如"天气"），优先使用该场景
+            task_specific_matched_keywords = []
+            scenario_matched_keywords = []
+            combined_matched_keywords = []
+
+            for scene_key, keywords in scene_keywords_map.items():
+                # 首先检查任务描述中是否包含具体场景关键词
+                if scene_key in task_lower:
+                    task_specific_matched_keywords.extend(keywords)
+                # 然后检查场景标题
+                elif scene_key in scenario_lower:
+                    scenario_matched_keywords.extend(keywords)
+                # 最后检查组合
+                elif scene_key in combined:
+                    combined_matched_keywords.extend(keywords)
+
+            # 优先使用任务描述匹配到的关键词（更具体）
+            if task_specific_matched_keywords:
+                unique_keywords = list(dict.fromkeys(task_specific_matched_keywords))
                 self._keyword_cache[cache_key] = unique_keywords[:15]
                 return unique_keywords[:15]
-        
-        # 步骤2: 尝试匹配场景关键词映射
-        # 任务描述优先：如果任务描述中包含具体场景关键词（如"天气"），优先使用该场景
-        task_specific_matched_keywords = []
-        scenario_matched_keywords = []
-        combined_matched_keywords = []
-        
-        for scene_key, keywords in scene_keywords_map.items():
-            # 首先检查任务描述中是否包含具体场景关键词
-            if scene_key in task_lower:
-                task_specific_matched_keywords.extend(keywords)
-            # 然后检查场景标题
-            elif scene_key in scenario_lower:
-                scenario_matched_keywords.extend(keywords)
-            # 最后检查组合
-            elif scene_key in combined:
-                combined_matched_keywords.extend(keywords)
-        
-        # 优先使用任务描述匹配到的关键词（更具体）
-        if task_specific_matched_keywords:
-            unique_keywords = list(dict.fromkeys(task_specific_matched_keywords))
-            self._keyword_cache[cache_key] = unique_keywords[:15]
-            return unique_keywords[:15]
-        
-        # 如果任务描述没有匹配到，使用场景标题匹配的关键词
-        if scenario_matched_keywords:
-            unique_keywords = list(dict.fromkeys(scenario_matched_keywords))
-            self._keyword_cache[cache_key] = unique_keywords[:15]
-            return unique_keywords[:15]
-        
-        # 最后尝试组合匹配（兼容旧逻辑）
-        if combined_matched_keywords:
-            unique_keywords = list(dict.fromkeys(combined_matched_keywords))
-            self._keyword_cache[cache_key] = unique_keywords[:15]
-            return unique_keywords[:15]
+
+            # 如果任务描述没有匹配到，使用场景标题匹配的关键词
+            if scenario_matched_keywords:
+                unique_keywords = list(dict.fromkeys(scenario_matched_keywords))
+                self._keyword_cache[cache_key] = unique_keywords[:15]
+                return unique_keywords[:15]
+
+            # 最后尝试组合匹配（兼容旧逻辑）
+            if combined_matched_keywords:
+                unique_keywords = list(dict.fromkeys(combined_matched_keywords))
+                self._keyword_cache[cache_key] = unique_keywords[:15]
+                return unique_keywords[:15]
 
         # 尝试 AI 动态生成
         try:
             import httpx
             import os
 
-            prompt = f"""You are a language teaching expert for {target_language}. For the following speaking practice scenario and task, generate 10-15 essential keywords/phrases in {target_language}.
+            prompt = f"""You are a language teaching expert. Generate 10-15 essential keywords/phrases for a speaking practice task.
+
+CRITICAL: You MUST output ALL keywords in {target_language} ONLY. Do NOT use English unless {target_language} is English.
 
 Scenario: {scenario_title or "General Conversation"}
 Task: {task_desc or f"Practice speaking {target_language}"}
+Target Language: {target_language}
 
-Return ONLY a JSON array: ["keyword1", "keyword2", ...]"""
+Return ONLY a JSON array of {target_language} keywords/phrases: ["keyword1", "keyword2", ...]"""
 
             api_key = os.getenv("QWEN3_OMNI_API_KEY")
             if api_key:
@@ -1183,9 +1199,11 @@ Return ONLY a JSON array: ["keyword1", "keyword2", ...]"""
                         keywords = json.loads(json_match.group())
                         keywords = [kw.strip().lower() for kw in keywords if isinstance(kw, str) and len(kw) > 1]
                         if keywords:
+                            print(f"[DEBUG] AI keywords for lang='{target_language}': {keywords[:15]}")
                             self._keyword_cache[cache_key] = keywords[:15]
                             return keywords[:15]
         except Exception as e:
+            print(f"[DEBUG] AI keyword generation failed: {e}")
             pass  # AI 调用失败，使用 fallback
 
         # Fallback: 从文本提取关键词
@@ -1205,9 +1223,15 @@ Return ONLY a JSON array: ["keyword1", "keyword2", ...]"""
 
         if not text:
             return default_fallback
-        
+
+        # 非英语时提取 CJK/非ASCII 词（日语/中文/韩文字符），提取不到再用 default_fallback
+        if target_language.lower() != "english":
+            cjk_words = re.findall(r'[\u3040-\u9fff\uac00-\ud7af\u4e00-\u9fff]+', text)
+            unique_cjk = list(dict.fromkeys(cjk_words))
+            return unique_cjk[:10] if unique_cjk else default_fallback
+
         text_lower = text.lower()
-        
+
         # 提取实词（名词、动词、形容词）
         words = re.findall(r'\b[a-zA-Z]{3,}\b', text_lower)
         stop_words = {
@@ -1217,7 +1241,7 @@ Return ONLY a JSON array: ["keyword1", "keyword2", ...]"""
             'practice', 'scenario', 'task', 'current', 'complete', 'finish'
         }
         keywords = [w for w in words if w not in stop_words]
-        
+
         # 去重并保持顺序
         unique_keywords = list(dict.fromkeys(keywords))
         return unique_keywords[:10] if unique_keywords else default_fallback

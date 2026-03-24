@@ -15,7 +15,7 @@ ARG REACT_APP_GOOGLE_CLIENT_ID
 
 # --- Layer 1: deps (only invalidated when package*.json changes) ---
 COPY package*.json ./
-RUN npm ci && npm cache clean --force
+RUN npm ci --legacy-peer-deps && npm cache clean --force
 
 # --- Layer 2: source (invalidated only when source changes) ---
 COPY config-overrides.js ./
@@ -41,7 +41,7 @@ RUN sed -i 's/dl-cdn.alpinelinux.org/mirrors.aliyun.com/g' /etc/apk/repositories
 
 # Install ONLY runtime deps (express, http-proxy-middleware)
 COPY package*.json ./
-RUN npm ci --omit=dev && npm cache clean --force
+RUN npm ci --omit=dev --legacy-peer-deps && npm cache clean --force
 
 # Copy compiled React build from builder stage
 COPY --from=builder /app/build ./build

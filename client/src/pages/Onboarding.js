@@ -1,10 +1,13 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { useTranslation } from 'react-i18next';
 import { useAuth } from '../contexts/AuthContext';
+import LanguageSwitcher from '../components/LanguageSwitcher';
 
 function Onboarding() {
   const navigate = useNavigate();
   const { user, loading, updateProfile } = useAuth();
+  const { t } = useTranslation();
   const [nickname, setNickname] = useState(user?.nickname || '');
   const [gender, setGender] = useState(user?.gender || '');
   const [nativeLanguage, setNativeLanguage] = useState(user?.native_language || 'Chinese');
@@ -24,23 +27,22 @@ function Onboarding() {
         'female': 0,
         'other': 2
       };
-      
-      const result = await updateProfile({ 
-          nickname, 
-          gender: genderMap[gender] !== undefined ? genderMap[gender] : null, 
-          native_language: nativeLanguage
+
+      const result = await updateProfile({
+        nickname,
+        gender: genderMap[gender] !== undefined ? genderMap[gender] : null,
+        native_language: nativeLanguage
       });
 
       if (result.success) {
-        setSuccess('个人资料更新成功！');
-        // Navigate to goal setting instead of discovery directly
+        setSuccess(t('onboarding_success'));
         setTimeout(() => navigate('/goal-setting'), 1000);
       } else {
-        setError(result.message || '更新失败');
+        setError(result.message || t('err_onboarding_default'));
       }
     } catch (err) {
       console.error(err);
-      setError(err.message || '网络或服务器错误，请稀后重试。');
+      setError(err.message || t('err_onboarding_default'));
     }
   };
 
@@ -48,8 +50,12 @@ function Onboarding() {
     <div className="relative flex min-h-screen w-full flex-col items-center bg-background-light dark:bg-background-dark p-4">
       <div className="flex w-full max-w-md flex-col items-center justify-center flex-grow">
         <div className="w-full px-4">
-          <h1 className="text-slate-900 dark:text-white text-3xl font-bold mb-2">完善您的个人资料</h1>
-          <p className="text-slate-600 dark:text-slate-400 mb-8">告诉我们您的语言背景，以便为您定制课程。</p>
+          <div className="flex justify-end mb-4">
+            <LanguageSwitcher />
+          </div>
+
+          <h1 className="text-slate-900 dark:text-white text-3xl font-bold mb-2">{t('onboarding_title')}</h1>
+          <p className="text-slate-600 dark:text-slate-400 mb-8">{t('onboarding_subtitle')}</p>
 
           <form onSubmit={handleSubmit} className="space-y-4">
             {error && (
@@ -65,7 +71,7 @@ function Onboarding() {
 
             <div>
               <label htmlFor="nickname" className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">
-                昵称
+                {t('nickname_label')}
               </label>
               <input
                 type="text"
@@ -80,7 +86,7 @@ function Onboarding() {
 
             <div>
               <label htmlFor="gender" className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">
-                性别
+                {t('gender_label')}
               </label>
               <select
                 id="gender"
@@ -89,16 +95,16 @@ function Onboarding() {
                 disabled={loading}
                 className="w-full px-4 py-3 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white focus:border-primary focus:ring-2 focus:ring-primary/50 outline-none disabled:opacity-50"
               >
-                <option value="">请选择</option>
-                <option value="male">男性</option>
-                <option value="female">女性</option>
-                <option value="other">其他</option>
+                <option value="">{t('gender_placeholder')}</option>
+                <option value="male">{t('gender_male')}</option>
+                <option value="female">{t('gender_female')}</option>
+                <option value="other">{t('gender_other')}</option>
               </select>
             </div>
 
             <div>
               <label htmlFor="nativeLanguage" className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">
-                母语
+                {t('native_language_label')}
               </label>
               <select
                 id="nativeLanguage"
@@ -109,9 +115,14 @@ function Onboarding() {
                 className="w-full px-4 py-3 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white focus:border-primary focus:ring-2 focus:ring-primary/50 outline-none disabled:opacity-50"
               >
                 <option value="Chinese">中文</option>
-                <option value="English">英语</option>
-                <option value="Japanese">日语</option>
-                <option value="French">法语</option>
+                <option value="English">English</option>
+                <option value="Japanese">日本語</option>
+                <option value="French">Français</option>
+                <option value="Spanish">Español</option>
+                <option value="Korean">한국어</option>
+                <option value="German">Deutsch</option>
+                <option value="Portuguese">Português</option>
+                <option value="Russian">Русский</option>
               </select>
             </div>
 
@@ -119,7 +130,7 @@ function Onboarding() {
               type="submit"
               disabled={loading}
               className="w-full mt-6 flex items-center justify-center rounded-lg h-12 px-5 bg-primary text-white text-base font-bold hover:bg-primary/90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
-              {loading ? '保存中...' : '下一步：设定目标'}
+              {loading ? t('onboarding_loading') : t('onboarding_submit')}
             </button>
           </form>
         </div>

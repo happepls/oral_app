@@ -5,10 +5,16 @@
 
 ## Backlog
 
-- [ ] [Frontend] 添加多语言界面支持
 - [ ] [Commercialization]  Defined a tiered subscription model (Freemium/Pro) and cost-per-minute unit economics for AI-driven oral practice.
-
+- [ ] [Feature]  Tell me a good way to plan a live activity for when I background the app.
+- [ ] [Security] JWT → httpOnly Cookie 迁移（需前后端协同，防 XSS token 窃取）
+- [ ] [Security] Conversation.js localStorage key 注入修复（encodeURIComponent + 已有数据迁移方案）
+- [ ] [Security] Stripe 重定向 URL 白名单（checkout.stripe.com 域名校验）
+- [ ] [Optimization] i18n 翻译懒加载（拆分 JSON 按需加载，减少初始包体 ~50KB）
+- [ ] [Testing] i18n 测试基础设施（i18next Provider wrapper + getInitialLanguage/COUNTRY_LANG_MAP/LanguageSwitcher 单元测试）
 ## Done
+
+- [x] [Frontend] 添加多语言界面支持（9语言 i18n + IP/浏览器语言自动检测 + LanguageSwitcher 组件）
 
 - [x] [Monitoring] 实现用户行为分析和性能指标收集 (Added Nginx logging and stats API)
 - [x] [Frontend] Profile 页面数据对接：将静态展示替换为真实用户的动态个人资料 (Integrated with history-analytics-service)

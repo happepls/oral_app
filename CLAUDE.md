@@ -26,8 +26,9 @@ cd services/<service-name> && npm install   # only needed once locally
 docker compose up -d --build <service-name>
 ```
 
-> Exception: `client/Dockerfile.prod` uses `npm ci` in a multi-stage build and is
-> intentionally kept as-is for production frontend image reproducibility.
+> Exception: `client/Dockerfile.prod` uses `npm ci --legacy-peer-deps` in a multi-stage build.
+> The `--legacy-peer-deps` flag is required due to peer dependency conflicts introduced by
+> `react-i18next` / `i18next` vs `react-scripts@5`. Do NOT remove it.
 
 ## Commands
 
@@ -124,6 +125,19 @@ User speaks → ai-omni-service (DashScope Qwen3-Omni streaming)
 - **Auth**: `AuthContext.js` wraps the entire app; JWT stored in localStorage; Google OAuth via `@react-oauth/google`
 - **Key page**: `pages/Conversation.js` — the main practice interface. Handles WebSocket lifecycle, audio playback queue (`audioQueueRef`), proficiency notifications, task completion UI, and scenario review modal.
 - **WebSocket message types** handled in Conversation.js: `proficiency_update`, `task_completed`, `scenario_completed`, `connection_closed`
+
+### Internationalization (i18n)
+
+- **Library**: `react-i18next` + `i18next` (installed with `--legacy-peer-deps`)
+- **Config**: `client/src/i18n/index.js` — all 9 language translations inline, initialized synchronously
+- **Supported languages**: zh, en, ja, es, fr, ko, de, pt, ru
+- **Language detection priority**: `localStorage('ui_language')` → `navigator.language` → default `zh`
+- **Language switcher component**: `client/src/components/LanguageSwitcher.js` — drop-in `<select>` for any page
+- **Pages with i18n**: Landing, Login, Register, Welcome, Onboarding — all use `useTranslation()`
+- **Persistence**: Selected language cached in `localStorage('ui_language')`; persists across sessions
+- **NO external IP detection**: Uses `navigator.language` only (privacy-safe). The `COUNTRY_LANG_MAP` in `i18n/index.js` is kept for reference but not used for auto-fetching.
+- **Adding a new language**: Add translations object to `resources` in `i18n/index.js`, add entry to `LANGUAGES` array in `LanguageSwitcher.js`, add to `SUPPORTED_LANGS` array.
+- **Testing note**: Any component test that renders a page using `useTranslation()` must wrap with `<I18nextProvider i18n={i18n}>`. Existing tests in `__tests__/` do NOT have this wrapper yet — add before writing new page tests.
 
 ### Backend Services
 
