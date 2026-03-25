@@ -18,6 +18,15 @@ const JWT_CONFIG = {
   audience: 'oral-app-users'
 };
 
+// Cookie options for httpOnly JWT cookie
+const COOKIE_OPTIONS = {
+  httpOnly: true,
+  secure: process.env.NODE_ENV === 'production',
+  sameSite: 'lax',
+  path: '/api',
+  maxAge: 7 * 24 * 60 * 60 * 1000 // 7 days
+};
+
 // Helper to generate JWT with proper configuration
 const generateToken = (id) => {
   return jwt.sign(
@@ -58,7 +67,8 @@ exports.register = async (req, res) => {
     // 3. Generate a token for the new user
     const token = generateToken(newUser.id);
 
-    // 4. Respond with success and the token in the expected format
+    // 4. Set httpOnly cookie and respond
+    res.cookie('accessToken', token, COOKIE_OPTIONS);
     res.status(201).json({
       success: true,
       message: '注册成功',
@@ -102,15 +112,17 @@ exports.login = async (req, res) => {
       });
     }
 
-    // 3. Respond with token in the expected format
+    // 3. Set httpOnly cookie and respond
     const userWithoutPassword = { ...user };
     delete userWithoutPassword.password;
-    
+
+    const token = generateToken(user.id);
+    res.cookie('accessToken', token, COOKIE_OPTIONS);
     res.json({
       success: true,
       message: '登录成功',
       data: {
-        token: generateToken(user.id),
+        token: token,
         user: userWithoutPassword,
       },
     });
@@ -143,11 +155,13 @@ exports.googleSignIn = async (req, res) => {
       const userWithoutPassword = { ...user };
       delete userWithoutPassword.password;
 
+      const jwtToken = generateToken(user.id);
+      res.cookie('accessToken', jwtToken, COOKIE_OPTIONS);
       res.json({
         success: true,
         message: 'Google登录成功',
         data: {
-          token: generateToken(user.id),
+          token: jwtToken,
           user: userWithoutPassword,
         },
       });
@@ -168,16 +182,16 @@ exports.googleSignIn = async (req, res) => {
 
 
 exports.verifyToken = (req, res) => {
-    const authHeader = req.headers.authorization;
+    // Cookie-first, then Bearer header fallback
+    const token = req.cookies?.accessToken ||
+      (req.headers.authorization?.startsWith('Bearer ') ? req.headers.authorization.split(' ')[1] : null);
 
-    if (!authHeader || !authHeader.startsWith('Bearer ')) {
-        return res.status(401).json({ 
+    if (!token) {
+        return res.status(401).json({
           success: false,
-          message: '未提供令牌或令牌格式错误' 
+          message: '未提供令牌或令牌格式错误'
         });
     }
-
-    const token = authHeader.split(' ')[1];
 
     try {
         const decoded = jwt.verify(token, process.env.JWT_SECRET);
@@ -816,6 +830,29 @@ exports.generateTaskKeywords = async (req, res) => {
         console.error('Generate Task Keywords Error:', error);
         res.status(500).json({ success: false, message: 'Server Error' });
     }
+};
+
+// Logout — clear httpOnly cookie
+exports.logout = (req, res) => {
+  res.clearCookie('accessToken', { path: '/api' });
+  res.json({ success: true, message: '已登出' });
+};
+
+// Token migration — read old Bearer token, verify, set as httpOnly cookie
+exports.tokenMigrate = (req, res) => {
+  const authHeader = req.headers.authorization;
+  if (!authHeader || !authHeader.startsWith('Bearer ')) {
+    return res.status(400).json({ success: false, message: '未提供有效的Bearer令牌' });
+  }
+
+  const token = authHeader.split(' ')[1];
+  try {
+    jwt.verify(token, process.env.JWT_SECRET);
+    res.cookie('accessToken', token, COOKIE_OPTIONS);
+    res.json({ success: true, message: '令牌迁移成功' });
+  } catch (error) {
+    res.status(401).json({ success: false, message: '无效令牌，无法迁移' });
+  }
 };
 
 module.exports = exports;

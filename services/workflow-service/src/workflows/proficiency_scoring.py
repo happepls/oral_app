@@ -326,6 +326,123 @@ class ProficiencyScoringWorkflow:
 
         return min(10, max(0, score))
 
+    def _fuzzy_match(self, keyword: str, text: str, threshold: float = 0.7) -> bool:
+        """模糊匹配：精确包含 OR 字符重叠率超过阈值"""
+        if keyword.lower() in text.lower():
+            return True
+        # 对较长关键词（>=3字符）做字符重叠检测
+        if len(keyword) >= 3:
+            kw_chars = set(keyword.lower())
+            text_lower = text.lower()
+            kw_len = len(keyword)
+            for i in range(len(text_lower) - kw_len + 1):
+                window = text_lower[i:i + kw_len]
+                overlap = len(kw_chars & set(window)) / len(kw_chars)
+                if overlap >= threshold:
+                    return True
+        return False
+
+    def _is_repetitive_input(self, user_input: str, suggested_keywords: list) -> bool:
+        """
+        检测用户输入是否为无效重复：
+        1. 自我重复（同一片段出现2次以上）
+        2. 照抄关键词（输入内容 ≥80% 由建议关键词组成）
+        """
+        if not user_input or len(user_input.strip()) < 3:
+            return False
+
+        text = user_input.strip()
+
+        # --- 检测1：自我重复 ---
+        # 对长度 ≥ 3 的子串，检查是否在文本中出现 2 次以上
+        n = len(text)
+        for length in range(3, n // 2 + 1):
+            for start in range(n - length * 2 + 1):
+                segment = text[start:start + length]
+                count = 0
+                pos = 0
+                while True:
+                    pos = text.find(segment, pos)
+                    if pos == -1:
+                        break
+                    count += 1
+                    pos += 1
+                if count >= 2 and len(segment) >= 3:
+                    return True  # 发现重复片段
+
+        # --- 检测2：照抄关键词 ---
+        if not suggested_keywords:
+            return False
+
+        # 计算关键词字符在用户输入中的覆盖率
+        remaining = text
+        for kw in suggested_keywords:
+            remaining = remaining.replace(kw, '')
+
+        # 去掉标点和空白后，剩余非关键词字符
+        non_kw_chars = re.sub(r'[\s\u3000-\u303f\uff00-\uffef.,!?。！？、，]', '', remaining)
+        total_meaningful = re.sub(r'[\s\u3000-\u303f\uff00-\uffef.,!?。！？、，]', '', text)
+
+        if len(total_meaningful) == 0:
+            return True  # 全是标点
+
+        kw_coverage = 1 - len(non_kw_chars) / len(total_meaningful)
+        if kw_coverage >= 0.8 and len(total_meaningful) <= 20:
+            return True  # 短输入且 ≥80% 是关键词
+
+        return False
+
+    def _score_task_relevance_from_ai_response(self, ai_response: str, target_language: str) -> int:
+        """已废弃，保留兼容。使用 _get_correction_penalty 替代。"""
+        return 5
+
+    def _get_correction_penalty(self, ai_response: str) -> float:
+        """从 AI 回复中检测纠错信号，返回惩罚系数（0.5~1.0）
+
+        严格区分「纠正」与「教学建议」：
+        - 强纠正（0.5）：明确表示用户说错/没听懂
+        - 轻度纠正（0.7）：明确说表达模糊/不够清晰
+        - 教学建议不触发 penalty（如鼓励扩展、建议词汇、鼓励尝试）
+        """
+        if not ai_response:
+            return 1.0
+        text = ai_response.lower()
+
+        # 强纠正：明确表示用户说错/没听懂
+        hard_correction_patterns = [
+            # 日语
+            '全然違う', '間違い', '意味不明', '何が言いたい', '分かりません', 'もう一度言って',
+            # 中文
+            '说错了', '不对', '听不懂', '什么意思',
+            # 英文
+            "that's wrong", 'incorrect', "i don't understand what you mean",
+            # 偏题重定向
+            '话题', '先完成', '回到', '专注于',
+            "let's focus on", "let's go back to", 'remember the task',
+            'については', 'に戻り', 'テーマ',
+        ]
+
+        # 轻度纠正：明确说表达模糊/不够清晰，或要求更具体
+        soft_correction_patterns = [
+            # 日语
+            '曖昧', 'あいまい', 'はっきり言って', 'もっとはっきり',
+            'もう少し具体的', 'もっと具体的',  # AI 要求补充细节，说明当前表达不足
+            # 中文
+            '太模糊', '不够具体', '说得更清楚', '更具体',
+            # 英文
+            'vague', 'unclear', 'not sure what you mean', 'be more specific', 'more specific',
+        ]
+
+        hard_count = sum(1 for p in hard_correction_patterns if p in text)
+        soft_count = sum(1 for p in soft_correction_patterns if p in text)
+
+        if hard_count > 0:
+            return 0.5
+        elif soft_count > 0:
+            return 0.7
+        else:
+            return 1.0
+
     async def _score_task_relevance(
         self,
         turns: List[Dict[str, Any]],
@@ -333,159 +450,101 @@ class ProficiencyScoringWorkflow:
         target_language: str = "English"
     ) -> Dict[str, Any]:
         """
-        任务相关性评分 (0-10) - 支持跨语言匹配
-        - 包含任务特定关键词 : +5
-        - 包含场景关键词 : +2
-        - 偏离话题 : -3
-        - 无关内容 : -5
-        
+        任务相关性评分 (0-10) - 双信号混合评分
+
+        公式: task_relevance = input_relevance_score × correction_penalty × sentence_quality_factor
+
+        input_relevance_score（用户输入关键词命中）:
+            >=3 命中 → 9 | 2 命中 → 7 | 1 命中 → 5 | 0 命中 → 2
+
+        correction_penalty（AI 纠错惩罚）:
+            无纠错 → ×1.0 | 1处纠错 → ×0.7 | 多处纠错 → ×0.5
+
+        sentence_quality_factor（句子质量）:
+            <8字符 → ×0.6 | 关键词命中但无实质内容 → ×0.7 | 正常 → ×1.0
+
         Returns:
-            {
-                "score": int,  # 0-10 的分数
-                "suggested_keywords": List[str],  # 建议的关键词（当分数低时）
-                "matched_keywords": List[str]  # 已匹配的关键词
-            }
+            {"score": int, "suggested_keywords": List[str], "matched_keywords": List[str]}
         """
-        score = 5  # 基础分
-        suggested_keywords = []
-        matched_keywords = []
-
         if not current_task:
-            return {"score": score, "suggested_keywords": suggested_keywords, "matched_keywords": matched_keywords}
+            return {"score": 5, "suggested_keywords": [], "matched_keywords": []}
 
-        # 获取任务描述和场景标题
         task_desc = current_task.get("task_description", "")
         scenario_title = current_task.get("scenario_title", "")
 
-        # 使用动态生成的场景关键词（这是主要匹配依据，支持任何语言）
-        scene_keywords = self._get_scene_keywords(scenario_title, task_desc, target_language)
-        print(f"[DEBUG] scene_keywords for lang='{target_language}': {scene_keywords}")
+        # 1. 提取用户最近输入和最后一条 AI 回复
+        user_content = ""
+        last_ai_response = ""
+        for turn in reversed(turns):
+            if not isinstance(turn, dict):
+                continue
+            role = turn.get('role', '') or turn.get('type', '')
+            content = turn.get('content', '') or turn.get('text', '')
+            if role in ('user', 'human') and not user_content:
+                user_content = content.lower()
+            if role in ('assistant', 'ai') and not last_ai_response:
+                last_ai_response = content
+            if user_content and last_ai_response:
+                break
 
-        # 获取用户对话内容（转为小写用于匹配）
-        user_content = " ".join(
-            t.get("content", "").lower()
-            for t in turns
-            if t.get("role") == "user"
-        )
-
-        if not user_content:
-            return {"score": score, "suggested_keywords": scene_keywords[:5], "matched_keywords": matched_keywords}
-
-        # 1. 从任务描述中提取任务特定关键词
-        # 非英语时英文正则提取结果为空，跳过无意义的提取，直接依赖 scene_keywords
-        if not target_language or target_language.lower() == "english":
-            task_keywords_en = set(re.findall(r'\b[a-zA-Z]{3,}\b', task_desc.lower()))
-            task_keywords_generic = set(task_desc.lower().split())
-            task_keywords = task_keywords_en | task_keywords_generic
-            stop_words = {'the', 'a', 'an', 'is', 'are', 'was', 'were', 'be', 'been', 'being',
-                          'have', 'has', 'had', 'do', 'does', 'did', 'will', 'would', 'could',
-                          'should', 'may', 'might', 'must', 'shall', 'can', 'need', 'dare',
-                          'ought', 'used', 'to', 'of', 'in', 'for', 'on', 'with', 'at', 'by',
-                          'from', 'as', 'into', 'through', 'during', 'before', 'after', 'above',
-                          'below', 'between', 'under', 'again', 'further', 'then', 'once', '的',
-                          '了', '在', '是', '我', '有', '和', '就', '不', '人', '都', '一', '一个'}
-            task_keywords = {kw for kw in task_keywords if len(kw) >= 3 and kw not in stop_words}
-        else:
-            task_keywords = set()
-
-        # 2. 获取任务特定关键词（英语时走预定义映射，非英语返回空集合让 scene_keywords 主导）
-        task_specific_keywords = await self._get_task_specific_keywords(
-            task_desc,
-            scenario_title,
-            current_task.get("id"),
-            None,  # user_id - 暂不需要
-            None,  # token - 暂不需要
+        # 2. 获取任务关键词（复用已有方法）
+        task_keywords = await self._get_task_specific_keywords(
+            task_desc, scenario_title,
+            current_task.get("id"), None, None,
             target_language
         )
-        
-        # 定义通用礼貌用语（这些词不应该作为任务相关性评分依据）
-        generic_polite_words = {'please', 'can you', 'could you', 'thank you', 'thanks', 'excuse me', 'sorry', 'pardon', 'hello', 'hi', 'hey'}
-        
-        # 3. 检查任务特定关键词匹配（高权重）
-        # 过滤掉通用礼貌用语，只保留场景特定关键词
-        for kw in task_specific_keywords:
-            if kw.lower() in user_content and kw.lower() not in generic_polite_words:
-                matched_keywords.append(kw)
-        matched_task_specific = len(matched_keywords)
+        scene_keywords = self._get_scene_keywords(scenario_title, task_desc, target_language)
+        all_keywords = list(dict.fromkeys(task_keywords + scene_keywords))  # 去重保序
 
-        # 4. 检查场景关键词匹配（低权重）
-        # 同样过滤掉通用礼貌用语
-        matched_scene_keywords_list = []
-        for kw in scene_keywords:
-            if kw.lower() in user_content and kw.lower() not in generic_polite_words:
-                matched_scene_keywords_list.append(kw)
-        matched_scene_keywords = len(matched_scene_keywords_list)
+        # 检测重复/照抄输入
+        if self._is_repetitive_input(user_content, all_keywords):
+            print(f"[DEBUG] task_relevance: repetitive input detected")
+            return {
+                'score': 1,
+                'suggested_keywords': all_keywords[:6],
+                'matched_keywords': [],
+                'is_repetitive': True,
+            }
 
-        # 检测用户输入语言是否与目标语言匹配
-        target_language = current_task.get("target_language", "English").lower()
-        input_language = self._detect_input_language(user_content)
+        # 3. 计算用户输入关键词命中数（模糊匹配）
+        matched = [kw for kw in all_keywords if self._fuzzy_match(kw, user_content)] if user_content else []
+        hit_count = len(matched)
 
-        # 语言不匹配时降低分数，但不直接给最低分（继续关键词匹配）
-        language_mismatch = False
-        if input_language and input_language != target_language:
-            # 明确检测到语言不匹配（如中文vs英文）
-            language_mismatch = True
-            score -= 2  # 扣2分
-        # 注意：如果无法检测语言（返回None），不扣分，继续关键词匹配
-        # 这避免短文本如"Hi", "Good morning"等被误判
-
-        # 检测无效输入（无意义字符、重复字符等）
-        # 检测纯符号、重复字符、无意义输入（如"xxxx"、"。。。"、"!!!"等）
-        if re.match(r'^[\x00-\x1f\W]{1,10}$', user_content.strip()) or \
-           re.match(r'^(.)\1{2,}$', user_content.strip().lower()) or \
-           len(user_content.strip()) < 3:
-            # 无效输入，直接给最低分，返回前5个场景关键词作为建议
-            return {"score": 1, "suggested_keywords": scene_keywords[:5], "matched_keywords": []}
-
-        # 计算得分 - 任务特定关键词权重更高
-        if matched_task_specific >= 2:
-            score += 5  # 高度相关
-        elif matched_task_specific >= 1:
-            score += 3  # 中等相关
-        elif matched_scene_keywords >= 2:
-            score += 2  # 低度相关
-        elif matched_scene_keywords >= 1:
-            score += 1  # 微弱相关
+        if hit_count >= 3:
+            input_score = 9
+        elif hit_count == 2:
+            input_score = 7
+        elif hit_count == 1:
+            input_score = 4  # 单关键词命中不足以加分（<=4 阈值），需 2+ 才能得分
         else:
-            # 没有匹配到任何关键词，说明偏离话题
-            score = max(0, score - 3)
+            input_score = 2  # 未命中但保留基础分
 
-        # 检测偏离话题（用户谈论完全不相关的内容）
-        # 1. 检测明显的无关话题关键词
-        off_topic_indicators = [
-            "politics", "religion", "sex", "violence", "weapon",
-            "coding", "programming", "math", "physics", "chemistry",
-            "stock", "crypto", "investment",
-            # 食物相关（与问候/爱好场景无关）
-            "eat", "food", "dinner", "lunch", "breakfast", "cook", "recipe",
-            "吃", "饭", "晚餐", "午餐", "早餐", "做饭", "菜", "面", "面条", "下面"
-        ]
+        # 4. AI 纠错惩罚系数
+        penalty = self._get_correction_penalty(last_ai_response)
 
-        # 2. 检测用户输入是否包含任务特定关键词或场景关键词（排除通用礼貌用语）
-        has_task_specific = any(kw.lower() in user_content for kw in task_specific_keywords if kw.lower() not in generic_polite_words)
-        has_scene_keywords = any(kw.lower() in user_content for kw in scene_keywords if kw.lower() not in generic_polite_words)
+        # 5. 句子质量系数
+        sentence_quality_factor = 1.0
+        if user_content:
+            stripped = user_content.strip()
+            if len(stripped) < 8:
+                sentence_quality_factor = 0.6
+            elif hit_count > 0:
+                # 关键词命中但句子缺少实质性内容：去除匹配关键词后剩余字符太少
+                remaining = stripped
+                for kw in matched:
+                    remaining = remaining.replace(kw.lower(), '')
+                remaining = remaining.strip()
+                if len(remaining) < 4:
+                    sentence_quality_factor = 0.7
 
-        # 3. 检测是否有明显的无关内容
-        has_off_topic = any(word in user_content for word in off_topic_indicators)
+        # 6. 最终 task_relevance
+        final_score = max(1, min(10, round(input_score * penalty * sentence_quality_factor)))
+        print(f"[DEBUG] task_relevance: hits={hit_count}, input_score={input_score}, penalty={penalty}, quality={sentence_quality_factor}, final={final_score}")
 
-        # 4. 如果用户说的内容和任务场景完全无关，且有明显的无关话题（额外扣分）
-        if not has_task_specific and not has_scene_keywords and has_off_topic:
-            score = max(0, score - 2)  # 严重偏离话题，再扣 2 分
-
-        final_score = min(10, max(0, score))
-        
-        # 准备建议关键词（当分数较低时）
-        suggested_keywords = []
-        if final_score < 5:
-            # 取未匹配的场景关键词作为建议
-            suggested_keywords = [kw for kw in scene_keywords if kw not in matched_scene_keywords_list][:5]
-            if not suggested_keywords:
-                suggested_keywords = scene_keywords[:5]
-        
         return {
             "score": final_score,
-            "suggested_keywords": suggested_keywords,
-            "matched_keywords": matched_keywords + matched_scene_keywords_list
+            "suggested_keywords": all_keywords[:6],  # 用于 improvement_tips 💡 展示
+            "matched_keywords": matched,              # 保留供 debug
         }
 
     async def _get_task_specific_keywords(self, task_desc: str, scenario_title: str, task_id: int = None, user_id: str = None, token: str = None, target_language: str = "English") -> List[str]:
@@ -493,10 +552,12 @@ class ProficiencyScoringWorkflow:
         import os
         import httpx
 
-        # 非英语时，硬编码的英文关键词无法匹配用户输入，直接返回空集合
-        # 让 scene_keywords（AI 动态生成的目标语言关键词）承担主要匹配
+        # 非英语时，从英文 task description 提取并映射到目标语言
         if target_language and target_language.lower() != "english":
-            return []
+            task_keywords = self._extract_keywords_from_text(
+                f"{scenario_title} {task_desc}", target_language
+            )
+            return task_keywords[:8]
 
         # 优先从 user-service API 获取关键词
         if task_id and user_id and token:
@@ -576,29 +637,23 @@ class ProficiencyScoringWorkflow:
         
         注意：建议关键词会通过 scores 字典传递，不需要在此函数中返回
         """
-        # 只计算整数分数的平均值
-        numeric_scores = [
-            scores.get("fluency", 5),
-            scores.get("vocabulary", 5),
-            scores.get("grammar", 5),
-            scores.get("task_relevance", 5)
-        ]
-        avg_score = sum(numeric_scores) / len(numeric_scores)
         task_relevance = scores.get("task_relevance", 5)
 
-        # 如果话题偏离（task_relevance < 3），不加分并给出反馈
-        # 话题相关性是核心指标，如果用户说的内容与任务无关，即使语言表达再好也不应该加分
-        if task_relevance < 3:
+        # 重复输入不加分
+        if scores.get('is_repetitive'):
+            return 0, "请用自己的话表达，不要重复建议词"
+
+        # 话题相关度过低时强制 delta=0，防止无关输入刷分
+        if task_relevance <= 5:
             return 0, "请专注于当前任务场景练习"
 
-        if avg_score >= 8:
+        # delta 由 task_relevance 驱动
+        if task_relevance >= 8:
             return 2, "表现优秀！继续加油！"
-        elif avg_score >= 6:
+        elif task_relevance >= 6:
             return 1, "表现良好，继续保持"
-        elif avg_score >= 4:
-            return 1, "有进步，继续练习"
         else:
-            return 0, "需要多加练习，注意语法和词汇"
+            return 0, "需要多加练习"
     
     async def _update_user_proficiency(
         self,
@@ -650,6 +705,11 @@ class ProficiencyScoringWorkflow:
             "task_title": "",
             "scenario_title": ""
         }
+
+        # 填充 task_title / scenario_title（从 current_task 参数取，避免提前 return 时丢失）
+        if current_task:
+            result["task_title"] = current_task.get("task_description", "")
+            result["scenario_title"] = current_task.get("scenario_title", "")
 
         # 如果话题偏离，不加分
         if proficiency_delta == 0:
@@ -1087,6 +1147,14 @@ class ProficiencyScoringWorkflow:
             # 问候相关任务
             "问候": ["hello", "hi", "nice", "meet", "pleased", "good morning", "how are you", "greetings"],
             "greet": ["hello", "hi", "nice", "meet", "pleased", "good morning", "how are you"],
+            # 图片描述相关任务
+            "picture": ["photo", "picture", "image", "describe", "detail", "scene", "beautiful", "interesting", "show", "look", "see", "color", "background", "foreground"],
+            "描述图片": ["photo", "picture", "image", "describe", "detail", "scene", "beautiful", "interesting", "show", "look"],
+            "describing": ["photo", "picture", "image", "describe", "detail", "scene", "beautiful", "interesting", "show", "look", "see", "color"],
+            # 意见表达相关任务
+            "opinion": ["opinion", "think", "feel", "believe", "view", "agree", "disagree", "prefer", "advantage", "disadvantage", "compare", "reason", "because"],
+            "express": ["opinion", "think", "feel", "express", "view", "believe", "agree", "disagree", "prefer", "reason", "point"],
+            "意见": ["opinion", "think", "feel", "believe", "view", "agree", "disagree", "prefer", "reason"],
         }
 
         # 场景关键词映射（作为 AI 调用失败的 fallback）- 支持中文场景名匹配
@@ -1114,6 +1182,14 @@ class ProficiencyScoringWorkflow:
             "travel": ["travel", "flight", "hotel", "ticket", "airport", "booking", "destination", "trip", "passport", "check in", "check out", "reservation", "suitcase", "luggage"],
             "business": ["business", "meeting", "project", "team", "client", "deadline", "report", "presentation", "schedule", "appointment", "discuss", "agenda", "proposal", "contract"],
             "weather": ["weather", "sunny", "rainy", "cloudy", "temperature", "forecast", "wind", "nice day", "beautiful day", "hot", "cold", "warm", "cool", "raining", "snowing"],
+            # 图片描述场景
+            "describing pictures": ["photo", "picture", "image", "describe", "detail", "scene", "beautiful", "interesting", "show", "look", "see", "color", "background", "foreground", "person", "place", "it looks like", "i can see", "there is", "there are"],
+            "describing": ["photo", "picture", "image", "describe", "detail", "scene", "beautiful", "interesting", "show", "look", "see", "color", "background", "foreground"],
+            "picture": ["photo", "picture", "image", "describe", "detail", "scene", "beautiful", "interesting", "show", "look", "see"],
+            # 意见表达场景
+            "express your opinion": ["opinion", "think", "feel", "believe", "view", "agree", "disagree", "prefer", "advantage", "disadvantage", "compare", "reason", "because", "in my opinion", "i think", "i feel", "i believe", "point of view"],
+            "express opinion": ["opinion", "think", "feel", "believe", "view", "agree", "disagree", "prefer", "reason", "because", "in my opinion", "i think"],
+            "opinion": ["opinion", "think", "feel", "believe", "view", "agree", "disagree", "prefer", "advantage", "disadvantage", "compare", "reason"],
         }
 
         # 步骤1: 仅英语时使用硬编码映射表；非英语直接走 AI 生成路径
@@ -1210,41 +1286,251 @@ Return ONLY a JSON array of {target_language} keywords/phrases: ["keyword1", "ke
         return self._extract_keywords_from_text(f"{scenario_title} {task_desc}", target_language)
 
     def _extract_keywords_from_text(self, text: str, target_language: str = "English") -> List[str]:
-        """从文本中提取关键词作为后备方案"""
-        lang_fallbacks = {
-            "japanese": ["練習", "会話", "表現", "話す", "聞く"],
-            "chinese":  ["练习", "对话", "表达", "说话", "学习"],
-            "french":   ["pratique", "conversation", "parler", "écouter", "apprendre"],
-            "spanish":  ["práctica", "conversación", "hablar", "escuchar", "aprender"],
-            "korean":   ["연습", "대화", "표현", "말하기", "듣기"],
-            "german":   ["Übung", "Gespräch", "sprechen", "hören", "lernen"],
-        }
-        default_fallback = lang_fallbacks.get(target_language.lower(), ["practice", "conversation", "speak", "listen", "learn"])
-
+        """从任务文本提取关键词，当文本为英文但目标语言非英文时做语义映射"""
         if not text:
-            return default_fallback
+            return []
 
-        # 非英语时提取 CJK/非ASCII 词（日语/中文/韩文字符），提取不到再用 default_fallback
-        if target_language.lower() != "english":
-            cjk_words = re.findall(r'[\u3040-\u9fff\uac00-\ud7af\u4e00-\u9fff]+', text)
-            unique_cjk = list(dict.fromkeys(cjk_words))
-            return unique_cjk[:10] if unique_cjk else default_fallback
-
-        text_lower = text.lower()
-
-        # 提取实词（名词、动词、形容词）
-        words = re.findall(r'\b[a-zA-Z]{3,}\b', text_lower)
+        # 1. 从文本提取内容关键词（去掉停用词）
         stop_words = {
-            'the', 'and', 'for', 'with', 'your', 'that', 'this', 'from', 'have', 'been',
-            'would', 'there', 'about', 'which', 'their', 'could', 'where', 'when', 'what',
-            'how', 'are', 'you', 'doing', 'fine', 'thanks', 'hello', 'hi', 'hey', 'good',
+            'a', 'an', 'the', 'in', 'on', 'at', 'to', 'for', 'of', 'and', 'or',
+            'is', 'are', 'be', 'with', 'about', 'how', 'what', 'your', 'you',
+            'that', 'this', 'from', 'have', 'has', 'been', 'would', 'there',
+            'which', 'their', 'could', 'where', 'when', 'doing', 'fine',
             'practice', 'scenario', 'task', 'current', 'complete', 'finish'
         }
-        keywords = [w for w in words if w not in stop_words]
+        en_keywords = [w.lower() for w in re.findall(r'\b[a-zA-Z]{3,}\b', text) if w.lower() not in stop_words]
+        en_keywords = list(dict.fromkeys(en_keywords))  # 去重保序
 
-        # 去重并保持顺序
-        unique_keywords = list(dict.fromkeys(keywords))
-        return unique_keywords[:10] if unique_keywords else default_fallback
+        # 2. 英语目标语言直接返回英文关键词
+        if not target_language or target_language.lower() == "english":
+            return en_keywords[:10]
+
+        # 3. 非英语：先尝试提取 CJK 字符（如果文本本身含目标语言文字）
+        cjk_words = re.findall(r'[\u3040-\u9fff\uac00-\ud7af\u4e00-\u9fff]+', text)
+        unique_cjk = list(dict.fromkeys(cjk_words))
+
+        # 4. 基于英文关键词查找目标语言语义等价词
+        en_to_target = self._get_translation_map(target_language)
+        translated = []
+        for kw in en_keywords:
+            if kw in en_to_target:
+                translated.extend(en_to_target[kw])
+
+        # 5. 合并 CJK 提取 + 翻译映射，去重
+        combined = list(dict.fromkeys(unique_cjk + translated))
+
+        # 6. 如果映射结果非空返回映射词；否则返回英文原词（总比泛化词好）
+        return combined[:10] if combined else en_keywords[:8]
+
+    def _get_translation_map(self, target_language: str) -> dict:
+        """英文内容词 → 目标语言语义等价词映射"""
+        maps = {
+            "japanese": {
+                "describe": ["説明する", "描写する", "述べる", "表現する"],
+                "photo": ["写真", "画像", "フォト", "この写真"],
+                "picture": ["写真", "絵", "画像", "イラスト", "この写真"],
+                "image": ["画像", "写真", "イメージ"],
+                "detail": ["詳細", "細かく", "具体的"],
+                "hotel": ["ホテル", "宿泊施設", "旅館"],
+                "room": ["部屋", "客室", "ルーム"],
+                "book": ["予約する", "ブック", "申し込む"],
+                "order": ["注文する", "オーダー", "頼む"],
+                "food": ["食べ物", "料理", "食事"],
+                "price": ["値段", "価格", "料金"],
+                "ask": ["質問する", "聞く", "尋ねる"],
+                "conversation": ["会話", "対話", "話す"],
+                "introduce": ["紹介する", "自己紹介"],
+                "travel": ["旅行", "旅", "トラベル"],
+                "shopping": ["買い物", "ショッピング"],
+                "restaurant": ["レストラン", "食堂", "飲食店"],
+                "direction": ["道案内", "方向", "場所"],
+                "interview": ["インタビュー", "面接", "質疑"],
+                "opinion": ["意見", "考え", "思います", "感じます", "と思う", "と感じる", "印象", "気持ち"],
+                "express": ["表現する", "言葉にする", "述べる", "伝える", "表す"],
+                "think": ["思います", "と思う", "考えます"],
+                "feel": ["感じます", "気がします", "気持ち"],
+                "view": ["見解", "考え方", "視点", "観点"],
+                "beautiful": ["美しい", "綺麗", "素晴らしい", "きれい"],
+                "interesting": ["面白い", "興味深い", "印象的"],
+                "scene": ["場面", "シーン", "風景", "景色"],
+                "compare": ["比較する", "比べる"],
+                "advantage": ["メリット", "利点", "長所"],
+                "disadvantage": ["デメリット", "欠点", "短所"],
+                "weather": ["天気", "天候", "気温"],
+                "phone": ["電話", "通話"],
+                "meeting": ["会議", "ミーティング"],
+                "greeting": ["挨拶", "あいさつ"],
+                "hobby": ["趣味", "好きなこと"],
+                "work": ["仕事", "職場"],
+                "family": ["家族", "親族"],
+                "sport": ["スポーツ", "運動"],
+                "movie": ["映画", "ムービー"],
+                "music": ["音楽", "ミュージック"],
+                "schedule": ["スケジュール", "予定"],
+                "reservation": ["予約", "リザベーション"],
+            },
+            "chinese": {
+                "describe": ["描述", "描写", "形容"],
+                "photo": ["照片", "图片", "相片"],
+                "picture": ["图片", "图画", "照片"],
+                "detail": ["详细", "细节", "具体"],
+                "hotel": ["酒店", "宾馆", "住宿"],
+                "room": ["房间", "客房", "房"],
+                "book": ["预订", "预约", "订"],
+                "order": ["点餐", "订购", "下单"],
+                "food": ["食物", "美食", "饮食"],
+                "price": ["价格", "价钱", "费用"],
+                "ask": ["询问", "提问", "问"],
+                "travel": ["旅行", "旅游", "出行"],
+                "shopping": ["购物", "买东西"],
+                "restaurant": ["餐厅", "饭店", "餐馆"],
+                "interview": ["面试", "采访"],
+                "opinion": ["意见", "看法", "观点"],
+                "weather": ["天气", "气温", "温度"],
+                "phone": ["电话", "打电话"],
+                "meeting": ["会议", "开会"],
+                "greeting": ["问候", "打招呼"],
+                "hobby": ["爱好", "兴趣"],
+                "work": ["工作", "上班"],
+                "family": ["家庭", "家人"],
+                "sport": ["运动", "体育"],
+                "movie": ["电影", "影片"],
+                "music": ["音乐", "歌曲"],
+                "schedule": ["日程", "安排"],
+                "reservation": ["预约", "预订"],
+                "direction": ["方向", "路线", "怎么走"],
+                "compare": ["比较", "对比"],
+                "advantage": ["优点", "优势"],
+                "disadvantage": ["缺点", "劣势"],
+                "introduce": ["介绍", "自我介绍"],
+                "conversation": ["对话", "交谈", "聊天"],
+                "image": ["图像", "图片"],
+            },
+            "korean": {
+                "describe": ["설명하다", "묘사하다"],
+                "photo": ["사진", "이미지"],
+                "picture": ["그림", "사진"],
+                "detail": ["자세히", "세부적으로"],
+                "hotel": ["호텔", "숙소"],
+                "room": ["방", "객실"],
+                "book": ["예약하다"],
+                "order": ["주문하다"],
+                "food": ["음식", "식사"],
+                "price": ["가격", "요금"],
+                "ask": ["질문하다", "묻다"],
+                "travel": ["여행"],
+                "shopping": ["쇼핑", "장보기"],
+                "restaurant": ["식당", "레스토랑"],
+                "weather": ["날씨", "기온"],
+                "phone": ["전화", "통화"],
+                "meeting": ["회의", "미팅"],
+                "greeting": ["인사", "인사하다"],
+                "hobby": ["취미"],
+                "work": ["일", "직장"],
+                "family": ["가족"],
+                "direction": ["방향", "길 안내"],
+                "introduce": ["소개하다", "자기소개"],
+                "conversation": ["대화", "이야기"],
+            },
+            "french": {
+                "describe": ["décrire", "description"],
+                "photo": ["photo", "image"],
+                "picture": ["image", "tableau"],
+                "hotel": ["hôtel", "hébergement"],
+                "room": ["chambre", "pièce"],
+                "book": ["réserver", "réservation"],
+                "order": ["commander", "commande"],
+                "food": ["nourriture", "repas", "cuisine"],
+                "price": ["prix", "tarif", "coût"],
+                "travel": ["voyage", "voyager"],
+                "shopping": ["shopping", "achats", "faire les courses"],
+                "restaurant": ["restaurant", "bistro"],
+                "weather": ["météo", "temps", "température"],
+                "phone": ["téléphone", "appel"],
+                "meeting": ["réunion", "rendez-vous"],
+                "greeting": ["salutation", "bonjour"],
+                "direction": ["direction", "chemin"],
+                "introduce": ["présenter", "se présenter"],
+                "conversation": ["conversation", "dialogue"],
+            },
+            "spanish": {
+                "describe": ["describir", "descripción"],
+                "photo": ["foto", "imagen"],
+                "picture": ["imagen", "cuadro"],
+                "hotel": ["hotel", "alojamiento"],
+                "room": ["habitación", "cuarto"],
+                "book": ["reservar", "reserva"],
+                "order": ["pedir", "ordenar"],
+                "food": ["comida", "alimento"],
+                "price": ["precio", "costo"],
+                "travel": ["viaje", "viajar"],
+                "shopping": ["compras", "ir de compras"],
+                "restaurant": ["restaurante"],
+                "weather": ["clima", "tiempo", "temperatura"],
+                "phone": ["teléfono", "llamada"],
+                "meeting": ["reunión", "cita"],
+                "greeting": ["saludo", "saludar"],
+                "direction": ["dirección", "camino"],
+                "introduce": ["presentar", "presentarse"],
+                "conversation": ["conversación", "diálogo"],
+            },
+            "german": {
+                "describe": ["beschreiben", "Beschreibung"],
+                "photo": ["Foto", "Bild"],
+                "picture": ["Bild", "Gemälde"],
+                "hotel": ["Hotel", "Unterkunft"],
+                "room": ["Zimmer", "Raum"],
+                "book": ["buchen", "reservieren"],
+                "order": ["bestellen", "Bestellung"],
+                "food": ["Essen", "Mahlzeit"],
+                "price": ["Preis", "Kosten"],
+                "travel": ["Reise", "reisen"],
+                "shopping": ["Einkaufen", "Shopping"],
+                "restaurant": ["Restaurant", "Gaststätte"],
+                "weather": ["Wetter", "Temperatur"],
+                "phone": ["Telefon", "Anruf"],
+                "meeting": ["Treffen", "Besprechung"],
+                "greeting": ["Begrüßung", "Gruß"],
+                "direction": ["Richtung", "Weg"],
+                "introduce": ["vorstellen", "sich vorstellen"],
+                "conversation": ["Gespräch", "Unterhaltung"],
+            },
+            "portuguese": {
+                "describe": ["descrever", "descrição"],
+                "photo": ["foto", "imagem"],
+                "hotel": ["hotel", "hospedagem"],
+                "room": ["quarto", "sala"],
+                "book": ["reservar", "reserva"],
+                "order": ["pedir", "pedido"],
+                "food": ["comida", "refeição"],
+                "price": ["preço", "custo"],
+                "travel": ["viagem", "viajar"],
+                "restaurant": ["restaurante"],
+                "weather": ["clima", "tempo", "temperatura"],
+                "introduce": ["apresentar", "se apresentar"],
+                "conversation": ["conversa", "diálogo"],
+            },
+            "russian": {
+                "describe": ["описать", "описание"],
+                "photo": ["фото", "фотография"],
+                "hotel": ["отель", "гостиница"],
+                "room": ["комната", "номер"],
+                "book": ["забронировать", "бронь"],
+                "order": ["заказать", "заказ"],
+                "food": ["еда", "пища"],
+                "price": ["цена", "стоимость"],
+                "travel": ["путешествие", "поездка"],
+                "restaurant": ["ресторан"],
+                "weather": ["погода", "температура"],
+                "introduce": ["представиться", "знакомство"],
+                "conversation": ["разговор", "беседа"],
+            },
+        }
+        lang_key = target_language.lower()
+        for k in maps:
+            if k in lang_key or lang_key in k:
+                return maps[k]
+        return {}
 
     def _detect_input_language(self, text: str) -> Optional[str]:
         """

@@ -44,6 +44,14 @@ wss.on('connection', async function connection(clientWs, req) {
       }
     }
 
+    // Fallback: read from httpOnly cookie
+    if (!token && req.headers.cookie) {
+      const cookies = Object.fromEntries(
+        req.headers.cookie.split(';').map(c => c.trim().split('=').map(decodeURIComponent))
+      );
+      token = cookies['accessToken'];
+    }
+
     if (!token) {
       console.log('Connection rejected: No token provided.');
       clientWs.close(1008, 'Authorization token is required.');

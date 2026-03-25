@@ -112,7 +112,9 @@ User speaks → ai-omni-service (DashScope Qwen3-Omni streaming)
            → response.audio.done event fires
            → calls workflow-service /proficiency-scoring/update
            → scores: fluency, vocabulary, grammar, task_relevance (0-10 each)
-           → avg ≥ 8 → +3pts | avg ≥ 6 → +2pts | avg ≥ 4 → +1pt | < 4 → 0pts
+           → task_relevance = round(input_score × correction_penalty × sentence_quality_factor)
+           → task_relevance ≤ 5 → delta=0 | 6-7 → delta=1 | ≥8 → delta=2
+           → lang quality (fluency/vocab/grammar) does NOT gate delta — task_relevance is sole driver
            → if score >= 9 AND interaction_count >= 3 → task_completed
            → WebSocket push to frontend: proficiency_update | task_completed
            → 3 tasks completed in scenario → scenario_review triggered
@@ -122,7 +124,7 @@ User speaks → ai-omni-service (DashScope Qwen3-Omni streaming)
 
 - **Framework**: React 19.2.0 + Bootstrap 5 + react-bootstrap (NOT Tailwind despite README mention)
 - **Build tool**: react-app-rewired (CRA-based, NOT Vite)
-- **Auth**: `AuthContext.js` wraps the entire app; JWT stored in localStorage; Google OAuth via `@react-oauth/google`
+- **Auth**: `AuthContext.js` wraps the entire app; **httpOnly Cookie** (migrated from localStorage); Google OAuth via `@react-oauth/google`. `token` state is always `null` in cookie mode — do NOT rely on it being set. WebSocket auth also uses cookie (comms-service reads `req.headers.cookie` as fallback).
 - **Key page**: `pages/Conversation.js` — the main practice interface. Handles WebSocket lifecycle, audio playback queue (`audioQueueRef`), proficiency notifications, task completion UI, and scenario review modal.
 - **WebSocket message types** handled in Conversation.js: `proficiency_update`, `task_completed`, `scenario_completed`, `connection_closed`
 
@@ -188,6 +190,36 @@ The string `急急如律令` (with Chinese punctuation variants `。！？`) in 
 ### TTS Endpoint
 
 `POST /tts` is implemented in `ai-omni-service/app/main.py` (Nginx rewrites `/api/ai/tts` → `/tts`). Uses `qwen3-tts-flash` via `dashscope.MultiModalConversation.call()` with voice `Serena`. Supports 10 languages (Chinese, English, Japanese, Korean, French, Spanish, German, Italian, Portuguese, Russian) and mixed-language text in a single call. Returns WAV audio bytes fetched from the OSS URL in the response. Called by `aiAPI.tts()` in `api.js` → `playSelectedText()` in `Conversation.js` for the floating speaker button on selected AI message text.
+
+### Authentication: httpOnly Cookie
+
+- **Login/Register/Google**: `user-service` sets `accessToken` httpOnly cookie (`sameSite: lax`, `path: /api`, 7d TTL)
+- **Token migration**: On app init, `AuthContext.js` detects legacy `localStorage.authToken` → calls `POST /api/users/token-migrate` → clears localStorage keys
+- **Logout**: `POST /api/users/logout` clears cookie server-side; frontend clears local state
+- **WebSocket auth**: comms-service reads token from (1) URL query `?token=`, (2) `Authorization` header, (3) `req.headers.cookie` — browser auto-sends cookie on WS upgrade
+- **CORS**: Nginx uses `map $http_origin $cors_origin` (whitelist: localhost:3000, localhost:5001) + `Access-Control-Allow-Credentials: true`. Cannot use `*` wildcard when credentials are included.
+- **Gotcha**: `connectWebSocket` previously checked `!token` to abort — changed to `!user` since token is always null in cookie mode
+
+### Proficiency Scoring: task_relevance Design
+
+`_score_task_relevance` in `proficiency_scoring.py` uses a 3-factor formula:
+```
+final = max(1, min(10, round(input_score × correction_penalty × sentence_quality_factor)))
+```
+
+- **input_score**: hits=0→2, hits=1→4, hits=2→7, hits≥3→9
+- **correction_penalty**: hard correction (说错了/全然違う/incorrect) → 0.5; soft (曖昧/不够具体/vague/もう少し具体的) → 0.7; teaching suggestion only → 1.0
+- **sentence_quality_factor**: <8 chars → 0.6; keyword-only sentence (remaining<4 chars) → 0.7; normal → 1.0
+- **Delta gate**: task_relevance ≤5 → delta=0; 6-7 → delta=1; ≥8 → delta=2
+- **Anti-cheat**: hits=1 always produces input_score=4 → final≤4 → delta=0 regardless of sentence length
+- **Repetitive input** (`_is_repetitive_input`): self-repetition (substring ≥3 chars appears 2+x) OR keyword parroting (≥80% content is keyword chars AND len≤20) → delta=0
+- **`task_title`/`scenario_title`**: populated from `current_task` parameter before early-return; DB query only runs when delta>0
+
+### Docker: Python Service Rebuild Rules
+
+- Python 源文件（.py）变更 → `docker compose build <service>` (无 --no-cache，复用 pip 缓存层)
+- `requirements.txt` 或 `Dockerfile` 变更 → `docker compose build --no-cache <service>`
+- **PyPI 镜像**: `workflow-service` 和 `ai-omni-service` Dockerfile 已配置阿里云镜像源 (`mirrors.aliyun.com/pypi/simple/`)，避免网络超时
 
 ### Discovery Page: Goal Completion
 

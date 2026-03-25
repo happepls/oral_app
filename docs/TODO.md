@@ -7,11 +7,17 @@
 
 - [ ] [Commercialization]  Defined a tiered subscription model (Freemium/Pro) and cost-per-minute unit economics for AI-driven oral practice.
 - [ ] [Feature]  Tell me a good way to plan a live activity for when I background the app.
-- [ ] [Security] JWT → httpOnly Cookie 迁移（需前后端协同，防 XSS token 窃取）
 - [ ] [Security] Conversation.js localStorage key 注入修复（encodeURIComponent + 已有数据迁移方案）
 - [ ] [Security] Stripe 重定向 URL 白名单（checkout.stripe.com 域名校验）
 - [ ] [Optimization] i18n 翻译懒加载（拆分 JSON 按需加载，减少初始包体 ~50KB）
 - [ ] [Testing] i18n 测试基础设施（i18next Provider wrapper + getInitialLanguage/COUNTRY_LANG_MAP/LanguageSwitcher 单元测试）
+- [ ] [Optimization] proficiency_scoring: task 完成后（status='completed'）仍执行 score+interaction_count 累加，数据不干净。应在 UPDATE 前检查 status，已完成的 task 跳过累加。
+- [ ] [Security] comms-service 内部转发 AI 服务时将 token 附加在 URL 查询参数（aiUrl.searchParams.set('token')），可能被代理/日志记录，改为 header 或消息体传递。
+- [ ] [Performance] Conversation.js:1482 多处 async API（getHistory/getActiveGoal）缺少 AbortController，组件卸载后仍触发 setState，存在内存泄漏风险。
+- [ ] [Performance] proficiency_scoring.py:732/742 两次查询同一 user_tasks 记录，合并为一次 SELECT 可减少 DB 往返。
+- [ ] [Testing] proficiency_scoring.py 零单元测试覆盖（27 个缺口），核心评分逻辑（keyword matching、penalty、delta 计算）需补充 pytest 测试。
+- [ ] [Testing] AuthContext.js httpOnly cookie 迁移逻辑零测试（token-migrate 路径、logout 清理、登录成功 cookie 模式）。
+- [ ] [Testing] Conversation.js 关键路径测试不足（AudioBar 集成、playFullAudio Web Audio/proxy 路径、task 完成检测）。
 ## Done
 
 - [x] [Frontend] 添加多语言界面支持（9语言 i18n + IP/浏览器语言自动检测 + LanguageSwitcher 组件）
@@ -164,3 +170,13 @@
 - [x] [Deployment] 实现 CI/CD 流水线自动化
 - [x] [Testing] 编写完整的集成测试套件
 - [x] [AI] **Scenario Scoring Alignment**: Adapt AI scoring to evaluate 3 specific tasks per scenario over multiple turns.
+- [x] [Security] JWT → httpOnly Cookie 迁移完成（user-service 设置 httpOnly cookie、AuthContext 迁移逻辑、comms-service WS cookie 解析、Nginx CORS credentials 支持、token-migrate 和 logout 端点）
+- [x] [Frontend] Conversation 任务栏重构：浮动侧边栏改为顶部下拉栏，集成进度条，3s 后半透明
+- [x] [Frontend] AudioBar 组件：替换"重听"文字为圆形 play/pause 图标按钮，修复暂停无法停止音频 bug
+- [x] [Frontend] AudioBar 性能修复：Math.random() 波形高度改为 useMemo 缓存，避免每次 render 抖动
+- [x] [Frontend] AuthContext 性能修复：context value 对象改为 useMemo 包装，避免所有消费者不必要重渲
+- [x] [AI] proficiency_scoring 评分机制重构：双信号评分（关键词命中×AI纠正penalty×句子质量factor）、重复输入拦截、task_relevance 纯驱动 delta、阈值调优至 task_relevance≥6 加分
+- [x] [AI] proficiency_scoring 关键词覆盖扩展：日语 opinion/photo/think/feel/beautiful 等词汇扩充，非英语场景关键词提取修复
+- [x] [AI] proficiency_scoring 修复 task_title/scenario_title 为空 bug（delta=0 提前 return 时从 current_task 参数填充）
+- [x] [AI] proficiency_scoring penalty 机制重写：严格区分「纠正」(0.5/0.7) 与「教学建议」(1.0)，补充日语曖昧/具体的に等 pattern
+- [x] [Docker] workflow-service 和 ai-omni-service Dockerfile 添加阿里云 PyPI 镜像源，解决 pip 依赖下载超时问题

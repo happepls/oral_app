@@ -17,6 +17,10 @@ router.post('/api/users/login', authRateLimiter, validateLogin, handleValidation
 router.post('/api/users/google', authRateLimiter, userController.googleSignIn);
 router.post('/api/users/verify', userController.verifyToken);
 
+// Logout and token migration routes
+router.post('/api/users/logout', userController.logout);
+router.post('/api/users/token-migrate', userController.tokenMigrate);
+
 // Protected route to get user profile
 router.get('/api/users/profile', protect, userController.getProfile);
 router.put('/api/users/profile', protect, userController.updateProfile);

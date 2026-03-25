@@ -46,10 +46,10 @@ const handleResponse = async (response) => {
 };
 
 const getAuthHeaders = () => {
-  const token = localStorage.getItem('authToken');
+  // Cookie-based auth: no longer send token in headers
+  // httpOnly cookie is automatically included by browser
   return {
-    'Content-Type': 'application/json',
-    ...(token && { 'Authorization': `Bearer ${token}` })
+    'Content-Type': 'application/json'
   };
 };
 
@@ -60,6 +60,7 @@ export const authAPI = {
       headers: {
         'Content-Type': 'application/json'
       },
+      credentials: 'include',
       body: JSON.stringify(userData)
     });
     return handleResponse(response);
@@ -71,6 +72,7 @@ export const authAPI = {
       headers: {
         'Content-Type': 'application/json'
       },
+      credentials: 'include',
       body: JSON.stringify(credentials)
     });
     return handleResponse(response);
@@ -80,6 +82,7 @@ export const authAPI = {
     const response = await fetch(`${API_BASE_URL}/users/google`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
       body: JSON.stringify({ token })
     });
     return handleResponse(response);
@@ -89,7 +92,8 @@ export const authAPI = {
 export const userAPI = {
   async getProfile() {
     const response = await fetch(`${API_BASE_URL}/users/profile`, {
-      headers: getAuthHeaders()
+      headers: getAuthHeaders(),
+      credentials: 'include'
     });
     return handleResponse(response);
   },
@@ -98,6 +102,7 @@ export const userAPI = {
     const response = await fetch(`${API_BASE_URL}/users/profile`, {
       method: 'PUT',
       headers: getAuthHeaders(),
+      credentials: 'include',
       body: JSON.stringify(updates)
     });
     return handleResponse(response);
@@ -107,6 +112,7 @@ export const userAPI = {
     const response = await fetch(`${API_BASE_URL}/users/goals`, {
       method: 'POST',
       headers: getAuthHeaders(),
+      credentials: 'include',
       body: JSON.stringify(goalData)
     });
     return handleResponse(response);
@@ -114,14 +120,16 @@ export const userAPI = {
 
   async getActiveGoal() {
     const response = await fetch(`${API_BASE_URL}/users/goals/active`, {
-      headers: getAuthHeaders()
+      headers: getAuthHeaders(),
+      credentials: 'include'
     });
     return handleResponse(response);
   },
 
   async getCurrentTask() {
     const response = await fetch(`${API_BASE_URL}/users/goals/current-task`, {
-      headers: getAuthHeaders()
+      headers: getAuthHeaders(),
+      credentials: 'include'
     });
     return handleResponse(response);
   },
@@ -130,7 +138,8 @@ export const userAPI = {
     const response = await fetch(`${API_BASE_URL}/users/goals/reset-task`, {
       method: 'POST',
       headers: getAuthHeaders(),
-      body: JSON.stringify({ 
+      credentials: 'include',
+      body: JSON.stringify({
         task_id: taskId,
         scenario_title: scenarioTitle
       })
@@ -142,7 +151,8 @@ export const userAPI = {
   async checkin() {
     const response = await fetch(`${API_BASE_URL}/users/checkin`, {
       method: 'POST',
-      headers: getAuthHeaders()
+      headers: getAuthHeaders(),
+      credentials: 'include'
     });
     return handleResponse(response);
   },
@@ -151,7 +161,8 @@ export const userAPI = {
   async getScenarioReview(scenarioTitle) {
     try {
       const response = await fetch(`${API_BASE_URL}/users/goals/active`, {
-        headers: getAuthHeaders()
+        headers: getAuthHeaders(),
+        credentials: 'include'
       });
       const data = await handleResponse(response);
       // The scenario review is stored in the active_goal's scenario_review field
@@ -164,21 +175,24 @@ export const userAPI = {
 
   async getCheckinHistory(days = 30) {
     const response = await fetch(`${API_BASE_URL}/users/checkin/history?days=${days}`, {
-      headers: getAuthHeaders()
+      headers: getAuthHeaders(),
+      credentials: 'include'
     });
     return handleResponse(response);
   },
 
   async getCheckinStats() {
     const response = await fetch(`${API_BASE_URL}/users/checkin/stats`, {
-      headers: getAuthHeaders()
+      headers: getAuthHeaders(),
+      credentials: 'include'
     });
     return handleResponse(response);
   },
 
   async getUserGoals() {
     const response = await fetch(`${API_BASE_URL}/users/goals`, {
-      headers: getAuthHeaders()
+      headers: getAuthHeaders(),
+      credentials: 'include'
     });
     return handleResponse(response);
   },
@@ -186,7 +200,8 @@ export const userAPI = {
   async switchGoal(goalId) {
     const response = await fetch(`${API_BASE_URL}/users/goals/${goalId}/activate`, {
       method: 'PUT',
-      headers: getAuthHeaders()
+      headers: getAuthHeaders(),
+      credentials: 'include'
     });
     return handleResponse(response);
   }
@@ -197,6 +212,7 @@ export const aiAPI = {
     const response = await fetch(`${API_BASE_URL}/ai/chat`, {
       method: 'POST',
       headers: getAuthHeaders(),
+      credentials: 'include',
       body: JSON.stringify({ messages, scenario })
     });
     return handleResponse(response);
@@ -206,6 +222,7 @@ export const aiAPI = {
     const response = await fetch(`${API_BASE_URL}/ai/generate-scenarios`, {
       method: 'POST',
       headers: getAuthHeaders(),
+      credentials: 'include',
       body: JSON.stringify(goalParams)
     });
     return handleResponse(response);
@@ -217,6 +234,7 @@ export const aiAPI = {
     const response = await fetch(`${API_BASE_URL}/ai/tts`, {
       method: 'POST',
       headers: getAuthHeaders(),
+      credentials: 'include',
       body: JSON.stringify(body)
     });
     
@@ -229,7 +247,8 @@ export const aiAPI = {
 
   async getScenarios() {
     const response = await fetch(`${API_BASE_URL}/ai/scenarios`, {
-      headers: getAuthHeaders()
+      headers: getAuthHeaders(),
+      credentials: 'include'
     });
     return handleResponse(response);
   },
@@ -238,6 +257,7 @@ export const aiAPI = {
     const response = await fetch(`${API_BASE_URL}/ai/chat/stream`, {
       method: 'POST',
       headers: getAuthHeaders(),
+      credentials: 'include',
       body: JSON.stringify({ messages, scenario })
     });
 
@@ -285,6 +305,7 @@ export const conversationAPI = {
     const response = await fetch(`${API_BASE_URL}/conversation/start`, {
       method: 'POST',
       headers: getAuthHeaders(),
+      credentials: 'include',
       body: JSON.stringify(data)
     });
     return handleResponse(response);
@@ -294,6 +315,7 @@ export const conversationAPI = {
     const response = await fetch(`${API_BASE_URL}/conversation/end`, {
       method: 'POST',
       headers: getAuthHeaders(),
+      credentials: 'include',
       body: JSON.stringify({ sessionId })
     });
     return handleResponse(response);
@@ -304,6 +326,7 @@ export const conversationAPI = {
     const response = await fetch(`${API_BASE_URL}/conversation/history/${sessionId}`, {
       method: 'POST',
       headers: getAuthHeaders(),
+      credentials: 'include',
       body: JSON.stringify({ messages, userId })
     });
     return handleResponse(response);
@@ -311,7 +334,8 @@ export const conversationAPI = {
 
   async getHistory(sessionId) {
     const response = await fetch(`${API_BASE_URL}/history/session/${sessionId}`, {
-      headers: getAuthHeaders()
+      headers: getAuthHeaders(),
+      credentials: 'include'
     });
     return handleResponse(response);
   },
@@ -319,7 +343,8 @@ export const conversationAPI = {
   async getActiveSessions(userId, goalId) {
     const params = new URLSearchParams({ userId, goalId });
     const response = await fetch(`${API_BASE_URL}/conversation/sessions?${params.toString()}`, {
-        headers: getAuthHeaders()
+        headers: getAuthHeaders(),
+        credentials: 'include'
     });
     return handleResponse(response);
   }
@@ -328,21 +353,24 @@ export const conversationAPI = {
 export const historyAPI = {
   async getUserHistory(userId) {
     const response = await fetch(`${API_BASE_URL}/history/user/${userId}`, {
-      headers: getAuthHeaders()
+      headers: getAuthHeaders(),
+      credentials: 'include'
     });
     return handleResponse(response);
   },
 
   async getConversationDetail(sessionId) {
     const response = await fetch(`${API_BASE_URL}/history/session/${sessionId}/messages`, {
-      headers: getAuthHeaders()
+      headers: getAuthHeaders(),
+      credentials: 'include'
     });
     return handleResponse(response);
   },
 
   async getStats(userId) {
     const response = await fetch(`${API_BASE_URL}/history/stats/${userId}`, {
-      headers: getAuthHeaders()
+      headers: getAuthHeaders(),
+      credentials: 'include'
     });
     return handleResponse(response);
   },
@@ -351,6 +379,7 @@ export const historyAPI = {
     const response = await fetch(`${API_BASE_URL}/history/proficiency/${userId}`, {
       method: 'POST',
       headers: getAuthHeaders(),
+      credentials: 'include',
       body: JSON.stringify(metrics)
     });
     return handleResponse(response);
@@ -358,7 +387,8 @@ export const historyAPI = {
 
   async getProficiencyMetrics(userId) {
     const response = await fetch(`${API_BASE_URL}/history/proficiency/${userId}`, {
-      headers: getAuthHeaders()
+      headers: getAuthHeaders(),
+      credentials: 'include'
     });
     return handleResponse(response);
   }
@@ -369,6 +399,7 @@ export const feedbackAPI = {
     const response = await fetch(`${API_BASE_URL}/feedback`, {
       method: 'POST',
       headers: getAuthHeaders(),
+      credentials: 'include',
       body: JSON.stringify({ category, message })
     });
     return handleResponse(response);

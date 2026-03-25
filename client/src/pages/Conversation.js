@@ -22,6 +22,9 @@ function Conversation() {
   const [sessionId, setSessionId] = useState(null);
   const [selection, setSelection] = useState({ text: '', x: 0, y: 0, visible: false });
   const [isSynthesizing, setIsSynthesizing] = useState(false);
+  const [playingAudioUrl, setPlayingAudioUrl] = useState(null);
+  const [taskBarFaded, setTaskBarFaded] = useState(false);
+  const taskBarFadeTimerRef = useRef(null);
   const [welcomeMessageShown, setWelcomeMessageShown] = useState(false); // Track if welcome message has been shown
   const connectWebSocketRef = useRef(null); // Ref to store connectWebSocket function
   
@@ -269,6 +272,7 @@ function Conversation() {
     });
     audioQueueRef.current = [];
     setIsAISpeaking(false);
+    setPlayingAudioUrl(null);
   };
 
   // Play full audio (for AudioBar) - use proxy for cross-origin audio
@@ -305,8 +309,10 @@ function Conversation() {
           
           source.start();
           setIsAISpeaking(true);
+          setPlayingAudioUrl(audioUrl);
           source.onended = () => {
             setIsAISpeaking(false);
+            setPlayingAudioUrl(null);
             // Remove from queue when done
             audioQueueRef.current = audioQueueRef.current.filter(s => s !== source);
             console.log('Audio playback ended');
@@ -341,8 +347,10 @@ function Conversation() {
       source.start();
 
       setIsAISpeaking(true);
+      setPlayingAudioUrl(audioUrl);
       source.onended = () => {
         setIsAISpeaking(false);
+        setPlayingAudioUrl(null);
         // Remove from queue when done
         audioQueueRef.current = audioQueueRef.current.filter(s => s !== source);
       };
@@ -1143,8 +1151,9 @@ function Conversation() {
   // --- WebSocket Logic ---
   const connectWebSocket = useCallback((explicitSessionId = null) => {
     const effectiveSessionId = explicitSessionId || sessionId;
-    if (!token || !effectiveSessionId) {
-      console.log('connectWebSocket: missing token or sessionId', { token, effectiveSessionId, sessionId });
+    // Cookie-based auth: check user instead of token
+    if (!user || !effectiveSessionId) {
+      console.log('connectWebSocket: missing user or sessionId', { user, effectiveSessionId, sessionId });
       return;
     }
 
@@ -1190,7 +1199,8 @@ function Conversation() {
       wsHost = window.location.host;
     }
     
-    wsUrl = `${protocol}//${wsHost}/api/ws/?token=${token}&sessionId=${effectiveSessionId}${scenario ? `&scenario=${scenario}` : ''}${topic ? `&topic=${topic}` : ''}&voice=${voice}`;
+    // Cookie-based auth: token is now in httpOnly cookie, no need to pass in URL
+    wsUrl = `${protocol}//${wsHost}/api/ws/?sessionId=${effectiveSessionId}${scenario ? `&scenario=${scenario}` : ''}${topic ? `&topic=${topic}` : ''}&voice=${voice}`;
 
     // Create optimized WebSocket connection
     socketRef.current = new OptimizedWebSocket(wsUrl, {
@@ -1350,12 +1360,12 @@ function Conversation() {
       window.networkAdaptiveManager.startMonitoring();
     }
 
-  }, [token, sessionId, playAudioChunk, handleJsonMessage, user]);
+  }, [user, sessionId, playAudioChunk, handleJsonMessage]);
 
   // Init Session
   useEffect(() => {
     const init = async () => {
-      if (!user?.id || !token) return; // Wait for full auth
+      if (!user?.id) return; // Cookie-based auth: only need user, token is in httpOnly cookie
       
       // Don't auto-reconnect on every render - only on initial mount or manual retry
       if (isManualDisconnect) {
@@ -1722,44 +1732,6 @@ function Conversation() {
 
   return (
     <div className="flex flex-col h-screen max-w-lg mx-auto bg-background-light dark:bg-background-dark relative">
-      {/* Task Sidebar/Overlay */}
-      {showTasks && (
-          <div className={`fixed top-20 right-4 z-20 w-48 bg-white/90 dark:bg-slate-800/90 backdrop-blur rounded-xl shadow-lg border border-slate-100 dark:border-slate-700 p-4 transition-transform duration-300 ${showTasks ? 'translate-x-0' : 'translate-x-[110%]'}`}>
-              <div className="flex justify-between items-center mb-2">
-                  <h3 className="font-bold text-xs uppercase tracking-wide text-slate-500">Mission Tasks</h3>
-                  <button onClick={() => setShowTasks(false)} className="text-slate-400 hover:text-slate-600">
-                      <span className="material-symbols-outlined text-sm">close</span>
-                  </button>
-              </div>
-              <ul className="space-y-2">
-                  {tasks.length > 0 ? (
-                      tasks.map((task, idx) => {
-                          const taskText = typeof task === 'string' ? task : task.text;
-                          const isCompleted = completedTasks.has(taskText);
-                          return (
-                              <li key={idx} className={`text-xs flex items-start gap-2 ${isCompleted ? 'text-green-600 dark:text-green-400 line-through opacity-70' : 'text-slate-700 dark:text-slate-200'}`}>
-                                  <span className={`w-3 h-3 rounded-full border flex items-center justify-center shrink-0 mt-0.5 ${isCompleted ? 'bg-green-100 border-green-200' : 'border-slate-300'}`}>
-                                      {isCompleted && <span className="material-symbols-outlined text-[8px] font-bold">check</span>}
-                                  </span>
-                                  <span>{taskText}</span>
-                              </li>
-                          );
-                      })
-                  ) : tasksLoading ? (
-                      <li key="loading" className="text-xs text-slate-500">Loading tasks...</li>
-                  ) : null}
-              </ul>
-          </div>
-      )}
-      
-      {/* Toggle Tasks Button */}
-      {(tasks.length > 0 || location.state?.scenario || new URLSearchParams(window.location.search).get('scenario')) && !showTasks && (
-          <button
-            onClick={() => setShowTasks(true)}
-            className="fixed top-20 right-4 z-20 bg-white dark:bg-slate-800 p-2 rounded-full shadow-md border border-slate-200 dark:border-slate-700 text-primary">
-              <span className="material-symbols-outlined">assignment</span>
-          </button>
-      )}
 
       {/* Header */}
       <header className="flex flex-col items-center justify-between p-4 border-b border-gray-200 dark:border-gray-800 bg-white/80 dark:bg-slate-900/80 backdrop-blur shrink-0 z-10">
@@ -1789,27 +1761,114 @@ function Conversation() {
           </div>
         </div>
         
-        {/* Progress Bar - Task Progress */}
-        {(tasks.length > 0 || location.state?.scenario || new URLSearchParams(window.location.search).get('scenario')) && (
-          <div className="w-full mt-2 px-4">
-            <div className="flex items-center justify-between text-xs text-gray-600 dark:text-gray-400 mb-1">
-              <span className="flex items-center gap-1">
-                参与度: 
-                <span className={`font-medium ${engagementLevel === '高' ? 'text-green-600' : engagementLevel === '中' ? 'text-yellow-600' : 'text-red-600'}`}>
-                  {engagementLevel}
+      </header>
+
+      {/* Mission Tasks Dropdown Bar */}
+      {(tasks.length > 0 || tasksLoading) && (
+        <div
+          className={`z-10 bg-white dark:bg-slate-900 border-b border-gray-200 dark:border-gray-800 transition-all duration-700 ${
+            !showTasks
+              ? 'absolute top-16 left-0 right-0 w-full'
+              : 'shrink-0 relative'
+          } ${!showTasks && taskBarFaded ? 'opacity-30' : 'opacity-100'}`}
+          onMouseEnter={() => {
+            if (!showTasks && taskBarFaded) {
+              clearTimeout(taskBarFadeTimerRef.current);
+              setTaskBarFaded(false);
+              taskBarFadeTimerRef.current = setTimeout(() => setTaskBarFaded(true), 3000);
+            }
+          }}
+        >
+          {/* Collapsed / Expanded header button */}
+          <button
+            onClick={() => {
+              setShowTasks(prev => {
+                const next = !prev;
+                clearTimeout(taskBarFadeTimerRef.current);
+                if (!next) {
+                  taskBarFadeTimerRef.current = setTimeout(() => setTaskBarFaded(true), 3000);
+                } else {
+                  setTaskBarFaded(false);
+                }
+                return next;
+              });
+            }}
+            className="w-full bg-green-500 hover:bg-green-600 active:bg-green-700 transition-colors"
+          >
+            <div className="flex items-center justify-between px-4 py-2">
+              <div className="flex items-center gap-2">
+                <span className="material-symbols-outlined text-white text-base">assignment_turned_in</span>
+                <span className="text-sm font-semibold text-white">
+                  Tasks ({completedTasks.size}/{tasks.length} Complete)
                 </span>
+                <span className={`text-xs px-1.5 py-0.5 rounded-full font-medium ${
+                  engagementLevel === '高' ? 'bg-white/30 text-white' :
+                  engagementLevel === '中' ? 'bg-yellow-300/40 text-yellow-100' :
+                  'bg-red-300/40 text-red-100'
+                }`}>
+                  参与度 {engagementLevel}
+                </span>
+              </div>
+              <span className="material-symbols-outlined text-white text-base">
+                {showTasks ? 'expand_less' : 'expand_more'}
               </span>
-              <span>{currentTaskProgress}%</span>
             </div>
-            <div className="w-full h-2 bg-gray-200 dark:bg-gray-700 rounded-full overflow-hidden">
-              <div 
-                className={`h-full transition-all duration-500 ease-out ${currentTaskProgress >= 100 ? 'bg-green-500' : 'bg-primary'}`}
+            {/* Overall progress bar — always visible in header */}
+            <div className="w-full h-1 bg-green-700/40">
+              <div
+                className="h-full bg-white/80 transition-all duration-500 ease-out"
                 style={{ width: `${currentTaskProgress}%` }}
               />
             </div>
-          </div>
-        )}
-      </header>
+          </button>
+
+          {showTasks && (
+            <ul className="bg-green-500 px-4 pb-3 pt-1 space-y-3 border-t border-green-400">
+              {tasksLoading ? (
+                <li className="text-xs text-white/80 py-1">Loading tasks...</li>
+              ) : (() => {
+                // determine which is the current in-progress task (first incomplete)
+                const firstIncompleteIdx = tasks.findIndex(t => {
+                  const txt = typeof t === 'string' ? t : t.text;
+                  return !completedTasks.has(txt);
+                });
+                return tasks.map((task, idx) => {
+                  const taskText = typeof task === 'string' ? task : task.text;
+                  const isCompleted = completedTasks.has(taskText);
+                  const isCurrent = idx === firstIncompleteIdx;
+                  const progress = isCompleted ? 100 : isCurrent ? currentTaskProgress : 0;
+                  return (
+                    <li key={idx} className="space-y-1">
+                      <div className="flex items-start gap-2">
+                        <span className={`w-4 h-4 rounded-full flex items-center justify-center shrink-0 mt-0.5 ${isCompleted ? 'bg-white' : 'bg-white/30 border border-white/60'}`}>
+                          {isCompleted && (
+                            <span className="material-symbols-outlined text-green-600 text-[11px] font-bold">check</span>
+                          )}
+                        </span>
+                        <div className="flex-1 min-w-0">
+                          <span className={`text-sm ${isCompleted ? 'text-white/60 line-through' : 'text-white'}`}>
+                            {taskText}
+                          </span>
+                          {/* Per-task progress bar */}
+                          <div className="w-full h-1 mt-1 bg-green-700/40 rounded-full overflow-hidden">
+                            <div
+                              className={`h-full rounded-full transition-all duration-500 ease-out ${isCompleted ? 'bg-white' : 'bg-white/70'}`}
+                              style={{ width: `${progress}%` }}
+                            />
+                          </div>
+                          {isCurrent && !isCompleted && (
+                            <span className="text-[10px] text-white/70 mt-0.5 inline-block">{progress}%</span>
+                          )}
+                        </div>
+                      </div>
+                    </li>
+                  );
+                });
+              })()}
+            </ul>
+          )}
+        </div>
+      )}
 
       {/* Floating Playback Button */}
       {selection.visible && (
@@ -1864,11 +1923,18 @@ function Conversation() {
                  <p className="whitespace-pre-wrap leading-relaxed">{displayContent}</p>
                  {msg.audioUrl && (
                    <div className="mt-2">
-                     <AudioBar 
+                     <AudioBar
                        audioUrl={msg.audioUrl}
                        duration={0}
-                       onClick={() => playFullAudio(msg.audioUrl)}
+                       onClick={() => {
+                         if (playingAudioUrl === msg.audioUrl) {
+                           stopAudioPlayback();
+                         } else {
+                           playFullAudio(msg.audioUrl);
+                         }
+                       }}
                        isOwnMessage={!isAI}
+                       isActive={playingAudioUrl === msg.audioUrl}
                      />
                    </div>
                  )}

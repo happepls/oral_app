@@ -1,4 +1,4 @@
-import React, { createContext, useState, useContext, useEffect } from 'react';
+import React, { createContext, useState, useContext, useEffect, useMemo } from 'react';
 import { authAPI, userAPI } from '../services/api';
 
 const AuthContext = createContext(null);
@@ -10,7 +10,7 @@ export const AuthProvider = ({ children }) => {
   const [error, setError] = useState(null);
 
   useEffect(() => {
-    const savedToken = localStorage.getItem('authToken');
+    const savedToken = localStorage.getItem('authToken') || localStorage.getItem('token');
     const savedUser = localStorage.getItem('user');
 
     const clearAuth = () => {
@@ -19,50 +19,70 @@ export const AuthProvider = ({ children }) => {
       localStorage.removeItem('user');
     };
 
-    if (savedToken && savedUser) {
-      // Validate token expiry before trusting it
+    const migrateToken = async (oldToken) => {
       try {
-        const payload = JSON.parse(atob(savedToken.split('.')[1]));
-        const now = Math.floor(Date.now() / 1000);
-        if (payload.exp && payload.exp < now) {
-          clearAuth();
-          setLoading(false);
-          return;
-        }
-      } catch (e) {
-        clearAuth();
-        setLoading(false);
-        return;
-      }
+        const response = await fetch('/api/users/token-migrate', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${oldToken}`
+          },
+          credentials: 'include'
+        });
 
-      setToken(savedToken);
+        if (response.ok) {
+          console.log('Token migrated successfully to httpOnly cookie');
+          // Remove old token from localStorage after successful migration
+          clearAuth();
+          // Try to restore user from API response if provided
+          const data = await response.json();
+          if (data.data?.user) {
+            localStorage.setItem('user', JSON.stringify(data.data.user));
+            setUser(data.data.user);
+          }
+        } else {
+          console.error('Token migration failed');
+          clearAuth();
+        }
+      } catch (err) {
+        console.error('Token migration error:', err);
+        clearAuth();
+      }
+      setLoading(false);
+    };
+
+    if (savedToken) {
+      // Migrate old JWT token to httpOnly cookie
+      migrateToken(savedToken);
+    } else if (savedUser) {
+      // No old token, just restore user from localStorage
       try {
         setUser(JSON.parse(savedUser));
       } catch (err) {
         console.error('Failed to parse user data:', err);
         clearAuth();
-        setToken(null);
       }
+      setLoading(false);
+    } else {
+      // No saved data
+      setLoading(false);
     }
-
-    setLoading(false);
   }, []);
 
   const login = async (credentials) => {
     try {
       setError(null);
       setLoading(true);
-      
+
       const response = await authAPI.login(credentials);
-      
-      // The API response is now standardized with success/data format
-      // handleResponse in api.js extracts the data part for successful responses
-      const { user: userData, token: newToken } = response;
-      localStorage.setItem('authToken', newToken);
-      localStorage.setItem('token', newToken); // For backward compatibility
+
+      // Cookie-based auth: token is now in httpOnly cookie
+      // Only save non-sensitive user info to localStorage
+      const { user: userData } = response;
       localStorage.setItem('user', JSON.stringify(userData));
       setUser(userData);
-      setToken(newToken);
+      // Cookie is automatically handled by browser; no need to store token
+      setToken(null); // Keep token state null in cookie mode
       return { success: true };
     } catch (err) {
       const errorMessage = err.message || '登录失败，请稍后重试';
@@ -77,17 +97,16 @@ export const AuthProvider = ({ children }) => {
     try {
       setError(null);
       setLoading(true);
-      
+
       const response = await authAPI.register(userData);
-      
-      // The API response is now standardized with success/data format
-      // handleResponse in api.js extracts the data part for successful responses
-      const { user: newUser, token: newToken } = response;
-      localStorage.setItem('authToken', newToken);
-      localStorage.setItem('token', newToken); // For backward compatibility
+
+      // Cookie-based auth: token is now in httpOnly cookie
+      // Only save non-sensitive user info to localStorage
+      const { user: newUser } = response;
       localStorage.setItem('user', JSON.stringify(newUser));
       setUser(newUser);
-      setToken(newToken);
+      // Cookie is automatically handled by browser; no need to store token
+      setToken(null); // Keep token state null in cookie mode
       return { success: true };
     } catch (err) {
       const errorMessage = err.message || '注册失败，请稍后重试';
@@ -103,12 +122,14 @@ export const AuthProvider = ({ children }) => {
       setError(null);
       setLoading(true);
       const response = await authAPI.googleSignIn(googleToken);
-      const { user: userData, token: newToken } = response;
-      localStorage.setItem('authToken', newToken);
-      localStorage.setItem('token', newToken);
+
+      // Cookie-based auth: token is now in httpOnly cookie
+      // Only save non-sensitive user info to localStorage
+      const { user: userData } = response;
       localStorage.setItem('user', JSON.stringify(userData));
       setUser(userData);
-      setToken(newToken);
+      // Cookie is automatically handled by browser; no need to store token
+      setToken(null); // Keep token state null in cookie mode
       return { success: true };
     } catch (err) {
       const errorMessage = err.message || 'Google 登录失败，请稍后重试';
@@ -135,8 +156,20 @@ export const AuthProvider = ({ children }) => {
     }
   };
 
-  const logout = () => {
-    localStorage.removeItem('authToken');
+  const logout = async () => {
+    try {
+      // Call backend to clear httpOnly cookie
+      await fetch('/api/users/logout', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include'
+      });
+    } catch (err) {
+      console.error('Logout API call failed:', err);
+      // Continue with local cleanup even if API call fails
+    }
+
+    // Clear local state
     localStorage.removeItem('user');
     setUser(null);
     setToken(null);
@@ -157,35 +190,19 @@ export const AuthProvider = ({ children }) => {
   };
 
   const checkTokenExpiry = () => {
-    const token = localStorage.getItem('authToken');
-    if (!token) return false;
-    
-    try {
-      const payload = JSON.parse(atob(token.split('.')[1]));
-      const now = Math.floor(Date.now() / 1000);
-      const timeLeft = payload.exp - now;
-      
-      // Consider token expired if less than 5 minutes left
-      return timeLeft > 300;
-    } catch (e) {
-      return false;
-    }
+    // Cookie-based auth: token validity is handled by server/httpOnly cookie
+    // No client-side token expiry check needed
+    // Backend will respond with 401 if cookie is invalid
+    return true;
   };
 
   const refreshToken = async () => {
-    try {
-      // For now, just logout and redirect to login
-      // In a full implementation, you would use a refresh token
-      logout();
-      window.location.href = '/login';
-      return false;
-    } catch (err) {
-      console.error('Failed to refresh token:', err);
-      return false;
-    }
+    // Cookie-based auth: no manual refresh needed
+    // If 401 is received, API handler will redirect to login
+    return true;
   };
 
-  const value = {
+  const value = useMemo(() => ({
     user,
     token,
     loading,
@@ -199,7 +216,7 @@ export const AuthProvider = ({ children }) => {
     checkTokenExpiry,
     refreshToken,
     isAuthenticated: !!user
-  };
+  }), [user, token, loading, error, login, loginWithGoogle, register, logout, updateProfile, refreshProfile, checkTokenExpiry, refreshToken]);
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 };

@@ -62,14 +62,11 @@ const generateRefreshToken = (userId) => {
 const protect = async (req, res, next) => {
   let token;
 
-  // Check for token in Authorization header
-  if (req.headers.authorization && req.headers.authorization.startsWith('Bearer')) {
-    token = req.headers.authorization.split(' ')[1];
-  }
-  
-  // Check for token in cookies as fallback
-  if (!token && req.cookies && req.cookies.accessToken) {
+  // Cookie-first: check httpOnly cookie, then fallback to Bearer header
+  if (req.cookies?.accessToken) {
     token = req.cookies.accessToken;
+  } else if (req.headers.authorization?.startsWith('Bearer')) {
+    token = req.headers.authorization.split(' ')[1];
   }
 
   if (!token) {
