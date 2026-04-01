@@ -35,6 +35,9 @@ router.put('/api/users/goals/:id/complete', protect, userController.completeGoal
 router.put('/api/users/goals/:id/activate', protect, userController.switchGoal);
 router.post('/api/users/goals/reset-task', protect, userController.resetTask);
 
+// Daily scenario count (for enforcing per-day scenario limits)
+router.get('/api/users/daily-scenario-count', protect, userController.getDailyScenarioCount);
+
 // Check-in routes
 router.post('/api/users/checkin', protect, userController.checkin);
 router.get('/api/users/checkin/history', protect, userController.getCheckinHistory);

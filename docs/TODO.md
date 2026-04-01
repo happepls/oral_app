@@ -5,6 +5,7 @@
 
 ## Backlog
 
+- [X] [Bug] 魔法重复阶段：通过一句后台词卡不自动刷新新句子，AI 也不主动引导。根因：`magic_pass` 后端调用 `_update_session_prompt()` + `response.create` 触发 AI 回复，但实测无效，AI 未产生新的 `[MAGIC_SENTENCE:]` 输出。需排查 DashScope `conversation.item.create` + `response.create` 在 magic_pass 后是否能正常触发新轮响应（涉及 `main.py` ~line 833 触发逻辑）。
 - [ ] [Commercialization]  Defined a tiered subscription model (Freemium/Pro) and cost-per-minute unit economics for AI-driven oral practice.
 - [ ] [Feature]  Tell me a good way to plan a live activity for when I background the app.
 - [ ] [Security] Conversation.js localStorage key 注入修复（encodeURIComponent + 已有数据迁移方案）

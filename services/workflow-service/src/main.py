@@ -176,6 +176,12 @@ class NewGoalRequest(BaseModel):
     interests: str = ""
 
 
+class MagicPassEvaluateRequest(BaseModel):
+    user_utterance: str
+    target_sentence: str
+    target_language: Optional[str] = "en"
+
+
 # ============== API Endpoints ==============
 
 @app.get("/health")
@@ -376,6 +382,76 @@ async def create_new_goal(request: NewGoalRequest, conn = Depends(get_db_connect
         
         return {"success": True, "data": result}
     except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/workflows/magic-pass/evaluate")
+async def evaluate_magic_pass(request: MagicPassEvaluateRequest):
+    """
+    Workflow: Magic Pass Evaluation
+    Independently evaluate whether user's utterance correctly reproduces the target sentence.
+    Decoupled from AI response text — uses normalized string similarity.
+    Returns: {pass: bool, score: float, reason: str}
+    """
+    import re
+    import unicodedata
+
+    def _normalize(text: str) -> str:
+        """Lowercase, strip punctuation, normalize unicode, collapse whitespace."""
+        text = unicodedata.normalize("NFKC", text.lower())
+        # Remove common punctuation (CJK and Latin)
+        text = re.sub(r'[，。！？；：""''、《》【】\[\],.!?;:\'"()\-–—\s]+', ' ', text)
+        return text.strip()
+
+    def _cjk_char_overlap(a: str, b: str) -> float:
+        """Character-level F1 for CJK text."""
+        set_a = list(a.replace(' ', ''))
+        set_b = list(b.replace(' ', ''))
+        if not set_a or not set_b:
+            return 0.0
+        common = sum(min(set_a.count(c), set_b.count(c)) for c in set(set_a))
+        precision = common / len(set_b) if set_b else 0
+        recall = common / len(set_a) if set_a else 0
+        if precision + recall == 0:
+            return 0.0
+        return 2 * precision * recall / (precision + recall)
+
+    def _word_overlap(a: str, b: str) -> float:
+        """Word-level F1 for Latin-script text."""
+        words_a = a.split()
+        words_b = b.split()
+        if not words_a or not words_b:
+            return 0.0
+        common = sum(min(words_a.count(w), words_b.count(w)) for w in set(words_a))
+        precision = common / len(words_b) if words_b else 0
+        recall = common / len(words_a) if words_a else 0
+        if precision + recall == 0:
+            return 0.0
+        return 2 * precision * recall / (precision + recall)
+
+    CJK_LANGS = {"zh", "ja", "ko"}
+    PASS_THRESHOLD = 0.75
+
+    try:
+        norm_user = _normalize(request.user_utterance)
+        norm_target = _normalize(request.target_sentence)
+
+        lang = (request.target_language or "en").lower()[:2]
+        if lang in CJK_LANGS:
+            score = _cjk_char_overlap(norm_user, norm_target)
+        else:
+            score = _word_overlap(norm_user, norm_target)
+
+        passed = score >= PASS_THRESHOLD
+        reason = "sufficient_overlap" if passed else "insufficient_overlap"
+
+        logger.info(
+            f"[MAGIC_PASS] lang={lang} score={score:.2f} pass={passed} "
+            f"user='{request.user_utterance[:40]}' target='{request.target_sentence[:40]}'"
+        )
+        return {"pass": passed, "score": round(score, 3), "reason": reason}
+    except Exception as e:
+        logger.error(f"[MAGIC_PASS] Evaluation error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 

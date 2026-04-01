@@ -8,6 +8,16 @@ import AudioBar from '../components/AudioBar.jsx'; // Import the new AudioBar co
 import NetworkAdaptiveManager from '../utils/network-adaptive-manager';
 import OptimizedWebSocket from '../utils/websocket-optimized';
 
+const MAGIC_TIPS = [
+  '点击消息气泡右侧的喇叭图标，可重听 AI 的示范发音。',
+  '跟读时保持和 AI 相同的语速和停顿，节奏感是流利度的关键。',
+  '背诵时先回想句子结构，再补充词汇细节，效果更好。',
+  '遇到长句，可拆成 2-3 个短片段分别练习，再连起来说。',
+  '重复 3-5 次才能真正记住一个句型，不用担心次数多。',
+  '闭眼想象句子的画面，有助于将语言与情景绑定记忆。',
+  '说出来的速度不需要追求完美，意思准确是第一步。',
+];
+
 function Conversation() {
   const navigate = useNavigate();
   const location = useLocation();
@@ -140,6 +150,31 @@ function Conversation() {
   const completionCheckedRef = useRef(false); // Prevent duplicate modal triggers
   const hasViewedCompletionModalRef = useRef(false); // Track if user has already viewed and closed the modal
 
+  // 双阶段 UI State（Magic Repetition 和 Scene Theater）
+  const [currentPhase, setCurrentPhase] = useState('magic_repetition'); // 'magic_repetition'|'scene_theater'|'review'
+  const currentPhaseRef = useRef('magic_repetition'); // ref for use inside callbacks
+  const [sceneImageUrl, setSceneImageUrl] = useState(null);
+  const [magicPassedTasks, setMagicPassedTasks] = useState(() => {
+    try {
+      const sc = new URLSearchParams(window.location.search).get('scenario') || '';
+      const stored = sc && localStorage.getItem(`magic_passed_${sc}`);
+      return stored ? new Set(JSON.parse(stored)) : new Set();
+    } catch { return new Set(); }
+  }); // task indices that passed magic（localStorage 持久化，key: magic_passed_{scenario}）
+  const [theaterCompletedTasks, setTheaterCompletedTasks] = useState(new Set());
+  const [aiFeedback, setAiFeedback] = useState('');
+  const [dailyScenariosUsed, setDailyScenariosUsed] = useState(0);
+  const [currentMagicSentence, setCurrentMagicSentence] = useState(() => {
+    try {
+      const sc = new URLSearchParams(window.location.search).get('scenario') || '';
+      return sc ? (localStorage.getItem(`magic_sentence_${sc}`) || '') : '';
+    } catch { return ''; }
+  }); // 魔法重复阶段当前需复述的句子（持久化到 localStorage，key: magic_sentence_{scenario}）
+  const [magicCardState, setMagicCardState] = useState('waiting'); // 'waiting'|'reciting'|'passed'
+  const [magicCardCovered, setMagicCardCovered] = useState(false);
+  const [showSkipButton, setShowSkipButton] = useState(false);
+  const [tipIndex, setTipIndex] = useState(0);
+
   const getScoreFeedback = (score, reviewData = null) => {
     const stripEmoji = (s) => s.replace(
       /[\u{1F600}-\u{1F64F}\u{1F300}-\u{1F5FF}\u{1F680}-\u{1F6FF}\u{1F1E0}-\u{1F1FF}\u{2600}-\u{26FF}\u{2700}-\u{27BF}]/gu, ''
@@ -175,6 +210,14 @@ function Conversation() {
     if (score >= 60) return { emoji: '', text: '进步明显，建议多练习口语表达的流畅度。', level: 'fair' };
     return { emoji: '', text: '建议继续练习，多听多说以提高表达能力。', level: 'needsWork' };
   };
+
+  // 查询每日场景数（mount 时，使用 localStorage）
+  useEffect(() => {
+    const today = new Date().toISOString().slice(0, 10); // '2026-03-30'
+    const key = `daily_scenarios_${today}`;
+    const count = parseInt(localStorage.getItem(key) || '0', 10);
+    setDailyScenariosUsed(Math.min(count, 3));
+  }, []);
 
   // Initialize completed tasks set and check for scenario completion
   useEffect(() => {
@@ -226,14 +269,58 @@ function Conversation() {
                   } catch (error) {
                       console.error('Failed to fetch scenario review:', error);
                   } finally {
-                      // Show modal after 1 second delay
-                      setTimeout(() => setShowCompletionModal(true), 1000);
+                      // Show modal after 1 second delay; clear magic progress for this scenario
+                      setTimeout(() => {
+                          setShowCompletionModal(true);
+                          try {
+                              const sc = new URLSearchParams(window.location.search).get('scenario') || '';
+                              if (sc) localStorage.removeItem(`magic_passed_${sc}`);
+                              if (sc) localStorage.removeItem(`magic_sentence_${sc}`);
+                          } catch {}
+                      }, 1000);
                   }
               };
               fetchReviewAndShowModal();
           }
       }
   }, [tasks, allScenarios]);
+
+  // 同步 currentPhase → ref（供 handleJsonMessage 等 callback 读取）
+  useEffect(() => { currentPhaseRef.current = currentPhase; }, [currentPhase]);
+
+  // 持久化 currentMagicSentence → localStorage（刷新页面后可恢复，key: magic_sentence_{scenario}）
+  useEffect(() => {
+    try {
+      const sc = new URLSearchParams(window.location.search).get('scenario') || '';
+      if (!sc) return;
+      if (currentMagicSentence) {
+        localStorage.setItem(`magic_sentence_${sc}`, currentMagicSentence);
+      } else {
+        localStorage.removeItem(`magic_sentence_${sc}`);
+      }
+    } catch {}
+  }, [currentMagicSentence]);
+
+  // Tips 轮播（魔法重复 waiting 阶段每 9s 切换）
+  useEffect(() => {
+    if (currentPhase !== 'magic_repetition' || magicCardState !== 'waiting') return;
+    const timer = setInterval(() => {
+      setTipIndex(prev => (prev + 1) % MAGIC_TIPS.length);
+    }, 9000);
+    return () => clearInterval(timer);
+  }, [currentPhase, magicCardState]);
+
+  // 监听 showCompletionModal，当显示时增加每日场景计数
+  useEffect(() => {
+    if (showCompletionModal) {
+      const today = new Date().toISOString().slice(0, 10);
+      const key = `daily_scenarios_${today}`;
+      const count = parseInt(localStorage.getItem(key) || '0', 10);
+      const newCount = Math.min(count + 1, 3);
+      localStorage.setItem(key, String(newCount));
+      setDailyScenariosUsed(newCount);
+    }
+  }, [showCompletionModal]);
 
   // Audio context and refs
   const audioContextRef = useRef(null);
@@ -451,6 +538,16 @@ function Conversation() {
     if (resetProgress) {
       setCurrentTaskProgress(0);
       setCurrentTaskScore(0);
+      // 重置魔法重复阶段状态
+      setMagicPassedTasks(new Set());
+      setCurrentMagicSentence('');
+      setMagicCardState('waiting');
+      setMagicCardCovered(false);
+      setCurrentPhase('magic_repetition');
+      // 清除 localStorage 里的魔法通过记录
+      const scKey = scenarioFromUrl || '';
+      if (scKey) localStorage.removeItem(`magic_passed_${scKey}`);
+      if (scKey) localStorage.removeItem(`magic_sentence_${scKey}`);
     } else {
       // Continue practice: show 100% progress
       setCurrentTaskProgress(100);
@@ -819,8 +916,42 @@ function Conversation() {
            const msgPayload = data.payload || data;
            const aiContent = msgPayload.content || data.content || data.text || msgPayload.text || '';
            const responseId = msgPayload.responseId || data.responseId;
-           
-           if (aiContent) {
+
+           // 检测文本标记（降级方案）
+           let cleanContent = aiContent;
+
+           // 提取 MAGIC_SENTENCE
+           if (aiContent && aiContent.includes('[MAGIC_SENTENCE:')) {
+               const sentenceMatch = aiContent.match(/\[MAGIC_SENTENCE:\s*(.+?)\]/);
+               if (sentenceMatch) {
+                   setCurrentMagicSentence(sentenceMatch[1].trim());
+               }
+               // 从显示文字中移除标记
+               cleanContent = aiContent.replace(/\[MAGIC_SENTENCE:[^\]]+\]\s*/g, '');
+           }
+
+           if (aiContent && aiContent.includes('[MAGIC_PASS]')) {
+               // 从显示文字中移除标记
+               cleanContent = cleanContent.replace(/\s*\[MAGIC_PASS[^\]]*\]/g, '');
+               // 触发台词卡"通过"动画：仅在背诵模式下才生效（防止跟读阶段误触发）
+               if (magicCardState === 'reciting') {
+                   setMagicCardCovered(false);  // 背诵模式立即揭开
+                   setMagicCardState('passed');
+                   setTimeout(() => {
+                       setMagicCardState('waiting');
+                   }, 1800);
+               }
+           }
+           if (aiContent && /\[TASK_\d+_COMPLETE\]/.test(aiContent)) {
+               // 提取任务索引（假设格式: [TASK_0_COMPLETE])
+               const match = aiContent.match(/\[TASK_(\d+)_COMPLETE\]/);
+               if (match) {
+                   const taskIdx = parseInt(match[1], 10);
+                   setTheaterCompletedTasks(prev => new Set([...prev, taskIdx]));
+               }
+           }
+
+           if (cleanContent) {
                setMessages(prev => {
                    const last = prev[prev.length - 1];
                    // If last message is an in-progress AI message, update it
@@ -829,7 +960,7 @@ function Conversation() {
                            ...prev.slice(0, -1),
                            {
                                ...last,
-                               content: aiContent,
+                               content: cleanContent,
                                isFinal: true,
                                responseId: responseId || last.responseId
                            }
@@ -838,37 +969,50 @@ function Conversation() {
                    // Otherwise create new AI message
                    return [...prev, {
                        type: 'ai',
-                       content: aiContent,
+                       content: cleanContent,
                        isFinal: true,
                        responseId: responseId
                    }];
                });
            }
            break;
-        case 'ai_response':
+        case 'ai_response': {
            // Handle AI text response from comms-service
-           console.log('🤖 AI Response:', data.text);
+           let responseText = data.text || '';
+           console.log('🤖 AI Response:', responseText);
+
+           // 提取 MAGIC_SENTENCE 标记
+           if (responseText.includes('[MAGIC_SENTENCE:')) {
+               const sentenceMatch = responseText.match(/\[MAGIC_SENTENCE:\s*(.+?)\]/);
+               if (sentenceMatch) {
+                   setCurrentMagicSentence(sentenceMatch[1].trim());
+               }
+               responseText = responseText.replace(/\[MAGIC_SENTENCE:[^\]]+\]\s*/g, '');
+           }
+
+           // 提取并移除 MAGIC_PASS 标记
+           if (responseText.includes('[MAGIC_PASS]')) {
+               responseText = responseText.replace(/\s*\[MAGIC_PASS[^\]]*\]/g, '');
+               // 仅在背诵模式下才触发通过动画（防止跟读阶段误触发）
+               if (magicCardState === 'reciting') {
+                   setMagicCardCovered(false);
+                   setMagicCardState('passed');
+                   setTimeout(() => {
+                       setMagicCardState('waiting');
+                   }, 1800);
+               }
+           }
+
+           const finalText = responseText.trim();
            setMessages(prev => {
                const last = prev[prev.length - 1];
-               // If last message is an in-progress AI message, update it
                if (last && last.type === 'ai' && !last.isFinal) {
-                   return [
-                       ...prev.slice(0, -1),
-                       {
-                           ...last,
-                           content: data.text,
-                           isFinal: true
-                       }
-                   ];
+                   return [...prev.slice(0, -1), { ...last, content: finalText, isFinal: true }];
                }
-               // Otherwise create new AI message
-               return [...prev, {
-                   type: 'ai',
-                   content: data.text,
-                   isFinal: true
-               }];
+               return [...prev, { type: 'ai', content: finalText, isFinal: true }];
            });
            break;
+        }
         case 'user_transcript':
            // Display user's speech transcription in chat
            if (data.payload && data.payload.text) {
@@ -918,8 +1062,8 @@ function Conversation() {
            const message = profPayload.message || '';
            const improvementTips = profPayload.improvement_tips || [];
 
-           // Show improvement tips even if delta=0 (e.g., when task relevance is low)
-           if (improvementTips.length > 0) {
+           // Show improvement tips only outside magic_repetition phase
+           if (improvementTips.length > 0 && currentPhaseRef.current !== 'magic_repetition') {
                const tipsText = '💡 建议：' + improvementTips.join('；');
                setMessages(prev => [...prev, {
                    type: 'system',
@@ -927,7 +1071,6 @@ function Conversation() {
                    isFinal: true,
                    className: 'text-sm text-slate-500'
                }]);
-               // Note: Tips are now permanent (no auto-dismiss) so users can refer back to them
            }
 
            // Update proficiency and progress bar only if delta > 0
@@ -1069,6 +1212,69 @@ function Conversation() {
                }, 1500);
            }
            break;
+        case 'phase_transition': {
+           const phase = data.payload?.phase || data.phase;
+           if (phase) {
+               setCurrentPhase(phase);
+               setTipIndex(Math.floor(Math.random() * MAGIC_TIPS.length));
+           }
+           if (phase === 'magic_repetition') {
+               setMagicCardState('waiting');
+               setMagicCardCovered(false);
+               // 停止旧任务的音频播放，避免与新任务音频重叠
+               stopAudioPlayback();
+               // 注意：不立即设置 currentMagicSentence，等待 AI 的 [MAGIC_SENTENCE] 标记
+               // 这样可以避免显示任务标题而不是具体句子
+           } else {
+               // 切换到其他阶段（scene_theater 等）时重置卡片状态
+               setMagicCardCovered(false);
+               setMagicCardState('waiting');
+           }
+           setShowSkipButton(false);
+           console.log('📊 Phase Transition:', phase);
+           break;
+        }
+        case 'scene_image': {
+           const imageUrl = data.payload?.image_url || data.image_url;
+           if (imageUrl) setSceneImageUrl(imageUrl);
+           console.log('🖼️ Scene Image:', imageUrl);
+           break;
+        }
+        case 'magic_pass_first': {
+           setMagicCardCovered(true);
+           setMagicCardState('reciting');
+           setShowSkipButton(false);
+           setCurrentMagicSentence('');
+           setTipIndex(Math.floor(Math.random() * MAGIC_TIPS.length));
+           console.log('🎭 Magic Pass First — card covered, memory mode');
+           break;
+        }
+        case 'magic_pass': {
+           const magicTaskIndex = data.payload?.task_index ?? data.task_index;
+           setMagicPassedTasks(prev => {
+               const next = new Set([...prev, magicTaskIndex]);
+               try {
+                   const sc = new URLSearchParams(window.location.search).get('scenario') || '';
+                   if (sc) localStorage.setItem(`magic_passed_${sc}`, JSON.stringify([...next]));
+               } catch {}
+               return next;
+           });
+           setMagicCardState('passed');
+           setMagicCardCovered(false);
+           setShowSkipButton(false);
+           setTipIndex(Math.floor(Math.random() * MAGIC_TIPS.length));
+           setTimeout(() => {
+               setMagicCardState('waiting');
+           }, 1800);
+           console.log('✨ Magic Pass Task:', magicTaskIndex);
+           break;
+        }
+        case 'theater_task_complete': {
+           const theaterTaskIndex = data.payload?.task_index ?? data.task_index;
+           setTheaterCompletedTasks(prev => new Set([...prev, theaterTaskIndex]));
+           console.log('🎭 Theater Task Complete:', theaterTaskIndex);
+           break;
+        }
         case 'scenario_review':
            // Handle scenario review data from backend (when all tasks in scenario are completed)
            console.log('📚 [Scenario Review] 场景完成，获取 AI 点评：', data.payload);
@@ -1249,6 +1455,18 @@ function Conversation() {
     }
     };
     socketRef.current.send(JSON.stringify(payload));
+
+    // 刷新重连：如果处于 magic_repetition 且句子为空，请求后端重发
+    setTimeout(() => {
+      try {
+        const sc = new URLSearchParams(window.location.search).get('scenario') || '';
+        const hasSentence = sc ? !!localStorage.getItem(`magic_sentence_${sc}`) : false;
+        if (currentPhaseRef.current === 'magic_repetition' && !hasSentence) {
+          socketRef.current.send(JSON.stringify({ type: 'resend_magic_sentence' }));
+          console.log('[Magic] Requested resend_magic_sentence after reconnect');
+        }
+      } catch {}
+    }, 600);
     });
 
     socketRef.current.addEventListener('message', async (event) => {
@@ -1484,13 +1702,31 @@ function Conversation() {
                       effectiveSessionId = storedSessionId;
                       // Load history messages into state
                       // Set audioPlayed: true to prevent auto-play on page refresh
-                      const historyMessages = historyRes.messages.map(msg => ({
-                          type: msg.role === 'user' ? 'user' : 'ai',
-                          content: msg.content,
-                          audioUrl: msg.audioUrl,
-                          isFinal: true,
-                          audioPlayed: true
-                      }));
+                      let lastMagicSentence = '';
+                      const historyMessages = historyRes.messages.map(msg => {
+                          let content = msg.content || '';
+                          if (msg.role !== 'user') {
+                              // 提取最新的 MAGIC_SENTENCE（取最后一条）
+                              const match = content.match(/\[MAGIC_SENTENCE:\s*(.+?)\]/);
+                              if (match) lastMagicSentence = match[1].trim();
+                              // 剥离所有标记
+                              content = content
+                                  .replace(/\[MAGIC_SENTENCE:[^\]]+\]\s*/g, '')
+                                  .replace(/\s*\[MAGIC_PASS[^\]]*\]/g, '')
+                                  .replace(/\[TASK_\d+_COMPLETE\]/g, '')
+                                  .trim();
+                          }
+                          return {
+                              type: msg.role === 'user' ? 'user' : 'ai',
+                              content,
+                              audioUrl: msg.audioUrl,
+                              isFinal: true,
+                              audioPlayed: true
+                          };
+                      });
+                      if (lastMagicSentence) {
+                          setCurrentMagicSentence(lastMagicSentence);
+                      }
                       setMessages(prev => {
                           // Keep initial system message, add history
                           const systemMsg = prev.find(m => m.type === 'system');
@@ -1730,47 +1966,261 @@ function Conversation() {
 
   // Removed handleAudioData since we now cache audio and send only on stop
 
+  // PhaseIndicator 组件：两阶段 tab 指示器（Minimalist 风格）
+  const PhaseIndicator = () => {
+    const phases = [
+      { id: 'magic_repetition', label: '魔法重复', count: 3 },
+      { id: 'scene_theater', label: '情景剧场', count: 3 },
+    ];
+
+    const handlePhaseClick = (phaseId) => {
+      if (phaseId === 'magic_repetition' && currentPhase !== 'magic_repetition') {
+        // 回退到魔法重复阶段：重置前端状态 + 通知后端
+        setCurrentPhase('magic_repetition');
+        setMagicPassedTasks(new Set());
+        setCurrentMagicSentence('');
+        setMagicCardState('waiting');
+        setMagicCardCovered(false);
+        try {
+          const sc = new URLSearchParams(window.location.search).get('scenario') || '';
+          if (sc) localStorage.removeItem(`magic_passed_${sc}`);
+          if (sc) localStorage.removeItem(`magic_sentence_${sc}`);
+        } catch {}
+        if (socketRef.current?.readyState === WebSocket.OPEN) {
+          socketRef.current.send(JSON.stringify({ type: 'reset_magic_phase' }));
+          console.log('🔄 Reset magic phase requested');
+        }
+      } else {
+        setCurrentPhase(phaseId);
+      }
+    };
+
+    return (
+      <div className="h-12 flex items-center gap-2 px-4 bg-slate-900 dark:bg-slate-950 justify-center transition-all duration-500">
+        {phases.map((phase) => {
+          const isActive = currentPhase === phase.id;
+          const completedTasks = phase.id === 'magic_repetition' ? magicPassedTasks : theaterCompletedTasks;
+          return (
+            <button
+              key={phase.id}
+              onClick={() => handlePhaseClick(phase.id)}
+              className={`flex flex-col items-center gap-1 px-4 transition-colors duration-300 ${
+                isActive ? 'text-indigo-400' : 'text-slate-400 hover:text-slate-300'
+              }`}
+            >
+              <div className="text-xs font-medium">{phase.label}</div>
+              <div className="flex gap-0.5">
+                {Array.from({ length: phase.count }).map((_, i) => (
+                  <div
+                    key={i}
+                    className={`w-1 h-1 rounded-full transition-colors duration-300 ${
+                      completedTasks.has(i) ? 'bg-emerald-500' : 'bg-slate-600'
+                    }`}
+                  />
+                ))}
+              </div>
+            </button>
+          );
+        })}
+      </div>
+    );
+  };
+
+  // AIFeedbackStrip 组件：简洁的反馈条（底部淡入）
+  const AIFeedbackStrip = () => {
+    if (!aiFeedback) return null;
+    return (
+      <div className="px-4 py-2 bg-amber-950/30 dark:bg-amber-900/20 border-t border-amber-800/30 text-amber-200 text-xs flex items-center gap-2 animate-in fade-in duration-500">
+        {/* 闪烁点动画 */}
+        <span className="inline-flex gap-1">
+          <span className="w-0.5 h-0.5 rounded-full bg-amber-400 animate-pulse" />
+          <span className="w-0.5 h-0.5 rounded-full bg-amber-400 animate-pulse delay-100" />
+          <span className="w-0.5 h-0.5 rounded-full bg-amber-400 animate-pulse delay-200" />
+        </span>
+        <span className="flex-1">{aiFeedback}</span>
+      </div>
+    );
+  };
+
   return (
     <div className="flex flex-col h-screen max-w-lg mx-auto bg-background-light dark:bg-background-dark relative">
 
-      {/* Header */}
-      <header className="flex flex-col items-center justify-between p-4 border-b border-gray-200 dark:border-gray-800 bg-white/80 dark:bg-slate-900/80 backdrop-blur shrink-0 z-10">
-        <div className="flex items-center justify-between w-full">
+      {/* ── Scene Panel: 场景图全宽置顶，控制按钮叠加 ── */}
+      <div className="relative w-full shrink-0 overflow-hidden bg-slate-900" style={{height:'220px'}}>
+
+        {/* 背景：情景剧场阶段显示场景图，其他阶段显示深色渐变 */}
+        {(currentPhase === 'scene_theater' && sceneImageUrl) ? (
+          <img
+            src={sceneImageUrl}
+            alt="scene"
+            className="absolute inset-0 w-full h-full object-cover transition-opacity duration-500"
+          />
+        ) : (
+          <div className="absolute inset-0 bg-gradient-to-br from-slate-800 via-slate-900 to-indigo-950" />
+        )}
+
+        {/* 全局渐变叠加层 */}
+        <div className="absolute inset-0 bg-gradient-to-b from-black/50 via-transparent to-black/80 pointer-events-none" />
+
+        {/* 情景剧场骨架屏（有图位置但图片未加载） */}
+        {currentPhase === 'scene_theater' && !sceneImageUrl && (
+          <div className="absolute inset-0 flex items-center justify-center gap-3 px-8">
+            <div className="w-14 h-14 rounded-lg bg-slate-700 animate-pulse shrink-0" />
+            <div className="flex flex-col gap-2 flex-1">
+              <div className="h-3 bg-slate-700 rounded w-3/4 animate-pulse" />
+              <div className="h-3 bg-slate-700 rounded w-1/2 animate-pulse" />
+            </div>
+          </div>
+        )}
+
+        {/* ── 顶部控制层：× 按钮 + 连接状态 ── */}
+        <div className="absolute top-0 left-0 right-0 flex items-center justify-between px-4 pt-4 z-10">
           <button
             onClick={() => navigate('/discovery')}
-            className="p-2 text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-full">
-            <span className="material-symbols-outlined">close</span>
+            className="w-8 h-8 rounded-full bg-black/40 backdrop-blur-sm flex items-center justify-center text-white hover:bg-black/60 transition">
+            <span className="material-symbols-outlined text-sm">close</span>
           </button>
-          <div className="flex flex-col items-center">
-            <h1 className="font-bold text-gray-900 dark:text-white flex items-center gap-2">
-              <span className="material-symbols-outlined text-primary">school</span>
-              {currentRole === 'OralTutor' ? 'AI 导师' : currentRole}
-            </h1>
-            <span className={`text-xs px-2 py-0.5 rounded-full flex items-center gap-1 ${isConnected ? 'bg-green-100 text-green-700' : 'bg-yellow-100 text-yellow-700'}`}>
-              <span className={`w-1.5 h-1.5 rounded-full ${isConnected ? 'bg-green-500' : 'bg-yellow-500'}`}></span>
-              {isConnected ? '在线' : '连接中...'}
+          <div className="flex items-center gap-2">
+            <span className={`text-xs px-2 py-0.5 rounded-full backdrop-blur-sm flex items-center gap-1 ${
+              isConnected ? 'bg-emerald-500/80 text-white' : 'bg-amber-500/80 text-white'
+            }`}>
+              <span className={`w-1 h-1 rounded-full ${isConnected ? 'bg-white' : 'bg-white/70'}`} />
+              {isConnected ? '在线' : '连接中'}
             </span>
           </div>
-          <div className="flex items-center gap-2">
-              <span className="text-sm font-medium text-gray-700 dark:text-gray-300 hidden sm:block">
-                  {user?.username || '用户'}
-              </span>
-              <div className="w-8 h-8 rounded-full bg-primary/10 text-primary flex items-center justify-center font-bold">
-                  {user?.username ? user.username[0].toUpperCase() : 'U'}
+        </div>
+
+        {/* ── 底部叠加层：话题引导词 + 场景标题 + 阶段指示 ── */}
+        <div className="absolute bottom-0 left-0 right-0 px-4 pb-3 z-10">
+
+          {/* 魔法重复阶段：台词卡（话题引导词） */}
+          {currentPhase === 'magic_repetition' && (
+            <div className={`mb-3 backdrop-blur-sm rounded-xl px-4 py-3 border transition-all duration-400 ${
+              magicCardState === 'passed'
+                ? 'bg-emerald-900/60 border-emerald-500/70'
+                : magicCardCovered
+                ? 'bg-indigo-900/60 border-indigo-400/50'
+                : 'bg-black/50 border-white/10'
+            }`}>
+              {magicCardState === 'passed' ? (
+                <div className="flex items-center justify-center gap-2 py-1 animate-in zoom-in duration-200">
+                  <span className="text-2xl">☑️</span>
+                  <span className="text-emerald-300 font-semibold">通过！</span>
+                </div>
+              ) : magicCardCovered ? (
+                <div className="text-center py-1">
+                  <p className="text-xs text-indigo-300 mb-1 tracking-widest uppercase">从记忆复述</p>
+                  <div className="flex items-center justify-center gap-2">
+                    <div className="w-16 h-2 rounded-full bg-indigo-400/40 animate-pulse" />
+                    <div className="w-10 h-2 rounded-full bg-indigo-400/30 animate-pulse" />
+                    <div className="w-12 h-2 rounded-full bg-indigo-400/40 animate-pulse" />
+                  </div>
+                  <p className="text-xs text-indigo-200/50 mt-2">句子已隐藏，请尝试背诵</p>
+                </div>
+              ) : (
+                <>
+                  <p className="text-xs text-slate-400 mb-1.5 tracking-widest uppercase">跟我说</p>
+                  <p className="text-sm font-medium text-white leading-relaxed">
+                    {currentMagicSentence || <span className="text-slate-500 italic">AI 正在准备...</span>}
+                  </p>
+                </>
+              )}
+            </div>
+          )}
+
+          {currentPhase === 'magic_repetition' && magicCardState !== 'passed' && (
+            <div className="mb-2 flex items-center gap-2">
+              <div className="flex-1 px-3 py-1.5 rounded-lg bg-black/30 border border-white/5 flex items-start gap-2">
+                <span className="text-yellow-400/60 text-xs mt-0.5 shrink-0">💡</span>
+                <p key={tipIndex} className="text-xs text-white/35 leading-relaxed">
+                  {MAGIC_TIPS[tipIndex]}
+                </p>
               </div>
+              <button
+                onClick={() => {
+                  if (socketRef.current?.readyState === WebSocket.OPEN) {
+                    socketRef.current.send(JSON.stringify({ type: 'force_advance_magic' }));
+                    console.log('⏭️ Manual advance magic task');
+                  }
+                }}
+                className="shrink-0 px-2.5 py-1.5 rounded-lg text-xs text-white/40 hover:text-white/70 border border-white/10 hover:border-white/25 bg-black/20 hover:bg-black/40 transition-all"
+                title="跳过当前句子"
+              >
+                跳过 →
+              </button>
+            </div>
+          )}
+
+          <div className="flex items-end justify-between">
+            {/* 场景标题 + 阶段名 */}
+            <div>
+              <p className="text-white font-semibold text-sm leading-tight" style={{textShadow:'0 1px 6px rgba(0,0,0,0.8)'}}>
+                {currentScenarioTitle || 'AI 口语导师'}
+              </p>
+              <p className="text-white/50 text-xs mt-0.5">
+                {currentPhase === 'magic_repetition' ? '魔法重复阶段' : currentPhase === 'scene_theater' ? '情景剧场阶段' : '复盘点评'}
+              </p>
+            </div>
+
+            {/* 阶段进度点 */}
+            <div className="flex items-center gap-3">
+              {[
+                { id: 'magic_repetition', label: '重复', set: magicPassedTasks },
+                { id: 'scene_theater', label: '剧场', set: theaterCompletedTasks },
+              ].map((ph) => (
+                <button
+                  key={ph.id}
+                  onClick={() => {
+                    if (ph.id === 'magic_repetition' && currentPhase !== 'magic_repetition') {
+                      setCurrentPhase('magic_repetition');
+                      setMagicPassedTasks(new Set());
+                      setCurrentMagicSentence('');
+                      setMagicCardState('waiting');
+                      setMagicCardCovered(false);
+                      try {
+                        const sc = new URLSearchParams(window.location.search).get('scenario') || '';
+                        if (sc) localStorage.removeItem(`magic_passed_${sc}`);
+                        if (sc) localStorage.removeItem(`magic_sentence_${sc}`);
+                      } catch {}
+                      if (socketRef.current?.readyState === WebSocket.OPEN) {
+                        socketRef.current.send(JSON.stringify({ type: 'reset_magic_phase' }));
+                      }
+                    }
+                  }}
+                  className={`flex flex-col items-center gap-1 transition-opacity ${
+                    ph.id === 'magic_repetition' && currentPhase !== 'magic_repetition'
+                      ? 'cursor-pointer opacity-70 hover:opacity-100'
+                      : 'cursor-default'
+                  }`}
+                >
+                  <span className={`text-[10px] tracking-wide ${currentPhase === ph.id ? 'text-indigo-300' : 'text-white/30'}`}>
+                    {ph.label}
+                  </span>
+                  <div className="flex gap-0.5">
+                    {[0,1,2].map(i => (
+                      <div key={i} className={`w-1.5 h-1.5 rounded-full transition-colors duration-300 ${
+                        ph.set.has(i) ? 'bg-emerald-400' : 'bg-white/20'
+                      }`} />
+                    ))}
+                  </div>
+                </button>
+              ))}
+            </div>
           </div>
         </div>
-        
-      </header>
+      </div>
 
-      {/* Mission Tasks Dropdown Bar */}
-      {(tasks.length > 0 || tasksLoading) && (
+      {/* 每日限制 Banner */}
+      {dailyScenariosUsed >= 3 && (
+        <div className="flex items-center justify-center px-4 py-1.5 bg-amber-900/40 text-amber-300 text-xs">
+          今日练习已满 3 个场景，明天继续加油
+        </div>
+      )}
+
+      {/* Mission Tasks Dropdown Bar — only visible in scene_theater phase */}
+      {currentPhase === 'scene_theater' && (tasks.length > 0 || tasksLoading) && (
         <div
-          className={`z-10 bg-white dark:bg-slate-900 border-b border-gray-200 dark:border-gray-800 transition-all duration-700 ${
-            !showTasks
-              ? 'absolute top-16 left-0 right-0 w-full'
-              : 'shrink-0 relative'
-          } ${!showTasks && taskBarFaded ? 'opacity-30' : 'opacity-100'}`}
+          className={`z-10 bg-green-500 border-b border-green-400 transition-all duration-700 shrink-0 relative ${!showTasks && taskBarFaded ? 'opacity-30' : 'opacity-100'}`}
           onMouseEnter={() => {
             if (!showTasks && taskBarFaded) {
               clearTimeout(taskBarFadeTimerRef.current);
@@ -1795,18 +2245,10 @@ function Conversation() {
             }}
             className="w-full bg-green-500 hover:bg-green-600 active:bg-green-700 transition-colors"
           >
-            <div className="flex items-center justify-between px-4 py-2">
-              <div className="flex items-center gap-2">
-                <span className="material-symbols-outlined text-white text-base">assignment_turned_in</span>
-                <span className="text-sm font-semibold text-white">
-                  Tasks ({completedTasks.size}/{tasks.length} Complete)
-                </span>
-                <span className={`text-xs px-1.5 py-0.5 rounded-full font-medium ${
-                  engagementLevel === '高' ? 'bg-white/30 text-white' :
-                  engagementLevel === '中' ? 'bg-yellow-300/40 text-yellow-100' :
-                  'bg-red-300/40 text-red-100'
-                }`}>
-                  参与度 {engagementLevel}
+            <div className="flex items-center justify-between px-5 py-3">
+              <div className="flex items-center gap-3">
+                <span className="text-base font-bold text-white">
+                  任务 ({completedTasks.size}/{tasks.length} 完成)
                 </span>
               </div>
               <span className="material-symbols-outlined text-white text-base">
@@ -1823,7 +2265,7 @@ function Conversation() {
           </button>
 
           {showTasks && (
-            <ul className="bg-green-500 px-4 pb-3 pt-1 space-y-3 border-t border-green-400">
+            <ul className="bg-green-500 px-5 pb-4 pt-2 space-y-3 border-t border-green-400">
               {tasksLoading ? (
                 <li className="text-xs text-white/80 py-1">Loading tasks...</li>
               ) : (() => {
@@ -1838,15 +2280,16 @@ function Conversation() {
                   const isCurrent = idx === firstIncompleteIdx;
                   const progress = isCompleted ? 100 : isCurrent ? currentTaskProgress : 0;
                   return (
-                    <li key={idx} className="space-y-1">
-                      <div className="flex items-start gap-2">
-                        <span className={`w-4 h-4 rounded-full flex items-center justify-center shrink-0 mt-0.5 ${isCompleted ? 'bg-white' : 'bg-white/30 border border-white/60'}`}>
+                    <li key={idx} className="space-y-1.5">
+                      <div className="flex items-start gap-2.5">
+                        <span className={`w-5 h-5 rounded-full flex items-center justify-center shrink-0 mt-0.5 ${isCompleted ? 'bg-white' : 'bg-white/30 border border-white'}`}>
                           {isCompleted && (
-                            <span className="material-symbols-outlined text-green-600 text-[11px] font-bold">check</span>
+                            <span className="material-symbols-outlined text-green-600 text-[13px] font-bold">check</span>
                           )}
                         </span>
                         <div className="flex-1 min-w-0">
-                          <span className={`text-sm ${isCompleted ? 'text-white/60 line-through' : 'text-white'}`}>
+                          <span className={`text-sm ${isCompleted ? 'text-white/60 line-through' : 'text-white font-medium'}`}>
+                            {isCurrent && !isCompleted && '→ '}
                             {taskText}
                           </span>
                           {/* Per-task progress bar */}
@@ -1887,6 +2330,10 @@ function Conversation() {
 
       {/* Messages Area */}
       <main className="flex-1 overflow-y-auto p-4 space-y-6 scroll-smooth">
+
+
+
+
         {messages.map((msg, index) => {
           
           if (msg.type === 'system') {
@@ -1950,7 +2397,10 @@ function Conversation() {
         <div className="flex flex-col items-center gap-3">
             {/* Main Controls: Recorder + Restart Button */}
             <div className="flex items-center gap-3 w-full max-w-md">
-                <div className="flex-1">
+                <div className="flex-1 relative">
+                    {dailyScenariosUsed >= 3 && (
+                      <div className="absolute inset-0 z-10 rounded-full pointer-events-none" />
+                    )}
                     <RealTimeRecorder
                       ref={recorderRef}
                       isConnected={isConnected}
@@ -1959,6 +2409,7 @@ function Conversation() {
                       onCancel={handleRecordingCancel}
                       enableCompression={true}
                       enableMetrics={true}
+                      disabled={dailyScenariosUsed >= 3}
                     />
                 </div>
                 
@@ -1993,7 +2444,10 @@ function Conversation() {
             )}
         </div>
       </footer>
-      
+
+      {/* AI Feedback Strip */}
+      <AIFeedbackStrip />
+
       {/* Scenario Completion Modal */}
       {showCompletionModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm">
@@ -2071,6 +2525,28 @@ function Conversation() {
                   <span className="material-symbols-outlined">replay</span>
                   <span>重新开始</span>
                 </button>
+
+                {scenarioScore < 80 && (
+                  <button
+                    onClick={() => {
+                      setShowCompletionModal(false);
+                      hasViewedCompletionModalRef.current = false; // 允许再次显示 modal
+                      setCurrentPhase('magic_repetition');
+                      setSceneImageUrl(null);
+                      setMagicPassedTasks(new Set());
+                      setTheaterCompletedTasks(new Set());
+                      setMessages([]);
+                      setCompletedTasks(new Set());
+                      setCurrentTaskProgress(0);
+                      setCurrentTaskScore(0);
+                      completionCheckedRef.current = false;
+                    }}
+                    className="w-full py-3 bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-300 rounded-xl font-medium flex items-center justify-center gap-2 hover:bg-purple-200 dark:hover:bg-purple-900/50 transition"
+                  >
+                    <span className="material-symbols-outlined">bolt</span>
+                    <span>再次挑战</span>
+                  </button>
+                )}
 
                 <button
                   onClick={handleSelectOtherScenario}

@@ -367,6 +367,53 @@ app.get('/history/user/:userId', async (req, res) => {
   }
 });
 
+// ---------------------------------------------------------------------------
+// Phase state persistence — stores dual-phase progress in Redis
+// Key: phase:{sessionId}  TTL: 24h
+// ---------------------------------------------------------------------------
+const PHASE_TTL_S = 86400; // 24 hours
+
+app.post('/phase', async (req, res) => {
+  const { userId, sessionId, phase, taskIndex, imageUrl } = req.body;
+  if (!userId || !sessionId || !phase) {
+    return res.status(400).json({ message: 'userId, sessionId and phase are required.' });
+  }
+  const key = `phase:${sessionId}`;
+  const data = { userId, phase, taskIndex: taskIndex ?? 0, imageUrl: imageUrl || null, updatedAt: Date.now() };
+  try {
+    await redis.setex(key, PHASE_TTL_S, JSON.stringify(data));
+    res.status(200).json({ success: true });
+  } catch (err) {
+    console.error('[Phase] Failed to save phase state:', err);
+    res.status(500).json({ message: 'Internal server error.' });
+  }
+});
+
+app.get('/phase/:sessionId', async (req, res) => {
+  const { sessionId } = req.params;
+  try {
+    const raw = await redis.get(`phase:${sessionId}`);
+    if (!raw) {
+      return res.status(404).json({ success: false, message: 'Phase state not found.' });
+    }
+    res.status(200).json({ success: true, data: JSON.parse(raw) });
+  } catch (err) {
+    console.error('[Phase] Failed to get phase state:', err);
+    res.status(500).json({ message: 'Internal server error.' });
+  }
+});
+
+app.delete('/phase/:sessionId', async (req, res) => {
+  const { sessionId } = req.params;
+  try {
+    await redis.del(`phase:${sessionId}`);
+    res.status(200).json({ success: true });
+  } catch (err) {
+    console.error('[Phase] Failed to delete phase state:', err);
+    res.status(500).json({ message: 'Internal server error.' });
+  }
+});
+
 app.get('/history/stats/:userId', async (req, res) => {
   const { userId } = req.params;
 

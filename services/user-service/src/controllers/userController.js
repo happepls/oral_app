@@ -855,6 +855,27 @@ exports.tokenMigrate = (req, res) => {
   }
 };
 
+// ===== Daily Scenario Count =====
+exports.getDailyScenarioCount = async (req, res) => {
+    try {
+        const userId = req.user.id;
+        // Count distinct scenarios completed today (server timezone: UTC)
+        const result = await db.query(
+            `SELECT COUNT(DISTINCT scenario_title) AS count
+             FROM user_tasks
+             WHERE user_id = $1
+               AND status = 'completed'
+               AND completed_at >= CURRENT_DATE`,
+            [userId]
+        );
+        const count = parseInt(result.rows[0]?.count || '0', 10);
+        res.json({ success: true, data: { count } });
+    } catch (error) {
+        console.error('getDailyScenarioCount error:', error);
+        res.status(500).json({ success: false });
+    }
+};
+
 module.exports = exports;
 
 /**

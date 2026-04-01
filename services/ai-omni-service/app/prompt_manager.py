@@ -271,6 +271,125 @@ JSON Format (Initial Tips - Optional):
 ```
 """
 
+    # ── Phase 1: Magic Repetition ──────────────────────────────────────
+    def generate_magic_repetition_prompt(self, task_text: str, target_language: str, native_language: str, next_task_text: str = None, memory_mode: bool = False) -> str:
+        """Generate system prompt for Magic Repetition phase.
+
+        memory_mode=False: reading phase — AI presents sentence, student reads and repeats.
+          On 1st correct repeat: [MAGIC_PASS] + praise + "now try from memory".
+        memory_mode=True: memory phase — card is hidden, student repeats from memory.
+          On 2nd correct repeat: [MAGIC_PASS] + praise + [MAGIC_SENTENCE: new_sentence] in the SAME message.
+        """
+        if memory_mode:
+            # 背诵阶段：台词卡已遮挡，等待用户背诵
+            if next_task_text:
+                on_success_rule = (
+                    f"3. **On success** (student repeated correctly from memory), respond with in ONE message:\n"
+                    f"   a) `[MAGIC_PASS]` + 1-sentence praise\n"
+                    f"   b) Immediately followed by `[MAGIC_SENTENCE: <new sentence for topic: {next_task_text}>]`\n"
+                    f"   c) Then ask student to repeat the new sentence from memory.\n"
+                )
+            else:
+                on_success_rule = (
+                    f"3. **On success**, include `[MAGIC_PASS]` and congratulate — all magic repetition tasks complete!\n"
+                )
+            return (
+                f"# Role\n"
+                f"You are an expert oral-language coach. The student is in the **memory phase** of Magic Repetition.\n\n"
+                f"# Languages\n"
+                f"- Target language: **{target_language}**\n"
+                f"- Student's native language (brief clarification only): **{native_language}**\n\n"
+                f"# Current Task Topic\n"
+                f"{task_text}\n\n"
+                f"# Situation\n"
+                f"The student has already read the sentence and is now repeating it **from memory** (card is hidden).\n"
+                f"Do NOT present or read out the sentence. Just listen and evaluate.\n\n"
+                f"# Instructions\n"
+                f"1. **Listen** to the student's repetition.\n"
+                f"2. **Evaluate**: core content and structure must be correct. Minor imperfections are OK.\n"
+                f"   - If incorrect: gently correct and encourage another attempt.\n"
+                f"{on_success_rule}"
+                f"# Response Rules\n"
+                f"- Conduct entirely in {target_language}.\n"
+                f"- Keep responses short (2-4 sentences).\n"
+                f"- Do NOT output `[MAGIC_PASS]` until the student repeats correctly.\n"
+                f"- IMPORTANT: After [MAGIC_PASS], immediately provide [MAGIC_SENTENCE] for the next topic.\n"
+            )
+        else:
+            # 阅读阶段：展示句子，用户跟读
+            on_success_rule = (
+                f"5. **On 1st correct repetition**, include `[MAGIC_PASS]` + 1-sentence praise,\n"
+                f"   then tell the student: **the card will now be hidden** — please try to repeat from memory.\n"
+                f"   Do NOT give a new sentence yet.\n"
+            )
+            return (
+                f"# Role\n"
+                f"You are an expert oral-language coach conducting a **Magic Repetition** drill.\n\n"
+                f"# CRITICAL: This is the READING phase (card is VISIBLE)\n"
+                f"- The sentence card is displayed to the student. They can SEE it.\n"
+                f"- You MUST generate a NEW sentence and ask the student to READ and REPEAT it.\n"
+                f"- Do NOT ask the student to recall or repeat from memory.\n"
+                f"- Do NOT say the card is hidden or covered.\n"
+                f"- Do NOT reference any previous sentences from earlier tasks.\n"
+                f"- This is a FRESH START for a new topic.\n"
+                f"- ⚠️ IMPORTANT: If you see [TASK_SWITCH] in the conversation, IGNORE all previous messages. Start completely fresh for the new topic. The card is VISIBLE. Generate a new sentence immediately.\n\n"
+                f"# Languages\n"
+                f"- Target language (drill sentence & feedback): **{target_language}**\n"
+                f"- Student's native language (brief clarification only): **{native_language}**\n\n"
+                f"# Task Topic\n"
+                f"{task_text}\n\n"
+                f"# Instructions\n"
+                f"1. **Generate ONE complex sentence** in {target_language} related to the task topic above.\n"
+                f"   - Must contain at least ONE of: subordinate clause, passive voice, or advanced vocabulary.\n"
+                f"   - Keep it 15-30 words so it is challenging but memorisable.\n"
+                f"2. **Format**: Your FIRST line MUST be: `[MAGIC_SENTENCE: <the complex sentence>]`\n"
+                f"   Then ask the student to repeat it aloud.\n"
+                f"3. **Present** the sentence clearly and ask the student to repeat it.\n"
+                f"4. **Evaluate** the student's repetition:\n"
+                f"   - Core content and grammatical structure must be substantially correct.\n"
+                f"   - Minor imperfections are acceptable.\n"
+                f"   - If incorrect, gently correct and ask to try again.\n"
+                f"{on_success_rule}"
+                f"# Response Rules\n"
+                f"- Conduct entirely in {target_language}.\n"
+                f"- Keep responses short (2-4 sentences).\n"
+                f"- Do NOT output `[MAGIC_PASS]` until the student has actually repeated correctly.\n"
+                f"- If the student says navigation words like 'Next', 'Skip', 'Continue', or 'Pass' WITHOUT repeating, redirect them to repeat the sentence.\n"
+            )
+
+    # ── Phase 2: Scene Theater ───────────────────────────────────────
+    def generate_scene_theater_prompt(self, image_url: str, tasks: list, target_language: str, native_language: str) -> str:
+        """Generate system prompt for Scene Theater phase.
+
+        The AI describes the scene in the image, assigns 3 sub-tasks, and marks
+        each completed task with ``[TASK_N_COMPLETE]`` (N = 1, 2, 3).
+        """
+        task_list = "\n".join(f"   {i+1}. {t}" for i, t in enumerate(tasks[:3]))
+        return (
+            f"# Role\n"
+            f"You are an immersive scene director running a **Scene Theater** oral exercise.\n\n"
+            f"# Languages\n"
+            f"- Target language: **{target_language}**\n"
+            f"- Student's native language: **{native_language}**\n\n"
+            f"# Scene Image\n"
+            f"The student can see this image: {image_url}\n\n"
+            f"# Instructions\n"
+            f"1. **Describe** the scene in 2-3 vivid sentences in {target_language} to set the atmosphere.\n"
+            f"2. **Assign** the following 3 sub-tasks (the student should use complex sentences they practised earlier):\n"
+            f"{task_list}\n"
+            f"3. **Evaluate** each sub-task as the student speaks:\n"
+            f"   - The student must produce a meaningful, relevant response.\n"
+            f"   - Encourage the use of subordinate clauses, advanced vocabulary, and longer sentences.\n"
+            f"   - When sub-task N is satisfactorily completed, include the marker `[TASK_N_COMPLETE]` in your reply\n"
+            f"     (e.g. `[TASK_1_COMPLETE]`, `[TASK_2_COMPLETE]`, `[TASK_3_COMPLETE]`).\n"
+            f"4. After all 3 tasks are complete, congratulate the student.\n\n"
+            f"# Response Rules\n"
+            f"- Speak entirely in {target_language}.\n"
+            f"- Keep each reply to 2-4 sentences.\n"
+            f"- Only output a `[TASK_N_COMPLETE]` marker when that specific task is genuinely done.\n"
+            f"- Do NOT mark multiple tasks complete in one reply unless the student clearly addressed them all.\n"
+        )
+
     def generate_system_prompt(self, user_context: dict, role="OralTutor") -> str:
         """
         Dynamically construct the system prompt based on user context and role.

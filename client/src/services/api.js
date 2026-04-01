@@ -135,6 +135,7 @@ export const userAPI = {
   },
 
   async resetTask(taskId, scenarioTitle) {
+    // Step 1: Reset tasks in database via user-service
     const response = await fetch(`${API_BASE_URL}/users/goals/reset-task`, {
       method: 'POST',
       headers: getAuthHeaders(),
@@ -144,7 +145,29 @@ export const userAPI = {
         scenario_title: scenarioTitle
       })
     });
-    return handleResponse(response);
+    const result = await handleResponse(response);
+
+    // Step 2: Reset phase state in ai-omni-service (if user is available)
+    try {
+      const userStr = localStorage.getItem('user');
+      if (userStr) {
+        const user = JSON.parse(userStr);
+        const userId = user?.id || user?.userId;
+        if (userId) {
+          await fetch(`${API_BASE_URL}/ai/reset-phase`, {
+            method: 'POST',
+            headers: getAuthHeaders(),
+            credentials: 'include',
+            body: JSON.stringify({ user_id: String(userId) })
+          });
+          console.log('[resetTask] Phase state reset for user', userId);
+        }
+      }
+    } catch (err) {
+      console.error('[resetTask] Failed to reset phase state:', err);
+    }
+
+    return result;
   },
 
   // Check-in APIs
