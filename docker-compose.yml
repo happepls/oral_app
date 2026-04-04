@@ -120,6 +120,7 @@ services:
       - DB_PASSWORD=password
       - DB_DATABASE=oral_app
       - DB_PORT=5432
+      - DATABASE_URL=postgresql://user:password@postgres:5432/oral_app
       - JWT_SECRET=your_jwt_secret_key_change_in_production
       - STRIPE_PUBLISHABLE_KEY=${STRIPE_PUBLISHABLE_KEY:-}
       - STRIPE_SECRET_KEY=${STRIPE_SECRET_KEY:-}
@@ -174,8 +175,6 @@ services:
       - CONVERSATION_SERVICE_URL=http://conversation-service:8083
       - MEDIA_SERVICE_URL=http://media-processing-service:3005
       - WORKFLOW_SERVICE_URL=http://workflow-service:3006
-      - QWEN3_OMNI_API_KEY=${QWEN3_OMNI_API_KEY:-}
-      - DASHSCOPE_API_KEY=${DASHSCOPE_API_KEY:-}
     networks:
       - oral_app_net
 
