@@ -252,8 +252,9 @@ async def call_proficiency_workflow(user_id: str, goal_id: int, task_id: int, co
                 )
                 return None
         # 如果没有 task_id，需要从 user-service 获取当前任务 ID
-        task_description = user_context.get('custom_topic', 'General Practice')
-        scenario_title = user_context.get('custom_topic', 'General Practice').split(" (Tasks:")[0].strip()
+        custom_topic = user_context.get('custom_topic') or 'General Practice'
+        task_description = custom_topic
+        scenario_title = custom_topic.split(" (Tasks:")[0].strip()
         user_service_url = os.getenv("USER_SERVICE_URL", "http://localhost:3000")
 
         if not task_id or task_id == 0:
@@ -266,9 +267,9 @@ async def call_proficiency_workflow(user_id: str, goal_id: int, task_id: int, co
                         headers={"Authorization": f"Bearer {token}"}
                     )
                     if goal_resp.status_code == 200:
-                        goal_data = goal_resp.json().get('data', {})
-                        active_goal = goal_data.get('goal', {})
-                        scenarios = active_goal.get('scenarios', [])
+                        goal_data = goal_resp.json().get('data') or {}
+                        active_goal = goal_data.get('goal') or goal_data or {}
+                        scenarios = active_goal.get('scenarios') or []
 
                         # 查找匹配的场景
                         matched_scenario = None
@@ -282,7 +283,7 @@ async def call_proficiency_workflow(user_id: str, goal_id: int, task_id: int, co
                         if matched_scenario:
                             scenario_title = matched_scenario.get('title', scenario_title)
                             # 查找该场景下第一个未完成的任务
-                            tasks = matched_scenario.get('tasks', [])
+                            tasks = matched_scenario.get('tasks') or []
                             for task in tasks:
                                 if isinstance(task, dict) and task.get('status') != 'completed':
                                     task_id = task.get('id', 0)
@@ -420,6 +421,7 @@ async def call_proficiency_workflow(user_id: str, goal_id: int, task_id: int, co
                 return None
     except Exception as e:
         logger.error(f"Error calling proficiency workflow: {e}")
+        logger.error(traceback.format_exc())
         return None
 
 # --- Prompt Management ---
