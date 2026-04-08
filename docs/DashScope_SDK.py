@@ -1,32 +1,66 @@
-# Qwen-Omni-Realtime 模型可通过 WebSocket 协议接入，也可通过以下 Python 示例代码建立连接。也可通过DashScope SDK 建立连接。
-# SDK 版本不低于1.23.9
-# SDK 版本不低于1.23.9
+# 依赖：dashscope >= 1.23.9，pyaudio
 import os
-import json
-from dashscope.audio.qwen_omni import OmniRealtimeConversation,OmniRealtimeCallback
+import base64
+import time
+
+import pyaudio
+from dashscope.audio.qwen_omni import MultiModality, AudioFormat,OmniRealtimeCallback,OmniRealtimeConversation
 import dashscope
-# 若没有配置 API Key，请将下行改为 dashscope.api_key = "sk-xxx"
-dashscope.api_key = os.getenv("DASHSCOPE_API_KEY")
 
-class PrintCallback(OmniRealtimeCallback):
-    def on_open(self) -> None:
-        print("Connected Successfully")
-    def on_event(self, response: dict) -> None:
-        print("Received event:")
-        print(json.dumps(response, indent=2, ensure_ascii=False))
-    def on_close(self, close_status_code: int, close_msg: str) -> None:
-        print(f"Connection closed (code={close_status_code}, msg={close_msg}).")
 
-callback = PrintCallback()
-conversation = OmniRealtimeConversation(
-    model="qwen3-omni-flash-realtime",
-    callback=callback,
-    # 以下为北京地域url
-    url="wss://dashscope.aliyuncs.com/api-ws/v1/realtime"
-)
+url = f'wss://dashscope.aliyuncs.com/api-ws/v1/realtime'
+# 配置 API Key，若没有设置环境变量，请用 API Key 将下行替换为 dashscope.api_key = "sk-xxx"
+dashscope.api_key = os.getenv('DASHSCOPE_API_KEY')
+# 指定音色
+voice = 'Ethan'
+# 指定模型
+model = 'qwen3.5-omni-flash-realtime'
+# 指定模型角色
+instructions = "你是个人口语陪练教练，请认真耐心地帮助用户提高口语能力"
+class SimpleCallback(OmniRealtimeCallback):
+    def __init__(self, pya):
+        self.pya = pya
+        self.out = None
+    def on_open(self):
+        # 初始化音频输出流
+        self.out = self.pya.open(
+            format=pyaudio.paInt16,
+            channels=1,
+            rate=24000,
+            output=True
+        )
+    def on_event(self, response):
+        if response['type'] == 'response.audio.delta':
+            # 播放音频
+            self.out.write(base64.b64decode(response['delta']))
+        elif response['type'] == 'conversation.item.input_audio_transcription.completed':
+            # 打印转录文本
+            print(f"[User] {response['transcript']}")
+        elif response['type'] == 'response.audio_transcript.done':
+            # 打印助手回复文本
+            print(f"[LLM] {response['transcript']}")
+
+# 1. 初始化音频设备
+pya = pyaudio.PyAudio()
+# 2. 创建回调函数和会话
+callback = SimpleCallback(pya)
+conv = OmniRealtimeConversation(model=model, callback=callback, url=url)
+# 3. 建立连接并配置会话
+conv.connect()
+conv.update_session(output_modalities=[MultiModality.AUDIO, MultiModality.TEXT], voice=voice, instructions=instructions)
+# 4. 初始化音频输入流
+mic = pya.open(format=pyaudio.paInt16, channels=1, rate=16000, input=True)
+# 5. 主循环处理音频输入
+print("对话已开始，对着麦克风说话 (Ctrl+C 退出)...")
 try:
-    conversation.connect()
-    print("Conversation started. Press Ctrl+C to exit.")
-    conversation.thread.join()
+    while True:
+        audio_data = mic.read(3200, exception_on_overflow=False)
+        conv.append_audio(base64.b64encode(audio_data).decode())
+        time.sleep(0.01)
 except KeyboardInterrupt:
-    conversation.close()
+    # 清理资源
+    conv.close()
+    mic.close()
+    callback.out.close()
+    pya.terminate()
+    print("\n对话结束")

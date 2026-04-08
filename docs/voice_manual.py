@@ -305,7 +305,7 @@ async def interactive_test():
     realtime_client = OmniRealtimeClient(
         base_url="wss://dashscope.aliyuncs.com/api-ws/v1/realtime",
         api_key=api_key,
-        model="qwen3-omni-flash-realtime",
+        model="qwen3.5-omni-plus-realtime",
         voice="Ethan",
         instructions="你是个人助理小云，请你准确且友好地解答用户的问题，始终以乐于助人的态度回应。", # 设定模型角色
         on_text_delta=lambda text: print(f"助手回复: {text}", end="", flush=True),

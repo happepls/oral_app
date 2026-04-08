@@ -139,7 +139,7 @@ services:
       - "8082:8082"
       - "8081:8081"
     environment:
-      - QWEN3_OMNI_MODEL=qwen3-omni-flash-realtime-2025-12-01
+      - QWEN3_OMNI_MODEL=qwen3.5-omni-plus-realtime
       - USER_SERVICE_URL=http://user-service:3000
       - CONVERSATION_SERVICE_URL=http://conversation-service:8083
       - MEDIA_SERVICE_URL=http://media-processing-service:3005

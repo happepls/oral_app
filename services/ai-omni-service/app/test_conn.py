@@ -44,7 +44,7 @@ class TestCallback(OmniRealtimeCallback):
 def test_connection():
     print("Attempting to connect to DashScope Qwen-Omni...")
     conversation = OmniRealtimeConversation(
-        model=os.getenv("QWEN3_OMNI_MODEL", "qwen3-omni-flash-realtime-2025-12-01"),
+        model=os.getenv("QWEN3_OMNI_MODEL", "qwen3.5-omni-plus-realtime"),
         callback=TestCallback(),
     )
     
