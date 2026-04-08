@@ -158,7 +158,7 @@ export const userAPI = {
             method: 'POST',
             headers: getAuthHeaders(),
             credentials: 'include',
-            body: JSON.stringify({ user_id: String(userId) })
+            body: JSON.stringify({ user_id: String(userId), scenario: scenarioTitle || '' })
           });
           console.log('[resetTask] Phase state reset for user', userId);
         }

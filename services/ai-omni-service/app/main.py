@@ -34,7 +34,7 @@ if not api_key:
 dashscope.api_key = api_key
 logger.info("Using real DashScope API with provided API key")
 
-# 双阶段会话状态，key=user_id
+# 双阶段会话状态，key=f"{user_id}:{scenario}" — 每个场景独立维护状态
 session_phases: dict = {}
 
 app = FastAPI()
@@ -444,6 +444,7 @@ class WebSocketCallback(OmniRealtimeCallback):
         self.user_id = user_id
         self.session_id = session_id
         self.scenario = scenario
+        self.phase_key = f"{user_id}:{scenario or ''}"  # 每个场景独立的 phase key
         self.conversation = None
         self.full_response_text = ""
         # If scenario is provided, always use OralTutor role for practice
@@ -469,6 +470,9 @@ class WebSocketCallback(OmniRealtimeCallback):
         self.connection_established_sent = False  # Track if we've sent connection_established
         self.last_detected_language = None  # Language detected by DashScope for last user utterance
         self.just_switched_task = False  # True immediately after a task completes; cleared after prompt update
+        self._reconnect_failures = 0   # Count of "opened then closed quickly" events
+        self._last_open_time = 0       # Timestamp of last on_open
+        self.auth_denied = False        # Set True after too many quick-close failures (rate-limit / access-denied)
 
     async def _safe_send(self, message: dict):
         """Safely send a WebSocket message, ignoring errors if client is disconnected."""
@@ -490,6 +494,7 @@ class WebSocketCallback(OmniRealtimeCallback):
     def on_open(self) -> None:
         logger.info("DashScope Connection Open")
         self.is_connected = True
+        self._last_open_time = time.time()
         logger.info(f"on_open called, connection_established_sent={self.connection_established_sent}")
         # Only send connection_established once per WebSocket session
         if not self.connection_established_sent:
@@ -544,7 +549,7 @@ class WebSocketCallback(OmniRealtimeCallback):
                 if matched_scenario:
                     # ── CRITICAL: Use phase_info task_index for magic_repetition phase ──
                     # Do NOT rely on task.status which may be stale (async workflow update)
-                    phase_info = session_phases.get(self.user_id, {})
+                    phase_info = session_phases.get(self.phase_key, {})
                     tasks = matched_scenario.get('tasks', [])
 
                     if phase_info.get("phase") == "magic_repetition":
@@ -587,7 +592,7 @@ class WebSocketCallback(OmniRealtimeCallback):
                 full_ctx['custom_topic'] = self.scenario
 
             # ── Phase-aware system prompt selection ──
-            phase_info = session_phases.get(self.user_id, {"phase": "magic_repetition", "task_index": 0})
+            phase_info = session_phases.get(self.phase_key, {"phase": "magic_repetition", "task_index": 0})
             target_lang = full_ctx.get('target_language', 'English')
             native_lang = full_ctx.get('native_language', '中文')
 
@@ -651,23 +656,26 @@ class WebSocketCallback(OmniRealtimeCallback):
                 cutoff = getattr(self, 'task_history_cutoff', 0)
                 current_task_msgs = self.messages[cutoff:][-10:]  # max 10 from current task
                 if current_task_msgs:
+                    import re as _re
+                    _URL_RE = _re.compile(r'https?://\S+|www\.\S+', _re.IGNORECASE)
                     history_text = "\n\n# Current Session Context (READ-ONLY):\n"
                     history_text += "**CRITICAL**: This is HISTORY only. Do NOT auto-complete tasks. Wait for user to speak first.\n"
                     history_text += f"**CURRENT TASK**: {full_ctx.get('task_description', 'Practice conversation')} in scenario: {self.scenario}\n\n"
                     for msg in current_task_msgs:
                         role_label = "User" if msg['role'] == 'user' else "AI"
-                        history_text += f"{role_label}: {msg.get('content', '')}\n"
+                        content = _URL_RE.sub('[link]', msg.get('content', ''))
+                        history_text += f"{role_label}: {content}\n"
                     history_text += "\n**NOW**: Wait silently for user to speak. Greet briefly if needed, then listen.\n"
                     system_prompt += history_text
 
-            logger.info(f"Sending System Prompt ({self.role}): {system_prompt[:100]}...")
+            logger.info(f"Sending System Prompt ({self.role}) full:\n{system_prompt}")
             try:
                 self.conversation.update_session(
                     instructions=system_prompt,
                     voice=selected_voice,
                     output_modalities=[MultiModality.TEXT, MultiModality.AUDIO],
-                    input_audio_format=AudioFormat.PCM_16000HZ_MONO_16BIT,  # Explicitly set input audio format
-                    input_audio_transcription={"model": os.getenv("QWEN3_OMNI_MODEL", "qwen3-omni-flash-realtime"), "enabled": True},
+                    enable_input_audio_transcription=True,
+                    input_audio_transcription_model="qwen3-asr-flash-realtime",
                     enable_turn_detection=False,
                 )
             except Exception as e:
@@ -714,7 +722,7 @@ class WebSocketCallback(OmniRealtimeCallback):
         # Log all events for debugging
         if event_name not in ['response.audio.delta', 'response.audio_transcript.delta', 'response.audio.done', 'response.audio_transcript.done']:
             logger.info(f"DashScope Event: {event_name}, RID: {rid}")
-            logger.info(f"Detailed Event Data: {json.dumps(response)[:500]}")
+            logger.info(f"Detailed Event Data: {json.dumps(response)[:3000]}")
 
         if event_name == 'session.created':
             self.session_ready = True
@@ -791,7 +799,8 @@ class WebSocketCallback(OmniRealtimeCallback):
                                         _last_user_text = (_msg.get("content") or "").strip()
                                         break
                                 _NAV_PHRASES = {"next", "skip", "continue", "move on", "pass", "next.", "skip.", "pass.", "continue."}
-                                _is_nav = (
+                                # Only treat as nav if we actually have a transcript (empty = ASR not ready, not a nav command)
+                                _is_nav = bool(_last_user_text) and (
                                     len(_last_user_text) < 8 or
                                     _last_user_text.lower() in _NAV_PHRASES or
                                     _last_user_text.lower().rstrip(".!?,") in _NAV_PHRASES
@@ -816,8 +825,9 @@ class WebSocketCallback(OmniRealtimeCallback):
                                 if _skip_magic:
                                     self._skip_next_magic_pass = False
                                     logger.info("[Phase] Skipping magic pass — task-switch presentation response")
-                                if not _skip_magic and not _is_nav and has_positive:
-                                    phase_info = session_phases.setdefault(self.user_id, {
+                                _current_phase = session_phases.get(self.phase_key, {}).get("phase", "magic_repetition")
+                                if not _skip_magic and not _is_nav and has_positive and _current_phase == "magic_repetition":
+                                    phase_info = session_phases.setdefault(self.phase_key, {
                                         "phase": "magic_repetition", "task_index": 0,
                                         "magic_positive_streak": 0, "memory_mode": False
                                     })
@@ -861,44 +871,74 @@ class WebSocketCallback(OmniRealtimeCallback):
                                                 # Directly read from tasks list — _update_session_prompt hasn't been called yet
                                                 next_task_val = tasks_for_advance[next_index] if next_index < len(tasks_for_advance) else ""
                                                 logger.info(f"[Phase] Advancing to task[{next_index}], task_text='{next_task_val[:50]}'")
-                                                await send_phase_event(self.websocket, "phase_transition", {
-                                                    "phase": "magic_repetition", "task_index": next_index, "task_text": next_task_val
-                                                })
-                                                self.messages = []
-                                                self.task_history_cutoff = 0
-                                                self._update_session_prompt()
-                                                # 短暂延迟确保 DashScope session 更新生效
-                                                await asyncio.sleep(0.5)
-                                                # Inject trigger so AI presents new sentence immediately
-                                                self._skip_next_magic_pass = True
-                                                try:
-                                                    logger.info(f"[Phase] Injecting trigger for task[{next_index}]: '{next_task_val[:50]}'")
-                                                    self.conversation.send_raw(json.dumps({
-                                                        "type": "conversation.item.create",
-                                                        "item": {"type": "message", "role": "user",
-                                                                 "content": [{"type": "input_text", "text": f"[TASK_SWITCH] The previous task is now COMPLETE. You are starting a BRAND NEW task.\n\nCRITICAL INSTRUCTIONS:\n- IGNORE all previous conversation patterns from the old task\n- Do NOT ask the student to recall or repeat any sentence from previous tasks\n- The sentence card is NOW VISIBLE to the student\n- You MUST immediately generate a NEW sentence for the new topic\n- Output format: [MAGIC_SENTENCE: <your new sentence>] as the VERY FIRST line\n\nNew topic: '{next_task_val}'\nStart fresh now."}]}
-                                                    }))
-                                                    self.conversation.send_raw(json.dumps({
-                                                        "type": "response.create",
-                                                        "response": {
-                                                            "modalities": ["text", "audio"],
-                                                            "instructions": (
-                                                                f"You are a language coach presenting a new Magic Repetition drill. "
-                                                                f"IGNORE all previous conversation. "
-                                                                f"Generate ONE complex sentence (15-25 words, with subordinate clause or advanced vocabulary) for the topic: '{next_task_val}'. "
-                                                                f"Your response MUST start EXACTLY with: [MAGIC_SENTENCE: <your sentence>] "
-                                                                f"Then on the next line, ask the student to repeat it aloud. "
-                                                                f"Do NOT ask them to recall or memorize anything from before."
-                                                            )
-                                                        }
-                                                    }))
-                                                    logger.info(f"[Phase] Task-switch trigger + response.create (with instructions) sent for task[{next_index}]")
-                                                except Exception as _te:
-                                                    logger.error(f"[Phase] Task switch trigger failed: {_te}")
+
+                                                # ── Merged A+B detection ──────────────────────────────────
+                                                # Check if AI already included [MAGIC_SENTENCE: ...] in this
+                                                # magic_pass response. If so, no second response.create needed.
+                                                # Also match <MAGIC_SENTENCE: ...> (AI sometimes uses wrong brackets)
+                                                _ms_match = re.search(r'[\[<]MAGIC_SENTENCE:\s*([^\]>]+?)(?:[\]>]|$)', latest_ai_text)
+                                                if _ms_match:
+                                                    _embedded_sentence = _ms_match.group(1).strip()
+                                                    logger.info(f"[Phase] AI merged A+B — extracted sentence: '{_embedded_sentence[:60]}'")
+                                                    # Send phase_transition with embedded sentence and stop_audio=false
+                                                    await send_phase_event(self.websocket, "phase_transition", {
+                                                        "phase": "magic_repetition", "task_index": next_index,
+                                                        "task_text": next_task_val,
+                                                        "magic_sentence": _embedded_sentence,
+                                                        "stop_audio": False
+                                                    })
+                                                    self.messages = []
+                                                    self.task_history_cutoff = 0
+                                                    self._update_session_prompt()
+                                                    logger.info(f"[Phase] Merged A+B — skipped response.create, updated session prompt for task[{next_index}]")
+                                                else:
+                                                    # Fallback: AI did not include [MAGIC_SENTENCE] — send response.create
+                                                    logger.info(f"[Phase] AI did NOT include [MAGIC_SENTENCE] — using fallback response.create for task[{next_index}]")
+                                                    await send_phase_event(self.websocket, "phase_transition", {
+                                                        "phase": "magic_repetition", "task_index": next_index,
+                                                        "task_text": next_task_val,
+                                                        "stop_audio": False
+                                                    })
+                                                    self.messages = []
+                                                    self.task_history_cutoff = 0
+                                                    self._update_session_prompt()
+                                                    # 短暂延迟确保 DashScope session 更新生效
+                                                    await asyncio.sleep(0.5)
+                                                    self._skip_next_magic_pass = True
+                                                    try:
+                                                        logger.info(f"[Phase] Injecting trigger for task[{next_index}]: '{next_task_val[:50]}'")
+                                                        self.conversation.send_raw(json.dumps({
+                                                            "type": "conversation.item.create",
+                                                            "item": {"type": "message", "role": "user",
+                                                                     "content": [{"type": "input_text", "text": f"[TASK_SWITCH] New task: '{next_task_val}'. Sentence card is visible."}]}
+                                                        }))
+                                                        self.conversation.send_raw(json.dumps({
+                                                            "type": "response.create",
+                                                            "response": {
+                                                                "modalities": ["text", "audio"],
+                                                                "instructions": (
+                                                                    f"New task started: '{next_task_val}'. The sentence card is now VISIBLE and needs a NEW sentence. "
+                                                                    f"1. Generate ONE complex sentence (15-30 words) in the target language related to this topic. "
+                                                                    f"2. Your response MUST start with: [MAGIC_SENTENCE: YOUR_NEW_SENTENCE_HERE] "
+                                                                    f"   Use SQUARE BRACKETS [ ] ONLY — NOT angle brackets < > or parentheses. "
+                                                                    f"3. Then ask the student to read the sentence on the card aloud."
+                                                                )
+                                                            }
+                                                        }))
+                                                        logger.info(f"[Phase] Fallback: Task-switch trigger + response.create sent for task[{next_index}]")
+                                                    except Exception as _te:
+                                                        logger.error(f"[Phase] Task switch trigger failed: {_te}")
                                                 logger.info(f"[Phase] Advanced to task[{next_index}]")
                                             else:
-                                                # 全部通过 → 切换情景剧场
+                                                # 全部通过 → 切换情景剧场（立即更新 phase，防止图片生成期间用户说话触发 magic_pass）
                                                 logger.info(f"[Phase] 所有任务完成！切换到情景剧场。next_index={next_index}, tasks_total={len(tasks_for_advance)}")
+                                                phase_info["phase"] = "scene_theater"
+                                                phase_info["task_index"] = 0
+                                                phase_info["scene_image_url"] = ""  # 图片未就绪时先置空
+                                                self.messages = []
+                                                self.task_history_cutoff = 0
+                                                self._update_session_prompt()  # 提前到 await 之前，防止竞态条件
+                                                logger.info(f"[Phase] scene_theater prompt 已提前注入（图片生成中）")
                                                 try:
                                                     # Wanx T2I 轮询最多需要 12 秒，设置 25 秒超时确保足够
                                                     async with httpx.AsyncClient(timeout=25) as _client:
@@ -910,16 +950,39 @@ class WebSocketCallback(OmniRealtimeCallback):
                                                 except Exception as e:
                                                     logger.error(f"[Phase] Scene image generation failed: {e}")
                                                     image_url = ""
-                                                phase_info["phase"] = "scene_theater"
-                                                phase_info["task_index"] = 0
+                                                # 图片就绪后更新 prompt（带 image_url）并通知前端
                                                 phase_info["scene_image_url"] = image_url
+                                                self._update_session_prompt()
                                                 await send_phase_event(self.websocket, "scene_image", {"image_url": image_url})
                                                 await send_phase_event(self.websocket, "phase_transition", {
                                                     "phase": "scene_theater", "task_index": 0
                                                 })
-                                                self.messages = []
-                                                self.task_history_cutoff = 0
-                                                self._update_session_prompt()
+                                                # 触发 AI 主动介绍情景剧场
+                                                self._skip_next_magic_pass = True
+                                                try:
+                                                    self.conversation.send_raw(json.dumps({
+                                                        "type": "conversation.item.create",
+                                                        "item": {
+                                                            "type": "message", "role": "user",
+                                                            "content": [{"type": "input_text",
+                                                                         "text": "[PHASE_START: scene_theater] Magic Repetition is complete. Now start the Scene Theater phase."}]
+                                                        }
+                                                    }))
+                                                    self.conversation.send_raw(json.dumps({
+                                                        "type": "response.create",
+                                                        "response": {
+                                                            "modalities": ["text", "audio"],
+                                                            "instructions": (
+                                                                "Magic Repetition is now COMPLETE. You are starting the Scene Theater phase. "
+                                                                "Describe the scene image shown to the student in 2-3 vivid sentences, "
+                                                                "then introduce the 3 sub-tasks they need to complete. "
+                                                                "Do NOT ask the student to repeat any sentence. Start fresh."
+                                                            )
+                                                        }
+                                                    }))
+                                                    logger.info(f"[Phase] scene_theater intro response.create triggered")
+                                                except Exception as _te:
+                                                    logger.error(f"[Phase] scene_theater trigger failed: {_te}")
                                                 logger.info(f"[Phase] All magic passed → scene_theater")
 
                                 for _n in range(1, 4):
@@ -930,7 +993,7 @@ class WebSocketCallback(OmniRealtimeCallback):
                                 # 调用工作流 2（熟练度打分）- 只在用户有输入后才调用
                                 # Skip workflow call if this is the welcome message (no user input yet)
                                 user_message_count = sum(1 for m in self.messages if m.get("role") == "user")
-                                _magic_phase_info = session_phases.get(self.user_id, {})
+                                _magic_phase_info = session_phases.get(self.phase_key, {})
                                 if goal_id and user_message_count > 0 and _magic_phase_info.get("phase") != "magic_repetition":
                                     workflow_result = await call_proficiency_workflow(
                                         self.user_id,
@@ -1254,6 +1317,24 @@ class WebSocketCallback(OmniRealtimeCallback):
     def on_close(self, code: int, message: str) -> None:
         self.is_connected = False
         logger.info(f"DashScope connection closed for session {self.session_id}, code={code}, message={message}")
+        # If connection closed within 5 seconds of opening, treat as a failure (rate-limit / access-denied)
+        _open_duration = time.time() - getattr(self, '_last_open_time', 0)
+        if _open_duration < 5.0:
+            self._reconnect_failures = getattr(self, '_reconnect_failures', 0) + 1
+            logger.warning(f"[DashScope] Quick-close after {_open_duration:.1f}s, failure #{self._reconnect_failures}")
+            if self._reconnect_failures >= 3:
+                self.auth_denied = True
+                logger.error(f"[DashScope] {self._reconnect_failures} quick-close failures — blocking reconnect for 60s to avoid rate-limit storm.")
+                # Auto-clear after 60 seconds (allows retry after backoff period)
+                def _clear_auth_denied():
+                    self.auth_denied = False
+                    self._reconnect_failures = 0
+                    logger.info("[DashScope] Reconnect block lifted — retries allowed again.")
+                import threading as _t
+                _t.Timer(60, _clear_auth_denied).start()
+        else:
+            # Long-lived connection closed normally — reset failure count
+            self._reconnect_failures = 0
         # Don't try to send message if WebSocket is already closed
         if self.websocket.client_state.name == 'CONNECTED':
             try:
@@ -1265,7 +1346,11 @@ class WebSocketCallback(OmniRealtimeCallback):
                 pass  # Ignore errors if WebSocket is already closed
 
     def on_error(self, error: Exception) -> None:
-        logger.error(f"DashScope Error: {error}")
+        error_str = str(error)
+        logger.error(f"DashScope Error: {error_str}")
+        if 'Access denied' in error_str:
+            self.auth_denied = True
+            logger.error("[DashScope] Access denied — API key lacks permission or unsupported parameter. Reconnect blocked.")
         # Don't try to send message if WebSocket is already closed
         try:
             asyncio.run_coroutine_threadsafe(
@@ -1309,15 +1394,16 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query(None), ses
     loop = asyncio.get_running_loop()
     
     callback = WebSocketCallback(websocket, loop, user_context, token, user_id, session_id, history_messages, scenario)
+    phase_key = callback.phase_key  # f"{user_id}:{scenario or ''}" — 每个场景独立
 
     # ── 初始化双阶段会话状态 ──
-    if user_id not in session_phases:
-        session_phases[user_id] = {
+    if phase_key not in session_phases:
+        session_phases[phase_key] = {
             "phase": "magic_repetition",
             "task_index": 0,
             "magic_positive_streak": 0,
         }
-    _init_phase_info = session_phases[user_id]
+    _init_phase_info = session_phases[phase_key]
     _init_task_text = _init_phase_info.get("_current_task_text", "")
     await send_phase_event(websocket, "phase_transition", {
         "phase": _init_phase_info["phase"],
@@ -1443,11 +1529,18 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query(None), ses
                     })
                     continue
 
-                if (not conversation or not callback.is_connected) and msg_type in ['audio_stream', 'text_message', 'input_text', 'user_audio_ended']:
-                    logger.warning("Attempting to reconnect DashScope due to inactive connection")
+                if (not conversation or not callback.is_connected) \
+                        and not getattr(callback, 'auth_denied', False) \
+                        and msg_type in ['audio_stream', 'text_message', 'input_text', 'user_audio_ended']:
+                    # Exponential backoff: 1s, 2s, 4s … cap at 30s to avoid rate-limit storms
+                    _failures = getattr(callback, '_reconnect_failures', 0)
+                    _backoff = min(2 ** _failures, 30)
+                    logger.warning(f"Attempting to reconnect DashScope (failure #{_failures}, backoff={_backoff}s)")
                     if conversation:
                         try: conversation.close()
                         except: pass
+                    if _backoff > 1:
+                        await asyncio.sleep(_backoff)
                     try:
                         conversation = connect_dashscope()
                         await asyncio.sleep(0.5)
@@ -1513,7 +1606,7 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query(None), ses
                                 logger.error(f"Error creating response for text: {e}")
                 elif msg_type == 'resend_magic_sentence':
                     # 前端刷新重连后请求重发当前任务句子
-                    _resend_phase = session_phases.get(user_id, {})
+                    _resend_phase = session_phases.get(phase_key, {})
                     if _resend_phase.get("phase") == "magic_repetition" and callback.is_connected:
                         callback._skip_next_magic_pass = True
                         try:
@@ -1533,7 +1626,7 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query(None), ses
                                     "instructions": (
                                         f"You are a language coach presenting a Magic Repetition drill. "
                                         f"Generate ONE complex sentence (15-25 words) for the topic: '{_resend_task_text}'. "
-                                        f"Your response MUST start EXACTLY with: [MAGIC_SENTENCE: <your sentence>] "
+                                        f"Your response MUST start EXACTLY with: [MAGIC_SENTENCE: WRITE_SENTENCE_HERE] (use SQUARE BRACKETS only) "
                                         f"Then ask the student to repeat it aloud."
                                     )
                                 }
@@ -1543,7 +1636,7 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query(None), ses
                             logger.error(f"[Phase] resend_magic_sentence failed: {_re}")
                 elif msg_type == 'reset_magic_phase':
                     # Return to magic repetition phase from scene theater
-                    session_phases[user_id] = {
+                    session_phases[phase_key] = {
                         "phase": "magic_repetition",
                         "task_index": 0,
                         "magic_positive_streak": 0,
@@ -1552,7 +1645,7 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query(None), ses
                     callback.messages = []
                     callback.task_history_cutoff = 0
                     callback._update_session_prompt()
-                    _reset_task_text = session_phases[user_id].get("_current_task_text", "")
+                    _reset_task_text = session_phases[phase_key].get("_current_task_text", "")
                     await send_phase_event(websocket, "phase_transition", {
                         "phase": "magic_repetition", "task_index": 0,
                         **({"task_text": _reset_task_text} if _reset_task_text else {}),
@@ -1560,7 +1653,7 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query(None), ses
                     logger.info(f"[Phase] reset_magic_phase → task[0], text='{_reset_task_text[:40]}'")
                 elif msg_type == 'force_advance_magic':
                     # Manual skip button: force advance to next magic repetition task
-                    phase_info = session_phases.get(user_id, {})
+                    phase_info = session_phases.get(phase_key, {})
                     if phase_info.get("phase") == "magic_repetition":
                         current_index = phase_info.get("task_index", 0)
                         # Build tasks list
@@ -1634,23 +1727,24 @@ async def health_check():
 from fastapi import HTTPException, Body
 
 @app.post("/reset-phase")
-async def reset_phase(user_id: str = Body(..., description="用户 ID")):
+async def reset_phase(user_id: str = Body(..., description="用户 ID"), scenario: str = Body(default="", description="场景名称")):
     """
     重置用户的会话阶段状态（session_phases）。
     当用户点击重置按钮时调用，清理魔法重复阶段的所有状态。
     """
     try:
-        if user_id in session_phases:
-            old_phase = session_phases[user_id].copy()
-            session_phases[user_id] = {
+        phase_key = f"{user_id}:{scenario or ''}"
+        if phase_key in session_phases:
+            old_phase = session_phases[phase_key].copy()
+            session_phases[phase_key] = {
                 "phase": "magic_repetition",
                 "task_index": 0,
                 "magic_positive_streak": 0,
                 "memory_mode": False,
             }
-            logger.info(f"[reset-phase] Cleared session_phases for user {user_id}: {old_phase} → reset")
+            logger.info(f"[reset-phase] Cleared session_phases[{phase_key}]: {old_phase} → reset")
         else:
-            logger.info(f"[reset-phase] No session_phases found for user {user_id}")
+            logger.info(f"[reset-phase] No session_phases found for key {phase_key}")
 
         return {"success": True, "message": "Phase state reset successfully"}
     except Exception as e:

@@ -172,6 +172,7 @@ function Conversation() {
   }); // 魔法重复阶段当前需复述的句子（持久化到 localStorage，key: magic_sentence_{scenario}）
   const [magicCardState, setMagicCardState] = useState('waiting'); // 'waiting'|'reciting'|'passed'
   const [magicCardCovered, setMagicCardCovered] = useState(false);
+  const [isPeeking, setIsPeeking] = useState(false);
   const [showSkipButton, setShowSkipButton] = useState(false);
   const [tipIndex, setTipIndex] = useState(0);
 
@@ -358,24 +359,30 @@ function Conversation() {
       }
     });
     audioQueueRef.current = [];
+    nextStartTimeRef.current = 0;
     setIsAISpeaking(false);
     setPlayingAudioUrl(null);
   };
 
   // Play full audio (for AudioBar) - use proxy for cross-origin audio
-  const playFullAudio = (audioUrl) => {
-    console.log('Playing full audio from:', audioUrl);
-    
-    // Stop any currently playing audio first
-    stopAudioPlayback();
-    
+  // autoQueue=false (default): interrupt current audio and play immediately (audio_back replay)
+  // autoQueue=true: schedule after current audio without interruption (auto-play on new AI message)
+  const playFullAudio = (audioUrl, autoQueue = false) => {
+    console.log('Playing full audio from:', audioUrl, autoQueue ? '(queued)' : '(interrupt)');
+
+    if (!autoQueue) {
+      // User-triggered replay: stop current audio and play immediately
+      stopAudioPlayback();
+      isInterruptedRef.current = false;
+    }
+
     // Check if URL is cross-origin
     const isCrossOrigin = audioUrl.startsWith('http') && !audioUrl.startsWith(window.location.origin);
 
     if (isCrossOrigin) {
       // For cross-origin audio, always use proxy to avoid CORS issues
       console.log('Using proxy for cross-origin audio:', audioUrl);
-      fetchAudioViaProxy(audioUrl);
+      fetchAudioViaProxy(audioUrl, autoQueue);
     } else {
       // Same-origin, use Web Audio API
       initAudioContext();
@@ -387,14 +394,18 @@ function Conversation() {
         })
         .then(audioBuffer => {
           if (!audioBuffer || !audioContextRef.current) return;
-          const source = audioContextRef.current.createBufferSource();
+          const ctx = audioContextRef.current;
+          const source = ctx.createBufferSource();
           source.buffer = audioBuffer;
-          source.connect(audioContextRef.current.destination);
-          
+          source.connect(ctx.destination);
+
           // Add to queue for stop functionality
           audioQueueRef.current.push(source);
-          
-          source.start();
+
+          const start = autoQueue ? Math.max(ctx.currentTime, nextStartTimeRef.current) : ctx.currentTime;
+          source.start(start);
+          if (autoQueue) nextStartTimeRef.current = start + audioBuffer.duration;
+
           setIsAISpeaking(true);
           setPlayingAudioUrl(audioUrl);
           source.onended = () => {
@@ -410,7 +421,7 @@ function Conversation() {
   };
 
   // Fetch audio via API proxy to avoid CORS issues
-  const fetchAudioViaProxy = async (audioUrl) => {
+  const fetchAudioViaProxy = async (audioUrl, autoQueue = false) => {
     try {
       // Use our API gateway as a proxy to fetch the audio
       const proxyUrl = `/api/media/proxy?url=${encodeURIComponent(audioUrl)}`;
@@ -423,15 +434,18 @@ function Conversation() {
       initAudioContext();
       if (!audioContextRef.current) return;
 
-      const audioBuffer = await audioContextRef.current.decodeAudioData(arrayBuffer);
-      const source = audioContextRef.current.createBufferSource();
+      const ctx = audioContextRef.current;
+      const audioBuffer = await ctx.decodeAudioData(arrayBuffer);
+      const source = ctx.createBufferSource();
       source.buffer = audioBuffer;
-      source.connect(audioContextRef.current.destination);
-      
+      source.connect(ctx.destination);
+
       // Add to queue for stop functionality
       audioQueueRef.current.push(source);
-      
-      source.start();
+
+      const start = autoQueue ? Math.max(ctx.currentTime, nextStartTimeRef.current) : ctx.currentTime;
+      source.start(start);
+      if (autoQueue) nextStartTimeRef.current = start + audioBuffer.duration;
 
       setIsAISpeaking(true);
       setPlayingAudioUrl(audioUrl);
@@ -866,10 +880,10 @@ function Conversation() {
                            console.log(`[AudioURL] Attached to message ${index} via ID ${targetResponseId}`);
                            // If welcome is muted and this is the first AI message, don't auto-play
                            const isFirstAIMessage = index === 0 || (index === 1 && newMessages[0]?.type === 'system');
-                           newMessages[index] = { 
-                               ...newMessages[index], 
-                               audioUrl: url, 
-                               audioPlayed: welcomeMuted && isFirstAIMessage ? true : false 
+                           newMessages[index] = {
+                               ...newMessages[index],
+                               audioUrl: url,
+                               audioPlayed: (welcomeMuted && isFirstAIMessage) ? true : false
                            };
                            return newMessages;
                        }
@@ -880,10 +894,10 @@ function Conversation() {
                        if (newMessages[i].type === 'ai' && !newMessages[i].audioUrl) {
                            console.log(`[AudioURL] Fallback attachment to message ${i}`);
                            const isFirstAIMessage = i === 0 || (i === 1 && newMessages[0]?.type === 'system');
-                           newMessages[i] = { 
-                               ...newMessages[i], 
-                               audioUrl: url, 
-                               audioPlayed: welcomeMuted && isFirstAIMessage ? true : false 
+                           newMessages[i] = {
+                               ...newMessages[i],
+                               audioUrl: url,
+                               audioPlayed: (welcomeMuted && isFirstAIMessage) ? true : false
                            };
                            break;
                        }
@@ -920,14 +934,18 @@ function Conversation() {
            // 检测文本标记（降级方案）
            let cleanContent = aiContent;
 
-           // 提取 MAGIC_SENTENCE
-           if (aiContent && aiContent.includes('[MAGIC_SENTENCE:')) {
-               const sentenceMatch = aiContent.match(/\[MAGIC_SENTENCE:\s*(.+?)\]/);
+           // 提取 MAGIC_SENTENCE（兼容 [ ] 和 < > 两种括号，兼容缺少结尾符的情况）
+           if (aiContent && (aiContent.includes('[MAGIC_SENTENCE:') || aiContent.includes('<MAGIC_SENTENCE:'))) {
+               const sentenceMatch = aiContent.match(/[\[<]MAGIC_SENTENCE:\s*([^\]>]+?)(?:[\]>]|$)/s);
                if (sentenceMatch) {
-                   setCurrentMagicSentence(sentenceMatch[1].trim());
+                   // 去掉末尾的 "Please repeat..." 等指令文字
+                   const sentence = sentenceMatch[1]
+                       .replace(/\.?\s*[Pp]lease\s+(repeat|say|try|recite)[\s\S]*/i, '')
+                       .trim();
+                   setCurrentMagicSentence(sentence || sentenceMatch[1].trim());
                }
-               // 从显示文字中移除标记
-               cleanContent = aiContent.replace(/\[MAGIC_SENTENCE:[^\]]+\]\s*/g, '');
+               // 从显示文字中移除标记（兼容 [ ] 和 < > 两种括号）
+               cleanContent = aiContent.replace(/[\[<]MAGIC_SENTENCE:[^\]>]*[\]>]?\s*/g, '').trim();
            }
 
            if (aiContent && aiContent.includes('[MAGIC_PASS]')) {
@@ -981,13 +999,16 @@ function Conversation() {
            let responseText = data.text || '';
            console.log('🤖 AI Response:', responseText);
 
-           // 提取 MAGIC_SENTENCE 标记
-           if (responseText.includes('[MAGIC_SENTENCE:')) {
-               const sentenceMatch = responseText.match(/\[MAGIC_SENTENCE:\s*(.+?)\]/);
+           // 提取 MAGIC_SENTENCE 标记（兼容 [ ] 和 < > 两种括号，兼容缺少结尾符）
+           if (responseText.includes('[MAGIC_SENTENCE:') || responseText.includes('<MAGIC_SENTENCE:')) {
+               const sentenceMatch = responseText.match(/[\[<]MAGIC_SENTENCE:\s*([^\]>]+?)(?:[\]>]|$)/s);
                if (sentenceMatch) {
-                   setCurrentMagicSentence(sentenceMatch[1].trim());
+                   const sentence = sentenceMatch[1]
+                       .replace(/\.?\s*[Pp]lease\s+(repeat|say|try|recite)[\s\S]*/i, '')
+                       .trim();
+                   setCurrentMagicSentence(sentence || sentenceMatch[1].trim());
                }
-               responseText = responseText.replace(/\[MAGIC_SENTENCE:[^\]]+\]\s*/g, '');
+               responseText = responseText.replace(/[\[<]MAGIC_SENTENCE:[^\]>]+[\]>]?\s*/g, '');
            }
 
            // 提取并移除 MAGIC_PASS 标记
@@ -1221,10 +1242,18 @@ function Conversation() {
            if (phase === 'magic_repetition') {
                setMagicCardState('waiting');
                setMagicCardCovered(false);
-               // 停止旧任务的音频播放，避免与新任务音频重叠
-               stopAudioPlayback();
-               // 注意：不立即设置 currentMagicSentence，等待 AI 的 [MAGIC_SENTENCE] 标记
-               // 这样可以避免显示任务标题而不是具体句子
+               // stop_audio=false 表示 AI 已在同一响应中合并输出 A+B，不打断正在播放的音频
+               // stop_audio=true（或未设置）表示后端另发了 response.create，需要清空旧音频
+               if (data.payload?.stop_audio !== false) {
+                   stopAudioPlayback();
+               }
+               // 若 AI 在同一响应中嵌入了 [MAGIC_SENTENCE]，直接从 payload 取句子更新台词卡
+               if (data.payload?.magic_sentence) {
+                   const sc = new URLSearchParams(window.location.search).get('scenario') || '';
+                   setCurrentMagicSentence(data.payload.magic_sentence);
+                   try { if (sc) localStorage.setItem(`magic_sentence_${sc}`, data.payload.magic_sentence); } catch {}
+                   console.log('[Magic] Embedded sentence from phase_transition:', data.payload.magic_sentence);
+               }
            } else {
                // 切换到其他阶段（scene_theater 等）时重置卡片状态
                setMagicCardCovered(false);
@@ -1244,7 +1273,6 @@ function Conversation() {
            setMagicCardCovered(true);
            setMagicCardState('reciting');
            setShowSkipButton(false);
-           setCurrentMagicSentence('');
            setTipIndex(Math.floor(Math.random() * MAGIC_TIPS.length));
            console.log('🎭 Magic Pass First — card covered, memory mode');
            break;
@@ -1266,6 +1294,19 @@ function Conversation() {
            setTimeout(() => {
                setMagicCardState('waiting');
            }, 1800);
+           // Stop response A audio and delete its bubble — it may say "try from memory" which
+           // conflicts with the new task intro (Response B). Only Response B should appear.
+           stopAudioPlayback();
+           setMessages(prev => {
+               // Find last AI message index via reverse scan (O(n) single pass, no intermediate arrays)
+               let lastAiIdx = -1;
+               for (let i = prev.length - 1; i >= 0; i--) {
+                   if (prev[i].type === 'ai') { lastAiIdx = i; break; }
+               }
+               if (lastAiIdx === -1) return prev;
+               console.log('[magic_pass] Removing Response A bubble at index', lastAiIdx);
+               return prev.filter((_, i) => i !== lastAiIdx);
+           });
            console.log('✨ Magic Pass Task:', magicTaskIndex);
            break;
         }
@@ -1815,9 +1856,9 @@ function Conversation() {
           return newMessages;
         });
 
-        // Play the audio
+        // Play the audio — autoQueue=true: schedule after current audio, no interruption
         console.log(`[AutoPlay] Playing AI audio for message ${index}:`, message.audioUrl);
-        playFullAudio(message.audioUrl);
+        playFullAudio(message.audioUrl, true);
       }
     });
   }, [messages]);
@@ -1891,12 +1932,21 @@ function Conversation() {
         recorderRef.current.clearSessionId();
     }
 
-    // Send buffered audio data
+    // Send buffered audio data as JSON-wrapped base64
     if (audioBuffers && audioBuffers.length > 0) {
         console.log('🎤 Sending buffered audio data, count:', audioBuffers.length);
         audioBuffers.forEach(buffer => {
-            if (wsReadyState === WebSocket.OPEN) {
-                socketRef.current.send(buffer);
+            if (socketRef.current && socketRef.current.readyState === WebSocket.OPEN) {
+                const uint8 = new Uint8Array(buffer.buffer !== undefined ? buffer.buffer : buffer);
+                let binary = '';
+                for (let i = 0; i < uint8.byteLength; i++) {
+                    binary += String.fromCharCode(uint8[i]);
+                }
+                const b64 = btoa(binary);
+                socketRef.current.send(JSON.stringify({
+                    type: 'audio_stream',
+                    payload: { audio: b64 }
+                }));
             } else {
                 console.warn('⚠️ Cannot send buffered audio - WebSocket not connected, state:', wsReadyState);
             }
@@ -2095,19 +2145,27 @@ function Conversation() {
 
           {/* 魔法重复阶段：台词卡（话题引导词） */}
           {currentPhase === 'magic_repetition' && (
-            <div className={`mb-3 backdrop-blur-sm rounded-xl px-4 py-3 border transition-all duration-400 ${
-              magicCardState === 'passed'
-                ? 'bg-emerald-900/60 border-emerald-500/70'
-                : magicCardCovered
-                ? 'bg-indigo-900/60 border-indigo-400/50'
-                : 'bg-black/50 border-white/10'
-            }`}>
+            <div
+              className={`mb-3 backdrop-blur-sm rounded-xl px-4 py-3 border transition-all duration-200 cursor-grab active:cursor-grabbing ${
+                magicCardState === 'passed'
+                  ? 'bg-emerald-900/60 border-emerald-500/70'
+                  : magicCardCovered && !isPeeking
+                  ? 'bg-indigo-900/60 border-indigo-400/50'
+                  : magicCardCovered && isPeeking
+                  ? 'bg-indigo-800/80 border-indigo-300/60'
+                  : 'bg-black/50 border-white/10'
+              }`}
+              onPointerDown={() => magicCardCovered && setIsPeeking(true)}
+              onPointerUp={() => setIsPeeking(false)}
+              onPointerLeave={() => setIsPeeking(false)}
+              style={{ userSelect: 'none', touchAction: 'none' }}
+            >
               {magicCardState === 'passed' ? (
                 <div className="flex items-center justify-center gap-2 py-1 animate-in zoom-in duration-200">
                   <span className="text-2xl">☑️</span>
                   <span className="text-emerald-300 font-semibold">通过！</span>
                 </div>
-              ) : magicCardCovered ? (
+              ) : magicCardCovered && !isPeeking ? (
                 <div className="text-center py-1">
                   <p className="text-xs text-indigo-300 mb-1 tracking-widest uppercase">从记忆复述</p>
                   <div className="flex items-center justify-center gap-2">
@@ -2116,6 +2174,15 @@ function Conversation() {
                     <div className="w-12 h-2 rounded-full bg-indigo-400/40 animate-pulse" />
                   </div>
                   <p className="text-xs text-indigo-200/50 mt-2">句子已隐藏，请尝试背诵</p>
+                  <p className="text-xs text-indigo-200/30 mt-1">💡 按住卡片可查看</p>
+                </div>
+              ) : magicCardCovered && isPeeking ? (
+                <div className="text-center py-1 opacity-transition">
+                  <p className="text-xs text-indigo-300 mb-2 tracking-widest uppercase">偷看模式</p>
+                  <p className="text-sm font-medium text-indigo-100 leading-relaxed mb-2">
+                    {currentMagicSentence || <span className="text-slate-400 italic">AI 正在准备...</span>}
+                  </p>
+                  <p className="text-xs text-indigo-200/50">松开后隐藏</p>
                 </div>
               ) : (
                 <>

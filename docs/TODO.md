@@ -8,6 +8,15 @@
 - [X] [Bug] 魔法重复阶段：通过一句后台词卡不自动刷新新句子，AI 也不主动引导。根因：`magic_pass` 后端调用 `_update_session_prompt()` + `response.create` 触发 AI 回复，但实测无效，AI 未产生新的 `[MAGIC_SENTENCE:]` 输出。需排查 DashScope `conversation.item.create` + `response.create` 在 magic_pass 后是否能正常触发新轮响应（涉及 `main.py` ~line 833 触发逻辑）。
 - [ ] [Commercialization]  Defined a tiered subscription model (Freemium/Pro) and cost-per-minute unit economics for AI-driven oral practice.
 - [ ] [Feature]  Tell me a good way to plan a live activity for when I background the app.
+- [ ] [Security] `/reset-phase` 端点缺少 JWT 身份验证：任意请求可重置他人 session_phases 状态，需添加 token 校验 + user_id 与 JWT 匹配检查
+- [ ] [Security] WebSocket 连接参数（scenario/voice）未校验：应添加白名单/正则验证，防止注入特殊字符破坏 URL 构造
+- [ ] [Performance] `session_phases` 全局字典无过期清理：长期运行（数周）旧 phase_key 持续积累，需添加 TTL 机制（推荐迁移至 Redis 或添加 72h LRU 清理）
+- [ ] [Performance] `playFullAudio` autoQueue 时间差异未检查：WebAudioContext 长时间运行后 nextStartTimeRef 与 currentTime 差距过大，需添加异常重置逻辑
+- [ ] [Testing] magic_pass 删气泡逻辑无测试（消息列表为空、无 AI 类型消息、多条 AI 消息时删除正确条目）
+- [ ] [Testing] `playFullAudio` autoQueue=true/false 两种行为无测试（排队顺序、stopAudioPlayback 后状态、nextStartTimeRef 更新准确性）
+- [ ] [Testing] `/reset-phase` scenario 参数处理无测试（scenario="" 时 key 格式、不存在 key 时行为、并发请求隔离性）
+- [ ] [Testing] `session_phases` 复合 key 隔离性无测试（不同用户同场景、同用户不同场景、状态修改不污染兄弟 key）
+- [ ] [Testing] `api.js resetTask()` 两步调用无测试（Step1成功+Step2失败降级、userId 未登录、scenarioTitle=null 序列化）
 - [ ] [Security] Conversation.js localStorage key 注入修复（encodeURIComponent + 已有数据迁移方案）
 - [ ] [Security] Stripe 重定向 URL 白名单（checkout.stripe.com 域名校验）
 - [ ] [Optimization] i18n 翻译懒加载（拆分 JSON 按需加载，减少初始包体 ~50KB）
@@ -20,6 +29,12 @@
 - [ ] [Testing] AuthContext.js httpOnly cookie 迁移逻辑零测试（token-migrate 路径、logout 清理、登录成功 cookie 模式）。
 - [ ] [Testing] Conversation.js 关键路径测试不足（AudioBar 集成、playFullAudio Web Audio/proxy 路径、task 完成检测）。
 ## Done
+
+- [x] [Bug] 魔法重复音频割裂修复：`stop_audio` 改为 False + `playFullAudio` 增加 `autoQueue` 参数（`autoQueue=true` 用 `nextStartTimeRef` 排队，不中断当前播放；auto-play useEffect 改用 `autoQueue=true`）
+- [x] [Bug] 魔法重复台词卡不切换修复：prompt_manager 背诵通过规则重写为强制格式（`[MAGIC_PASS]` + `[MAGIC_SENTENCE: ...]` 必须在同一响应），提示词严格要求使用方括号而非角括号；后端 MAGIC_SENTENCE regex 兼容 `[]` 和 `<>` 两种括号；fallback `response.create` instructions 修改为要求 AI 生成新句子
+- [x] [Bug] 魔法重复 Response A 误导文字修复：彻底移除 `suppressNextAIAudioRef`（时序 bug），改为 `magic_pass` 触发时直接删除最后一条 AI 消息气泡（`setMessages` 反向扫描删除）+ `stopAudioPlayback()`，对话框只显示 Response B
+- [x] [Bug] 场景切换后错误进入情景剧场修复：`session_phases` key 从 `user_id` 改为 `f"{user_id}:{scenario}"` 复合键，每个场景独立维护阶段状态；`WebSocketCallback` 增加 `self.phase_key` 属性；`/reset-phase` 端点新增 `scenario` 参数；`api.js resetTask()` 调用时传入 `scenarioTitle`
+- [x] [Performance] `setMessages` magic_pass 删气泡由 `map→filter→pop`（O(n) 两次遍历 + 中间数组）改为反向单次 for 循环
 
 - [x] [Frontend] 添加多语言界面支持（9语言 i18n + IP/浏览器语言自动检测 + LanguageSwitcher 组件）
 

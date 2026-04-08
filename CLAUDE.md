@@ -221,6 +221,31 @@ final = max(1, min(10, round(input_score × correction_penalty × sentence_quali
 - `requirements.txt` 或 `Dockerfile` 变更 → `docker compose build --no-cache <service>`
 - **PyPI 镜像**: `workflow-service` 和 `ai-omni-service` Dockerfile 已配置阿里云镜像源 (`mirrors.aliyun.com/pypi/simple/`)，避免网络超时
 
+### Magic Repetition Phase: Audio & State Design
+
+Two-phase flow per task: **reading** (card visible) → **memory** (card covered). Each has a pass event:
+- `magic_pass_first`: reading → memory. Card covered, `magicCardState = 'reciting'`.
+- `magic_pass`: memory → next task (or scene_theater). Card uncovered, ✅ animation, then `'waiting'`.
+
+**Audio sequencing**: COS-uploaded audio URLs (not streaming) are the source of truth for playback.
+- `audio_url` WebSocket event attaches URL to AI message → `audioPlayed: false` → auto-play `useEffect` calls `playFullAudio(url, autoQueue=true)`.
+- `autoQueue=true`: schedules via `nextStartTimeRef` (Web Audio API), does NOT call `stopAudioPlayback()`, enables seamless A→B chaining.
+- `autoQueue=false` (default, user replay): calls `stopAudioPlayback()` first, resets `nextStartTimeRef.current = 0`.
+- `stopAudioPlayback()` MUST reset `nextStartTimeRef.current = 0` — missing this causes new audio to schedule in silence.
+
+**Response A deletion on magic_pass**: When `magic_pass` fires, Response A (AI commentary) is deleted from the messages array via `setMessages` reverse scan (`for` loop from end, O(n) single pass). `stopAudioPlayback()` stops any in-flight audio. Response B (new task intro) plays normally via `autoQueue`.
+
+**Anti-pattern avoided**: Do NOT use a flag ref (like `suppressNextAIAudioRef`) to suppress Response A's `audio_url` — COS upload completes BEFORE `magic_pass` WebSocket event arrives at the frontend, causing the flag to consume Response B's audio_url instead.
+
+**session_phases isolation**: Keyed by `f"{user_id}:{scenario}"` (not just `user_id`). Each scenario maintains its own phase state independently. `WebSocketCallback.phase_key` = `f"{self.user_id}:{self.scenario or ''}"`. When switching scenarios, a new key is initialized from scratch (phase=magic_repetition, task_index=0).
+
+**Gotcha**: `MAGIC_SENTENCE` brackets — prompts must specify "SQUARE BRACKETS [ ] ONLY, NOT angle brackets < > or ( )". AI historically uses `<>` when prompt template uses `<placeholder>` notation. Regex in frontend and backend matches both: `[\[<]MAGIC_SENTENCE:\s*([^\]>]+?)(?:[\]>]|$)`.
+
+**Docker rebuild shortcut** (when apt network fails): Python source-only changes can be hot-patched:
+```bash
+docker cp services/ai-omni-service/app/main.py oral_app_ai_omni_service:/app/app/main.py && docker compose restart ai-omni-service
+```
+
 ### Discovery Page: Goal Completion
 
 When `progress === 100` (all scenarios completed), `Discovery.js` shows a 🏆 achievement modal once per goal (keyed by `goal_all_completed_${goal.id}` in localStorage) plus a persistent CTA banner. Both navigate to `/goal-setting` for setting a new goal.
