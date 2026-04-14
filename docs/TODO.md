@@ -8,26 +8,37 @@
 - [X] [Bug] 魔法重复阶段：通过一句后台词卡不自动刷新新句子，AI 也不主动引导。根因：`magic_pass` 后端调用 `_update_session_prompt()` + `response.create` 触发 AI 回复，但实测无效，AI 未产生新的 `[MAGIC_SENTENCE:]` 输出。需排查 DashScope `conversation.item.create` + `response.create` 在 magic_pass 后是否能正常触发新轮响应（涉及 `main.py` ~line 833 触发逻辑）。
 - [ ] [Commercialization]  Defined a tiered subscription model (Freemium/Pro) and cost-per-minute unit economics for AI-driven oral practice.
 - [ ] [Feature]  Tell me a good way to plan a live activity for when I background the app.
-- [ ] [Security] `/reset-phase` 端点缺少 JWT 身份验证：任意请求可重置他人 session_phases 状态，需添加 token 校验 + user_id 与 JWT 匹配检查
-- [ ] [Security] WebSocket 连接参数（scenario/voice）未校验：应添加白名单/正则验证，防止注入特殊字符破坏 URL 构造
-- [ ] [Performance] `session_phases` 全局字典无过期清理：长期运行（数周）旧 phase_key 持续积累，需添加 TTL 机制（推荐迁移至 Redis 或添加 72h LRU 清理）
-- [ ] [Performance] `playFullAudio` autoQueue 时间差异未检查：WebAudioContext 长时间运行后 nextStartTimeRef 与 currentTime 差距过大，需添加异常重置逻辑
-- [ ] [Testing] magic_pass 删气泡逻辑无测试（消息列表为空、无 AI 类型消息、多条 AI 消息时删除正确条目）
-- [ ] [Testing] `playFullAudio` autoQueue=true/false 两种行为无测试（排队顺序、stopAudioPlayback 后状态、nextStartTimeRef 更新准确性）
-- [ ] [Testing] `/reset-phase` scenario 参数处理无测试（scenario="" 时 key 格式、不存在 key 时行为、并发请求隔离性）
-- [ ] [Testing] `session_phases` 复合 key 隔离性无测试（不同用户同场景、同用户不同场景、状态修改不污染兄弟 key）
-- [ ] [Testing] `api.js resetTask()` 两步调用无测试（Step1成功+Step2失败降级、userId 未登录、scenarioTitle=null 序列化）
-- [ ] [Security] Conversation.js localStorage key 注入修复（encodeURIComponent + 已有数据迁移方案）
-- [ ] [Security] Stripe 重定向 URL 白名单（checkout.stripe.com 域名校验）
-- [ ] [Optimization] i18n 翻译懒加载（拆分 JSON 按需加载，减少初始包体 ~50KB）
-- [ ] [Testing] i18n 测试基础设施（i18next Provider wrapper + getInitialLanguage/COUNTRY_LANG_MAP/LanguageSwitcher 单元测试）
-- [ ] [Optimization] proficiency_scoring: task 完成后（status='completed'）仍执行 score+interaction_count 累加，数据不干净。应在 UPDATE 前检查 status，已完成的 task 跳过累加。
-- [ ] [Security] comms-service 内部转发 AI 服务时将 token 附加在 URL 查询参数（aiUrl.searchParams.set('token')），可能被代理/日志记录，改为 header 或消息体传递。
-- [ ] [Performance] Conversation.js:1482 多处 async API（getHistory/getActiveGoal）缺少 AbortController，组件卸载后仍触发 setState，存在内存泄漏风险。
-- [ ] [Performance] proficiency_scoring.py:732/742 两次查询同一 user_tasks 记录，合并为一次 SELECT 可减少 DB 往返。
-- [ ] [Testing] proficiency_scoring.py 零单元测试覆盖（27 个缺口），核心评分逻辑（keyword matching、penalty、delta 计算）需补充 pytest 测试。
-- [ ] [Testing] AuthContext.js httpOnly cookie 迁移逻辑零测试（token-migrate 路径、logout 清理、登录成功 cookie 模式）。
-- [ ] [Testing] Conversation.js 关键路径测试不足（AudioBar 集成、playFullAudio Web Audio/proxy 路径、task 完成检测）。
+- [x] [Security] `/reset-phase` 端点缺少 JWT 身份验证：任意请求可重置他人 session_phases 状态，需添加 token 校验 + user_id 与 JWT 匹配检查
+- [x] [Security] WebSocket 连接参数（scenario/voice）未校验：应添加白名单/正则验证，防止注入特殊字符破坏 URL 构造
+- [x] [Performance] `session_phases` 全局字典无过期清理：长期运行（数周）旧 phase_key 持续积累，需添加 TTL 机制（推荐迁移至 Redis 或添加 72h LRU 清理）
+- [x] [Performance] `playFullAudio` autoQueue 时间差异未检查：WebAudioContext 长时间运行后 nextStartTimeRef 与 currentTime 差距过大，需添加异常重置逻辑
+- [x] [Testing] magic_pass 删气泡逻辑无测试（消息列表为空、无 AI 类型消息、多条 AI 消息时删除正确条目）
+- [x] [Testing] `playFullAudio` autoQueue=true/false 两种行为无测试（排队顺序、stopAudioPlayback 后状态、nextStartTimeRef 更新准确性）
+- [x] [Testing] `/reset-phase` scenario 参数处理无测试（scenario="" 时 key 格式、不存在 key 时行为、并发请求隔离性）→ 8 tests in test_reset_phase.py
+- [x] [Testing] `session_phases` 复合 key 隔离性无测试（不同用户同场景、同用户不同场景、状态修改不污染兄弟 key）→ 10 tests in test_session_phases_isolation.py
+- [x] [Testing] `api.js resetTask()` 两步调用无测试（Step1成功+Step2失败降级、userId 未登录、scenarioTitle=null 序列化）
+- [x] [Security] Conversation.js localStorage key 注入修复（encodeURIComponent + 已有数据迁移方案）
+- [x] [Security] Stripe 重定向 URL 白名单（stripeRoutes.js: getValidatedBaseUrl 校验 origin 白名单，env STRIPE_ALLOWED_ORIGINS 配置）
+- [x] [Optimization] i18n 翻译懒加载（拆分 JSON 按需加载，减少初始包体 ~50KB）
+- [x] [Testing] i18n 测试基础设施（i18next Provider wrapper + getInitialLanguage/COUNTRY_LANG_MAP/LanguageSwitcher 单元测试）
+- [x] [Optimization] proficiency_scoring: task 完成后（status='completed'）仍执行 score+interaction_count 累加，数据不干净。应在 UPDATE 前检查 status，已完成的 task 跳过累加。
+- [x] [Security] comms-service 内部转发 AI 服务时将 token 附加在 URL 查询参数（aiUrl.searchParams.set('token')），可能被代理/日志记录，改为 header 或消息体传递。
+- [x] [Performance] Conversation.js:1482 多处 async API（getHistory/getActiveGoal）缺少 AbortController，组件卸载后仍触发 setState，存在内存泄漏风险。
+- [x] [Performance] proficiency_scoring.py:732/742 两次查询同一 user_tasks 记录，合并为一次 SELECT 可减少 DB 往返。
+- [x] [Testing] proficiency_scoring.py 零单元测试覆盖（27 个缺口），核心评分逻辑（keyword matching、penalty、delta 计算）需补充 pytest 测试。→ 60 tests in test_proficiency_scoring.py
+- [x] [Testing] AuthContext.js httpOnly cookie 迁移逻辑零测试（token-migrate 路径、logout 清理、登录成功 cookie 模式）。
+- [x] [Testing] Conversation.js 关键路径测试不足（AudioBar 集成、playFullAudio Web Audio/proxy 路径、task 完成检测）。
+## Backlog (新增)
+
+- [ ] [Testing] GoalSetting.js 5步向导零测试覆盖（quiz评分、canNext条件、step跳转、handleGenerateScenarios 成功/失败路径、handleSubmit 校验）
+- [ ] [Performance] GoalSetting.js: handleGenerateScenarios 缺少 AbortController，组件卸载后仍触发 setState（内存泄漏风险）
+- [ ] [Performance] Discovery.js overallProgress 计算每次 render 重算，应用 useMemo
+- [ ] [Testing] Conversation.js isRecallMode 分支无测试（recall模式 phase_transition→navigate('/discovery')、magic card 仅 recall 模式显示）
+- [ ] [Testing] Onboarding.js 更新后的4题问卷无对应测试（新 Q3 分值上限 9，多选题评分逻辑）
+- [ ] [Performance] Discovery.js: enrichedScenarios/filteredScenarios 每次 render 重新计算，应用 useMemo（场景列表大时影响滚动流畅度）
+- [ ] [Performance] Discovery.js L138-189: useEffect 内多个 await 调用缺少 AbortController（组件卸载后仍触发 setState）
+- [ ] [Performance] GoalSetting.js: handleGenerateScenarios 无防抖/AbortController，用户快速点击可发起多个并发生成请求
+
 ## Done
 
 - [x] [Bug] 魔法重复音频割裂修复：`stop_audio` 改为 False + `playFullAudio` 增加 `autoQueue` 参数（`autoQueue=true` 用 `nextStartTimeRef` 排队，不中断当前播放；auto-play useEffect 改用 `autoQueue=true`）
@@ -196,3 +207,12 @@
 - [x] [AI] proficiency_scoring 修复 task_title/scenario_title 为空 bug（delta=0 提前 return 时从 current_task 参数填充）
 - [x] [AI] proficiency_scoring penalty 机制重写：严格区分「纠正」(0.5/0.7) 与「教学建议」(1.0)，补充日语曖昧/具体的に等 pattern
 - [x] [Docker] workflow-service 和 ai-omni-service Dockerfile 添加阿里云 PyPI 镜像源，解决 pip 依赖下载超时问题
+- [x] [Frontend] GoalSetting.js 完整重写为5步向导（欢迎→语言→口语水平问卷→目标偏好→场景确认），集成 Onboarding 问卷评分逻辑（CEFR 等级检测），AnimatePresence 方向感知动画
+- [x] [Frontend] Discovery.js 首页全面升级：场景卡片改为2列网格（ScenarioCard.jsx）、顶部进度条、今日复述浅紫配色（#637FF1 主题）、底部导航精简为3-Tab（去除 FAB mic 和历史）
+- [x] [Frontend] Onboarding.js 问卷精简为4题（语言环境/开口频率/small talk能力/独立应对场景），最高分 30 分
+- [x] [Frontend] ScenarioCard.jsx 增加 emoji prop，图片区改为 h-36，无图时渐变背景显示 emoji
+- [x] [Frontend] BottomNav.js 3-Tab 路由修正（目标→/goal-setting）
+- [x] [Bug] index.html 移除 class="dark" 硬编码，修复全站深色背景 bug（原因：tailwind darkMode:"class" + class="dark" 强制深色）
+- [x] [Feature] Conversation.js 今日复述模式：isRecallMode 由 URL mode=recall 触发，magic_repetition 阶段初始化，scene_theater 切换时 navigate 回 Discovery
+- [x] [Bug] comms-service/index.js mode 参数未转发修复：新增 mode 提取（queryObject.mode）并传递给 ai-omni-service，确保 recall 模式正确初始化后端阶段
+- [x] [Performance] Conversation.js isRecallMode 改为 useRef 初始化，避免每次 render 重新解析 URLSearchParams

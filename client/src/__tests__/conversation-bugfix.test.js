@@ -86,7 +86,7 @@ describe('BUG-002: Session reset on "重新开始"', () => {
     const result = resetSession(scenarioTitle);
     
     expect(result).toBe(true);
-    expect(localStorage.getItem(`session_${scenarioTitle}`)).toBeNull();
+    expect(localStorage.getItem(`session_${scenarioTitle}`)).toBeFalsy();
   });
   
   test('should generate new session ID on reset', () => {

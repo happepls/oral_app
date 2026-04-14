@@ -1,0 +1,70 @@
+{
+  "global": {
+    "color": {
+      "primary": {
+        "value": "#637FF1",
+        "type": "color"
+      },
+      "primary-light": {
+        "value": "#c3cef8",
+        "type": "color"
+      },
+      "primary-dark": {
+        "value": "#2d44ca",
+        "type": "color"
+      },
+      "secondary": {
+        "value": "#a47af6",
+        "type": "color"
+      },
+      "success": {
+        "value": "#10B981",
+        "type": "color"
+      },
+      "warning": {
+        "value": "#F59E0B",
+        "type": "color"
+      },
+      "error": {
+        "value": "#e2412e",
+        "type": "color"
+      }
+    },
+    "shadow": {
+      "color": {
+        "value": "137,171,241",
+        "type": "other"
+      },
+      "opacity": {
+        "value": "0.18",
+        "type": "other"
+      },
+      "blur": {
+        "value": "23px",
+        "type": "other"
+      },
+      "y": {
+        "value": "10px",
+        "type": "other"
+      }
+    },
+    "radius": {
+      "sm": {
+        "value": "10px",
+        "type": "borderRadius"
+      },
+      "md": {
+        "value": "13px",
+        "type": "borderRadius"
+      },
+      "lg": {
+        "value": "20px",
+        "type": "borderRadius"
+      },
+      "xl": {
+        "value": "29px",
+        "type": "borderRadius"
+      }
+    }
+  }
+}

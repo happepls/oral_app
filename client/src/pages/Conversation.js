@@ -3,6 +3,9 @@ import { useNavigate, useLocation } from 'react-router-dom';
 import { conversationAPI, aiAPI, userAPI } from '../services/api';
 import { getAuthHeaders } from '../services/api';
 import RealTimeRecorder from '../components/RealTimeRecorder';
+import { AiAvatar } from '../components/AiAvatar';
+import { PracticeReport } from '../components/PracticeReport';
+import { MessageBubble } from '../components/MessageBubble';
 import { useAuth } from '../contexts/AuthContext';
 import AudioBar from '../components/AudioBar.jsx'; // Import the new AudioBar component
 import NetworkAdaptiveManager from '../utils/network-adaptive-manager';
@@ -28,6 +31,7 @@ function Conversation() {
   const [isConnected, setIsConnected] = useState(false);
   const [currentRole, setCurrentRole] = useState('OralTutor'); // Default role
   const [isAISpeaking, setIsAISpeaking] = useState(false);
+  const [isUserRecording, setIsUserRecording] = useState(false);
   const [webSocketError, setWebSocketError] = useState(null);
   const [sessionId, setSessionId] = useState(null);
   const [selection, setSelection] = useState({ text: '', x: 0, y: 0, visible: false });
@@ -107,6 +111,9 @@ function Conversation() {
     ]
   };
 
+  // localStorage key helper — encodes scenario name to prevent key injection via crafted URLs
+  const _lsScenarioKey = (prefix, raw) => `${prefix}${encodeURIComponent(raw || '')}`;
+
   // Scenario Tasks State
   // Initialize as empty - will be populated from backend in useEffect
   const [tasks, setTasks] = useState([]);
@@ -118,7 +125,7 @@ function Conversation() {
     const searchParams = new URLSearchParams(window.location.search);
     const scenario = searchParams.get('scenario') || location.state?.scenario;
     if (scenario) {
-      const saved = localStorage.getItem(`task_progress_${scenario}`);
+      const saved = localStorage.getItem(_lsScenarioKey('task_progress_', scenario));
       return saved ? parseInt(saved, 10) : 0;
     }
     return 0;
@@ -151,13 +158,15 @@ function Conversation() {
   const hasViewedCompletionModalRef = useRef(false); // Track if user has already viewed and closed the modal
 
   // 双阶段 UI State（Magic Repetition 和 Scene Theater）
-  const [currentPhase, setCurrentPhase] = useState('magic_repetition'); // 'magic_repetition'|'scene_theater'|'review'
-  const currentPhaseRef = useRef('magic_repetition'); // ref for use inside callbacks
+  // useRef 保证只在首次挂载时读取 URL，避免每次 render 重新解析
+  const isRecallMode = useRef(new URLSearchParams(window.location.search).get('mode') === 'recall').current;
+  const [currentPhase, setCurrentPhase] = useState(isRecallMode ? 'magic_repetition' : 'scene_theater');
+  const currentPhaseRef = useRef(isRecallMode ? 'magic_repetition' : 'scene_theater');
   const [sceneImageUrl, setSceneImageUrl] = useState(null);
   const [magicPassedTasks, setMagicPassedTasks] = useState(() => {
     try {
       const sc = new URLSearchParams(window.location.search).get('scenario') || '';
-      const stored = sc && localStorage.getItem(`magic_passed_${sc}`);
+      const stored = sc && localStorage.getItem(_lsScenarioKey('magic_passed_', sc));
       return stored ? new Set(JSON.parse(stored)) : new Set();
     } catch { return new Set(); }
   }); // task indices that passed magic（localStorage 持久化，key: magic_passed_{scenario}）
@@ -167,7 +176,7 @@ function Conversation() {
   const [currentMagicSentence, setCurrentMagicSentence] = useState(() => {
     try {
       const sc = new URLSearchParams(window.location.search).get('scenario') || '';
-      return sc ? (localStorage.getItem(`magic_sentence_${sc}`) || '') : '';
+      return sc ? (localStorage.getItem(_lsScenarioKey('magic_sentence_', sc)) || '') : '';
     } catch { return ''; }
   }); // 魔法重复阶段当前需复述的句子（持久化到 localStorage，key: magic_sentence_{scenario}）
   const [magicCardState, setMagicCardState] = useState('waiting'); // 'waiting'|'reciting'|'passed'
@@ -275,8 +284,8 @@ function Conversation() {
                           setShowCompletionModal(true);
                           try {
                               const sc = new URLSearchParams(window.location.search).get('scenario') || '';
-                              if (sc) localStorage.removeItem(`magic_passed_${sc}`);
-                              if (sc) localStorage.removeItem(`magic_sentence_${sc}`);
+                              if (sc) localStorage.removeItem(_lsScenarioKey('magic_passed_', sc));
+                              if (sc) localStorage.removeItem(_lsScenarioKey('magic_sentence_', sc));
                           } catch {}
                       }, 1000);
                   }
@@ -295,9 +304,9 @@ function Conversation() {
       const sc = new URLSearchParams(window.location.search).get('scenario') || '';
       if (!sc) return;
       if (currentMagicSentence) {
-        localStorage.setItem(`magic_sentence_${sc}`, currentMagicSentence);
+        localStorage.setItem(_lsScenarioKey('magic_sentence_', sc), currentMagicSentence);
       } else {
-        localStorage.removeItem(`magic_sentence_${sc}`);
+        localStorage.removeItem(_lsScenarioKey('magic_sentence_', sc));
       }
     } catch {}
   }, [currentMagicSentence]);
@@ -402,6 +411,13 @@ function Conversation() {
           // Add to queue for stop functionality
           audioQueueRef.current.push(source);
 
+          // Reset time drift if autoQueue has drifted more than 30 seconds
+          const TIME_DRIFT_THRESHOLD = 30;
+          if (autoQueue && nextStartTimeRef.current - ctx.currentTime > TIME_DRIFT_THRESHOLD) {
+            console.warn(`Auto-queue time drift detected (${(nextStartTimeRef.current - ctx.currentTime).toFixed(2)}s). Resetting to current time.`);
+            nextStartTimeRef.current = ctx.currentTime;
+          }
+
           const start = autoQueue ? Math.max(ctx.currentTime, nextStartTimeRef.current) : ctx.currentTime;
           source.start(start);
           if (autoQueue) nextStartTimeRef.current = start + audioBuffer.duration;
@@ -442,6 +458,13 @@ function Conversation() {
 
       // Add to queue for stop functionality
       audioQueueRef.current.push(source);
+
+      // Reset time drift if autoQueue has drifted more than 30 seconds
+      const TIME_DRIFT_THRESHOLD = 30;
+      if (autoQueue && nextStartTimeRef.current - ctx.currentTime > TIME_DRIFT_THRESHOLD) {
+        console.warn(`Auto-queue time drift detected (${(nextStartTimeRef.current - ctx.currentTime).toFixed(2)}s). Resetting to current time.`);
+        nextStartTimeRef.current = ctx.currentTime;
+      }
 
       const start = autoQueue ? Math.max(ctx.currentTime, nextStartTimeRef.current) : ctx.currentTime;
       source.start(start);
@@ -557,11 +580,11 @@ function Conversation() {
       setCurrentMagicSentence('');
       setMagicCardState('waiting');
       setMagicCardCovered(false);
-      setCurrentPhase('magic_repetition');
+      setCurrentPhase(isRecallMode ? 'magic_repetition' : 'scene_theater');
       // 清除 localStorage 里的魔法通过记录
       const scKey = scenarioFromUrl || '';
-      if (scKey) localStorage.removeItem(`magic_passed_${scKey}`);
-      if (scKey) localStorage.removeItem(`magic_sentence_${scKey}`);
+      if (scKey) localStorage.removeItem(_lsScenarioKey('magic_passed_', scKey));
+      if (scKey) localStorage.removeItem(_lsScenarioKey('magic_sentence_', scKey));
     } else {
       // Continue practice: show 100% progress
       setCurrentTaskProgress(100);
@@ -628,7 +651,7 @@ function Conversation() {
 
           // Clear scenario-specific session from localStorage to prevent history reload on refresh
           if (scenarioTitle) {
-            localStorage.removeItem(`session_${scenarioTitle}`);
+            localStorage.removeItem(_lsScenarioKey('session_', scenarioTitle));
             console.log('Cleared localStorage session for scenario:', scenarioTitle);
           }
 
@@ -648,9 +671,9 @@ function Conversation() {
 
     // Clear localStorage for this scenario to prevent old progress restoration
     if (resetProgress && scenarioTitle) {
-      localStorage.removeItem(`task_progress_${scenarioTitle}`);
+      localStorage.removeItem(_lsScenarioKey('task_progress_', scenarioTitle));
       // Mark that welcome message should not be played after refresh
-      localStorage.setItem(`welcome_muted_${scenarioTitle}`, 'true');
+      localStorage.setItem(_lsScenarioKey('welcome_muted_', scenarioTitle), 'true');
       console.log('Cleared localStorage progress for scenario:', scenarioTitle);
     }
 
@@ -815,7 +838,7 @@ function Conversation() {
                                setCurrentTaskProgress(currentTaskProgress);
                                setCurrentTaskScore(currentTaskScore);
                                // Save to localStorage for persistence
-                               localStorage.setItem(`task_progress_${scenario}`, currentTaskProgress.toString());
+                               localStorage.setItem(_lsScenarioKey('task_progress_', scenario), currentTaskProgress.toString());
                            }
 
                            // Show toast for newly completed task
@@ -867,7 +890,7 @@ function Conversation() {
 
            // Check if welcome message is muted (after retry)
            const currentScenario = new URLSearchParams(window.location.search).get('scenario');
-           const welcomeMuted = currentScenario ? localStorage.getItem(`welcome_muted_${currentScenario}`) === 'true' : false;
+           const welcomeMuted = currentScenario ? localStorage.getItem(_lsScenarioKey('welcome_muted_', currentScenario)) === 'true' : false;
 
            if (role === 'assistant') {
                setMessages(prev => {
@@ -1140,7 +1163,7 @@ function Conversation() {
                const searchParams = new URLSearchParams(window.location.search);
                const scenario = searchParams.get('scenario') || location.state?.scenario;
                if (scenario) {
-                   localStorage.setItem(`task_progress_${scenario}`, newProgress.toString());
+                   localStorage.setItem(_lsScenarioKey('task_progress_', scenario), newProgress.toString());
                }
                
                // Auto-dismiss after 3 seconds
@@ -1189,7 +1212,7 @@ function Conversation() {
 
                    // Clear localStorage for this scenario (will be refreshed from backend)
                    if (scenario) {
-                       localStorage.removeItem(`task_progress_${scenario}`);
+                       localStorage.removeItem(_lsScenarioKey('task_progress_', scenario));
                    }
                }
                
@@ -1235,6 +1258,11 @@ function Conversation() {
            break;
         case 'phase_transition': {
            const phase = data.payload?.phase || data.phase;
+           // recall 模式：魔法重复全部完成后跳回 Dashboard
+           if (isRecallMode && phase === 'scene_theater') {
+               navigate('/discovery');
+               return;
+           }
            if (phase) {
                setCurrentPhase(phase);
                setTipIndex(Math.floor(Math.random() * MAGIC_TIPS.length));
@@ -1251,7 +1279,7 @@ function Conversation() {
                if (data.payload?.magic_sentence) {
                    const sc = new URLSearchParams(window.location.search).get('scenario') || '';
                    setCurrentMagicSentence(data.payload.magic_sentence);
-                   try { if (sc) localStorage.setItem(`magic_sentence_${sc}`, data.payload.magic_sentence); } catch {}
+                   try { if (sc) localStorage.setItem(_lsScenarioKey('magic_sentence_', sc), data.payload.magic_sentence); } catch {}
                    console.log('[Magic] Embedded sentence from phase_transition:', data.payload.magic_sentence);
                }
            } else {
@@ -1283,7 +1311,7 @@ function Conversation() {
                const next = new Set([...prev, magicTaskIndex]);
                try {
                    const sc = new URLSearchParams(window.location.search).get('scenario') || '';
-                   if (sc) localStorage.setItem(`magic_passed_${sc}`, JSON.stringify([...next]));
+                   if (sc) localStorage.setItem(_lsScenarioKey('magic_passed_', sc), JSON.stringify([...next]));
                } catch {}
                return next;
            });
@@ -1478,7 +1506,7 @@ function Conversation() {
     const scenario = searchParams.get('scenario');
 
     // Check if welcome message should be muted (after retry)
-    const welcomeMuted = scenario ? localStorage.getItem(`welcome_muted_${scenario}`) === 'true' : false;
+    const welcomeMuted = scenario ? localStorage.getItem(_lsScenarioKey('welcome_muted_', scenario)) === 'true' : false;
 
       const payload = {
         type: 'session_start',
@@ -1501,7 +1529,7 @@ function Conversation() {
     setTimeout(() => {
       try {
         const sc = new URLSearchParams(window.location.search).get('scenario') || '';
-        const hasSentence = sc ? !!localStorage.getItem(`magic_sentence_${sc}`) : false;
+        const hasSentence = sc ? !!localStorage.getItem(_lsScenarioKey('magic_sentence_', sc)) : false;
         if (currentPhaseRef.current === 'magic_repetition' && !hasSentence) {
           socketRef.current.send(JSON.stringify({ type: 'resend_magic_sentence' }));
           console.log('[Magic] Requested resend_magic_sentence after reconnect');
@@ -1623,9 +1651,12 @@ function Conversation() {
 
   // Init Session
   useEffect(() => {
+    // Create AbortController for this effect
+    const abortController = new AbortController();
+
     const init = async () => {
       if (!user?.id) return; // Cookie-based auth: only need user, token is in httpOnly cookie
-      
+
       // Don't auto-reconnect on every render - only on initial mount or manual retry
       if (isManualDisconnect) {
         console.log('Manual disconnect detected, skipping auto-init');
@@ -1643,7 +1674,7 @@ function Conversation() {
           try {
               console.log('Fetching tasks from backend for scenario:', scenario);
 
-              const goalRes = await userAPI.getActiveGoal();
+              const goalRes = await userAPI.getActiveGoal({ signal: abortController.signal });
               console.log('getActiveGoal response:', goalRes);
 
               let scenarios = [];
@@ -1734,11 +1765,11 @@ function Conversation() {
 
       // If no URL session ID, check localStorage for persisted session
       if (!effectiveSessionId && scenario) {
-          const storedSessionId = localStorage.getItem(`session_${scenario}`);
+          const storedSessionId = localStorage.getItem(_lsScenarioKey('session_', scenario));
           if (storedSessionId) {
               // Verify that the stored session ID is still valid by checking history
               try {
-                  const historyRes = await conversationAPI.getHistory(storedSessionId);
+                  const historyRes = await conversationAPI.getHistory(storedSessionId, { signal: abortController.signal });
                   if (historyRes && historyRes.messages && historyRes.messages.length > 0) {
                       effectiveSessionId = storedSessionId;
                       // Load history messages into state
@@ -1778,7 +1809,7 @@ function Conversation() {
               } catch (err) {
                   console.log('Stored session not valid, will create new one:', err);
                   // Clear invalid session from storage
-                  localStorage.removeItem(`session_${scenario}`);
+                  localStorage.removeItem(_lsScenarioKey('session_', scenario));
               }
           }
       }
@@ -1790,7 +1821,7 @@ function Conversation() {
 
       // Persist session ID for this scenario
       if (scenario) {
-          localStorage.setItem(`session_${scenario}`, effectiveSessionId);
+          localStorage.setItem(_lsScenarioKey('session_', scenario), effectiveSessionId);
       }
 
       setSessionId(effectiveSessionId);
@@ -1815,22 +1846,25 @@ function Conversation() {
     // Cleanup function to prevent memory leaks and stale callbacks
     return () => {
       console.log('[Cleanup] Conversation component unmounting, cleaning up resources...');
-      
+
+      // Abort any pending API requests
+      abortController.abort();
+
       // Close WebSocket connection
       if (socketRef.current) {
         console.log('[Cleanup] Closing WebSocket connection');
         socketRef.current.close(1000, 'Component unmounting');
         socketRef.current = null;
       }
-      
+
       // Stop any ongoing audio playback
       stopAudioPlayback();
-      
+
       // Stop network monitoring
       if (window.networkAdaptiveManager) {
         window.networkAdaptiveManager.stopMonitoring();
       }
-      
+
       // Clear any pending audio queue
       if (audioQueueRef.current) {
         audioQueueRef.current = [];
@@ -1879,6 +1913,7 @@ function Conversation() {
         alert('AI 导师尚未连接，请稍后再试');
         return;
     }
+    setIsUserRecording(true);
 
     isInterruptedRef.current = false; // Reset flag for new turn
     const newId = Date.now().toString();
@@ -1920,6 +1955,7 @@ function Conversation() {
   };
 
   const handleRecordingStop = (audioBuffers) => {
+    setIsUserRecording(false);
     const wsReadyState = socketRef.current?.getReadyState?.() || socketRef.current?.readyState;
     console.log('🎤 handleRecordingStop called, WebSocket state:', wsReadyState, 'audio buffers:', audioBuffers?.length);
 
@@ -1996,6 +2032,7 @@ function Conversation() {
   };
 
   const handleRecordingCancel = () => {
+    setIsUserRecording(false);
     console.log('🚫 Recording cancelled, clearing session ID:', currentRecordingSessionIdRef.current);
     currentRecordingSessionIdRef.current = null; // Clear session ID to ignore any pending audio data
 
@@ -2033,8 +2070,8 @@ function Conversation() {
         setMagicCardCovered(false);
         try {
           const sc = new URLSearchParams(window.location.search).get('scenario') || '';
-          if (sc) localStorage.removeItem(`magic_passed_${sc}`);
-          if (sc) localStorage.removeItem(`magic_sentence_${sc}`);
+          if (sc) localStorage.removeItem(_lsScenarioKey('magic_passed_', sc));
+          if (sc) localStorage.removeItem(_lsScenarioKey('magic_sentence_', sc));
         } catch {}
         if (socketRef.current?.readyState === WebSocket.OPEN) {
           socketRef.current.send(JSON.stringify({ type: 'reset_magic_phase' }));
@@ -2092,19 +2129,29 @@ function Conversation() {
     );
   };
 
+  // AiAvatar status derived from recording / AI speaking states
+  const avatarStatus = isAISpeaking ? 'speaking'
+    : isUserRecording ? 'listening'
+    : 'idle';
+
   return (
     <div className="flex flex-col h-screen max-w-lg mx-auto bg-background-light dark:bg-background-dark relative">
 
       {/* ── Scene Panel: 场景图全宽置顶，控制按钮叠加 ── */}
       <div className="relative w-full shrink-0 overflow-hidden bg-slate-900" style={{height:'220px'}}>
 
-        {/* 背景：情景剧场阶段显示场景图，其他阶段显示深色渐变 */}
+        {/* 背景：情景剧场阶段显示场景图，魔法重复阶段显示 AiAvatar，其他阶段显示深色渐变 */}
         {(currentPhase === 'scene_theater' && sceneImageUrl) ? (
           <img
             src={sceneImageUrl}
             alt="scene"
             className="absolute inset-0 w-full h-full object-cover transition-opacity duration-500"
           />
+        ) : currentPhase === 'magic_repetition' ? (
+          /* AiAvatar 填满 magic_repetition 场景面板 */
+          <div className="absolute inset-0 pb-10">
+            <AiAvatar status={avatarStatus} name="AI 导师" />
+          </div>
         ) : (
           <div className="absolute inset-0 bg-gradient-to-br from-slate-800 via-slate-900 to-indigo-950" />
         )}
@@ -2143,81 +2190,6 @@ function Conversation() {
         {/* ── 底部叠加层：话题引导词 + 场景标题 + 阶段指示 ── */}
         <div className="absolute bottom-0 left-0 right-0 px-4 pb-3 z-10">
 
-          {/* 魔法重复阶段：台词卡（话题引导词） */}
-          {currentPhase === 'magic_repetition' && (
-            <div
-              className={`mb-3 backdrop-blur-sm rounded-xl px-4 py-3 border transition-all duration-200 cursor-grab active:cursor-grabbing ${
-                magicCardState === 'passed'
-                  ? 'bg-emerald-900/60 border-emerald-500/70'
-                  : magicCardCovered && !isPeeking
-                  ? 'bg-indigo-900/60 border-indigo-400/50'
-                  : magicCardCovered && isPeeking
-                  ? 'bg-indigo-800/80 border-indigo-300/60'
-                  : 'bg-black/50 border-white/10'
-              }`}
-              onPointerDown={() => magicCardCovered && setIsPeeking(true)}
-              onPointerUp={() => setIsPeeking(false)}
-              onPointerLeave={() => setIsPeeking(false)}
-              style={{ userSelect: 'none', touchAction: 'none' }}
-            >
-              {magicCardState === 'passed' ? (
-                <div className="flex items-center justify-center gap-2 py-1 animate-in zoom-in duration-200">
-                  <span className="text-2xl">☑️</span>
-                  <span className="text-emerald-300 font-semibold">通过！</span>
-                </div>
-              ) : magicCardCovered && !isPeeking ? (
-                <div className="text-center py-1">
-                  <p className="text-xs text-indigo-300 mb-1 tracking-widest uppercase">从记忆复述</p>
-                  <div className="flex items-center justify-center gap-2">
-                    <div className="w-16 h-2 rounded-full bg-indigo-400/40 animate-pulse" />
-                    <div className="w-10 h-2 rounded-full bg-indigo-400/30 animate-pulse" />
-                    <div className="w-12 h-2 rounded-full bg-indigo-400/40 animate-pulse" />
-                  </div>
-                  <p className="text-xs text-indigo-200/50 mt-2">句子已隐藏，请尝试背诵</p>
-                  <p className="text-xs text-indigo-200/30 mt-1">💡 按住卡片可查看</p>
-                </div>
-              ) : magicCardCovered && isPeeking ? (
-                <div className="text-center py-1 opacity-transition">
-                  <p className="text-xs text-indigo-300 mb-2 tracking-widest uppercase">偷看模式</p>
-                  <p className="text-sm font-medium text-indigo-100 leading-relaxed mb-2">
-                    {currentMagicSentence || <span className="text-slate-400 italic">AI 正在准备...</span>}
-                  </p>
-                  <p className="text-xs text-indigo-200/50">松开后隐藏</p>
-                </div>
-              ) : (
-                <>
-                  <p className="text-xs text-slate-400 mb-1.5 tracking-widest uppercase">跟我说</p>
-                  <p className="text-sm font-medium text-white leading-relaxed">
-                    {currentMagicSentence || <span className="text-slate-500 italic">AI 正在准备...</span>}
-                  </p>
-                </>
-              )}
-            </div>
-          )}
-
-          {currentPhase === 'magic_repetition' && magicCardState !== 'passed' && (
-            <div className="mb-2 flex items-center gap-2">
-              <div className="flex-1 px-3 py-1.5 rounded-lg bg-black/30 border border-white/5 flex items-start gap-2">
-                <span className="text-yellow-400/60 text-xs mt-0.5 shrink-0">💡</span>
-                <p key={tipIndex} className="text-xs text-white/35 leading-relaxed">
-                  {MAGIC_TIPS[tipIndex]}
-                </p>
-              </div>
-              <button
-                onClick={() => {
-                  if (socketRef.current?.readyState === WebSocket.OPEN) {
-                    socketRef.current.send(JSON.stringify({ type: 'force_advance_magic' }));
-                    console.log('⏭️ Manual advance magic task');
-                  }
-                }}
-                className="shrink-0 px-2.5 py-1.5 rounded-lg text-xs text-white/40 hover:text-white/70 border border-white/10 hover:border-white/25 bg-black/20 hover:bg-black/40 transition-all"
-                title="跳过当前句子"
-              >
-                跳过 →
-              </button>
-            </div>
-          )}
-
           <div className="flex items-end justify-between">
             {/* 场景标题 + 阶段名 */}
             <div>
@@ -2229,10 +2201,10 @@ function Conversation() {
               </p>
             </div>
 
-            {/* 阶段进度点 */}
+            {/* 阶段进度点（recall 模式显示两阶段，普通场景只显示剧场） */}
             <div className="flex items-center gap-3">
               {[
-                { id: 'magic_repetition', label: '重复', set: magicPassedTasks },
+                ...(isRecallMode ? [{ id: 'magic_repetition', label: '复述', set: magicPassedTasks }] : []),
                 { id: 'scene_theater', label: '剧场', set: theaterCompletedTasks },
               ].map((ph) => (
                 <button
@@ -2246,8 +2218,8 @@ function Conversation() {
                       setMagicCardCovered(false);
                       try {
                         const sc = new URLSearchParams(window.location.search).get('scenario') || '';
-                        if (sc) localStorage.removeItem(`magic_passed_${sc}`);
-                        if (sc) localStorage.removeItem(`magic_sentence_${sc}`);
+                        if (sc) localStorage.removeItem(_lsScenarioKey('magic_passed_', sc));
+                        if (sc) localStorage.removeItem(_lsScenarioKey('magic_sentence_', sc));
                       } catch {}
                       if (socketRef.current?.readyState === WebSocket.OPEN) {
                         socketRef.current.send(JSON.stringify({ type: 'reset_magic_phase' }));
@@ -2398,8 +2370,111 @@ function Conversation() {
       {/* Messages Area */}
       <main className="flex-1 overflow-y-auto p-4 space-y-6 scroll-smooth">
 
+        {/* 魔法重复阶段：台词卡（句子跟读卡片，仅 recall 模式显示）*/}
+        {isRecallMode && currentPhase === 'magic_repetition' && (
+          <div>
+            {/* 台词卡主体 */}
+            <div
+              className={`bg-white rounded-2xl shadow-md transition-all duration-300 overflow-hidden ${
+                magicCardState === 'passed' ? 'border-l-4 border-emerald-500' : 'border-l-4 border-primary'
+              }`}
+              onPointerDown={() => magicCardCovered && setIsPeeking(true)}
+              onPointerUp={() => setIsPeeking(false)}
+              onPointerLeave={() => setIsPeeking(false)}
+              style={{ userSelect: 'none', touchAction: 'none' }}
+            >
+              <div className="p-5">
+                {magicCardState === 'passed' ? (
+                  /* 通过状态 */
+                  <div className="flex items-center gap-3 py-1 animate-in zoom-in duration-200">
+                    <div className="w-10 h-10 rounded-full bg-emerald-100 flex items-center justify-center shrink-0">
+                      <span className="text-xl">✅</span>
+                    </div>
+                    <div>
+                      <p className="font-semibold text-emerald-700">通过！</p>
+                      <p className="text-sm text-emerald-600/70">继续下一个句子</p>
+                    </div>
+                  </div>
+                ) : magicCardCovered && !isPeeking ? (
+                  /* 背诵模式（台词已隐藏）*/
+                  <div className="flex items-start gap-3">
+                    <div className="w-10 h-10 rounded-full bg-indigo-100 flex items-center justify-center shrink-0">
+                      <span className="text-lg">🧠</span>
+                    </div>
+                    <div className="flex-1">
+                      <p className="font-semibold text-gray-900 mb-2">从记忆复述</p>
+                      <div className="space-y-2">
+                        <div className="h-3 rounded-full bg-indigo-100 animate-pulse w-full" />
+                        <div className="h-3 rounded-full bg-indigo-100 animate-pulse w-4/5" />
+                      </div>
+                      <p className="text-xs text-gray-400 mt-3">💡 按住卡片可偷看</p>
+                    </div>
+                  </div>
+                ) : magicCardCovered && isPeeking ? (
+                  /* 偷看模式 */
+                  <div className="flex items-start gap-3">
+                    <div className="w-10 h-10 rounded-full bg-indigo-50 flex items-center justify-center shrink-0">
+                      <span className="text-lg">👀</span>
+                    </div>
+                    <div className="flex-1">
+                      <p className="font-semibold text-indigo-600 mb-1.5 text-sm">偷看模式</p>
+                      <p className="text-gray-700 leading-relaxed text-[15px]">
+                        {currentMagicSentence || <span className="text-slate-400 italic">AI 正在准备...</span>}
+                      </p>
+                      <p className="text-xs text-gray-400 mt-2">松开后隐藏</p>
+                    </div>
+                  </div>
+                ) : (
+                  /* 跟读模式（默认：展示台词）*/
+                  <div>
+                    <div className="flex items-start gap-3 mb-3">
+                      <div className="w-10 h-10 rounded-full flex items-center justify-center shrink-0" style={{ backgroundColor: '#637FF120' }}>
+                        <span className="text-lg">📝</span>
+                      </div>
+                      <div className="flex-1">
+                        <h3 className="font-semibold text-gray-900 mb-1.5">台词卡</h3>
+                        <p className="text-gray-700 leading-relaxed text-[15px]">
+                          {currentMagicSentence || <span className="text-slate-400 italic">AI 正在准备台词...</span>}
+                        </p>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2 text-xs text-gray-500">
+                      <span className="px-2 py-0.5 rounded-full" style={{ backgroundColor: '#637FF115', color: '#637FF1' }}>
+                        {currentScenarioTitle || '魔法重复'}
+                      </span>
+                      <span>•</span>
+                      <span>跟读练习</span>
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
 
-
+            {/* 提示 + 跳过按钮 */}
+            {magicCardState !== 'passed' && (
+              <div className="mt-2 flex items-center gap-2">
+                <div className="flex-1 px-3 py-2 rounded-xl bg-amber-50 border border-amber-100 flex items-start gap-2">
+                  <span className="text-yellow-500 text-xs mt-0.5 shrink-0">💡</span>
+                  <p key={tipIndex} className="text-xs text-amber-700/80 leading-relaxed">
+                    {MAGIC_TIPS[tipIndex]}
+                  </p>
+                </div>
+                <button
+                  onClick={() => {
+                    if (socketRef.current?.readyState === WebSocket.OPEN) {
+                      socketRef.current.send(JSON.stringify({ type: 'force_advance_magic' }));
+                      console.log('⏭️ Manual advance magic task');
+                    }
+                  }}
+                  className="shrink-0 px-3 py-2 rounded-xl text-xs text-gray-500 hover:text-gray-700 border border-gray-200 hover:border-gray-300 bg-white hover:bg-gray-50 transition-all"
+                  title="跳过当前句子"
+                >
+                  跳过 →
+                </button>
+              </div>
+            )}
+          </div>
+        )}
 
         {messages.map((msg, index) => {
           
@@ -2425,35 +2500,27 @@ function Conversation() {
           }
 
           return (
-            <div key={index} className={`flex items-start gap-3 ${isAI ? '' : 'flex-row-reverse'}`}>
-              <div className={`w-8 h-8 rounded-full flex items-center justify-center shrink-0 ${isAI ? 'bg-blue-100 text-blue-600' : 'bg-green-100 text-green-600'}`}>
-                <span className="material-symbols-outlined text-sm">{isAI ? 'smart_toy' : 'person'}</span>
-              </div>
-              <div className={`flex flex-col max-w-[80%] p-3.5 rounded-2xl shadow-sm ${
-                  isAI 
-                  ? 'bg-white dark:bg-slate-800 text-slate-800 dark:text-slate-200 rounded-tl-none border border-slate-100 dark:border-slate-700 select-text' 
-                  : 'bg-primary text-white rounded-tr-none'
-              }`}>
-                 <p className="whitespace-pre-wrap leading-relaxed">{displayContent}</p>
-                 {msg.audioUrl && (
-                   <div className="mt-2">
-                     <AudioBar
-                       audioUrl={msg.audioUrl}
-                       duration={0}
-                       onClick={() => {
-                         if (playingAudioUrl === msg.audioUrl) {
-                           stopAudioPlayback();
-                         } else {
-                           playFullAudio(msg.audioUrl);
-                         }
-                       }}
-                       isOwnMessage={!isAI}
-                       isActive={playingAudioUrl === msg.audioUrl}
-                     />
-                   </div>
-                 )}
-              </div>
-            </div>
+            <MessageBubble
+              key={index}
+              type={isAI ? 'ai' : 'user'}
+              message={displayContent}
+              state={!msg.isFinal && isAI ? 'loading' : 'default'}
+              footer={msg.audioUrl ? (
+                <AudioBar
+                  audioUrl={msg.audioUrl}
+                  duration={0}
+                  onClick={() => {
+                    if (playingAudioUrl === msg.audioUrl) {
+                      stopAudioPlayback();
+                    } else {
+                      playFullAudio(msg.audioUrl);
+                    }
+                  }}
+                  isOwnMessage={!isAI}
+                  isActive={playingAudioUrl === msg.audioUrl}
+                />
+              ) : null}
+            />
           );
         })}
         <div ref={messagesEndRef} className="h-4" />
@@ -2517,125 +2584,22 @@ function Conversation() {
 
       {/* Scenario Completion Modal */}
       {showCompletionModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm">
-          <div className="bg-white dark:bg-slate-800 rounded-2xl shadow-2xl max-w-sm w-full mx-4 overflow-hidden animate-in zoom-in duration-300 relative">
-            {/* Close button */}
-            <button
-              onClick={() => {
-                setShowCompletionModal(false);
-                hasViewedCompletionModalRef.current = true; // Mark as viewed so it doesn't show again on refresh
-              }}
-              className="absolute top-3 right-3 w-8 h-8 bg-white/20 hover:bg-white/30 rounded-full flex items-center justify-center transition z-10"
-              aria-label="Close"
-            >
-              <span className="material-symbols-outlined text-white text-lg">close</span>
-            </button>
-
-            <div className="bg-gradient-to-r from-green-500 to-emerald-600 p-6 text-white text-center">
-              <div className="w-16 h-16 bg-white/20 rounded-full flex items-center justify-center mx-auto mb-3">
-                <span className="material-symbols-outlined text-4xl">celebration</span>
-              </div>
-              <h2 className="text-xl font-bold">场景完成！</h2>
-              <p className="text-green-100 text-sm mt-1">{currentScenarioTitle}</p>
-            </div>
-            
-            <div className="p-6">
-              <div className="text-center mb-4">
-                <div className="text-4xl font-bold text-primary mb-1">{scenarioScore}</div>
-                <div className="text-sm text-slate-500">平均得分</div>
-                <div className="flex justify-center gap-1 mt-2">
-                  {[1,2,3,4,5].map(star => (
-                    <span 
-                      key={star} 
-                      className={`material-symbols-outlined text-xl ${star <= Math.ceil(scenarioScore / 20) ? 'text-yellow-400' : 'text-slate-300'}`}
-                    >
-                      star
-                    </span>
-                  ))}
-                </div>
-              </div>
-              
-              <div className="bg-slate-50 dark:bg-slate-700/50 rounded-xl p-4 mb-6">
-                <div className="flex items-start gap-3">
-                  <div className="flex-1">
-                    <p className="text-sm font-medium text-slate-700 dark:text-slate-200 mb-2">AI点评</p>
-                    <p className="text-sm text-slate-600 dark:text-slate-400 leading-relaxed">
-                      {getScoreFeedback(scenarioScore, scenarioReviewData).text}
-                    </p>
-                  </div>
-                </div>
-              </div>
-              
-              <div className="space-y-3">
-                {currentScenarioIndex < allScenarios.length - 1 && (
-                  <button
-                    onClick={handleNextScenario}
-                    className="w-full py-3 bg-primary text-white rounded-xl font-medium flex items-center justify-center gap-2 hover:bg-primary/90 transition"
-                  >
-                    <span>下一个场景</span>
-                    <span className="material-symbols-outlined">arrow_forward</span>
-                  </button>
-                )}
-
-                <button
-                  onClick={() => handleRetryCurrentScenario({ keepHistory: true, resetProgress: false })}
-                  className="w-full py-3 bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-300 rounded-xl font-medium flex items-center justify-center gap-2 hover:bg-green-200 dark:hover:bg-green-900/50 transition"
-                >
-                  <span className="material-symbols-outlined">play_arrow</span>
-                  <span>继续练习</span>
-                </button>
-
-                <button
-                  onClick={() => handleRetryCurrentScenario({ keepHistory: false, resetProgress: true })}
-                  className="w-full py-3 bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-300 rounded-xl font-medium flex items-center justify-center gap-2 hover:bg-amber-200 dark:hover:bg-amber-900/50 transition"
-                >
-                  <span className="material-symbols-outlined">replay</span>
-                  <span>重新开始</span>
-                </button>
-
-                {scenarioScore < 80 && (
-                  <button
-                    onClick={() => {
-                      setShowCompletionModal(false);
-                      hasViewedCompletionModalRef.current = false; // 允许再次显示 modal
-                      setCurrentPhase('magic_repetition');
-                      setSceneImageUrl(null);
-                      setMagicPassedTasks(new Set());
-                      setTheaterCompletedTasks(new Set());
-                      setMessages([]);
-                      setCompletedTasks(new Set());
-                      setCurrentTaskProgress(0);
-                      setCurrentTaskScore(0);
-                      completionCheckedRef.current = false;
-                    }}
-                    className="w-full py-3 bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-300 rounded-xl font-medium flex items-center justify-center gap-2 hover:bg-purple-200 dark:hover:bg-purple-900/50 transition"
-                  >
-                    <span className="material-symbols-outlined">bolt</span>
-                    <span>再次挑战</span>
-                  </button>
-                )}
-
-                <button
-                  onClick={handleSelectOtherScenario}
-                  className="w-full py-3 bg-slate-100 dark:bg-slate-700 text-slate-700 dark:text-slate-200 rounded-xl font-medium flex items-center justify-center gap-2 hover:bg-slate-200 dark:hover:bg-slate-600 transition"
-                >
-                  <span className="material-symbols-outlined">grid_view</span>
-                  <span>选择其他场景</span>
-                </button>
-
-                <button
-                  onClick={() => {
-                    setShowCompletionModal(false);
-                    hasViewedCompletionModalRef.current = true; // Mark as viewed so it doesn't show again on refresh
-                  }}
-                  className="w-full py-2 text-slate-500 text-sm hover:text-slate-700 transition"
-                >
-                  关闭
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
+        <PracticeReport
+          scenarioTitle={currentScenarioTitle}
+          scenarioScore={scenarioScore}
+          reviewData={scenarioReviewData}
+          messages={messages}
+          onClose={() => {
+            setShowCompletionModal(false);
+            hasViewedCompletionModalRef.current = true;
+          }}
+          onRetry={() => handleRetryCurrentScenario({ keepHistory: true, resetProgress: false })}
+          onRestart={() => handleRetryCurrentScenario({ keepHistory: false, resetProgress: true })}
+          onNextScenario={handleNextScenario}
+          onSelectOther={handleSelectOtherScenario}
+          hasNextScenario={currentScenarioIndex < allScenarios.length - 1}
+          onCheckin={() => userAPI.checkin()}
+        />
       )}
     </div>
   );

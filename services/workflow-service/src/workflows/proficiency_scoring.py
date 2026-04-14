@@ -716,7 +716,25 @@ class ProficiencyScoringWorkflow:
             result["message"] = feedback
             return result
 
-        # 更新 task 的 score 和 interaction_count
+        # 合并查询：一次获取 score / status / interaction_count / task info
+        task_result = await db_connection.fetchrow(
+            """
+            SELECT score, status, interaction_count, task_description, scenario_title
+            FROM user_tasks WHERE id = $1
+            """,
+            task_id
+        )
+
+        # 已完成的 task 跳过 score 累加（数据干净，避免无效写入）
+        if task_result and task_result.get("status") == "completed":
+            result["task_id"] = task_id
+            result["task_score"] = task_result.get("score", 0)
+            result["task_title"] = task_result.get("task_description", "Task")
+            result["scenario_title"] = task_result.get("scenario_title", "")
+            result["message"] = feedback
+            return result
+
+        # 更新 task 的 score 和 interaction_count（仅未完成的 task）
         await db_connection.execute(
             """
             UPDATE user_tasks
@@ -728,32 +746,23 @@ class ProficiencyScoringWorkflow:
             proficiency_delta, task_id, user_id
         )
 
-        # 获取当前 task 累计分数
+        # 重新读取更新后的值
         task_result = await db_connection.fetchrow(
             """
-            SELECT score, status, interaction_count FROM user_tasks WHERE id = $1
+            SELECT score, status, interaction_count, task_description, scenario_title
+            FROM user_tasks WHERE id = $1
             """,
             task_id
         )
 
         current_task_score = task_result.get("score", 0) if task_result else 0
 
-        # 获取task信息
-        task_info = await db_connection.fetchrow(
-            """
-            SELECT task_description, scenario_title FROM user_tasks WHERE id = $1
-            """,
-            task_id
-        )
-
         result["task_id"] = task_id
         result["task_score"] = current_task_score
-        result["task_title"] = task_info.get("task_description", "Task") if task_info else "Task"
-        result["scenario_title"] = task_info.get("scenario_title", "") if task_info else ""
+        result["task_title"] = task_result.get("task_description", "Task") if task_result else "Task"
+        result["scenario_title"] = task_result.get("scenario_title", "") if task_result else ""
 
         # 检查是否达到任务完成标准 (累计 9 分且至少 3 轮交互)
-        # 注意：分数范围是 0-10，但 9 分即表示 100% 进度（与前端保持一致）
-        # 需要至少 3 次交互，确保用户有足够的练习
         if current_task_score >= 9 and task_result.get("interaction_count", 0) >= 3 and task_result.get("status") != "completed":
             # 生成任务完成的详细反馈（根据用户母语）
             completion_feedback = self._generate_completion_feedback(scores, improvement_tips, native_language)

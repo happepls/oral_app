@@ -1,4 +1,6 @@
 import React, { useState, useRef, useEffect, useImperativeHandle, forwardRef } from 'react';
+import { Mic, WifiOff, X, Send } from 'lucide-react';
+import { motion, AnimatePresence } from 'motion/react';
 
 const BAR_COUNT = 32;
 
@@ -235,76 +237,115 @@ const RealTimeRecorder = forwardRef(({
 
   return (
     <div className="flex flex-col items-center gap-2 w-full">
-      {isRecording && showControls ? (
-        <div className="flex items-center gap-2 w-full">
+      <AnimatePresence mode="wait">
+        {isRecording && showControls ? (
+          /* ── Recording state ── */
+          <motion.div
+            key="recording"
+            initial={{ opacity: 0, y: 6 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: 6 }}
+            transition={{ duration: 0.18 }}
+            className="flex items-center gap-2 w-full"
+          >
+            {/* Waveform + timer pill */}
+            <div className="flex-1 bg-white border border-gray-200 rounded-2xl px-4 py-3 flex items-center gap-3 shadow-md overflow-hidden">
+              {/* Pulse dot */}
+              <div className="w-2 h-2 rounded-full bg-rose-500 animate-pulse shrink-0" />
 
-          {/* Waveform + timer pill */}
-          <div className="flex-1 bg-slate-900 dark:bg-slate-800 rounded-2xl px-4 py-3 flex items-center gap-3 shadow-xl border border-slate-700/60 overflow-hidden">
+              {/* Waveform bars */}
+              <div className="flex items-center gap-[2px] flex-1 h-9">
+                {waveformBars.map((h, idx) => (
+                  <div
+                    key={idx}
+                    style={{
+                      height: `${h}%`,
+                      minHeight: '3px',
+                      backgroundColor: barColor(idx),
+                      borderRadius: '9999px',
+                      flex: '1',
+                      transition: 'height 60ms ease-out, background-color 200ms ease',
+                    }}
+                  />
+                ))}
+              </div>
 
-            {/* Waveform bars */}
-            <div className="flex items-center gap-[2px] flex-1 h-10">
-              {waveformBars.map((h, idx) => (
-                <div
-                  key={idx}
-                  style={{
-                    height: `${h}%`,
-                    minHeight: '3px',
-                    backgroundColor: barColor(idx),
-                    borderRadius: '9999px',
-                    flex: '1',
-                    transition: 'height 60ms ease-out, background-color 200ms ease',
-                  }}
-                />
-              ))}
-            </div>
-
-            {/* Timer + pulse dot */}
-            <div className="flex items-center gap-1.5 shrink-0">
-              <div className="w-2 h-2 rounded-full bg-rose-500 animate-pulse" />
-              <span className="text-sm font-mono font-semibold text-white tabular-nums">
+              {/* Timer */}
+              <span className="text-sm font-mono font-semibold text-gray-700 tabular-nums shrink-0">
                 {formatTime(recordingTime)}
               </span>
             </div>
-          </div>
 
-          {/* Cancel */}
-          <button
-            onClick={internalCancelRecording}
-            className="w-12 h-12 bg-slate-800 dark:bg-slate-700 border border-slate-600 rounded-2xl flex items-center justify-center shadow-lg hover:bg-red-900/40 hover:border-red-500/60 transition-colors shrink-0"
-            title="取消"
-          >
-            <span className="material-symbols-outlined text-red-400 text-xl">delete</span>
-          </button>
+            {/* Cancel */}
+            <motion.button
+              whileHover={{ scale: 1.05 }}
+              whileTap={{ scale: 0.93 }}
+              onClick={internalCancelRecording}
+              className="w-12 h-12 bg-white border border-gray-200 rounded-2xl flex items-center justify-center shadow-md hover:border-red-300 hover:bg-red-50 transition-colors shrink-0"
+              title="取消"
+            >
+              <X className="w-5 h-5 text-red-400" />
+            </motion.button>
 
-          {/* Send */}
-          <button
-            onClick={stopRecording}
-            className="w-12 h-12 bg-indigo-500 hover:bg-indigo-600 rounded-2xl flex items-center justify-center shadow-lg transition-colors shrink-0"
-            title="发送"
+            {/* Send */}
+            <motion.button
+              whileHover={{ scale: 1.05 }}
+              whileTap={{ scale: 0.93 }}
+              onClick={stopRecording}
+              className="w-12 h-12 rounded-2xl flex items-center justify-center shadow-md transition-colors shrink-0"
+              style={{ background: 'linear-gradient(135deg, #637FF1, #a47af6)' }}
+              title="发送"
+            >
+              <Send className="w-5 h-5 text-white" />
+            </motion.button>
+          </motion.div>
+        ) : (
+          /* ── Idle state ── */
+          <motion.button
+            key="idle"
+            initial={{ opacity: 0, scale: 0.9 }}
+            animate={{ opacity: 1, scale: 1 }}
+            exit={{ opacity: 0, scale: 0.9 }}
+            transition={{ duration: 0.18 }}
+            whileHover={isConnected ? { scale: 1.06 } : {}}
+            whileTap={isConnected ? { scale: 0.94 } : {}}
+            onClick={startRecording}
+            disabled={!isConnected}
+            className="relative w-full h-14 rounded-2xl flex items-center justify-center gap-2 text-white font-medium shadow-lg transition-opacity disabled:opacity-50 disabled:cursor-not-allowed"
+            style={{
+              background: isConnected
+                ? 'linear-gradient(135deg, #637FF1, #a47af6)'
+                : '#94A3B8',
+            }}
           >
-            <span className="material-symbols-outlined text-white text-xl">send</span>
-          </button>
-        </div>
-      ) : (
-        /* Idle: mic button */
-        <button
-          onClick={startRecording}
-          disabled={!isConnected}
-          className={`relative flex items-center justify-center w-8 h-8 rounded-full font-medium transition-all shadow-lg shadow-primary/40
-            ${isConnected
-              ? 'bg-primary hover:shadow-xl hover:scale-105'
-              : 'bg-slate-400 cursor-not-allowed opacity-50'
-            } disabled:opacity-50 disabled:cursor-not-allowed`}
-        >
-          <span className="material-symbols-outlined text-white text-sm">
-            {!isConnected ? 'signal_wifi_off' : 'mic'}
-          </span>
-        </button>
+            {/* Ripple rings when connected */}
+            {isConnected && (
+              <>
+                {[0, 1].map((i) => (
+                  <motion.div
+                    key={i}
+                    className="absolute inset-0 rounded-2xl border-2 border-white/30"
+                    animate={{ scale: [1, 1.12], opacity: [0.4, 0] }}
+                    transition={{ duration: 1.8, repeat: Infinity, delay: i * 0.6, ease: 'easeOut' }}
+                  />
+                ))}
+              </>
+            )}
+            <div className="relative z-10 flex items-center gap-2">
+              {isConnected ? (
+                <Mic className="w-5 h-5" />
+              ) : (
+                <WifiOff className="w-5 h-5" />
+              )}
+              <span className="text-sm">{isConnected ? '点击说话' : '连接中...'}</span>
+            </div>
+          </motion.button>
+        )}
+      </AnimatePresence>
+
+      {isRecording && showControls && (
+        <p className="text-xs text-gray-400 text-center">点击取消或发送</p>
       )}
-
-      <p className="text-xs text-slate-400 dark:text-slate-500 text-center min-h-[18px]">
-        {isRecording && showControls ? '点击取消或发送' : !isConnected ? '连接中...' : '点击说话'}
-      </p>
     </div>
   );
 });

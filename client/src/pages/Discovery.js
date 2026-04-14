@@ -1,169 +1,223 @@
 import React, { useEffect, useState } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import BottomNav from '../components/BottomNav';
+import { StreakRing } from '../components/StreakRing';
+import { ScenarioCard } from '../components/ScenarioCard';
 import { useAuth } from '../contexts/AuthContext';
-import { userAPI, conversationAPI, historyAPI } from '../services/api';
+import { userAPI, historyAPI } from '../services/api';
+import { StatCard } from '../components/StatCard';
+import { motion } from 'motion/react';
+import { MessageSquare, Calendar, Trophy, Crown } from 'lucide-react';
 
-// --- Fallback Scenario Generator ---
+// --- Scenario emoji 映射（按关键词） ---
+const SCENARIO_EMOJIS = [
+  ['商务', '💼'], ['会议', '🤝'], ['谈判', '🎯'], ['客户', '📞'], ['演讲', '🎤'],
+  ['社交', '🌐'], ['面试', '💡'], ['办公', '🏢'], ['邮件', '📧'], ['项目', '📊'],
+  ['机场', '✈️'], ['酒店', '🏨'], ['方向', '🗺️'], ['餐厅', '🍽️'], ['购物', '🛍️'],
+  ['出租', '🚕'], ['急救', '🆘'], ['博物馆', '🏛️'], ['火车', '🚆'], ['交友', '👋'],
+  ['自我介绍', '🙋'], ['咖啡', '☕'], ['超市', '🛒'], ['天气', '🌤️'], ['爱好', '🎨'],
+  ['家庭', '👨‍👩‍👧'], ['周末', '🌴'], ['医生', '🏥'], ['帮助', '🤲'], ['闲聊', '💬'],
+];
+
+function getEmoji(title) {
+  const t = title || '';
+  for (const [kw, em] of SCENARIO_EMOJIS) {
+    if (t.includes(kw)) return em;
+  }
+  // 根据 hash 稳定分配 emoji
+  const defaults = ['💬', '📖', '🌍', '🎭', '🔑', '🌟', '🎓', '🗣️', '🏆', '✨'];
+  let hash = 0;
+  for (const c of t) hash = (hash * 31 + c.charCodeAt(0)) % defaults.length;
+  return defaults[hash];
+}
+
+// --- Fallback 场景生成（保持不变）---
 const generateScenarios = (language, interestsStr) => {
-    // Basic templates for common categories
-    const templates = {
-        'Business': [
-             { title: "Business Introduction", tasks: ["Introduce yourself and your role", "Ask about the company", "Exchange business cards"] },
-             { title: "Meeting Participation", tasks: ["State your opinion", "Agree with a colleague", "Ask for clarification"] },
-             { title: "Negotiation Basics", tasks: ["Make an offer", "Reject a proposal politely", "Suggest a compromise"] },
-             { title: "Client Call", tasks: ["Schedule a meeting", "Confirm details", "End the call professionally"] },
-             { title: "Presentation Q&A", tasks: ["Answer a difficult question", "Thank the audience", "Summarize key points"] },
-             { title: "Networking Event", tasks: ["Start a conversation", "Discuss industry trends", "Ask for contact info"] },
-             { title: "Job Interview", tasks: ["Describe your strengths", "Explain a past challenge", "Ask about the team"] },
-             { title: "Office Small Talk", tasks: ["Ask about the weekend", "Discuss lunch plans", "Talk about current events"] },
-             { title: "Email Dictation", tasks: ["Draft a formal request", "Write a follow-up", "Close an email"] },
-             { title: "Project Update", tasks: ["Report progress", "Mention a blocker", "Ask for resources"] }
-        ],
-        'Travel': [
-             { title: "Airport Check-in", tasks: ["Ask for an aisle seat", "Check luggage", "Ask about boarding time"] },
-             { title: "Hotel Reservation", tasks: ["Book a double room", "Ask for breakfast", "Request late check-out"] },
-             { title: "Asking Directions", tasks: ["Ask where the subway is", "Ask how far it is", "Thank the person"] },
-             { title: "Ordering Food", tasks: ["Ask for the menu", "Order a main dish", "Ask for the bill"] },
-             { title: "Shopping", tasks: ["Ask for a different size", "Ask about the price", "Ask for a discount"] },
-             { title: "Taxi/Uber", tasks: ["Give destination", "Ask about fare", "Ask to stop here"] },
-             { title: "Emergency", tasks: ["Ask for help", "Report lost item", "Find a pharmacy"] },
-             { title: "Museum Visit", tasks: ["Buy a ticket", "Ask for an audio guide", "Ask about closing time"] },
-             { title: "Train Travel", tasks: ["Buy a ticket", "Find the platform", "Ask about delays"] },
-             { title: "Making Friends", tasks: ["Introduce yourself", "Ask about hobbies", "Exchange contacts"] }
-        ],
-        'Daily Life': [
-             { title: "Self Introduction", tasks: ["Name and age", "Where you live", "Your job/study"] },
-             { title: "Ordering Coffee", tasks: ["Order a drink", "Ask for sugar/milk", "Pay by card"] },
-             { title: "Grocery Shopping", tasks: ["Ask where milk is", "Ask about freshness", "Pay at checkout"] },
-             { title: "Talking about Weather", tasks: ["Describe today's weather", "Ask about tomorrow", "Comment on the season"] },
-             { title: "Hobbies", tasks: ["Describe what you like", "Ask someone's hobby", "Suggest doing it together"] },
-             { title: "Family", tasks: ["Talk about siblings", "Describe parents", "Mention pets"] },
-             { title: "Weekend Plans", tasks: ["Say what you will do", "Ask a friend's plan", "Invite someone out"] },
-             { title: "At the Doctor", tasks: ["Describe symptoms", "Ask for medicine", "Ask about recovery"] },
-             { title: "Asking Help", tasks: ["Ask to lift something", "Ask to hold the door", "Thank profusely"] },
-             { title: "Small Talk", tasks: ["Compliment clothing", "Ask about the day", "Say goodbye"] }
-        ]
-    };
-
-    // Determine category based on interest string (simple keyword matching)
-    let category = 'Daily Life'; // Default
-    const lowerInterests = (interestsStr || '').toLowerCase();
-    
-    if (lowerInterests.includes('business') || lowerInterests.includes('work') || lowerInterests.includes('career') || lowerInterests.includes('job') || lowerInterests.includes('商')) {
-        category = 'Business';
-    } else if (lowerInterests.includes('travel') || lowerInterests.includes('trip') || lowerInterests.includes('tour') || lowerInterests.includes('旅')) {
-        category = 'Travel';
-    }
-
-    // Clone and adjust titles for language if needed (MVP: keep English titles for clarity, maybe add localized subtitles later)
-    let selectedScenarios = [...templates[category]];
-
-    // Ensure we have exactly 10
-    return selectedScenarios.slice(0, 10);
+  const templates = {
+    Business: [
+      { title: '商务自我介绍', tasks: ['介绍你的职位和公司', '询问对方公司信息', '交换名片'] },
+      { title: '会议参与', tasks: ['表达你的观点', '与同事达成共识', '请求澄清'] },
+      { title: '谈判基础', tasks: ['提出报价', '礼貌拒绝', '建议折衷方案'] },
+      { title: '客户电话', tasks: ['预约会议', '确认细节', '专业结束通话'] },
+      { title: '演讲问答', tasks: ['回答刁难问题', '感谢听众', '总结要点'] },
+      { title: '社交活动', tasks: ['开启对话', '讨论行业趋势', '索要联系方式'] },
+      { title: '工作面试', tasks: ['描述你的优势', '讲述过去挑战', '询问团队信息'] },
+      { title: '办公室闲聊', tasks: ['询问周末', '讨论午餐计划', '谈论时事'] },
+      { title: '邮件口述', tasks: ['起草正式请求', '撰写跟进邮件', '专业结尾'] },
+      { title: '项目汇报', tasks: ['汇报进展', '提及障碍', '申请资源'] },
+    ],
+    Travel: [
+      { title: '机场值机', tasks: ['要靠窗座位', '托运行李', '询问登机时间'] },
+      { title: '酒店预订', tasks: ['预订双人间', '要求含早餐', '申请延迟退房'] },
+      { title: '问路', tasks: ['询问地铁位置', '询问距离', '表示感谢'] },
+      { title: '点餐', tasks: ['要菜单', '点主菜', '要账单'] },
+      { title: '购物', tasks: ['询问尺码', '询问价格', '要求折扣'] },
+      { title: '打车', tasks: ['说目的地', '询问费用', '要求在此停车'] },
+      { title: '紧急情况', tasks: ['求助', '报告遗失物品', '寻找药店'] },
+      { title: '参观博物馆', tasks: ['购票', '要音频导览', '询问关门时间'] },
+      { title: '火车旅行', tasks: ['买票', '找站台', '询问延误'] },
+      { title: '结交朋友', tasks: ['自我介绍', '询问爱好', '交换联系方式'] },
+    ],
+    'Daily Life': [
+      { title: '自我介绍', tasks: ['姓名与年龄', '居住地点', '工作或学习'] },
+      { title: '点咖啡', tasks: ['点饮品', '要糖/牛奶', '刷卡付款'] },
+      { title: '超市购物', tasks: ['询问牛奶在哪', '询问新鲜度', '结账'] },
+      { title: '谈天气', tasks: ['描述今日天气', '询问明日天气', '评价季节'] },
+      { title: '谈爱好', tasks: ['描述你的喜好', '询问对方爱好', '约一起去'] },
+      { title: '谈家庭', tasks: ['聊兄弟姐妹', '描述父母', '提到宠物'] },
+      { title: '周末计划', tasks: ['说你的计划', '询问朋友计划', '邀请外出'] },
+      { title: '看医生', tasks: ['描述症状', '询问药物', '询问恢复时间'] },
+      { title: '请求帮助', tasks: ['请求搬东西', '请求撑门', '大力感谢'] },
+      { title: '闲聊', tasks: ['称赞衣着', '询问近况', '道别'] },
+    ],
+  };
+  let cat = 'Daily Life';
+  const lc = (interestsStr || '').toLowerCase();
+  if (lc.includes('business') || lc.includes('商')) cat = 'Business';
+  else if (lc.includes('travel') || lc.includes('旅')) cat = 'Travel';
+  return [...templates[cat]].slice(0, 10);
 };
+
+// --- 辅助函数 ---
+function calcProgress(scenario) {
+  if (!scenario.tasks || scenario.tasks.length === 0) return 0;
+  const done = scenario.tasks.filter(t => typeof t === 'object' && t.status === 'completed').length;
+  return Math.round((done / scenario.tasks.length) * 100);
+}
+
+function getDifficulty(index) {
+  if (index <= 2) return 'beginner';
+  if (index <= 6) return 'intermediate';
+  return 'advanced';
+}
+
+function isScenarioUnlocked(index, scenarios, isPro) {
+  if (isPro) return true;
+  if (index === 0) return true;
+  if (index >= 3) return false;
+  const prev = scenarios[index - 1];
+  return calcProgress(prev) === 100;
+}
+
+function getScenarioCardState(scenario, unlocked, pct) {
+  if (!unlocked) return 'locked';
+  if (pct === 100) return 'completed';
+  if (pct > 0) return 'active';
+  return 'default';
+}
+
+// Filter tab 配置
+const FILTER_TABS = [
+  { id: 'all',         label: '全部' },
+  { id: 'in-progress', label: '进行中' },
+  { id: 'completed',   label: '已完成' },
+  { id: 'not-started', label: '未开始' },
+];
 
 function Discovery() {
   const navigate = useNavigate();
   const location = useLocation();
   const { user } = useAuth();
+
   const [activeGoal, setActiveGoal] = useState(null);
   const [activeSessions, setActiveSessions] = useState([]);
   const [stats, setStats] = useState(null);
-  const [userProficiency, setUserProficiency] = useState(0);
   const [loading, setLoading] = useState(true);
+  const [checkinStats, setCheckinStats] = useState({ currentStreak: 0, checkedInToday: false, totalCheckins: 0 });
+  const [scenarios, setScenarios] = useState([]);
+  const [filterTab, setFilterTab] = useState('all');
   const [showAchievement, setShowAchievement] = useState(false);
   const [showGoalSwitch, setShowGoalSwitch] = useState(false);
+  const [showUpgradeModal, setShowUpgradeModal] = useState(false);
   const [allGoals, setAllGoals] = useState([]);
   const [switching, setSwitching] = useState(false);
   const [hasOtherGoals, setHasOtherGoals] = useState(false);
 
-  // Scenarios State
-  const [scenarios, setScenarios] = useState([]);
+  const isPro = user?.subscription_status === 'active';
 
   useEffect(() => {
     const fetchData = async () => {
-        if (!user) return;
+      if (!user) return;
+      try {
+        if (!user.native_language) { navigate('/onboarding'); return; }
+
+        const goalRes = await userAPI.getActiveGoal();
+        if (!goalRes || !goalRes.goal) { navigate('/goal-setting'); return; }
+        setActiveGoal(goalRes.goal);
+        checkAchievement(goalRes.goal);
 
         try {
-            if (!user.native_language) {
-                navigate('/onboarding');
-                return;
-            }
+          const goalsRes = await userAPI.getUserGoals();
+          const other = (goalsRes.goals || []).filter(g => g.status !== 'active');
+          setHasOtherGoals(other.length > 0);
+        } catch (_) { setHasOtherGoals(false); }
 
-            const goalRes = await userAPI.getActiveGoal();
-            if (!goalRes || !goalRes.goal) {
-                navigate('/goal-setting');
-                return;
-            }
-            setActiveGoal(goalRes.goal);
-            checkAchievement(goalRes.goal);
-
-            // Check if user has other goals to enable the switch button
-            try {
-                const goalsRes = await userAPI.getUserGoals();
-                const otherGoals = (goalsRes.goals || []).filter(g => g.status !== 'active');
-                setHasOtherGoals(otherGoals.length > 0);
-            } catch (e) {
-                setHasOtherGoals(false);
-            }
-
-            // Set Scenarios
-            if (goalRes.goal.scenarios && goalRes.goal.scenarios.length > 0) {
-                setScenarios(goalRes.goal.scenarios);
-            } else {
-                // Smart Fallback Generation
-                const generated = generateScenarios(goalRes.goal.target_language, goalRes.goal.interests);
-                setScenarios(generated);
-            }
-
-            const statsRes = await historyAPI.getStats(user.id);
-            if (statsRes && statsRes.data) {
-                setStats(statsRes.data);
-                setUserProficiency(statsRes.data.proficiency || 0);
-            }
-
-            // Fetch History to find sessions with metadata (like topic)
-            const historyRes = await historyAPI.getUserHistory(user.id);
-            if (historyRes && historyRes.data) {
-                // historyRes.data is the list of conversations
-                // Filter distinct sessions by topic? Or just keep them all.
-                // We want to use this list to check if a scenario has been started.
-                setActiveSessions(historyRes.data); 
-            }
-
-        } catch (e) {
-            console.error('Error fetching discovery data:', e);
-        } finally {
-            setLoading(false);
+        if (goalRes.goal.scenarios?.length > 0) {
+          setScenarios(goalRes.goal.scenarios);
+        } else {
+          setScenarios(generateScenarios(goalRes.goal.target_language, goalRes.goal.interests));
         }
+
+        const [statsRes, histRes, checkinRes] = await Promise.allSettled([
+          historyAPI.getStats(user.id),
+          historyAPI.getUserHistory(user.id),
+          userAPI.getCheckinStats(),
+        ]);
+
+        if (statsRes.status === 'fulfilled' && statsRes.value?.data) {
+          setStats(statsRes.value.data);
+        }
+        if (histRes.status === 'fulfilled' && histRes.value?.data) {
+          setActiveSessions(histRes.value.data);
+        }
+        if (checkinRes.status === 'fulfilled' && checkinRes.value?.data) {
+          const d = checkinRes.value.data;
+          setCheckinStats({
+            currentStreak: d.currentStreak || d.streak_count || 0,
+            checkedInToday: d.checkedInToday || false,
+            totalCheckins: d.totalCheckins || 0,
+          });
+        }
+      } catch (e) {
+        console.error('Dashboard fetch error:', e);
+      } finally {
+        setLoading(false);
+      }
     };
 
-    const checkAchievement = (goal) => {
-        if (!goal || !goal.scenarios || goal.scenarios.length === 0) return;
-        const allDone = goal.scenarios.every(s =>
-            s.tasks && s.tasks.length > 0 && s.tasks.every(t => typeof t === 'object' && t.status === 'completed')
-        );
-        if (allDone) {
-            const key = `goal_all_completed_${goal.id}`;
-            if (!localStorage.getItem(key)) {
-                localStorage.setItem(key, 'true');
-                setShowAchievement(true);
-            }
-        }
-    };
-    
     fetchData();
-  }, [user, navigate, location.key]); // Trigger re-fetch on navigation back to this page
+  }, [user, navigate, location.key]);
+
+  const checkAchievement = (goal) => {
+    if (!goal?.scenarios?.length) return;
+    const allDone = goal.scenarios.every(s =>
+      s.tasks?.length > 0 && s.tasks.every(t => typeof t === 'object' && t.status === 'completed')
+    );
+    if (allDone) {
+      const key = `goal_all_completed_${goal.id}`;
+      if (!localStorage.getItem(key)) {
+        localStorage.setItem(key, 'true');
+        setShowAchievement(true);
+      }
+    }
+  };
+
+  const handleCheckin = async () => {
+    try {
+      const res = await userAPI.checkin();
+      const streak = res?.data?.streak || res?.checkin?.streak_count || checkinStats.currentStreak + 1;
+      setCheckinStats(prev => ({ ...prev, currentStreak: streak, checkedInToday: true }));
+    } catch (e) {
+      console.error('Checkin error:', e);
+    }
+  };
 
   const handleOpenSwitch = async () => {
     try {
       const res = await userAPI.getUserGoals();
       setAllGoals(res.goals || []);
       setShowGoalSwitch(true);
-    } catch (e) {
-      console.error('Failed to load goals:', e);
-    }
+    } catch (e) { console.error('Load goals error:', e); }
   };
 
   const handleSwitchGoal = async (goalId) => {
@@ -172,359 +226,373 @@ function Discovery() {
       await userAPI.switchGoal(goalId);
       setShowGoalSwitch(false);
       navigate(location.pathname, { replace: true });
-    } catch (e) {
-      console.error('Failed to switch goal:', e);
-    } finally {
-      setSwitching(false);
-    }
-  };
-
-  const handleStartNewSession = () => {
-      // Default to first scenario
-      if (scenarios.length > 0) {
-          handleScenarioClick(scenarios[0]);
-      } else {
-          navigate(`/conversation?scenario=tutor`);
-      }
-  };
-
-  const handleResumeSession = (sessionId) => {
-      navigate(`/conversation?sessionId=${sessionId}`);
+    } catch (e) { console.error('Switch goal error:', e); }
+    finally { setSwitching(false); }
   };
 
   const handleScenarioClick = (scenario) => {
-      // Check if there is already an active session for this scenario/topic
-      // We search in the history list we fetched (activeSessions now contains full objects)
-      const existingSession = activeSessions.find(s => 
-          s.topic === scenario.title || 
-          (s.topic && s.topic.includes(scenario.title))
-      );
-
-      if (existingSession) {
-          console.log('Resuming existing session for scenario:', scenario.title, existingSession.sessionId);
-          navigate(`/conversation?sessionId=${existingSession.sessionId}&scenario=${encodeURIComponent(scenario.title)}`, {
-              state: { tasks: scenario.tasks }
-          });
-      } else {
-          // Navigate with scenario title and tasks
-          navigate(`/conversation?scenario=${encodeURIComponent(scenario.title)}`, {
-              state: { tasks: scenario.tasks }
-          });
-      }
+    const existing = activeSessions.find(s =>
+      s.topic === scenario.title || s.topic?.includes(scenario.title)
+    );
+    if (existing) {
+      navigate(`/conversation?sessionId=${existing.sessionId}&scenario=${encodeURIComponent(scenario.title)}`, {
+        state: { tasks: scenario.tasks },
+      });
+    } else {
+      navigate(`/conversation?scenario=${encodeURIComponent(scenario.title)}`, {
+        state: { tasks: scenario.tasks },
+      });
+    }
   };
 
+  const handleCustomScenario = () => {
+    if (isPro) navigate('/goal-setting?mode=custom');
+    else setShowUpgradeModal(true);
+  };
+
+  // ── 派生数据 ──
+  const enrichedScenarios = scenarios.map((s, i) => {
+    const pct = calcProgress(s);
+    const unlocked = isScenarioUnlocked(i, scenarios, isPro);
+    const cardState = getScenarioCardState(s, unlocked, pct);
+    return { ...s, pct, unlocked, cardState, difficulty: getDifficulty(i), emoji: getEmoji(s.title), index: i };
+  });
+
+  const todayRecommended = enrichedScenarios.find(s => s.unlocked && s.pct < 100);
+
+  // 今日复述：从活跃场景中取第一个未完成任务作为复述句
+  const recallTask = todayRecommended?.tasks?.find(t => t.status !== 'completed');
+  const recallSentence = recallTask
+    ? (typeof recallTask === 'object' ? (recallTask.text || recallTask.description || recallTask.title || '') : String(recallTask))
+    : '';
+
+  const overallProgress = scenarios.length > 0
+    ? Math.round(enrichedScenarios.filter(s => s.pct === 100).length / scenarios.length * 100)
+    : 0;
+
+  const filteredScenarios = enrichedScenarios.filter(s => {
+    if (filterTab === 'all') return true;
+    if (filterTab === 'in-progress') return s.unlocked && s.pct > 0 && s.pct < 100;
+    if (filterTab === 'completed') return s.pct === 100;
+    if (filterTab === 'not-started') return s.unlocked && s.pct === 0;
+    return true;
+  });
+
+  const userName = user?.username || user?.name || '学习者';
+  const greeting = (() => {
+    const h = new Date().getHours();
+    if (h < 12) return '早上好';
+    if (h < 18) return '下午好';
+    return '晚上好';
+  })();
+
   if (loading) {
-      return <div className="flex items-center justify-center min-h-screen">Loading...</div>;
-  }
-
-  // Calculate overall progress based on scenario completion
-  let progress = 0;
-  let nextMission = null; // { index, title, nextTask } of first incomplete scenario
-  if (activeGoal && activeGoal.scenarios && activeGoal.scenarios.length > 0) {
-    const totalScenarios = activeGoal.scenarios.length;
-    let completedScenarios = 0;
-
-    activeGoal.scenarios.forEach((scenario, idx) => {
-      const hasTasks = scenario.tasks && scenario.tasks.length > 0;
-      const allDone = hasTasks && scenario.tasks.every(task =>
-        typeof task === 'object' && task.status === 'completed'
-      );
-      if (allDone) {
-        completedScenarios++;
-      } else if (!nextMission) {
-        // Find the first incomplete task within this scenario
-        const firstIncompleteTask = scenario.tasks && scenario.tasks.find(task =>
-          typeof task === 'object' ? task.status !== 'completed' : true
-        );
-        const nextTaskText = firstIncompleteTask
-          ? (typeof firstIncompleteTask === 'object' ? firstIncompleteTask.text || firstIncompleteTask.description : firstIncompleteTask)
-          : null;
-        nextMission = { index: idx + 1, title: scenario.title, nextTask: nextTaskText };
-      }
-    });
-
-    progress = Math.round((completedScenarios / totalScenarios) * 100);
-  } else {
-    // Fallback to proficiency if no scenarios
-    progress = Math.min(100, userProficiency);
-  }
-
-  // Calculate remaining days
-  let remainingDays = null;
-  if (activeGoal) {
-    const durationDays = activeGoal.duration_days || 60;
-    const createdAt = activeGoal.created_at ? new Date(activeGoal.created_at) : null;
-    if (createdAt) {
-      const daysElapsed = Math.floor((Date.now() - createdAt.getTime()) / (1000 * 60 * 60 * 24));
-      remainingDays = Math.max(0, durationDays - daysElapsed);
-    }
+    return (
+      <div className="flex items-center justify-center min-h-screen bg-background-light dark:bg-background-dark">
+        <div className="flex flex-col items-center gap-3">
+          <div className="w-10 h-10 rounded-full border-4 border-t-transparent animate-spin"
+            style={{ borderColor: '#637FF1', borderTopColor: 'transparent' }} />
+          <p className="text-sm text-slate-400">加载中...</p>
+        </div>
+      </div>
+    );
   }
 
   return (
     <div className="relative flex flex-col min-h-screen w-full bg-background-light dark:bg-background-dark">
 
-      {/* Achievement Badge Modal */}
+      {/* ── 成就 Modal ── */}
       {showAchievement && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
-          <div className="bg-white dark:bg-slate-800 rounded-2xl p-6 max-w-sm w-full text-center shadow-2xl">
+          <motion.div initial={{ scale: 0.9, opacity: 0 }} animate={{ scale: 1, opacity: 1 }}
+            className="bg-white dark:bg-slate-800 rounded-3xl p-8 max-w-sm w-full text-center shadow-brand-lg">
             <div className="text-7xl mb-3">🏆</div>
-            <div className="flex justify-center gap-1 mb-3">
-              {['🌟','🌟','🌟'].map((s, i) => <span key={i} className="text-2xl">{s}</span>)}
-            </div>
             <h2 className="text-2xl font-bold text-slate-900 dark:text-white mb-1">目标全部完成！</h2>
-            <p className="text-sm text-indigo-600 font-semibold mb-2">Achievement Unlocked</p>
-            <p className="text-slate-600 dark:text-slate-400 text-sm mb-6">
-              太棒了！你已完成所有 {scenarios.length} 个场景练习，成功达到 <span className="font-bold text-indigo-600">{activeGoal?.target_level}</span> 水平目标！<br />
-              是时候挑战下一个更高的目标了！
+            <p className="text-sm text-primary font-semibold mb-2">Achievement Unlocked</p>
+            <p className="text-slate-500 text-sm mb-6">
+              太棒了！你已完成所有 {scenarios.length} 个场景，成功达到{' '}
+              <span className="font-bold text-primary">{activeGoal?.target_level}</span> 水平目标！
             </p>
             <div className="flex gap-3">
-              <button
-                onClick={() => setShowAchievement(false)}
-                className="flex-1 py-3 rounded-xl border border-slate-300 dark:border-slate-600 text-slate-700 dark:text-slate-300 font-medium text-sm hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors"
-              >
+              <button onClick={() => setShowAchievement(false)}
+                className="flex-1 py-3 rounded-xl border border-slate-200 text-slate-600 font-medium text-sm">
                 稍后再说
               </button>
-              <button
-                onClick={() => { setShowAchievement(false); navigate('/goal-setting'); }}
-                className="flex-1 py-3 rounded-xl bg-gradient-to-r from-indigo-500 to-purple-500 text-white font-medium text-sm hover:opacity-90 transition-opacity"
-              >
+              <button onClick={() => { setShowAchievement(false); navigate('/goal-setting'); }}
+                className="flex-1 py-3 rounded-xl text-white font-medium text-sm"
+                style={{ background: 'linear-gradient(135deg, #637FF1, #a47af6)' }}>
                 制定新目标
               </button>
             </div>
-          </div>
+          </motion.div>
         </div>
       )}
 
-      {/* Goal Switch Modal */}
+      {/* ── 目标切换 Modal ── */}
       {showGoalSwitch && (
         <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/60"
-             onClick={() => setShowGoalSwitch(false)}>
-          <div className="bg-white dark:bg-slate-800 rounded-t-2xl w-full max-w-lg p-5 pb-8 max-h-[70vh] overflow-y-auto"
-               onClick={e => e.stopPropagation()}>
+          onClick={() => setShowGoalSwitch(false)}>
+          <motion.div initial={{ y: 40, opacity: 0 }} animate={{ y: 0, opacity: 1 }}
+            className="bg-white dark:bg-slate-800 rounded-t-3xl w-full max-w-lg p-5 pb-8 max-h-[70vh] overflow-y-auto"
+            onClick={e => e.stopPropagation()}>
             <h3 className="text-base font-bold text-slate-900 dark:text-white mb-4">切换学习目标</h3>
-            {allGoals.filter(g => g.status !== 'active').map(goal => {
-              const pct = goal.current_proficiency || 0;
-              const badgeColor = pct >= 80 ? 'bg-emerald-100 text-emerald-700'
-                               : pct >= 40 ? 'bg-indigo-100 text-indigo-600'
-                                           : 'bg-slate-100 text-slate-500';
-              return (
-                <button key={goal.id}
-                  onClick={() => handleSwitchGoal(goal.id)}
-                  disabled={switching}
-                  className="w-full text-left flex items-center gap-3 p-3 rounded-xl border border-slate-200 dark:border-slate-700 hover:bg-indigo-50 dark:hover:bg-slate-700 transition-colors mb-2"
-                >
-                  <div className="flex-1 min-w-0">
-                    <p className="font-semibold text-slate-900 dark:text-white text-sm">{goal.target_language}</p>
-                    <p className="text-xs text-slate-500">{goal.target_level} · {new Date(goal.created_at).toLocaleDateString('zh-CN')}</p>
-                  </div>
-                  <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${badgeColor}`}>{pct}%</span>
-                </button>
-              );
-            })}
+            {allGoals.filter(g => g.status !== 'active').map(goal => (
+              <button key={goal.id} onClick={() => handleSwitchGoal(goal.id)} disabled={switching}
+                className="w-full text-left flex items-center gap-3 p-3 rounded-xl border border-slate-200 hover:border-primary/40 hover:bg-slate-50 transition mb-2">
+                <div className="flex-1 min-w-0">
+                  <p className="font-semibold text-slate-900 text-sm">{goal.target_language}</p>
+                  <p className="text-xs text-slate-500">{goal.target_level} · {new Date(goal.created_at).toLocaleDateString('zh-CN')}</p>
+                </div>
+                <span className="text-xs font-medium px-2 py-0.5 rounded-full bg-slate-100 text-slate-500">
+                  {goal.current_proficiency || 0}%
+                </span>
+              </button>
+            ))}
             {allGoals.filter(g => g.status !== 'active').length === 0 && (
-              <p className="text-sm text-slate-400 text-center py-6">暂无其他存量目标</p>
+              <p className="text-sm text-slate-400 text-center py-6">暂无其他学习目标</p>
             )}
-          </div>
+          </motion.div>
         </div>
       )}
 
-      <main className="flex-grow pb-28">
-        {/* Header */}
-        <div className="flex flex-col gap-2 p-4 pb-2">
-          <div className="flex h-12 items-center justify-between">
-            <p className="text-3xl font-bold leading-tight tracking-tight text-slate-900 dark:text-white">发现</p>
-            <div className="flex items-center gap-2">
-                <div className="bg-orange-100 text-orange-600 px-3 py-1 rounded-full text-xs font-bold flex items-center gap-1">
-                    🔥 {stats?.learningDays || 0} 天
-                </div>
+      {/* ── 升级 Pro Modal ── */}
+      {showUpgradeModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4"
+          onClick={() => setShowUpgradeModal(false)}>
+          <motion.div initial={{ scale: 0.92, opacity: 0 }} animate={{ scale: 1, opacity: 1 }}
+            className="bg-white dark:bg-slate-800 rounded-3xl p-7 max-w-sm w-full text-center shadow-xl"
+            onClick={e => e.stopPropagation()}>
+            <div className="text-5xl mb-4">👑</div>
+            <h2 className="text-xl font-bold text-slate-900 dark:text-white mb-2">升级 Pro 解锁全部功能</h2>
+            <ul className="text-sm text-slate-500 text-left mb-6 space-y-2">
+              {['解锁全部 10 个场景（免费仅3个）', '自定义场景创建', '提前解锁高难度场景', '定制 AI 导师音色', '优先访问新功能'].map(f => (
+                <li key={f} className="flex items-center gap-2">
+                  <span className="text-yellow-500">★</span> {f}
+                </li>
+              ))}
+            </ul>
+            <div className="flex gap-3">
+              <button onClick={() => setShowUpgradeModal(false)}
+                className="flex-1 py-3 rounded-xl border border-slate-200 text-slate-500 font-medium text-sm">
+                稍后再说
+              </button>
+              <button onClick={() => { setShowUpgradeModal(false); navigate('/subscription'); }}
+                className="flex-1 py-3 rounded-xl text-white font-semibold text-sm"
+                style={{ background: 'linear-gradient(135deg, #F6B443, #F97316)' }}>
+                立即升级
+              </button>
             </div>
+          </motion.div>
+        </div>
+      )}
+
+      {/* ── Header ── */}
+      <header className="flex items-center justify-between px-5 pt-5 pb-2">
+        <div>
+          <p className="text-sm text-slate-500 dark:text-slate-400">{greeting}，</p>
+          <h1 className="text-xl font-bold text-slate-900 dark:text-white leading-tight">
+            {userName} {isPro && <span className="text-xs align-middle bg-yellow-100 text-yellow-600 px-1.5 py-0.5 rounded-full font-semibold ml-1">Pro</span>}
+          </h1>
+          {/* 目标总进度 */}
+          <div className="mt-1.5 flex items-center gap-2">
+            <div className="h-1 rounded-full bg-slate-200 overflow-hidden" style={{ width: 100 }}>
+              <div className="h-full rounded-full bg-primary transition-all duration-500"
+                style={{ width: `${overallProgress}%` }} />
+            </div>
+            <span className="text-xs text-slate-400">{overallProgress}% 完成</span>
           </div>
         </div>
+        <div className="flex items-center gap-2">
+          {hasOtherGoals && (
+            <button onClick={handleOpenSwitch}
+              className="text-xs text-slate-500 hover:text-primary transition px-2 py-1 rounded-lg bg-slate-100 dark:bg-slate-800">
+              ⇄ 切换目标
+            </button>
+          )}
+          <div className="w-10 h-10 rounded-full flex items-center justify-center text-white font-bold text-sm flex-shrink-0"
+            style={{ background: 'linear-gradient(135deg, #637FF1, #a47af6)' }}>
+            {userName.charAt(0).toUpperCase()}
+          </div>
+        </div>
+      </header>
 
-        {/* Active Goal / Progress Card */}
-        {activeGoal && (
-            <div className="px-4 py-2">
-                <div className="bg-gradient-to-r from-indigo-600 to-purple-600 rounded-2xl p-5 text-white shadow-xl relative overflow-hidden">
-                     {/* Decorative Circles */}
-                    <div className="absolute -top-10 -right-10 w-40 h-40 bg-white opacity-10 rounded-full blur-2xl"></div>
-                    <div className="absolute bottom-0 left-0 w-32 h-32 bg-purple-500 opacity-20 rounded-full blur-xl"></div>
-                    
-                    <div className="relative z-10">
-                        <div className="flex justify-between items-start mb-6">
-                            <div className="flex-1 min-w-0 pr-4">
-                                <div className="flex items-center justify-between mb-1">
-                                  <p className="text-xs font-medium text-indigo-100">当前目标 (Goal)</p>
-                                  {hasOtherGoals && (
-                                    <button
-                                      onClick={handleOpenSwitch}
-                                      className="flex items-center gap-0.5 text-xs text-indigo-200 hover:text-white transition-colors"
-                                      title="切换目标"
-                                    >
-                                      <span className="material-symbols-outlined text-sm">swap_horiz</span>
-                                      <span>切换</span>
-                                    </button>
-                                  )}
-                                </div>
-                                <h2 className="text-2xl font-bold tracking-tight mb-1">{activeGoal.target_language}</h2>
-                                {nextMission ? (
-                                    <div className="mb-2">
-                                        <p className="text-xs text-indigo-200 opacity-80">
-                                            Mission {nextMission.index}: {nextMission.title}
-                                        </p>
-                                        {nextMission.nextTask && (
-                                            <p
-                                                className="text-sm font-semibold text-yellow-300 mt-0.5 cursor-pointer hover:text-yellow-100 transition-colors underline-offset-2 hover:underline"
-                                                onClick={() => {
-                                                    const scenario = scenarios[nextMission.index - 1];
-                                                    if (scenario) handleScenarioClick(scenario);
-                                                }}
-                                            >
-                                                → {nextMission.nextTask}
-                                            </p>
-                                        )}
-                                    </div>
-                                ) : (
-                                    <p className="text-sm text-emerald-300 font-semibold mb-2">🎉 所有任务已完成！</p>
-                                )}
-                            </div>
-                            <div className="text-right shrink-0">
-                                <p className="text-2xl font-bold text-white">{activeGoal.target_level || 'B1'}</p>
-                                <p className="text-xs text-indigo-200">目标水平</p>
-                                {remainingDays !== null && (
-                                    <div className={`mt-2 text-xs font-semibold px-2 py-0.5 rounded-full ${remainingDays <= 7 ? 'bg-red-400/40 text-red-100' : remainingDays <= 14 ? 'bg-yellow-400/30 text-yellow-100' : 'bg-white/20 text-indigo-100'}`}>
-                                        剩 {remainingDays} 天
-                                    </div>
-                                )}
-                            </div>
-                        </div>
+      <main className="flex-grow pb-28 space-y-5 px-4 pt-2">
 
-                        {/* Progress Bar */}
-                        <div>
-                            <div className="flex justify-between text-xs font-medium text-indigo-100 mb-2">
-                                <span>总体进度</span>
-                                <span>{progress}%</span>
-                            </div>
-                            <div className="h-3 bg-black/20 rounded-full overflow-hidden backdrop-blur-sm">
-                                <div 
-                                    className="h-full bg-gradient-to-r from-yellow-400 to-orange-400 rounded-full transition-all duration-1000 ease-out shadow-[0_0_10px_rgba(251,191,36,0.5)]"
-                                    style={{ width: `${progress}%` }}
-                                ></div>
-                            </div>
-                        </div>
-                    </div>
-                </div>
+        {/* ── 连续学习进度环 ── */}
+        <StreakRing
+          streak={checkinStats.currentStreak}
+          monthlyTarget={30}
+          checkedInToday={checkinStats.checkedInToday}
+          onCheckin={handleCheckin}
+        />
+
+        {/* ── 4格统计 ── */}
+        {stats && (
+          <div className="grid grid-cols-4 gap-2">
+            <div className="flex flex-col items-center gap-1 bg-white dark:bg-slate-800 rounded-2xl p-3 shadow-sm">
+              <span className="text-xl">📚</span>
+              <span className="text-base font-bold text-slate-900 dark:text-white">{stats.totalSessions || 0}</span>
+              <span className="text-xs text-slate-400 text-center leading-tight">总对话</span>
             </div>
+            <div className="flex flex-col items-center gap-1 bg-white dark:bg-slate-800 rounded-2xl p-3 shadow-sm">
+              <span className="text-xl">📅</span>
+              <span className="text-base font-bold text-slate-900 dark:text-white">{stats.learningDays || 0}</span>
+              <span className="text-xs text-slate-400 text-center leading-tight">学习天</span>
+            </div>
+            <div className="flex flex-col items-center gap-1 bg-white dark:bg-slate-800 rounded-2xl p-3 shadow-sm">
+              <span className="text-xl">✅</span>
+              <span className="text-base font-bold text-slate-900 dark:text-white">
+                {enrichedScenarios.filter(s => s.pct === 100).length}/{scenarios.length}
+              </span>
+              <span className="text-xs text-slate-400 text-center leading-tight">场景完成</span>
+            </div>
+            <div className="flex flex-col items-center gap-1 bg-white dark:bg-slate-800 rounded-2xl p-3 shadow-sm">
+              <span className="text-xl">🎯</span>
+              <span className="text-base font-bold text-slate-900 dark:text-white">{overallProgress}%</span>
+              <span className="text-xs text-slate-400 text-center leading-tight">总进度</span>
+            </div>
+          </div>
         )}
 
-        {/* All Complete CTA Banner */}
-        {progress === 100 && (
-          <div className="px-4 pt-2 pb-0">
-            <div
-              onClick={() => navigate('/goal-setting')}
-              className="flex items-center gap-3 bg-gradient-to-r from-yellow-400/20 to-orange-400/20 border-2 border-yellow-400/60 rounded-xl p-4 cursor-pointer hover:shadow-md transition-all"
-            >
-              <span className="text-3xl">🏆</span>
-              <div className="flex-1">
-                <p className="font-bold text-slate-800 dark:text-slate-100 text-sm">所有场景已完成！</p>
-                <p className="text-xs text-slate-500 dark:text-slate-400">点击制定下一阶段新目标 →</p>
+        {/* ── 今日复述 ── */}
+        {todayRecommended && recallSentence && (
+          <section>
+            <h2 className="text-sm font-semibold text-slate-500 dark:text-slate-400 mb-2 uppercase tracking-wide">今日复述</h2>
+            <div className="rounded-2xl p-4 relative overflow-hidden"
+              style={{ background: 'rgba(99,127,241,0.07)', border: '1.5px solid rgba(99,127,241,0.18)' }}>
+              <div className="flex items-center justify-between gap-3">
+                <div className="flex-1 min-w-0">
+                  <h3 className="font-bold text-slate-900 text-sm mb-1">今日复述练习</h3>
+                  <p className="text-xs text-slate-500 mb-3 leading-snug line-clamp-2">
+                    {recallSentence}
+                  </p>
+                  <button
+                    onClick={() => navigate(
+                      `/conversation?scenario=${encodeURIComponent(todayRecommended.scenarioKey || todayRecommended.title)}&mode=recall`,
+                      { state: { tasks: todayRecommended.tasks } }
+                    )}
+                    className="flex items-center gap-1.5 px-4 py-1.5 rounded-xl text-xs font-bold text-white transition-all active:scale-95"
+                    style={{ background: '#637FF1' }}>
+                    ▶ 开始练习
+                  </button>
+                </div>
+                <span className="text-4xl flex-shrink-0">🎯</span>
               </div>
-              <span className="material-symbols-outlined text-yellow-500">arrow_forward</span>
             </div>
-          </div>
+          </section>
         )}
 
-        {/* Scenario List (Grid Layout) */}
-        <div className="px-4 py-6">
-             <div className="flex items-center justify-between mb-4">
-                 <h3 className="text-xl font-bold text-slate-900 dark:text-white">场景练习 (Scenarios)</h3>
-                 <span className="text-xs text-slate-500 font-medium bg-slate-100 dark:bg-slate-800 px-2 py-1 rounded-md">
-                     {scenarios.length} Missions
-                 </span>
-             </div>
-             
-             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                 {scenarios.map((scenario, index) => {
-                     const isLocked = false;
-                     const hasTasks = scenario.tasks && scenario.tasks.length > 0;
-                     const isCompleted = hasTasks && scenario.tasks.every(task =>
-                         typeof task === 'object' && task.status === 'completed'
-                     );
+        {/* ── 场景完成 Banner ── */}
+        {overallProgress === 100 && (
+          <motion.div whileHover={{ scale: 1.01 }} onClick={() => navigate('/goal-setting')}
+            className="flex items-center gap-3 border-2 border-yellow-400/60 rounded-2xl p-4 cursor-pointer"
+            style={{ background: 'rgba(251,191,36,0.08)' }}>
+            <Trophy className="w-7 h-7 text-yellow-500 flex-shrink-0" />
+            <div className="flex-1">
+              <p className="font-bold text-slate-800 dark:text-slate-100 text-sm">所有场景已完成！</p>
+              <p className="text-xs text-slate-500">点击制定下一阶段新目标 →</p>
+            </div>
+          </motion.div>
+        )}
 
-                     return (
-                         <div
-                            key={index}
-                            onClick={() => !isLocked && handleScenarioClick(scenario)}
-                            className={`relative p-4 rounded-xl border-2 transition-all duration-200 cursor-pointer overflow-hidden group hover:shadow-lg
-                                ${isLocked
-                                    ? 'bg-slate-50 dark:bg-slate-900 border-slate-100 dark:border-slate-800 opacity-60'
-                                    : isCompleted
-                                        ? 'bg-emerald-50 dark:bg-emerald-900/20 border-emerald-300 dark:border-emerald-700'
-                                        : 'bg-white dark:bg-slate-800 border-indigo-100 dark:border-indigo-900/30 hover:border-indigo-300'
-                                }
-                            `}
-                         >
-                             <div className="flex justify-between items-start mb-3">
-                                 <span className={`text-xs font-bold px-2 py-0.5 rounded-md
-                                     ${isLocked ? 'bg-slate-200 text-slate-500' : isCompleted ? 'bg-emerald-100 text-emerald-700' : 'bg-indigo-50 text-indigo-600'}
-                                 `}>
-                                     Mission {index + 1}
-                                 </span>
-                                 {isLocked ? (
-                                     <span className="material-symbols-outlined text-slate-400 text-lg">lock</span>
-                                 ) : isCompleted ? (
-                                     <span className="material-symbols-outlined text-emerald-500 text-lg">check_circle</span>
-                                 ) : (
-                                     <span className="material-symbols-outlined text-indigo-500 text-lg group-hover:scale-110 transition-transform">arrow_forward</span>
-                                 )}
-                             </div>
+        {/* ── 场景轮播 ── */}
+        <section>
+          <div className="flex items-center justify-between mb-3">
+            <div>
+              <h2 className="text-lg font-bold text-slate-900 dark:text-white">场景练习</h2>
+              {activeGoal && (
+                <p className="text-xs text-slate-400">{activeGoal.target_language} · {activeGoal.target_level}</p>
+              )}
+            </div>
+            <span className="text-xs text-slate-400 bg-slate-100 dark:bg-slate-800 px-2 py-1 rounded-lg">
+              {scenarios.length} 个场景
+            </span>
+          </div>
 
-                             <h4 className="font-bold text-base mb-2 text-slate-800 dark:text-slate-100">
-                                 {scenario.title}
-                             </h4>
+          {/* Filter chips */}
+          <div className="flex gap-2 overflow-x-auto pb-1 mb-3 scrollbar-hide">
+            {FILTER_TABS.map(tab => (
+              <button key={tab.id} onClick={() => setFilterTab(tab.id)}
+                className="flex-shrink-0 px-3 py-1 rounded-full text-xs font-medium transition-all"
+                style={{
+                  background: filterTab === tab.id ? '#637FF1' : '#F3F4F6',
+                  color: filterTab === tab.id ? '#fff' : '#6B7280',
+                }}>
+                {tab.label}
+              </button>
+            ))}
+          </div>
 
-                             {/* Tasks Preview */}
-                             <div className="space-y-1">
-                                 {scenario.tasks && scenario.tasks.slice(0, 3).map((task, tIdx) => {
-                                     const taskText = typeof task === 'object' ? (task.text || task.description || JSON.stringify(task)) : task;
-                                     const taskDone = typeof task === 'object' && task.status === 'completed';
-                                     return (
-                                         <div key={tIdx} className="flex items-center gap-2 text-xs text-slate-500">
-                                             <span className={`w-1.5 h-1.5 rounded-full ${taskDone ? 'bg-emerald-400' : 'bg-slate-300'}`}></span>
-                                             <span className={`truncate ${taskDone ? 'line-through text-slate-400' : ''}`}>{taskText}</span>
-                                         </div>
-                                     );
-                                 })}
-                             </div>
+          {/* 2列网格卡片 */}
+          <div className="grid grid-cols-2 gap-3">
+            {filteredScenarios.map((s) => (
+              <ScenarioCard
+                key={s.index}
+                title={s.title}
+                emoji={s.emoji}
+                description={
+                  s.tasks?.[0]
+                    ? (typeof s.tasks[0] === 'object'
+                        ? (s.tasks[0].text || s.tasks[0].description || '')
+                        : String(s.tasks[0]))
+                    : ''
+                }
+                difficulty={s.difficulty}
+                progress={s.pct}
+                state={s.cardState === 'locked' ? 'locked' : s.cardState === 'active' ? 'selected' : 'default'}
+                onStart={() => handleScenarioClick(s)}
+              />
+            ))}
+          </div>
 
-                             {isCompleted && (
-                                 <div className="mt-3 text-xs font-semibold text-emerald-600 dark:text-emerald-400">
-                                     已完成 ✓
-                                 </div>
-                             )}
-                         </div>
-                     );
-                 })}
-             </div>
-        </div>
+          {filteredScenarios.length === 0 && (
+            <p className="text-center text-sm text-slate-400 py-6">
+              {filterTab === 'in-progress' ? '暂无进行中的场景' :
+               filterTab === 'completed' ? '还没有完成的场景，加油！' : '暂无符合条件的场景'}
+            </p>
+          )}
+        </section>
 
-        {/* Free Chat Section */}
-        <div className="px-4 py-4">
-             <div 
-                onClick={() => navigate('/conversation?scenario=general')}
-                className="flex items-center gap-4 bg-gradient-to-r from-purple-500/10 to-pink-500/10 p-4 rounded-xl border-2 border-purple-200 dark:border-purple-900/50 cursor-pointer hover:shadow-lg transition-all">
-                 <div className="w-12 h-12 rounded-full bg-gradient-to-br from-purple-500 to-pink-500 text-white flex items-center justify-center shrink-0">
-                     <span className="material-symbols-outlined text-2xl">chat</span>
-                 </div>
-                 <div className="flex-1">
-                     <h3 className="text-lg font-bold text-slate-900 dark:text-white">随便聊俩</h3>
-                     <p className="text-sm text-slate-500 dark:text-slate-400">自由对话模式，随心练习口语</p>
-                 </div>
-                 <span className="material-symbols-outlined text-purple-500">arrow_forward</span>
-             </div>
-        </div>
+        {/* ── 最近活动 ── */}
+        {activeSessions.length > 0 && (
+          <section>
+            <h2 className="text-lg font-bold text-slate-900 dark:text-white mb-3">最近活动</h2>
+            <div className="space-y-2">
+              {activeSessions.slice(0, 3).map((session, idx) => {
+                const score = session.score || session.avg_score;
+                const badgeLabel = score >= 90 ? '优秀' : score >= 75 ? '良好' : score ? '继续加油' : null;
+                const badgeColor = score >= 90 ? '#10B981' : score >= 75 ? '#637FF1' : '#9CA3AF';
+                return (
+                  <div key={session.sessionId || idx}
+                    className="flex items-center gap-3 bg-white dark:bg-slate-800 rounded-2xl p-3.5 shadow-sm">
+                    <div className="w-10 h-10 rounded-xl flex items-center justify-center text-xl flex-shrink-0"
+                      style={{ background: '#F3F4F6' }}>
+                      🗣️
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-medium text-slate-800 dark:text-slate-100 truncate">
+                        {session.topic || '自由对话'}
+                      </p>
+                      <p className="text-xs text-slate-400">
+                        {session.createdAt ? new Date(session.createdAt).toLocaleDateString('zh-CN') : ''}
+                        {score ? ` · 得分 ${score}` : ''}
+                      </p>
+                    </div>
+                    {badgeLabel && (
+                      <span className="text-xs px-2 py-0.5 rounded-full text-white flex-shrink-0"
+                        style={{ backgroundColor: badgeColor }}>
+                        {badgeLabel}
+                      </span>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </section>
+        )}
       </main>
 
-      <BottomNav currentPage="discovery" />
+      <BottomNav currentPage="home" />
     </div>
   );
 }

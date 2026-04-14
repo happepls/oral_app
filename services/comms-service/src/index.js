@@ -71,6 +71,7 @@ wss.on('connection', async function connection(clientWs, req) {
     const sessionId = queryObject.sessionId;
     const scenario = queryObject.scenario;
     const voice = queryObject.voice;
+    const mode = queryObject.mode;
 
     if (!sessionId) {
       console.log('Connection rejected: No sessionId provided.');
@@ -136,19 +137,20 @@ wss.on('connection', async function connection(clientWs, req) {
     });
 
     try {
-      // Build connection URL with query parameters
+      // Build connection URL — token is passed via Authorization header (not URL) to avoid log exposure
       const aiUrl = new URL(AI_SERVICE_URL);
-      aiUrl.searchParams.set('token', token);
       aiUrl.searchParams.set('sessionId', sessionId);
       if (scenario) aiUrl.searchParams.set('scenario', scenario);
       if (voice) aiUrl.searchParams.set('voice', voice);
+      if (mode) aiUrl.searchParams.set('mode', mode);
 
       console.log(`Connecting to AI service: ${aiUrl.toString()}`);
 
       // Add additional options for WebSocket connection
       const wsOptions = {
         headers: {
-          'User-Agent': 'Oral-AI-Comms-Service/1.0'
+          'User-Agent': 'Oral-AI-Comms-Service/1.0',
+          'Authorization': `Bearer ${token}`,
         }
       };
 

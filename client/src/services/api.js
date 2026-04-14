@@ -118,10 +118,12 @@ export const userAPI = {
     return handleResponse(response);
   },
 
-  async getActiveGoal() {
+  async getActiveGoal(options = {}) {
+    const { signal } = options;
     const response = await fetch(`${API_BASE_URL}/users/goals/active`, {
       headers: getAuthHeaders(),
-      credentials: 'include'
+      credentials: 'include',
+      ...(signal && { signal })
     });
     return handleResponse(response);
   },
@@ -355,10 +357,12 @@ export const conversationAPI = {
     return handleResponse(response);
   },
 
-  async getHistory(sessionId) {
+  async getHistory(sessionId, options = {}) {
+    const { signal } = options;
     const response = await fetch(`${API_BASE_URL}/history/session/${sessionId}`, {
       headers: getAuthHeaders(),
-      credentials: 'include'
+      credentials: 'include',
+      ...(signal && { signal })
     });
     return handleResponse(response);
   },

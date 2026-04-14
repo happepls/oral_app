@@ -4,6 +4,21 @@ const { stripeService } = require('./stripeService');
 const { getStripePublishableKey } = require('./stripeClient');
 const { protect } = require('../middleware/authMiddleware');
 
+// Stripe redirect URL whitelist — only these origins are allowed for success/cancel/return URLs
+const ALLOWED_REDIRECT_ORIGINS = (process.env.STRIPE_ALLOWED_ORIGINS || 'http://localhost:3000,http://localhost:5001')
+  .split(',')
+  .map(o => o.trim())
+  .filter(Boolean);
+
+function getValidatedBaseUrl(req) {
+  const origin = req.headers.origin;
+  if (origin && ALLOWED_REDIRECT_ORIGINS.includes(origin)) {
+    return origin;
+  }
+  // Fallback to first allowed origin (safest default)
+  return ALLOWED_REDIRECT_ORIGINS[0] || `${req.protocol}://${req.get('host')}`;
+}
+
 router.get('/config', async (req, res) => {
   try {
     const publishableKey = await getStripePublishableKey();
@@ -113,7 +128,7 @@ router.post('/checkout', protect, async (req, res) => {
       }
     }
 
-    const baseUrl = req.headers.origin || `${req.protocol}://${req.get('host')}`;
+    const baseUrl = getValidatedBaseUrl(req);
     try {
       const session = await stripeService.createCheckoutSession(
         customerId,
@@ -141,7 +156,7 @@ router.post('/portal', protect, async (req, res) => {
       return res.status(400).json({ error: 'No Stripe customer found' });
     }
 
-    const baseUrl = req.headers.origin || `${req.protocol}://${req.get('host')}`;
+    const baseUrl = getValidatedBaseUrl(req);
     try {
       const session = await stripeService.createCustomerPortalSession(
         user.stripe_customer_id,

@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Oral AI - 首页</title>
+    <link rel="stylesheet" href="../../design-tokens.css">
+    <link rel="stylesheet" href="dashboard.css">
+</head>
+<body>
+    <div class="dashboard-container">
+        <!-- Header -->
+        <header class="dashboard-header">
+            <div class="user-greeting">
+                <h1 class="greeting-title">你好，User 👋</h1>
+                <p class="greeting-subtitle">今天也要继续练习英语吗？</p>
+            </div>
+            <div class="header-actions">
+                <button class="icon-btn">🔔</button>
+                <div class="avatar-small">U</div>
+            </div>
+        </header>
+
+        <!-- Streak Card -->
+        <section class="streak-section">
+            <div class="streak-card">
+                <div class="streak-flame">🔥</div>
+                <div class="streak-info">
+                    <span class="streak-count">15</span>
+                    <span class="streak-label">天连续学习</span>
+                </div>
+                <div class="streak-progress">
+                    <div class="progress-ring">
+                        <svg viewBox="0 0 36 36">
+                            <path class="ring-bg" d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" />
+                            <path class="ring-fill" stroke-dasharray="50, 100" d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" />
+                        </svg>
+                        <span class="ring-text">50%</span>
+                    </div>
+                    <span class="progress-label">本月目标 30 天</span>
+                </div>
+            </div>
+        </section>
+
+        <!-- Quick Stats -->
+        <section class="stats-section">
+            <div class="stats-grid">
+                <div class="stat-card">
+                    <span class="stat-icon">📚</span>
+                    <span class="stat-value">42</span>
+                    <span class="stat-label">总对话</span>
+                </div>
+                <div class="stat-card">
+                    <span class="stat-icon">⏱️</span>
+                    <span class="stat-value">12h</span>
+                    <span class="stat-label">练习时长</span>
+                </div>
+                <div class="stat-card">
+                    <span class="stat-icon">📝</span>
+                    <span class="stat-value">140</span>
+                    <span class="stat-label">新词汇</span>
+                </div>
+                <div class="stat-card">
+                    <span class="stat-icon">🎯</span>
+                    <span class="stat-value">85</span>
+                    <span class="stat-label">平均分</span>
+                </div>
+            </div>
+        </section>
+
+        <!-- Today's Goal -->
+        <section class="goal-section">
+            <h2 class="section-title">今日目标</h2>
+            <div class="goal-card">
+                <div class="goal-icon">🗣️</div>
+                <div class="goal-info">
+                    <h3 class="goal-title">完成 2 次对话练习</h</h3>
+                    <p class="goal-desc">已完成 1/2 · 剩余 1 次</p>
+                </div>
+                <div class="goal-check">
+                    <button class="check-btn">✓</button>
+                </div>
+            </div>
+        </section>
+
+        <!-- Scenarios -->
+        <section class="scenarios-section">
+            <div class="section-header">
+                <h2 class="section-title">场景练习</h2>
+                <button class="see-all-btn">查看全部 →</button>
+            </div>
+            <div class="scenarios-scroll">
+                <div class="scenario-card active">
+                    <div class="scenario-icon">💼</div>
+                    <span class="scenario-name">商务沟通</span>
+                    <span class="scenario-level">Level 3</span>
+                </div>
+                <div class="scenario-card">
+                    <div class="scenario-icon">🛫</div>
+                    <span class="scenario-name">旅行英语</span>
+                    <span class="scenario-level">Level 2</span>
+                </div>
+                <div class="scenario-card">
+                    <div class="scenario-icon">☕</div>
+                    <span class="scenario-name">日常对话</span>
+                    <span class="scenario-level">Level 4</span>
+                </div>
+                <div class="scenario-card">
+                    <div class="scenario-icon">🎬</div>
+                    <span class="scenario-name">电影台词</span>
+                    <span class="scenario-level">Level 1</span>
+                </div>
+                <div class="scenario-card add-new">
+                    <div class="scenario-icon">➕</div>
+                    <span class="scenario-name">更多场景</span>
+                </div>
+            </div>
+        </section>
+
+        <!-- Recent Activity -->
+        <section class="activity-section">
+            <h2 class="section-title">最近活动</h2>
+            <div class="activity-list">
+                <div class="activity-item">
+                    <div class="activity-icon">🗣️</div>
+                    <div class="activity-info">
+                        <span class="activity-title">商务邮件写作</span>
+                        <span class="activity-meta">今天 14:30 · 得分 92</span>
+                    </div>
+                    <span class="activity-badge success">优秀</span>
+                </div>
+                <div class="activity-item">
+                    <div class="activity-icon">🎧</div>
+                    <div class="activity-info">
+                        <span class="activity-title">听力练习 - 旅游场景</span>
+                        <span class="activity-meta">昨天 20:15 · 得分 78</span>
+                    </div>
+                    <span class="activity-badge">良好</span>
+                </div>
+                <div class="activity-item">
+                    <div class="activity-icon">📖</div>
+                    <div class="activity-info">
+                        <span class="activity-title">词汇复习 - 20 words</span>
+                        <span class="activity-meta">昨天 19:00 · 全部掌握</span>
+                    </div>
+                    <span class="activity-badge success">✓</span>
+                </div>
+            </div>
+        </section>
+
+        <!-- Bottom Navigation -->
+        <nav class="bottom-nav">
+            <button class="nav-item active">
+                <span class="nav-icon">🏠</span>
+                <span class="nav-label">首页</span>
+            </button>
+            <button class="nav-item">
+                <span class="nav-icon">📚</span>
+                <span class="nav-label">练习</span>
+            </button>
+            <button class="nav-item start-btn">
+                <span class="nav-icon">🎤</span>
+            </button>
+            <button class="nav-item">
+                <span class="nav-icon">📊</span>
+                <span class="nav-label">统计</span>
+            </button>
+            <button class="nav-item">
+                <span class="nav-icon">👤</span>
+                <span class="nav-label">我的</span>
+            </button>
+        </nav>
+    </div>
+
+    <script src="dashboard.js"></script>
+</body>
+</html>

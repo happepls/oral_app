@@ -249,3 +249,55 @@ docker cp services/ai-omni-service/app/main.py oral_app_ai_omni_service:/app/app
 ### Discovery Page: Goal Completion
 
 When `progress === 100` (all scenarios completed), `Discovery.js` shows a 🏆 achievement modal once per goal (keyed by `goal_all_completed_${goal.id}` in localStorage) plus a persistent CTA banner. Both navigate to `/goal-setting` for setting a new goal.
+
+### Recall Mode: 今日复述 (mode=recall)
+
+Discovery.js shows a 今日复述 card linking to `/conversation?mode=recall&scenario=<name>`. This triggers a standalone magic repetition session.
+
+**Frontend (Conversation.js)**:
+- `isRecallMode` is initialized via `useRef(new URLSearchParams(...).get('mode') === 'recall').current` — use `useRef` to avoid re-parsing on every render.
+- When `isRecallMode=true`: `currentPhase` and `currentPhaseRef` initialize to `'magic_repetition'` instead of `'scene_theater'`.
+- Magic card UI only renders when `isRecallMode && currentPhase === 'magic_repetition'`.
+- Phase dot for `magic_repetition` only visible when `isRecallMode`.
+- `phase_transition` to `scene_theater` in recall mode → `navigate('/discovery')` immediately (no scene_theater play).
+
+**Backend (ai-omni-service/main.py)**:
+- WebSocket endpoint accepts `mode: str = Query(None)`.
+- `is_recall_mode = (mode == 'recall')` → `initial_phase = "magic_repetition"` if recall.
+- On reconnect: if `not is_recall_mode` and existing phase is `magic_repetition` → force to `scene_theater`.
+
+**comms-service (CRITICAL)**:
+- `mode` query param MUST be extracted from client URL and forwarded to ai-omni-service.
+- Pattern: `const mode = queryObject.mode;` → `if (mode) aiUrl.searchParams.set('mode', mode);`
+- **Gotcha**: If `mode` is not forwarded, the backend always initializes in `scene_theater` regardless of the client's intent, breaking recall mode entirely.
+
+### GoalSetting.js: Multi-Step Onboarding Wizard
+
+Replaced the old single-form GoalSetting with a 5-step animated wizard (`TOTAL_STEPS = 5`):
+- **Step 1**: Welcome screen (🦜, feature cards)
+- **Step 2**: Target language (6 options) + target level (Beginner/Intermediate/Advanced)
+- **Step 3**: Proficiency quiz (4 questions from `QUIZ_QUESTIONS`, rendered one at a time via `currentQ` state; same scoring as Onboarding.js)
+- **Step 4**: Goal type + interests + AI voice selection; displays CEFR badge from quiz result
+- **Step 5**: AI-generated scenarios review (edit title/delete)
+
+Key implementation notes:
+- `displayStep = step - 1`, `displayTotal = TOTAL_STEPS - 1` — welcome step excluded from progress count.
+- `AnimatePresence key={step === 3 ? \`3-${currentQ}\` : step}` — question-level slide animation within step 3.
+- `QUIZ_QUESTIONS` and scoring functions (`calcQuizScore`, `scoreToProficiency`, `getLevel`) are duplicated from Onboarding.js. If Onboarding questions change, update GoalSetting too.
+- `handleGenerateScenarios` calls `aiAPI.generateScenarios()` → result populates step 5 scenarios.
+
+### Frontend Design: Figma Design System Reference
+
+**所有前端模块开发必须严格参考 `figma_app_template/src/` 中导出的设计元素**：
+- 组件样式、颜色、间距 → 参考 `figma_app_template/src/app/components/`
+- 设计 Token（颜色/字号/圆角等） → `figma_app_template/src/imports/design-tokens.json`（已同步至 `client/src/imports/design-tokens.json`）
+- 页面布局和交互模式 → `figma_app_template/src/app/pages/`
+- HTML 静态原型 → `figma_app_template/src/html_template/`
+
+开发新页面或组件时，先在 `figma_app_template/src/` 中查找对应的 Figma 导出参考，再动手实现。
+
+### Theme: Forcing Light Mode
+
+`tailwind.config.js` uses `darkMode: "class"` — dark mode only activates when `<html>` has `class="dark"`.
+
+**Gotcha**: `client/public/index.html` previously had `<html lang="zh-CN" class="dark">` hardcoded, forcing dark mode on all pages regardless of Tailwind classes. Removed `class="dark"` to restore light-mode default. If dark mode re-appears unexpectedly, check `index.html` first.

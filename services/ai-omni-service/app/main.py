@@ -35,7 +35,79 @@ dashscope.api_key = api_key
 logger.info("Using real DashScope API with provided API key")
 
 # 双阶段会话状态，key=f"{user_id}:{scenario}" — 每个场景独立维护状态
-session_phases: dict = {}
+# TTL-aware wrapper: 条目超过 72h 自动清理，最多保留 2000 个活跃 key（LRU）
+import time as _time
+from collections import OrderedDict as _OrderedDict
+
+_SESSION_PHASES_TTL = 72 * 3600   # 72 小时（秒）
+_SESSION_PHASES_MAX = 2000         # 最大条目数
+
+class _TTLDict:
+    """线程不安全的简单 TTL + LRU 字典，适合单进程 asyncio 服务。"""
+    def __init__(self, ttl: int, maxsize: int):
+        self._ttl = ttl
+        self._maxsize = maxsize
+        self._store: _OrderedDict = _OrderedDict()   # key → (value, last_access_ts)
+
+    def _now(self) -> float:
+        return _time.monotonic()
+
+    def _is_expired(self, ts: float) -> bool:
+        return (self._now() - ts) > self._ttl
+
+    def _evict_expired(self):
+        expired = [k for k, (_, ts) in list(self._store.items()) if self._is_expired(ts)]
+        for k in expired:
+            del self._store[k]
+
+    def get(self, key, default=None):
+        if key not in self._store:
+            return default
+        value, ts = self._store[key]
+        if self._is_expired(ts):
+            del self._store[key]
+            return default
+        # 更新访问时间（LRU）
+        self._store.move_to_end(key)
+        self._store[key] = (value, self._now())
+        return value
+
+    def __contains__(self, key):
+        return self.get(key) is not None
+
+    def __getitem__(self, key):
+        result = self.get(key)
+        if result is None and key not in self._store:
+            raise KeyError(key)
+        return result
+
+    def __setitem__(self, key, value):
+        self._store[key] = (value, self._now())
+        self._store.move_to_end(key)
+        # LRU 淘汰
+        if len(self._store) > self._maxsize:
+            self._store.popitem(last=False)
+
+    def __delitem__(self, key):
+        del self._store[key]
+
+    def setdefault(self, key, default=None):
+        existing = self.get(key)
+        if existing is not None:
+            return existing
+        self[key] = default
+        return default
+
+    def copy_value(self, key):
+        """返回 value 的浅拷贝（用于日志记录）。"""
+        v = self.get(key)
+        return v.copy() if isinstance(v, dict) else v
+
+    def purge_expired(self):
+        """显式触发过期清理（可在低流量时调用）。"""
+        self._evict_expired()
+
+session_phases: _TTLDict = _TTLDict(ttl=_SESSION_PHASES_TTL, maxsize=_SESSION_PHASES_MAX)
 
 app = FastAPI()
 
@@ -1360,13 +1432,40 @@ class WebSocketCallback(OmniRealtimeCallback):
         except Exception:
             pass  # Ignore errors if WebSocket is already closed
 
+import re as _re
+
+# 参数白名单：防止特殊字符注入破坏 URL/日志构造
+_SESSION_ID_RE = _re.compile(r'^[a-zA-Z0-9_\-]{1,128}$')
+_SCENARIO_RE   = _re.compile(r'^[\w\u4e00-\u9fff\s\-()（）]{0,200}$')
+_VOICE_RE      = _re.compile(r'^[a-zA-Z0-9_\-]{0,64}$')
+
 @app.websocket("/stream")
-async def websocket_endpoint(websocket: WebSocket, token: str = Query(None), sessionId: str = Query(None), scenario: str = Query(None), voice: str = Query(None)):
+async def websocket_endpoint(websocket: WebSocket, token: str = Query(None), sessionId: str = Query(None), scenario: str = Query(None), voice: str = Query(None), mode: str = Query(None)):
     await websocket.accept()
     logger.info(f"New connection attempt for session {sessionId}")
+    # token 优先从 query param 取（浏览器直连），其次从 Authorization header 取（comms-service 内部转发）
+    if not token:
+        auth_header = websocket.headers.get("authorization", "")
+        if auth_header.startswith("Bearer "):
+            token = auth_header[7:]
     if not token or not sessionId:
         await websocket.send_json({"type": "error", "payload": {"message": "Unauthorized"}})
         await websocket.close(); return
+
+    # 白名单校验：防止注入特殊字符
+    if not _SESSION_ID_RE.match(sessionId):
+        logger.warning(f"[ws] Rejected invalid sessionId: {repr(sessionId)}")
+        await websocket.send_json({"type": "error", "payload": {"message": "Invalid sessionId"}})
+        await websocket.close(); return
+    if scenario and not _SCENARIO_RE.match(scenario):
+        logger.warning(f"[ws] Rejected invalid scenario: {repr(scenario)}")
+        await websocket.send_json({"type": "error", "payload": {"message": "Invalid scenario"}})
+        await websocket.close(); return
+    if voice and not _VOICE_RE.match(voice):
+        logger.warning(f"[ws] Rejected invalid voice: {repr(voice)}")
+        await websocket.send_json({"type": "error", "payload": {"message": "Invalid voice"}})
+        await websocket.close(); return
+
     user_context = await get_user_context(token, scenario)
     if not user_context:
         await websocket.send_json({"type": "error", "payload": {"message": "Invalid token"}})
@@ -1397,12 +1496,18 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query(None), ses
     phase_key = callback.phase_key  # f"{user_id}:{scenario or ''}" — 每个场景独立
 
     # ── 初始化双阶段会话状态 ──
+    is_recall_mode = (mode == 'recall')
     if phase_key not in session_phases:
+        initial_phase = "magic_repetition" if is_recall_mode else "scene_theater"
         session_phases[phase_key] = {
-            "phase": "magic_repetition",
+            "phase": initial_phase,
             "task_index": 0,
             "magic_positive_streak": 0,
         }
+    else:
+        # 已有会话重连：非 recall 模式下若 phase 仍在 magic_repetition，强制跳到 scene_theater
+        if not is_recall_mode and session_phases[phase_key].get("phase") == "magic_repetition":
+            session_phases[phase_key]["phase"] = "scene_theater"
     _init_phase_info = session_phases[phase_key]
     _init_task_text = _init_phase_info.get("_current_task_text", "")
     await send_phase_event(websocket, "phase_transition", {
@@ -1724,18 +1829,42 @@ async def health_check():
 # ---------------------------------------------------------------------------
 # POST /reset-phase - 重置用户会话阶段状态
 # ---------------------------------------------------------------------------
-from fastapi import HTTPException, Body
+from fastapi import HTTPException, Body, Request
 
 @app.post("/reset-phase")
-async def reset_phase(user_id: str = Body(..., description="用户 ID"), scenario: str = Body(default="", description="场景名称")):
+async def reset_phase(
+    request: Request,
+    user_id: str = Body(..., description="用户 ID"),
+    scenario: str = Body(default="", description="场景名称"),
+):
     """
     重置用户的会话阶段状态（session_phases）。
-    当用户点击重置按钮时调用，清理魔法重复阶段的所有状态。
+    需要通过 JWT cookie 或 Authorization header 验证身份，且请求的 user_id 必须与 token 持有者匹配。
     """
+    # --- 身份验证 ---
+    token = request.cookies.get("accessToken")
+    if not token:
+        auth_header = request.headers.get("Authorization", "")
+        if auth_header.startswith("Bearer "):
+            token = auth_header[7:]
+
+    if not token:
+        raise HTTPException(status_code=401, detail="Authentication required")
+
+    user_context = await get_user_context(token)
+    if not user_context:
+        raise HTTPException(status_code=401, detail="Invalid or expired token")
+
+    authenticated_user_id = str(user_context.get("id", ""))
+    if authenticated_user_id != str(user_id):
+        logger.warning(f"[reset-phase] Forbidden: token owner={authenticated_user_id}, requested user_id={user_id}")
+        raise HTTPException(status_code=403, detail="Forbidden: user_id mismatch")
+
+    # --- 重置逻辑 ---
     try:
         phase_key = f"{user_id}:{scenario or ''}"
         if phase_key in session_phases:
-            old_phase = session_phases[phase_key].copy()
+            old_phase = session_phases.copy_value(phase_key)
             session_phases[phase_key] = {
                 "phase": "magic_repetition",
                 "task_index": 0,
