@@ -7,8 +7,20 @@ import { motion, AnimatePresence } from 'motion/react';
 import {
   ArrowLeft, Settings, Flame, Check, CheckCircle, LogOut,
   History, User, Bell, Crown, Palette, MessageSquare,
-  ChevronRight, PlusCircle, X, Info
+  ChevronRight, PlusCircle, X, Info, Pencil
 } from 'lucide-react';
+
+const NATIVE_LANGUAGES = [
+  { value: 'Chinese',    label: '中文（普通话）', flag: '🇨🇳' },
+  { value: 'English',   label: 'English',       flag: '🇬🇧' },
+  { value: 'Japanese',  label: '日本語',          flag: '🇯🇵' },
+  { value: 'Korean',    label: '한국어',           flag: '🇰🇷' },
+  { value: 'French',    label: 'Français',       flag: '🇫🇷' },
+  { value: 'Spanish',   label: 'Español',        flag: '🇪🇸' },
+  { value: 'German',    label: 'Deutsch',        flag: '🇩🇪' },
+  { value: 'Portuguese',label: 'Português',      flag: '🇧🇷' },
+  { value: 'Russian',   label: 'Русский',        flag: '🇷🇺' },
+];
 
 function Profile() {
   const navigate = useNavigate();
@@ -26,6 +38,25 @@ function Profile() {
 
   // Goal state
   const [activeGoal, setActiveGoal] = useState(null);
+
+  // Native language edit state
+  const [editingLang, setEditingLang] = useState(false);
+  const [savingLang, setSavingLang] = useState(false);
+  const [langSaveError, setLangSaveError] = useState('');
+
+  const handleSaveNativeLang = async (value) => {
+    setSavingLang(true);
+    setLangSaveError('');
+    try {
+      await userAPI.updateProfile({ native_language: value });
+      if (refreshProfile) await refreshProfile();
+      setEditingLang(false);
+    } catch (err) {
+      setLangSaveError('保存失败，请重试');
+    } finally {
+      setSavingLang(false);
+    }
+  };
 
   // Feedback state
   const [showFeedbackModal, setShowFeedbackModal] = useState(false);
@@ -279,6 +310,67 @@ function Profile() {
               <p className="text-2xl font-bold text-slate-900 dark:text-white">{s.value}</p>
             </motion.div>
           ))}
+        </div>
+
+        {/* Native Language Setting */}
+        <div className="px-4 pb-4">
+          <h2 className="text-base font-bold text-slate-900 dark:text-white pb-3">🌐 语言设置</h2>
+          <div className="bg-white dark:bg-slate-800 rounded-2xl p-4 shadow-brand border border-slate-100 dark:border-slate-700">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-xs text-slate-500 dark:text-slate-400 mb-1">母语（翻译目标语言）</p>
+                {editingLang ? (
+                  <select
+                    autoFocus
+                    defaultValue={user?.native_language || ''}
+                    onChange={(e) => handleSaveNativeLang(e.target.value)}
+                    disabled={savingLang}
+                    className="text-sm font-medium text-slate-900 dark:text-white bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-lg px-2 py-1 focus:outline-none focus:ring-2 focus:ring-primary/30"
+                  >
+                    <option value="" disabled>请选择母语</option>
+                    {NATIVE_LANGUAGES.map(l => (
+                      <option key={l.value} value={l.value}>
+                        {l.flag} {l.label}
+                      </option>
+                    ))}
+                  </select>
+                ) : (
+                  <p className="text-base font-semibold text-slate-900 dark:text-white">
+                    {(() => {
+                      const found = NATIVE_LANGUAGES.find(l =>
+                        l.value.toLowerCase() === (user?.native_language || '').toLowerCase()
+                      );
+                      return found
+                        ? `${found.flag} ${found.label}`
+                        : user?.native_language
+                          ? <span className="text-amber-500">⚠️ {user.native_language}（未识别）</span>
+                          : <span className="text-slate-400">未设置</span>;
+                    })()}
+                  </p>
+                )}
+                {langSaveError && <p className="text-xs text-red-500 mt-1">{langSaveError}</p>}
+              </div>
+              {!editingLang && (
+                <button
+                  onClick={() => { setEditingLang(true); setLangSaveError(''); }}
+                  className="flex items-center gap-1 px-3 py-1.5 text-xs font-medium text-primary bg-primary/10 hover:bg-primary/20 rounded-lg transition"
+                >
+                  <Pencil className="w-3 h-3" /> 修改
+                </button>
+              )}
+              {editingLang && !savingLang && (
+                <button
+                  onClick={() => setEditingLang(false)}
+                  className="text-xs text-slate-400 hover:text-slate-600 px-2 py-1 rounded transition"
+                >
+                  取消
+                </button>
+              )}
+            </div>
+            <p className="text-xs text-slate-400 dark:text-slate-500 mt-2">
+              母语用于 AI 对话翻译功能，请确保设置正确
+            </p>
+          </div>
         </div>
 
         {/* Daily Checkin Section */}

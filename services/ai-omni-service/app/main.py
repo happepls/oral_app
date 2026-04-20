@@ -9,8 +9,9 @@ import re
 import traceback
 import os
 from datetime import datetime
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Query
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Query, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
 from dashscope.audio.qwen_omni import (
     OmniRealtimeCallback,
     OmniRealtimeConversation,
@@ -700,7 +701,7 @@ class WebSocketCallback(OmniRealtimeCallback):
             else:
                 system_prompt = prompt_manager.generate_system_prompt(full_ctx, role=self.role)
 
-            selected_voice = self.user_context.get('voice') or os.getenv("QWEN3_OMNI_VOICE", "Cherry")
+            selected_voice = self.user_context.get('voice') or os.getenv("QWEN3_OMNI_VOICE", "Tina")
 
             if getattr(self, 'just_switched_task', False):
                 # Use next_task_text set by call_proficiency_workflow — it's already the correct next task.
@@ -838,7 +839,49 @@ class WebSocketCallback(OmniRealtimeCallback):
                         task_id = self.user_context.get('active_goal', {}).get('current_task', {}).get('id')
                         
                         async def upload_ai_task(d, r):
-                            url = await self.upload_audio_to_cos(d, 'ai_audio')
+                            # Yield so any pending audio_transcript.done event can populate self.messages
+                            await asyncio.sleep(0)
+
+                            # ── Pre-upload: strip spoken markers, re-synthesize clean TTS if needed ──
+                            latest_ai_text = ""
+                            for _m in reversed(self.messages):
+                                if _m.get("role") == "assistant":
+                                    latest_ai_text = _m.get("content", "")
+                                    break
+
+                            _MARKER_RE = re.compile(
+                                r'\[TASK_\d+_COMPLETE\]'
+                                r'|[\[<]MAGIC_SENTENCE:[^\]>]*[\]>]?'
+                                r'|\[MAGIC_PASS[^\]]*\]',
+                                re.IGNORECASE
+                            )
+                            audio_data = d
+                            if latest_ai_text and _MARKER_RE.search(latest_ai_text):
+                                _clean = _MARKER_RE.sub('', latest_ai_text)
+                                _clean = re.sub(r'```json.*?```', '', _clean, flags=re.DOTALL | re.IGNORECASE).strip()
+                                if _clean:
+                                    try:
+                                        _voice = self.user_context.get('voice') or os.getenv("QWEN3_OMNI_VOICE", "Tina")
+                                        _key = os.getenv("QWEN3_OMNI_API_KEY") or os.getenv("DASHSCOPE_API_KEY")
+                                        def _synth_clean():
+                                            dashscope.api_key = _key
+                                            resp = dashscope.MultiModalConversation.call(
+                                                model="qwen3-tts-flash", text=_clean[:500], voice=_voice,
+                                            )
+                                            if not resp or resp.status_code != 200:
+                                                raise RuntimeError(f"TTS status {getattr(resp, 'status_code', '?')}")
+                                            _tts_url = resp.output.get("audio", {}).get("url")
+                                            if not _tts_url:
+                                                raise RuntimeError("No TTS audio URL")
+                                            return _validated_urlopen(_tts_url, timeout=15)
+                                        audio_data = await asyncio.get_event_loop().run_in_executor(None, _synth_clean)
+                                        audio_data = _wav_extract_pcm(audio_data)  # 剥掉 WAV header，避免 ffmpeg 将其误读为 PCM 产生 ping 声
+                                        logger.info(f"[TTS-clean] Re-synthesized {len(audio_data)} bytes without markers for response {r}")
+                                    except Exception as _e:
+                                        logger.warning(f"[TTS-clean] Re-synthesis failed: {_e}. Using original audio.")
+                                        audio_data = d
+
+                            url = await self.upload_audio_to_cos(audio_data, 'ai_audio')
                             if url:
                                 await self._safe_send({"type": "audio_url", "payload": {"url": url, "role": "assistant"}, "responseId": r})
                                 # Store audio URL by response ID to ensure correct pairing
@@ -857,12 +900,7 @@ class WebSocketCallback(OmniRealtimeCallback):
                                         break
                                 
                                 # ── Phase marker detection ──
-                                # Check the latest AI message for phase markers
-                                latest_ai_text = ""
-                                for msg_item in reversed(self.messages):
-                                    if msg_item.get("role") == "assistant":
-                                        latest_ai_text = msg_item.get("content", "")
-                                        break
+                                # latest_ai_text already computed at start of upload_ai_task
 
                                 # Guard: skip magic pass check for navigation words / too-short input
                                 _last_user_text = ""
@@ -1508,6 +1546,11 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query(None), ses
         # 已有会话重连：非 recall 模式下若 phase 仍在 magic_repetition，强制跳到 scene_theater
         if not is_recall_mode and session_phases[phase_key].get("phase") == "magic_repetition":
             session_phases[phase_key]["phase"] = "scene_theater"
+        # recall 模式下无论之前 phase 是什么，都强制重置到 magic_repetition
+        elif is_recall_mode:
+            session_phases[phase_key]["phase"] = "magic_repetition"
+            session_phases[phase_key]["task_index"] = 0
+            session_phases[phase_key]["magic_positive_streak"] = 0
     _init_phase_info = session_phases[phase_key]
     _init_task_text = _init_phase_info.get("_current_task_text", "")
     await send_phase_event(websocket, "phase_transition", {
@@ -1886,6 +1929,21 @@ async def reset_phase(
 # ---------------------------------------------------------------------------
 from fastapi import Body
 import urllib.parse
+import urllib.request as _urllib_req
+
+# DashScope TTS audio URL 域名白名单（防止 SSRF）
+_ALLOWED_TTS_HOSTS = {"dashscope.aliyuncs.com", "oss-cn-beijing.aliyuncs.com", "oss-cn-hangzhou.aliyuncs.com", "oss-cn-shanghai.aliyuncs.com"}
+
+def _validated_urlopen(url: str, timeout: int = 15) -> bytes:
+    """Fetch URL with domain allowlist to prevent SSRF."""
+    parsed = urllib.parse.urlparse(url)
+    host = parsed.hostname or ""
+    if not any(host == d or host.endswith("." + d) for d in _ALLOWED_TTS_HOSTS):
+        raise RuntimeError(f"TTS URL domain not allowed: {host}")
+    if parsed.scheme not in ("http", "https"):
+        raise RuntimeError(f"TTS URL scheme not allowed: {parsed.scheme}")
+    with _urllib_req.urlopen(url, timeout=timeout) as f:
+        return f.read()
 
 # Mapping of common scenario keywords → Unsplash search terms
 _SCENE_KEYWORD_MAP = {
@@ -2100,6 +2158,58 @@ async def generate_scenarios(payload: dict = Body(...)):
         raise HTTPException(status_code=500, detail="场景生成失败，请重试")
 
 # ---------------------------------------------------------------------------
+# WAV → raw PCM extractor  (for media-processing-service which expects s16le PCM)
+# ---------------------------------------------------------------------------
+def _wav_extract_pcm(wav_bytes: bytes) -> bytes:
+    """从 WAV 文件中提取原始 PCM 数据（去掉 RIFF 文件头）。
+    media-processing-service 用 ffmpeg -f s16le 解析 ai_audio，
+    若接收到 WAV 文件头，头部字节会被当作音频采样产生"ping"噪声。
+    此函数定位 'data' chunk 并只返回 PCM 载荷。
+    """
+    if not wav_bytes or not wav_bytes[:4] == b'RIFF':
+        return wav_bytes  # 不是 WAV，原样返回（MP3 等格式）
+    try:
+        i = 12  # 跳过 RIFF 和 WAVE 标识
+        while i + 8 <= len(wav_bytes):
+            chunk_id = wav_bytes[i:i+4]
+            chunk_size = int.from_bytes(wav_bytes[i+4:i+8], 'little')
+            if chunk_id == b'data':
+                return wav_bytes[i+8:i+8+chunk_size]
+            i += 8 + chunk_size + (chunk_size % 2)  # chunk 按字对齐
+    except Exception:
+        pass
+    # 兜底：跳过标准 44 字节头
+    return wav_bytes[44:] if len(wav_bytes) > 44 else wav_bytes
+
+
+def _trim_wav_onset(wav_bytes: bytes, trim_ms: int = 150) -> bytes:
+    """裁剪 WAV 文件开头的 onset artifact（用于直接发给浏览器的 WAV）。
+    注意：不用于发送给 media-processing-service 的路径，那里应用 _wav_extract_pcm。
+    """
+    import struct
+    if len(wav_bytes) < 44 or not wav_bytes[:4] == b'RIFF':
+        return wav_bytes
+    try:
+        sample_rate = struct.unpack_from('<I', wav_bytes, 24)[0]
+        bits_per_sample = struct.unpack_from('<H', wav_bytes, 34)[0]
+        channels = struct.unpack_from('<H', wav_bytes, 22)[0]
+        bytes_per_sample = (bits_per_sample // 8) * channels
+        trim_bytes = int(sample_rate * bytes_per_sample * trim_ms / 1000)
+        trim_bytes = (trim_bytes // bytes_per_sample) * bytes_per_sample
+        data_start = 44
+        data_len = len(wav_bytes) - data_start
+        if trim_bytes <= 0 or trim_bytes >= data_len:
+            return wav_bytes
+        new_data = wav_bytes[data_start + trim_bytes:]
+        new_size = len(new_data)
+        header = bytearray(wav_bytes[:44])
+        struct.pack_into('<I', header, 4, new_size + 36)
+        struct.pack_into('<I', header, 40, new_size)
+        return bytes(header) + new_data
+    except Exception:
+        return wav_bytes
+
+# ---------------------------------------------------------------------------
 # POST /tts  (proxied from /api/ai/tts via Nginx)
 # ---------------------------------------------------------------------------
 from fastapi.responses import Response as FastAPIResponse
@@ -2132,17 +2242,51 @@ async def text_to_speech(payload: dict = Body(...)):
             audio_url = response.output.get("audio", {}).get("url")
             if not audio_url:
                 raise RuntimeError("No audio URL in response")
-            import urllib.request
-            with urllib.request.urlopen(audio_url, timeout=15) as f:
-                return f.read()
+            return _validated_urlopen(audio_url, timeout=15)
 
         loop = asyncio.get_event_loop()
         audio_bytes = await loop.run_in_executor(None, _synth)
+        audio_bytes = _trim_wav_onset(audio_bytes)
         return FastAPIResponse(content=audio_bytes, media_type="audio/wav")
     except Exception as e:
         logger.error(f"[tts] synthesis failed: {e}")
         from fastapi import HTTPException
         raise HTTPException(status_code=500, detail="语音合成失败")
+
+
+_LANG_CODE_MAP = {
+    "zh": "Chinese", "zh-cn": "Chinese", "zh-tw": "Traditional Chinese",
+    "en": "English", "ja": "Japanese", "ko": "Korean",
+    "fr": "French", "es": "Spanish", "de": "German",
+    "pt": "Portuguese", "ru": "Russian", "ar": "Arabic",
+    "中文": "Chinese", "chinese": "Chinese", "japanese": "Japanese",
+    "english": "English", "korean": "Korean",
+}
+
+class TranslateRequest(BaseModel):
+    text: str
+    target_lang: str = "Chinese"
+
+@app.post("/translate")
+async def translate_text(req: TranslateRequest):
+    from dashscope import Generation
+    # Normalize language code/name to full English name
+    lang = _LANG_CODE_MAP.get(req.target_lang.lower(), req.target_lang)
+    prompt = (
+        f"Translate the following text into {lang}. "
+        f"Output ONLY the translation, no explanation, no extra text:\n\n{req.text}"
+    )
+    response = Generation.call(
+        api_key=os.getenv("DASHSCOPE_API_KEY") or os.getenv("QWEN3_OMNI_API_KEY"),
+        model="qwen-turbo",
+        messages=[{"role": "user", "content": prompt}],
+        result_format="message"
+    )
+    if response.status_code == 200:
+        translation = response.output.choices[0].message.content.strip()
+        return {"translation": translation}
+    logger.error(f"[translate] DashScope error: {response.status_code} {response.message}")
+    raise HTTPException(status_code=500, detail="Translation failed")
 
 
 if __name__ == "__main__":

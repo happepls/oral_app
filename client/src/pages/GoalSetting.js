@@ -8,12 +8,35 @@ const TOTAL_STEPS = 5;  // Welcome + Language + Quiz + Goal/Voice + Scenarios
 
 // ── 语言选项 ──
 const LANGUAGES = [
-  { value: 'English',  label: '英语',     flag: '🇺🇸' },
-  { value: 'Japanese', label: '日语',     flag: '🇯🇵' },
-  { value: 'Chinese',  label: '中文',     flag: '🇨🇳' },
-  { value: 'French',   label: '法语',     flag: '🇫🇷' },
-  { value: 'Spanish',  label: '西班牙语', flag: '🇪🇸' },
-  { value: 'Korean',   label: '韩语',     flag: '🇰🇷' },
+  { value: 'Chinese',      label: '中文（普通话）', flag: '🇨🇳' },
+  { value: 'English',      label: '英语',           flag: '🇺🇸' },
+  { value: 'Japanese',     label: '日语',           flag: '🇯🇵' },
+  { value: 'Korean',       label: '韩语',           flag: '🇰🇷' },
+  { value: 'French',       label: '法语',           flag: '🇫🇷' },
+  { value: 'Spanish',      label: '西班牙语',       flag: '🇪🇸' },
+  { value: 'German',       label: '德语',           flag: '🇩🇪' },
+  { value: 'Portuguese',   label: '葡萄牙语',       flag: '🇧🇷' },
+  { value: 'Russian',      label: '俄语',           flag: '🇷🇺' },
+  { value: 'Italian',      label: '意大利语',       flag: '🇮🇹' },
+  { value: 'Thai',         label: '泰语',           flag: '🇹🇭' },
+  { value: 'Indonesian',   label: '印度尼西亚语',   flag: '🇮🇩' },
+  { value: 'Arabic',       label: '阿拉伯语',       flag: '🇸🇦' },
+  { value: 'Vietnamese',   label: '越南语',         flag: '🇻🇳' },
+  { value: 'Turkish',      label: '土耳其语',       flag: '🇹🇷' },
+  { value: 'Finnish',      label: '芬兰语',         flag: '🇫🇮' },
+  { value: 'Polish',       label: '波兰语',         flag: '🇵🇱' },
+  { value: 'Hindi',        label: '印地语',         flag: '🇮🇳' },
+  { value: 'Dutch',        label: '荷兰语',         flag: '🇳🇱' },
+  { value: 'Czech',        label: '捷克语',         flag: '🇨🇿' },
+  { value: 'Urdu',         label: '乌尔都语',       flag: '🇵🇰' },
+  { value: 'Filipino',     label: '他加禄语',       flag: '🇵🇭' },
+  { value: 'Swedish',      label: '瑞典语',         flag: '🇸🇪' },
+  { value: 'Danish',       label: '丹麦语',         flag: '🇩🇰' },
+  { value: 'Hebrew',       label: '希伯来语',       flag: '🇮🇱' },
+  { value: 'Icelandic',    label: '冰岛语',         flag: '🇮🇸' },
+  { value: 'Malay',        label: '马来语',         flag: '🇲🇾' },
+  { value: 'Norwegian',    label: '挪威语',         flag: '🇳🇴' },
+  { value: 'Persian',      label: '波斯语',         flag: '🇮🇷' },
 ];
 
 const LEVELS = [
@@ -113,13 +136,14 @@ const GOAL_TYPES = [
   { value: 'travel_survival',    label: '旅行生存', emoji: '✈️' },
   { value: 'exam_prep',          label: '考试备考', emoji: '📝' },
   { value: 'presentation',       label: '演讲表达', emoji: '🎤' },
+  { value: 'custom',             label: '自定义',   emoji: '✏️' },
 ];
 
 const VOICE_OPTIONS = [
-  { id: 'Serena', name: 'Serena', desc: '温柔女声', emoji: '👩' },
-  { id: 'Momo',   name: 'Momo',   desc: '活泼女声', emoji: '👧' },
-  { id: 'Ryan',   name: 'Ryan',   desc: '活力男声', emoji: '👨' },
-  { id: 'Nofish', name: 'Nofish', desc: '稳重男声', emoji: '🧑' },
+  { id: 'Tina',   name: 'Tina',   desc: '甜甜女声（默认）', emoji: '👩' },
+  { id: 'Serena', name: 'Serena', desc: '温柔女声',         emoji: '👧' },
+  { id: 'Evan',   name: 'Evan',   desc: '清亮男声',         emoji: '👨' },
+  { id: 'Arda',   name: 'Arda',   desc: '阳光男声',         emoji: '🧑' },
 ];
 
 const FEATURES = [
@@ -154,8 +178,12 @@ export default function GoalSetting() {
 
   // Step 4: Goal + Voice
   const [goalType, setGoalType]           = useState('daily_conversation');
+  const [customGoalType, setCustomGoalType] = useState('');
   const [interests, setInterests]         = useState(user?.interests || '');
-  const [selectedVoice, setSelectedVoice] = useState(localStorage.getItem('ai_voice') || 'Serena');
+  const [selectedVoice, setSelectedVoice] = useState(() => {
+    const stored = localStorage.getItem('ai_voice');
+    return VOICE_OPTIONS.some(v => v.id === stored) ? stored : 'Tina';
+  });
 
   // Step 5: Scenarios
   const [scenarios, setScenarios]       = useState([]);
@@ -179,6 +207,10 @@ export default function GoalSetting() {
   const isQuizAnswered = (q) => q.type === 'single' ? !!quizAnswers[q.id] : (quizAnswers[q.id] || []).length > 0;
 
   const handleGenerateScenarios = async () => {
+    if (goalType === 'custom' && !customGoalType.trim()) {
+      setError('请填写自定义练习方向');
+      return;
+    }
     setIsGenerating(true);
     setError('');
     try {
@@ -186,7 +218,7 @@ export default function GoalSetting() {
     } catch {}
     try {
       const result = await aiAPI.generateScenarios({
-        type: goalType,
+        type: goalType === 'custom' ? customGoalType.trim() : goalType,
         target_language: targetLanguage,
         target_level: targetLevel,
         interests,
@@ -209,9 +241,12 @@ export default function GoalSetting() {
     if (scenarios.length === 0) { setError('请保留至少一个场景。'); return; }
     setError(''); setSuccess('');
     try {
+      const finalGoalType = goalType === 'custom' ? customGoalType.trim() : goalType;
       await userAPI.createGoal({
-        type: goalType,
-        description: `${targetLanguage} ${goalType.replace(/_/g, ' ')} 练习`,
+        type: finalGoalType,
+        description: goalType === 'custom'
+          ? `${targetLanguage} ${customGoalType.trim()} 练习`
+          : `${targetLanguage} ${goalType.replace(/_/g, ' ')} 练习`,
         target_language: targetLanguage,
         target_level: targetLevel,
         current_proficiency: proficiency,
@@ -342,7 +377,7 @@ export default function GoalSetting() {
                 <div>
                   <h2 className="text-lg font-bold text-slate-900 mb-1">选择学习语言</h2>
                   <p className="text-xs text-slate-400 mb-4">选择你想练习的外语</p>
-                  <div className="grid grid-cols-3 gap-2">
+                  <div className="grid grid-cols-3 gap-2" style={{ maxHeight: '280px', overflowY: 'auto' }}>
                     {LANGUAGES.map(l => (
                       <button key={l.value} onClick={() => setTargetLanguage(l.value)}
                         className="flex flex-col items-center gap-1 p-3 rounded-2xl border-2 transition-all"
@@ -467,15 +502,42 @@ export default function GoalSetting() {
                       </button>
                     ))}
                   </div>
+                  {goalType === 'custom' && (
+                    <div className="mt-3">
+                      <div className="flex items-center justify-between mb-1">
+                        <span className="text-xs text-slate-500">请输入你的练习方向</span>
+                        <span className={`text-xs ${customGoalType.length > 40 ? 'text-red-400' : 'text-slate-400'}`}>
+                          {customGoalType.length}/50
+                        </span>
+                      </div>
+                      <input
+                        type="text"
+                        value={customGoalType}
+                        onChange={e => setCustomGoalType(e.target.value)}
+                        maxLength={50}
+                        placeholder="例如：商务谈判、旅游导览、学术演讲…"
+                        className="w-full px-4 py-2.5 rounded-xl border border-slate-200 bg-slate-50 text-slate-800 text-sm focus:border-primary focus:ring-2 focus:ring-primary/20 outline-none"
+                        autoFocus
+                      />
+                    </div>
+                  )}
                 </div>
 
                 <div>
                   <label className="block text-sm font-bold text-slate-900 mb-2">
                     兴趣 / 学习重点 <span className="text-slate-400 font-normal text-xs">（选填）</span>
+                    <span className={`ml-1 text-xs float-right ${interests.length > 80 ? 'text-red-400' : 'text-slate-400'}`}>
+                      {interests.length}/100
+                    </span>
                   </label>
-                  <textarea value={interests} onChange={e => setInterests(e.target.value)} rows={2}
+                  <textarea
+                    value={interests}
+                    onChange={e => setInterests(e.target.value)}
+                    maxLength={100}
+                    rows={2}
                     className="w-full px-4 py-3 rounded-xl border border-slate-200 bg-slate-50 text-slate-800 text-sm focus:border-primary focus:ring-2 focus:ring-primary/20 outline-none resize-none"
-                    placeholder="例如：出行旅游、职场表达、备考雅思…" />
+                    placeholder="例如：出行旅游、职场表达、备考雅思…"
+                  />
                 </div>
 
                 <div>

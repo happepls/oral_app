@@ -262,12 +262,23 @@ export const aiAPI = {
       credentials: 'include',
       body: JSON.stringify(body)
     });
-    
+
     if (!response.ok) {
         throw new Error('语音合成失败');
     }
-    
+
     return response.blob();
+  },
+
+  async translate(text, targetLang = 'zh') {
+    const res = await fetch('/api/ai/translate', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify({ text, target_lang: targetLang }),
+    });
+    if (!res.ok) throw new Error('Translation failed');
+    return res.json();
   },
 
   async getScenarios() {

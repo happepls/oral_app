@@ -7,7 +7,7 @@ function BottomNav({ currentPage, showFab = false }) {
   // 原有 3-Tab 布局（showFab=false，保持向后兼容）
   const defaultItems = [
     { id: 'home',    icon: 'home',    label: '首页', path: '/discovery' },
-    { id: 'goals',   icon: 'target',  label: '目标', path: '/goal-setting' },
+    { id: 'goals',   icon: 'target',  label: '目标', path: '/goals' },
     { id: 'profile', icon: 'person',  label: '我的', path: '/profile' },
   ];
 

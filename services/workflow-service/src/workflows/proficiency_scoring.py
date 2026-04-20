@@ -354,21 +354,15 @@ class ProficiencyScoringWorkflow:
         text = user_input.strip()
 
         # --- 检测1：自我重复 ---
-        # 对长度 ≥ 3 的子串，检查是否在文本中出现 2 次以上
+        # 最短片段 5 字符（避免日语助词/英语短介词误判），且需重复 ≥3 次
         n = len(text)
-        for length in range(3, n // 2 + 1):
-            for start in range(n - length * 2 + 1):
+        MIN_SEGMENT = 5
+        MIN_COUNT = 3
+        for length in range(MIN_SEGMENT, n // MIN_COUNT + 1):
+            for start in range(n - length * MIN_COUNT + 1):
                 segment = text[start:start + length]
-                count = 0
-                pos = 0
-                while True:
-                    pos = text.find(segment, pos)
-                    if pos == -1:
-                        break
-                    count += 1
-                    pos += 1
-                if count >= 2 and len(segment) >= 3:
-                    return True  # 发现重复片段
+                if text.count(segment) >= MIN_COUNT:
+                    return True
 
         # --- 检测2：照抄关键词 ---
         if not suggested_keywords:
@@ -387,8 +381,9 @@ class ProficiencyScoringWorkflow:
             return True  # 全是标点
 
         kw_coverage = 1 - len(non_kw_chars) / len(total_meaningful)
-        if kw_coverage >= 0.8 and len(total_meaningful) <= 20:
-            return True  # 短输入且 ≥80% 是关键词
+        # 放宽：≥90% 且极短（≤15字）才判为照抄，避免自然使用关键词被误判
+        if kw_coverage >= 0.9 and len(total_meaningful) <= 15:
+            return True
 
         return False
 
@@ -526,7 +521,11 @@ class ProficiencyScoringWorkflow:
         sentence_quality_factor = 1.0
         if user_content:
             stripped = user_content.strip()
-            if len(stripped) < 8:
+            # CJK 语言每字符语义密度更高，使用更低的最小长度阈值
+            _CJK_LANGS = {"japanese", "chinese", "korean", "mandarin", "cantonese"}
+            _min_len = 4 if target_language.lower() in _CJK_LANGS else 8
+            _min_remaining = 2 if target_language.lower() in _CJK_LANGS else 4
+            if len(stripped) < _min_len:
                 sentence_quality_factor = 0.6
             elif hit_count > 0:
                 # 关键词命中但句子缺少实质性内容：去除匹配关键词后剩余字符太少
@@ -534,7 +533,7 @@ class ProficiencyScoringWorkflow:
                 for kw in matched:
                     remaining = remaining.replace(kw.lower(), '')
                 remaining = remaining.strip()
-                if len(remaining) < 4:
+                if len(remaining) < _min_remaining:
                     sentence_quality_factor = 0.7
 
         # 6. 最终 task_relevance
@@ -818,26 +817,52 @@ class ProficiencyScoringWorkflow:
         conversation_history: List[Dict[str, Any]] = None,
         suggested_keywords: List[str] = None
     ) -> List[str]:
-        """生成精简的改进建议，只保留关键信息"""
-        tips = []
-
+        """从 AI 上一条回复中提取目标语言示例短语作为建议"""
         task_relevance = scores.get("task_relevance", 5)
+        if task_relevance >= 8:
+            return []
 
-        # 获取当前任务信息
-        task_desc = current_task.get("task_description", "") if current_task else ""
+        target_language = (current_task or {}).get("target_language", "English")
 
-        # 任务相关性建议 - 精简版，只保留关键词展示
-        if task_relevance < 5:
-            tips.append(f"🎯 {task_desc}")
-            # 如果有建议关键词，显示它们
-            if suggested_keywords and len(suggested_keywords) > 0:
-                tips.append(f"💡 {', '.join(suggested_keywords[:5])}")
-        elif task_relevance < 8:
-            # 中等相关性，简要提示
-            if suggested_keywords and len(suggested_keywords) > 0:
-                tips.append(f"💡 {', '.join(suggested_keywords[:3])}")
+        phrases = self._extract_ai_example_phrases(conversation_history, target_language)
+        if phrases:
+            return [f"可以试着说：{phrases[0]}"]
 
-        return tips
+        return [f"继续用{target_language}完成本轮对话"]
+
+    def _extract_ai_example_phrases(
+        self,
+        conversation_history: List[Dict[str, Any]] = None,
+        target_language: str = "English"
+    ) -> List[str]:
+        """从最后一条 AI 消息中提取引号内的目标语言示例短语"""
+        if not conversation_history:
+            return []
+
+        last_ai_content = ""
+        for msg in reversed(conversation_history):
+            if msg.get("role") in ("ai", "assistant"):
+                last_ai_content = msg.get("content", "") or msg.get("transcript", "")
+                if last_ai_content:
+                    break
+
+        if not last_ai_content:
+            return []
+
+        phrases = []
+        phrases += re.findall(r'「([^」]{2,30})」', last_ai_content)
+        phrases += re.findall(r'"([^"]{3,40})"', last_ai_content)
+        phrases += re.findall(r'\u201c([^\u201d]{3,40})\u201d', last_ai_content)
+        phrases += re.findall(r"'([^']{4,40})'", last_ai_content)
+
+        seen = set()
+        result = []
+        for p in phrases:
+            p = p.strip()
+            if p not in seen and len(p) >= 2:
+                seen.add(p)
+                result.append(p)
+        return result[:2]
 
     def _extract_user_inputs(self, conversation_history: List[Dict[str, Any]]) -> List[str]:
         """从对话历史中提取用户输入"""

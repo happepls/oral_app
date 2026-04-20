@@ -240,7 +240,7 @@ exports.saveSummary = async (req, res) => {
         if (delta && delta !== 0) {
             try {
                 console.log(`[Summary] Syncing proficiency delta ${delta} for user ${uid}`);
-                const syncRes = await fetch(`http://user-service:3000/internal/users/${uid}/proficiency`, {
+                const syncRes = await fetch(`http://user-service:3000/api/users/internal/users/${uid}/proficiency`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ delta })
@@ -344,7 +344,7 @@ exports.getStats = async (req, res) => {
 
     // Fetch real-time proficiency from user-service
     try {
-        const userRes = await fetch(`http://user-service:3000/internal/users/${userId}`);
+        const userRes = await fetch(`http://user-service:3000/api/users/internal/users/${userId}`);
         const text = await userRes.text(); // Get raw text first for debugging
         console.log(`[Stats] User Service Response for ${userId}: ${text}`);
         

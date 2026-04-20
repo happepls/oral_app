@@ -1,184 +1,299 @@
 import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { motion, AnimatePresence } from 'motion/react';
+import { ChevronDown, ChevronUp, Plus, Target, Flame, CheckCircle } from 'lucide-react';
 import BottomNav from '../components/BottomNav';
 import { useAuth } from '../contexts/AuthContext';
 import { userAPI } from '../services/api';
 
 const VOICE_OPTIONS = [
-  { id: 'Serena', name: 'Serena', description: '温柔女声' },
-  { id: 'Momo', name: 'Momo', description: '活泼女声' },
-  { id: 'Ryan', name: 'Ryan', description: '活力男声' },
-  { id: 'Nofish', name: 'Nofish', description: '稳重男声' }
+  { id: 'Tina',   name: 'Tina',   description: '清晰女声（默认）', emoji: '👩' },
+  { id: 'Serena', name: 'Serena', description: '温柔女声',         emoji: '🎙️' },
+  { id: 'Evan',   name: 'Evan',   description: '活力男声',         emoji: '👨' },
+  { id: 'Arda',   name: 'Arda',   description: '稳重男声',         emoji: '🎤' },
 ];
+
+function getGoalProgress(goal) {
+  if (!goal?.scenarios?.length) return { completed: 0, total: 0, pct: 0 };
+  const total = goal.scenarios.length;
+  const completed = goal.scenarios.filter(s =>
+    s.tasks?.length > 0 && s.tasks.every(t => t.status === 'completed')
+  ).length;
+  return { completed, total, pct: Math.round((completed / total) * 100) };
+}
+
+function GoalCard({ goal, isActive, onPractice, index }) {
+  const { completed, total, pct } = getGoalProgress(goal);
+  const [expanded, setExpanded] = useState(false);
+  const visibleScenarios = expanded ? goal.scenarios : (goal.scenarios || []).slice(0, 3);
+
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 12 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ delay: index * 0.08 }}
+      className="bg-white dark:bg-slate-800 rounded-2xl shadow-brand border border-slate-100 dark:border-slate-700 p-4 mb-3"
+    >
+      {/* Goal Header */}
+      <div className="flex items-start justify-between mb-3">
+        <div className="flex-1 min-w-0 pr-2">
+          <p className="font-semibold text-slate-900 dark:text-white text-sm leading-snug mb-1 truncate">
+            {goal.description || `${goal.target_language} ${goal.target_level}`}
+          </p>
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="text-xs text-slate-500 dark:text-slate-400">
+              {goal.target_language} · {goal.target_level}
+            </span>
+            <span
+              className={`text-xs px-2 py-0.5 rounded-full font-medium ${
+                isActive
+                  ? 'bg-primary/10 text-primary'
+                  : 'bg-emerald-50 dark:bg-emerald-900/20 text-emerald-600 dark:text-emerald-400'
+              }`}
+            >
+              {isActive ? '进行中' : '已完成'}
+            </span>
+          </div>
+        </div>
+        <div className="flex-shrink-0 text-right">
+          <p className="text-lg font-bold text-primary">{pct}%</p>
+          <p className="text-xs text-slate-400">{completed}/{total}</p>
+        </div>
+      </div>
+
+      {/* Progress Bar */}
+      <div className="h-2 bg-slate-100 dark:bg-slate-700 rounded-full overflow-hidden mb-3">
+        <motion.div
+          initial={{ width: 0 }}
+          animate={{ width: `${pct}%` }}
+          transition={{ duration: 0.8, ease: 'easeOut', delay: index * 0.08 + 0.2 }}
+          className="h-full rounded-full"
+          style={{ background: 'linear-gradient(135deg, #637FF1, #a47af6)' }}
+        />
+      </div>
+
+      {/* Scenario List */}
+      {isActive && goal.scenarios?.length > 0 && (
+        <div className="mb-3 space-y-1.5">
+          {visibleScenarios.map((s, i) => {
+            const done = s.tasks?.length > 0 && s.tasks.every(t => t.status === 'completed');
+            return (
+              <div key={i} className="flex items-center gap-2">
+                {done ? (
+                  <CheckCircle className="w-4 h-4 text-emerald-500 flex-shrink-0" />
+                ) : (
+                  <div className="w-4 h-4 rounded-full border-2 border-slate-300 dark:border-slate-600 flex-shrink-0" />
+                )}
+                <span className={`text-xs ${
+                  done
+                    ? 'text-slate-400 line-through'
+                    : 'text-slate-700 dark:text-slate-300'
+                }`}>
+                  {s.title}
+                </span>
+              </div>
+            );
+          })}
+          {goal.scenarios.length > 3 && (
+            <button
+              onClick={() => setExpanded(e => !e)}
+              className="flex items-center gap-1 text-xs text-primary mt-1 hover:text-primary/80 transition-colors"
+            >
+              {expanded ? (
+                <><ChevronUp className="w-3 h-3" /> 收起</>
+              ) : (
+                <><ChevronDown className="w-3 h-3" /> 查看全部 {goal.scenarios.length} 个场景</>
+              )}
+            </button>
+          )}
+        </div>
+      )}
+
+      {/* CTA Button */}
+      {isActive && (
+        <button
+          onClick={onPractice}
+          className="w-full py-2.5 rounded-xl text-sm font-semibold text-white transition-opacity hover:opacity-90 active:opacity-80"
+          style={{ background: 'linear-gradient(135deg, #637FF1, #a47af6)' }}
+        >
+          继续练习 →
+        </button>
+      )}
+    </motion.div>
+  );
+}
 
 function Goals() {
   const navigate = useNavigate();
   const { user } = useAuth();
-  const [activeGoal, setActiveGoal] = useState(null);
+  const [allGoals, setAllGoals] = useState([]);
+  const [streak, setStreak] = useState(0);
   const [loading, setLoading] = useState(true);
-  const [selectedVoice, setSelectedVoice] = useState('Serena');
-  const [saving, setSaving] = useState(false);
-  const [showCelebration, setShowCelebration] = useState(false);
+  const [selectedVoice, setSelectedVoice] = useState(() => {
+    const saved = localStorage.getItem('ai_voice');
+    return VOICE_OPTIONS.some(v => v.id === saved) ? saved : 'Tina';
+  });
 
   useEffect(() => {
-    const fetchGoal = async () => {
+    const load = async () => {
       try {
-        const res = await userAPI.getActiveGoal();
-        if (res && res.goal) {
-          setActiveGoal(res.goal);
-          if (res.goal.current_proficiency >= 100) {
-            const celebratedKey = `goal_celebrated_${res.goal.id}`;
-            if (!localStorage.getItem(celebratedKey)) {
-              setShowCelebration(true);
-              localStorage.setItem(celebratedKey, 'true');
-            }
-          }
-        }
-        const savedVoice = localStorage.getItem('ai_voice') || 'Serena';
-        setSelectedVoice(savedVoice);
-      } catch (error) {
-        console.error('Failed to fetch goal:', error);
+        const [goalsRes, checkinRes] = await Promise.all([
+          userAPI.getUserGoals().catch(() => null),
+          userAPI.getCheckinStats().catch(() => null),
+        ]);
+        if (goalsRes?.goals) setAllGoals(goalsRes.goals);
+        else if (goalsRes?.goal) setAllGoals([goalsRes.goal]);
+        if (checkinRes?.streak) setStreak(checkinRes.streak);
+      } catch (e) {
+        console.error('Goals load error:', e);
       } finally {
         setLoading(false);
       }
     };
-    fetchGoal();
+    load();
   }, []);
 
-  const handleVoiceChange = (voiceId) => {
-    setSelectedVoice(voiceId);
-    localStorage.setItem('ai_voice', voiceId);
+  const handleVoiceChange = (id) => {
+    setSelectedVoice(id);
+    localStorage.setItem('ai_voice', id);
   };
 
-  const handleNewGoal = () => {
-    navigate('/goal-setting');
-  };
-
-  const calculateProgress = () => {
-    if (!activeGoal?.scenarios) return 0;
-    const completed = activeGoal.scenarios.filter(s => 
-      s.tasks?.every(t => typeof t === 'object' ? t.status === 'completed' : false)
+  const activeGoals = allGoals.filter(g => g.status !== 'completed');
+  const completedGoals = allGoals.filter(g => g.status === 'completed');
+  const totalCompletedScenes = allGoals.reduce((acc, g) => {
+    return acc + (g.scenarios || []).filter(s =>
+      s.tasks?.length > 0 && s.tasks.every(t => t.status === 'completed')
     ).length;
-    return Math.round((completed / activeGoal.scenarios.length) * 100);
-  };
+  }, 0);
 
   if (loading) {
     return (
       <div className="flex h-screen items-center justify-center bg-background-light dark:bg-background-dark">
-        <div className="animate-spin w-8 h-8 border-4 border-primary border-t-transparent rounded-full"></div>
+        <div className="w-10 h-10 rounded-full border-2 border-primary/30 border-t-primary animate-spin" />
       </div>
     );
   }
 
   return (
-    <div className="flex flex-col min-h-screen bg-background-light dark:bg-background-dark">
-      {showCelebration && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
-          <div className="bg-white dark:bg-slate-800 rounded-2xl p-6 max-w-sm w-full text-center animate-bounce-in">
-            <div className="text-6xl mb-4">🎉</div>
-            <h2 className="text-2xl font-bold text-slate-900 dark:text-white mb-2">恭喜你！</h2>
-            <p className="text-lg text-indigo-600 font-bold mb-2">目标达成！</p>
-            <p className="text-slate-600 dark:text-slate-400 mb-6">
-              你已完成所有场景练习，口语水平大幅提升！继续保持，挑战新的目标吧！
-            </p>
-            <div className="flex gap-3">
+    <div className="relative flex flex-col min-h-screen w-full bg-background-light dark:bg-background-dark">
+      {/* Header */}
+      <div className="flex items-center bg-white dark:bg-slate-800 px-4 py-3 justify-between sticky top-0 z-10 border-b border-slate-100 dark:border-slate-700 shadow-sm">
+        <h1 className="text-lg font-bold text-slate-900 dark:text-white">学习目标</h1>
+        <button
+          onClick={() => navigate('/goal-setting')}
+          className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-sm font-medium text-primary border border-primary/30 hover:bg-primary/5 transition-colors"
+        >
+          <Plus className="w-4 h-4" />
+          新目标
+        </button>
+      </div>
+
+      <main className="flex-grow pb-28">
+        {/* Summary Stats */}
+        <motion.div
+          initial={{ opacity: 0, y: 12 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="flex gap-3 px-4 pt-4 mb-4"
+        >
+          {[
+            { label: '进行中', value: activeGoals.length, icon: <Target className="w-4 h-4" />, color: 'text-primary', bg: 'bg-primary/10' },
+            { label: '已完成场景', value: totalCompletedScenes, icon: <CheckCircle className="w-4 h-4" />, color: 'text-emerald-500', bg: 'bg-emerald-50 dark:bg-emerald-900/20' },
+            { label: '连续天数', value: streak, icon: <Flame className="w-4 h-4" />, color: 'text-amber-500', bg: 'bg-amber-50 dark:bg-amber-900/20' },
+          ].map((s, i) => (
+            <motion.div
+              key={s.label}
+              initial={{ opacity: 0, y: 12 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ delay: i * 0.08 }}
+              className="flex flex-1 flex-col items-center gap-1.5 rounded-2xl p-3 bg-white dark:bg-slate-800 shadow-brand border border-slate-100 dark:border-slate-700"
+            >
+              <div className={`p-1.5 rounded-lg ${s.bg} ${s.color}`}>{s.icon}</div>
+              <p className={`text-xl font-bold ${s.color}`}>{s.value}</p>
+              <p className="text-xs text-slate-500 dark:text-slate-400 text-center leading-tight">{s.label}</p>
+            </motion.div>
+          ))}
+        </motion.div>
+
+        <div className="px-4">
+          {/* Active Goals */}
+          {activeGoals.length > 0 ? (
+            <>
+              <p className="text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wide mb-3">进行中</p>
+              {activeGoals.map((g, i) => (
+                <GoalCard
+                  key={g.id}
+                  goal={g}
+                  isActive
+                  index={i}
+                  onPractice={() => navigate('/discovery')}
+                />
+              ))}
+            </>
+          ) : (
+            <motion.div
+              initial={{ opacity: 0, scale: 0.97 }}
+              animate={{ opacity: 1, scale: 1 }}
+              className="bg-white dark:bg-slate-800 rounded-2xl shadow-brand border border-slate-100 dark:border-slate-700 p-8 text-center mb-4"
+            >
+              <div className="text-4xl mb-3">🎯</div>
+              <p className="text-slate-500 dark:text-slate-400 text-sm mb-4">还没有进行中的目标</p>
               <button
-                onClick={() => setShowCelebration(false)}
-                className="flex-1 py-3 rounded-xl border border-slate-300 dark:border-slate-600 text-slate-700 dark:text-slate-300 font-medium"
-              >
-                知道了
-              </button>
-              <button
-                onClick={() => { setShowCelebration(false); navigate('/goal-setting'); }}
-                className="flex-1 py-3 rounded-xl bg-gradient-to-r from-indigo-500 to-purple-500 text-white font-medium"
+                onClick={() => navigate('/goal-setting')}
+                className="px-6 py-2.5 rounded-xl text-sm font-semibold text-white transition-opacity hover:opacity-90"
+                style={{ background: 'linear-gradient(135deg, #637FF1, #a47af6)' }}
               >
                 设定新目标
               </button>
+            </motion.div>
+          )}
+
+          {/* AI Voice Selection */}
+          <p className="text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wide mb-3 mt-2">AI 导师音色</p>
+          <motion.div
+            initial={{ opacity: 0, y: 8 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.2 }}
+            className="bg-white dark:bg-slate-800 rounded-2xl shadow-brand border border-slate-100 dark:border-slate-700 p-4 mb-4"
+          >
+            <div className="grid grid-cols-2 gap-2">
+              {VOICE_OPTIONS.map(v => (
+                <button
+                  key={v.id}
+                  onClick={() => handleVoiceChange(v.id)}
+                  className={`flex items-center gap-2.5 p-3 rounded-xl border transition-all text-left ${
+                    selectedVoice === v.id
+                      ? 'border-primary bg-primary/5 dark:bg-primary/10'
+                      : 'border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-700/50 hover:border-primary/30'
+                  }`}
+                >
+                  <span className="text-lg">{v.emoji}</span>
+                  <div>
+                    <p className={`text-sm font-semibold ${selectedVoice === v.id ? 'text-primary' : 'text-slate-800 dark:text-slate-200'}`}>
+                      {v.name}
+                    </p>
+                    <p className="text-xs text-slate-400 dark:text-slate-500">{v.description}</p>
+                  </div>
+                </button>
+              ))}
             </div>
-          </div>
+          </motion.div>
+
+          {/* Completed Goals */}
+          {completedGoals.length > 0 && (
+            <>
+              <p className="text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wide mb-3 mt-2">已完成</p>
+              {completedGoals.map((g, i) => (
+                <GoalCard
+                  key={g.id}
+                  goal={g}
+                  isActive={false}
+                  index={i}
+                  onPractice={() => {}}
+                />
+              ))}
+            </>
+          )}
         </div>
-      )}
-
-      <header className="sticky top-0 z-10 bg-background-light/95 dark:bg-background-dark/95 backdrop-blur-sm border-b border-slate-200 dark:border-slate-800">
-        <div className="px-4 py-4 flex items-center justify-between">
-          <h1 className="text-xl font-bold text-slate-900 dark:text-white">学习目标</h1>
-        </div>
-      </header>
-
-      <main className="flex-1 overflow-auto pb-24">
-        {activeGoal ? (
-          <div className="p-4 space-y-6">
-            <div className="bg-white dark:bg-slate-800 rounded-xl p-4 border border-slate-200 dark:border-slate-700">
-              <div className="flex items-center justify-between mb-3">
-                <span className="text-xs font-bold text-indigo-600 bg-indigo-50 dark:bg-indigo-900/30 px-2 py-1 rounded">当前目标</span>
-                <span className="text-xs text-slate-500">{activeGoal.target_language}</span>
-              </div>
-              <h2 className="text-lg font-bold text-slate-900 dark:text-white mb-2">
-                {activeGoal.description || `达到${activeGoal.target_level}水平`}
-              </h2>
-              <div className="flex items-center gap-2 mb-3">
-                <div className="flex-1 h-2 bg-slate-100 dark:bg-slate-700 rounded-full overflow-hidden">
-                  <div 
-                    className="h-full bg-gradient-to-r from-indigo-500 to-purple-500 transition-all duration-500"
-                    style={{ width: `${activeGoal.current_proficiency || 0}%` }}
-                  ></div>
-                </div>
-                <span className="text-sm font-bold text-indigo-600">{activeGoal.current_proficiency || 0}%</span>
-              </div>
-              <div className="flex items-center gap-4 text-sm text-slate-500">
-                <span>📅 {activeGoal.completion_time_days || 30}天计划</span>
-                <span>🎯 {activeGoal.scenarios?.length || 0}个场景</span>
-              </div>
-            </div>
-
-            <div className="bg-white dark:bg-slate-800 rounded-xl p-4 border border-slate-200 dark:border-slate-700">
-              <h3 className="text-base font-bold text-slate-900 dark:text-white mb-4">AI导师音色</h3>
-              <div className="grid grid-cols-2 gap-3">
-                {VOICE_OPTIONS.map((voice) => (
-                  <button
-                    key={voice.id}
-                    onClick={() => handleVoiceChange(voice.id)}
-                    className={`p-3 rounded-xl border-2 transition-all ${
-                      selectedVoice === voice.id
-                        ? 'border-indigo-500 bg-indigo-50 dark:bg-indigo-900/30'
-                        : 'border-slate-200 dark:border-slate-700 hover:border-slate-300'
-                    }`}
-                  >
-                    <div className="flex items-center gap-2">
-                      <span className="material-symbols-outlined text-indigo-500">
-                        {selectedVoice === voice.id ? 'check_circle' : 'record_voice_over'}
-                      </span>
-                      <div className="text-left">
-                        <p className="font-medium text-slate-900 dark:text-white text-sm">{voice.name}</p>
-                        <p className="text-xs text-slate-500">{voice.description}</p>
-                      </div>
-                    </div>
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            <button
-              onClick={handleNewGoal}
-              className="w-full py-3 rounded-xl border-2 border-dashed border-slate-300 dark:border-slate-600 text-slate-500 hover:border-indigo-500 hover:text-indigo-500 transition-all flex items-center justify-center gap-2"
-            >
-              <span className="material-symbols-outlined">add</span>
-              设定新目标
-            </button>
-          </div>
-        ) : (
-          <div className="flex flex-col items-center justify-center h-full p-8 text-center">
-            <span className="material-symbols-outlined text-6xl text-slate-300 mb-4">target</span>
-            <h2 className="text-xl font-bold text-slate-900 dark:text-white mb-2">还没有学习目标</h2>
-            <p className="text-slate-500 mb-6">设定一个目标开始你的口语练习之旅吧！</p>
-            <button
-              onClick={handleNewGoal}
-              className="px-6 py-3 bg-primary text-white rounded-xl font-medium hover:opacity-90 transition-all"
-            >
-              设定目标
-            </button>
-          </div>
-        )}
       </main>
 
       <BottomNav currentPage="goals" />

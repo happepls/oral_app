@@ -80,26 +80,29 @@ class TestIsRepetitiveInput:
         assert workflow._is_repetitive_input("ab", []) is False
 
     def test_self_repetition(self, workflow):
-        """Substring ≥3 chars appearing 2+ times → repetitive"""
-        assert workflow._is_repetitive_input("hello hello", []) is True
-        assert workflow._is_repetitive_input("abcabc", []) is True
+        """Substring ≥5 chars appearing 3+ times → repetitive (MIN_SEGMENT=5, MIN_COUNT=3)"""
+        assert workflow._is_repetitive_input("hello hello hello", []) is True
+        assert workflow._is_repetitive_input("abcdeabcdeabcde", []) is True
+
+    def test_self_repetition_below_threshold(self, workflow):
+        """2 repeats or short segments should NOT trigger (thresholds raised)"""
+        assert workflow._is_repetitive_input("hello hello", []) is False  # only 2 repeats, need 3
+        assert workflow._is_repetitive_input("abcabc", []) is False  # segment=3 < MIN_SEGMENT=5
 
     def test_no_self_repetition(self, workflow):
         assert workflow._is_repetitive_input("I like coffee and tea", []) is False
 
     def test_keyword_parroting_short(self, workflow):
-        """≥80% keyword coverage AND len≤20 → repetitive"""
+        """≥90% keyword coverage AND len≤15 → repetitive"""
         assert workflow._is_repetitive_input("coffee latte", ["coffee", "latte"]) is True
 
     def test_keyword_parroting_long_input(self, workflow):
-        """Long input (>20 meaningful chars) should NOT be flagged even with high keyword coverage"""
-        # Use text without any 3-char substring repeating (avoids self-repetition trigger)
+        """Long input (>15 meaningful chars) should NOT be flagged even with high keyword coverage"""
         long_input = "wow such big cup java"
         assert workflow._is_repetitive_input(long_input, ["cup", "java"]) is False
 
     def test_keyword_parroting_low_coverage(self, workflow):
-        """<80% keyword coverage → not repetitive"""
-        # "xyz" has no 3-char repeat; keyword "cup" not present → low coverage
+        """<90% keyword coverage → not repetitive"""
         assert workflow._is_repetitive_input("xyz big cup now", ["cup"]) is False
 
     def test_all_punctuation_with_keywords(self, workflow):
@@ -359,10 +362,10 @@ class TestAntiCheat:
             "target_language": "English"
         }
         turns = [
-            {"role": "user", "content": "hello everyone in the wonderful world of opportunities and experiences"},
+            {"role": "user", "content": "hello everyone today"},
             {"role": "assistant", "content": "Well done!"}
         ]
-        with patch.object(workflow, '_get_task_specific_keywords', new_callable=AsyncMock, return_value=["hello", "specific_word_xyz", "rare_word_abc"]):
+        with patch.object(workflow, '_get_task_specific_keywords', new_callable=AsyncMock, return_value=["hello", "zzzyyyxxx111", "qqqwwweee222"]):
             result = await workflow._score_task_relevance(turns, task, "English")
         # 1 hit → input_score=4, penalty=1.0, quality=1.0 → final=4 → delta=0
         delta, _ = workflow._calculate_proficiency_delta_with_feedback({"task_relevance": result["score"]})
@@ -642,3 +645,100 @@ class TestFuzzyMatch:
     def test_fuzzy_overlap(self, workflow):
         """Character overlap ≥ threshold → match"""
         assert workflow._fuzzy_match("helo", "say hello") is True
+
+
+# ============================================================
+# _extract_ai_example_phrases
+# ============================================================
+
+class TestExtractAiExamplePhrases:
+    def test_empty_history_returns_empty(self, workflow):
+        assert workflow._extract_ai_example_phrases(None) == []
+        assert workflow._extract_ai_example_phrases([]) == []
+
+    def test_no_ai_message_returns_empty(self, workflow):
+        history = [{"role": "user", "content": "Hello"}]
+        assert workflow._extract_ai_example_phrases(history) == []
+
+    def test_japanese_brackets(self, workflow):
+        history = [{"role": "assistant", "content": "Try saying 「いらっしゃいませ」 to greet customers."}]
+        result = workflow._extract_ai_example_phrases(history, "Japanese")
+        assert "いらっしゃいませ" in result
+
+    def test_curly_double_quotes(self, workflow):
+        history = [{"role": "ai", "content": 'You can say \u201cHow can I help you?\u201d'}]
+        result = workflow._extract_ai_example_phrases(history, "English")
+        assert "How can I help you?" in result
+
+    def test_straight_double_quotes(self, workflow):
+        history = [{"role": "assistant", "content": 'Say "Nice to meet you" as a greeting.'}]
+        result = workflow._extract_ai_example_phrases(history, "English")
+        assert "Nice to meet you" in result
+
+    def test_uses_last_ai_message(self, workflow):
+        history = [
+            {"role": "assistant", "content": 'First: "old phrase"'},
+            {"role": "user", "content": "ok"},
+            {"role": "assistant", "content": 'Now say "new phrase" instead.'},
+        ]
+        result = workflow._extract_ai_example_phrases(history, "English")
+        assert "new phrase" in result
+        assert "old phrase" not in result
+
+    def test_deduplication(self, workflow):
+        history = [{"role": "assistant", "content": 'Say "hello" and "hello" again.'}]
+        result = workflow._extract_ai_example_phrases(history, "English")
+        assert result.count("hello") == 1
+
+    def test_max_two_phrases(self, workflow):
+        history = [{"role": "assistant", "content": 'Say "one", "two", "three" phrases.'}]
+        result = workflow._extract_ai_example_phrases(history, "English")
+        assert len(result) <= 2
+
+    def test_transcript_fallback(self, workflow):
+        history = [{"role": "assistant", "transcript": 'Try "bonjour" today.'}]
+        result = workflow._extract_ai_example_phrases(history, "French")
+        assert "bonjour" in result
+
+
+# ============================================================
+# _generate_improvement_tips
+# ============================================================
+
+class TestGenerateImprovementTips:
+    def test_high_score_returns_empty(self, workflow):
+        scores = {"task_relevance": 8}
+        result = workflow._generate_improvement_tips(scores)
+        assert result == []
+
+    def test_high_score_boundary(self, workflow):
+        scores = {"task_relevance": 10}
+        assert workflow._generate_improvement_tips(scores) == []
+
+    def test_low_score_with_ai_phrase(self, workflow):
+        scores = {"task_relevance": 4}
+        history = [{"role": "assistant", "content": 'Try saying "こんにちは" to greet.'}]
+        current_task = {"target_language": "Japanese"}
+        result = workflow._generate_improvement_tips(scores, current_task, history)
+        assert len(result) == 1
+        assert "こんにちは" in result[0]
+        assert result[0].startswith("可以试着说：")
+
+    def test_low_score_no_phrase_fallback(self, workflow):
+        scores = {"task_relevance": 3}
+        history = [{"role": "assistant", "content": "Keep trying!"}]
+        current_task = {"target_language": "English"}
+        result = workflow._generate_improvement_tips(scores, current_task, history)
+        assert len(result) == 1
+        assert "English" in result[0]
+
+    def test_no_history_fallback(self, workflow):
+        scores = {"task_relevance": 5}
+        result = workflow._generate_improvement_tips(scores, {"target_language": "French"}, None)
+        assert len(result) == 1
+        assert "French" in result[0]
+
+    def test_boundary_score_7_triggers_tip(self, workflow):
+        scores = {"task_relevance": 7}
+        result = workflow._generate_improvement_tips(scores, {"target_language": "English"}, [])
+        assert len(result) == 1

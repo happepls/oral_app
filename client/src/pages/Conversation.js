@@ -21,11 +21,68 @@ const MAGIC_TIPS = [
   '说出来的速度不需要追求完美，意思准确是第一步。',
 ];
 
+function ScorePopup({ scores, delta, onClose }) {
+  const overall = Math.round(
+    ((scores.fluency || 5) + (scores.grammar || 5) + (scores.vocabulary || 5) + (scores.task_relevance || 5)) / 4 * 10
+  );
+  const circumference = 2 * Math.PI * 45;
+  const offset = circumference * (1 - Math.min(overall, 100) / 100);
+  const dims = [
+    { label: '流利度', val: Math.round((scores.fluency || 5) * 10) },
+    { label: '语法',   val: Math.round((scores.grammar || 5) * 10) },
+    { label: '词汇',   val: Math.round((scores.vocabulary || 5) * 10) },
+    { label: '话题',   val: Math.round((scores.task_relevance || 5) * 10) },
+  ];
+  return (
+    <div style={{ position:'fixed', inset:0, background:'rgba(0,0,0,0.75)',
+                  display:'flex', alignItems:'center', justifyContent:'center', zIndex:200 }}
+         onClick={onClose}>
+      <div style={{ background:'#1E293B', borderRadius:29, padding:32, maxWidth:340,
+                    width:'90%', textAlign:'center' }}
+           onClick={e => e.stopPropagation()}>
+        <h5 style={{ color:'#F8FAFC', marginBottom:24 }}>本轮评估 +{delta} 熟练度 🎉</h5>
+        <div style={{ width:120, height:120, margin:'0 auto 24px', position:'relative' }}>
+          <svg viewBox="0 0 100 100" style={{ transform:'rotate(-90deg)', width:'100%', height:'100%' }}>
+            <circle cx="50" cy="50" r="45" fill="none" stroke="#334155" strokeWidth="8"/>
+            <circle cx="50" cy="50" r="45" fill="none" stroke="#10B981" strokeWidth="8"
+                    strokeLinecap="round"
+                    strokeDasharray={circumference}
+                    strokeDashoffset={offset}
+                    style={{ transition:'stroke-dashoffset 1s ease' }}/>
+          </svg>
+          <span style={{ position:'absolute', top:'50%', left:'50%',
+                         transform:'translate(-50%,-50%)',
+                         fontSize:32, fontWeight:700, color:'#10B981' }}>{overall}</span>
+        </div>
+        <div style={{ textAlign:'left', marginBottom:24 }}>
+          {dims.map(({ label, val }) => (
+            <div key={label} style={{ display:'flex', alignItems:'center', gap:8, marginBottom:10 }}>
+              <span style={{ width:40, fontSize:12, color:'#94A3B8', flexShrink:0 }}>{label}</span>
+              <div style={{ flex:1, height:6, background:'#334155', borderRadius:3, overflow:'hidden' }}>
+                <div style={{ height:'100%', width:`${val}%`, background:'#637FF1',
+                              borderRadius:3, transition:'width 1s ease' }}/>
+              </div>
+              <span style={{ width:28, fontSize:12, color:'#F8FAFC', textAlign:'right', flexShrink:0 }}>{val}</span>
+            </div>
+          ))}
+        </div>
+        <button onClick={onClose}
+                style={{ width:'100%', padding:'12px', borderRadius:20,
+                         background:'#637FF1', color:'#fff', border:'none',
+                         fontWeight:600, cursor:'pointer', fontSize:14 }}>
+          继续练习
+        </button>
+      </div>
+    </div>
+  );
+}
+
 function Conversation() {
   const navigate = useNavigate();
   const location = useLocation();
   const { user, token, loading } = useAuth(); // Added loading state
-  
+  const scenarioEmoji = location.state?.emoji;
+
   // UI States
   const [messages, setMessages] = useState([]);
   const [isConnected, setIsConnected] = useState(false);
@@ -131,7 +188,10 @@ function Conversation() {
     return 0;
   });
   const [currentTaskScore, setCurrentTaskScore] = useState(0);
-  const [engagementLevel, setEngagementLevel] = useState('中'); // 高/中/低
+  const [engagementLevel, setEngagementLevel] = useState('中');
+  const [showScorePopup, setShowScorePopup] = useState(false);
+  const [batchScores, setBatchScores] = useState(null);
+  const [latestDelta, setLatestDelta] = useState(0); // 高/中/低
   const previousProgressRef = useRef(0); // Track previous progress to prevent unreasonable jumps
   
   // Initialize showTasks based on whether we have scenario info
@@ -1106,9 +1166,16 @@ function Conversation() {
            const message = profPayload.message || '';
            const improvementTips = profPayload.improvement_tips || [];
 
+           // 批量评估弹窗：scores 含 keyword_coverage 时触发
+           if (profPayload.scores?.keyword_coverage !== undefined && delta > 0) {
+               setBatchScores(profPayload.scores);
+               setLatestDelta(delta);
+               setShowScorePopup(true);
+           }
+
            // Show improvement tips only outside magic_repetition phase
            if (improvementTips.length > 0 && currentPhaseRef.current !== 'magic_repetition') {
-               const tipsText = '💡 建议：' + improvementTips.join('；');
+               const tipsText = '💡 ' + improvementTips.join('；');
                setMessages(prev => [...prev, {
                    type: 'system',
                    content: tipsText,
@@ -1475,7 +1542,8 @@ function Conversation() {
     }
     
     // Cookie-based auth: token is now in httpOnly cookie, no need to pass in URL
-    wsUrl = `${protocol}//${wsHost}/api/ws/?sessionId=${effectiveSessionId}${scenario ? `&scenario=${scenario}` : ''}${topic ? `&topic=${topic}` : ''}&voice=${voice}`;
+    const mode = searchParams.get('mode');
+    wsUrl = `${protocol}//${wsHost}/api/ws/?sessionId=${encodeURIComponent(effectiveSessionId)}${scenario ? `&scenario=${encodeURIComponent(scenario)}` : ''}${topic ? `&topic=${encodeURIComponent(topic)}` : ''}&voice=${encodeURIComponent(voice)}${mode ? `&mode=${encodeURIComponent(mode)}` : ''}`;
 
     // Create optimized WebSocket connection
     socketRef.current = new OptimizedWebSocket(wsUrl, {
@@ -1767,11 +1835,11 @@ function Conversation() {
       if (!effectiveSessionId && scenario) {
           const storedSessionId = localStorage.getItem(_lsScenarioKey('session_', scenario));
           if (storedSessionId) {
-              // Verify that the stored session ID is still valid by checking history
+              effectiveSessionId = storedSessionId;
+              // Load history messages for this session
               try {
                   const historyRes = await conversationAPI.getHistory(storedSessionId, { signal: abortController.signal });
-                  if (historyRes && historyRes.messages && historyRes.messages.length > 0) {
-                      effectiveSessionId = storedSessionId;
+                  if (historyRes && historyRes.messages) {
                       // Load history messages into state
                       // Set audioPlayed: true to prevent auto-play on page refresh
                       let lastMagicSentence = '';
@@ -1807,9 +1875,7 @@ function Conversation() {
                       console.log('Loaded history messages:', historyMessages.length);
                   }
               } catch (err) {
-                  console.log('Stored session not valid, will create new one:', err);
-                  // Clear invalid session from storage
-                  localStorage.removeItem(_lsScenarioKey('session_', scenario));
+                  console.log('Failed to load history:', err);
               }
           }
       }
@@ -2137,114 +2203,64 @@ function Conversation() {
   return (
     <div className="flex flex-col h-screen max-w-lg mx-auto bg-background-light dark:bg-background-dark relative">
 
-      {/* ── Scene Panel: 场景图全宽置顶，控制按钮叠加 ── */}
-      <div className="relative w-full shrink-0 overflow-hidden bg-slate-900" style={{height:'220px'}}>
+      {/* ── Header: 场景图（有时）+ 简洁 nav bar ── */}
+      <div className="w-full shrink-0">
 
-        {/* 背景：情景剧场阶段显示场景图，魔法重复阶段显示 AiAvatar，其他阶段显示深色渐变 */}
-        {(currentPhase === 'scene_theater' && sceneImageUrl) ? (
-          <img
-            src={sceneImageUrl}
-            alt="scene"
-            className="absolute inset-0 w-full h-full object-cover transition-opacity duration-500"
-          />
-        ) : currentPhase === 'magic_repetition' ? (
-          /* AiAvatar 填满 magic_repetition 场景面板 */
-          <div className="absolute inset-0 pb-10">
-            <AiAvatar status={avatarStatus} name="AI 导师" />
-          </div>
-        ) : (
-          <div className="absolute inset-0 bg-gradient-to-br from-slate-800 via-slate-900 to-indigo-950" />
-        )}
-
-        {/* 全局渐变叠加层 */}
-        <div className="absolute inset-0 bg-gradient-to-b from-black/50 via-transparent to-black/80 pointer-events-none" />
-
-        {/* 情景剧场骨架屏（有图位置但图片未加载） */}
-        {currentPhase === 'scene_theater' && !sceneImageUrl && (
-          <div className="absolute inset-0 flex items-center justify-center gap-3 px-8">
-            <div className="w-14 h-14 rounded-lg bg-slate-700 animate-pulse shrink-0" />
-            <div className="flex flex-col gap-2 flex-1">
-              <div className="h-3 bg-slate-700 rounded w-3/4 animate-pulse" />
-              <div className="h-3 bg-slate-700 rounded w-1/2 animate-pulse" />
-            </div>
+        {/* 场景图：仅当后端推送了真实图片时显示 */}
+        {sceneImageUrl && (
+          <div className="w-full overflow-hidden" style={{ height: '180px' }}>
+            <img
+              src={sceneImageUrl}
+              alt="scene"
+              className="w-full h-full object-cover"
+            />
           </div>
         )}
 
-        {/* ── 顶部控制层：× 按钮 + 连接状态 ── */}
-        <div className="absolute top-0 left-0 right-0 flex items-center justify-between px-4 pt-4 z-10">
-          <button
-            onClick={() => navigate('/discovery')}
-            className="w-8 h-8 rounded-full bg-black/40 backdrop-blur-sm flex items-center justify-center text-white hover:bg-black/60 transition">
-            <span className="material-symbols-outlined text-sm">close</span>
-          </button>
-          <div className="flex items-center gap-2">
-            <span className={`text-xs px-2 py-0.5 rounded-full backdrop-blur-sm flex items-center gap-1 ${
-              isConnected ? 'bg-emerald-500/80 text-white' : 'bg-amber-500/80 text-white'
+        {/* Nav bar：白色底，场景名 + 进度点 + AI状态 */}
+        <div className="flex items-center justify-between px-4 bg-white border-b border-gray-100 shadow-sm" style={{ height: '56px' }}>
+
+          {/* 左：× 关闭 + 场景名 */}
+          <div className="flex items-center gap-2 min-w-0 flex-1">
+            <button
+              onClick={() => navigate('/discovery')}
+              className="w-7 h-7 rounded-full bg-gray-100 flex items-center justify-center text-gray-500 hover:bg-gray-200 transition shrink-0">
+              <span className="material-symbols-outlined" style={{ fontSize: '16px' }}>close</span>
+            </button>
+            <p className="text-gray-900 font-semibold text-sm leading-tight truncate">
+              {currentScenarioTitle || 'AI 口语导师'}
+            </p>
+          </div>
+
+          {/* 右：子任务进度点 + AI 状态 */}
+          <div className="flex items-center gap-3 shrink-0">
+
+            {/* 任务完成进度点（recall模式显示复述进度，普通模式显示场景进度） */}
+            {isRecallMode ? (
+              <div className="flex gap-1">
+                {[0,1,2].map(i => (
+                  <div key={i} className={`w-2 h-2 rounded-full transition-colors duration-300 ${
+                    i <= magicPassedTasks.size ? 'bg-[#637FF1]' : 'bg-gray-200'
+                  }`} />
+                ))}
+              </div>
+            ) : (
+              <div className="flex gap-1">
+                {[0,1,2].map(i => (
+                  <div key={i} className={`w-2 h-2 rounded-full transition-colors duration-300 ${
+                    i <= theaterCompletedTasks.size ? 'bg-[#637FF1]' : 'bg-gray-200'
+                  }`} />
+                ))}
+              </div>
+            )}
+
+            {/* AI 导师状态 */}
+            <span className={`text-xs px-2 py-0.5 rounded-full flex items-center gap-1 ${
+              isConnected ? 'bg-emerald-50 text-emerald-600' : 'bg-amber-50 text-amber-600'
             }`}>
-              <span className={`w-1 h-1 rounded-full ${isConnected ? 'bg-white' : 'bg-white/70'}`} />
+              <span className={`w-1.5 h-1.5 rounded-full ${isConnected ? 'bg-emerald-500' : 'bg-amber-400'}`} />
               {isConnected ? '在线' : '连接中'}
             </span>
-          </div>
-        </div>
-
-        {/* ── 底部叠加层：话题引导词 + 场景标题 + 阶段指示 ── */}
-        <div className="absolute bottom-0 left-0 right-0 px-4 pb-3 z-10">
-
-          <div className="flex items-end justify-between">
-            {/* 场景标题 + 阶段名 */}
-            <div>
-              <p className="text-white font-semibold text-sm leading-tight" style={{textShadow:'0 1px 6px rgba(0,0,0,0.8)'}}>
-                {currentScenarioTitle || 'AI 口语导师'}
-              </p>
-              <p className="text-white/50 text-xs mt-0.5">
-                {currentPhase === 'magic_repetition' ? '魔法重复阶段' : currentPhase === 'scene_theater' ? '情景剧场阶段' : '复盘点评'}
-              </p>
-            </div>
-
-            {/* 阶段进度点（recall 模式显示两阶段，普通场景只显示剧场） */}
-            <div className="flex items-center gap-3">
-              {[
-                ...(isRecallMode ? [{ id: 'magic_repetition', label: '复述', set: magicPassedTasks }] : []),
-                { id: 'scene_theater', label: '剧场', set: theaterCompletedTasks },
-              ].map((ph) => (
-                <button
-                  key={ph.id}
-                  onClick={() => {
-                    if (ph.id === 'magic_repetition' && currentPhase !== 'magic_repetition') {
-                      setCurrentPhase('magic_repetition');
-                      setMagicPassedTasks(new Set());
-                      setCurrentMagicSentence('');
-                      setMagicCardState('waiting');
-                      setMagicCardCovered(false);
-                      try {
-                        const sc = new URLSearchParams(window.location.search).get('scenario') || '';
-                        if (sc) localStorage.removeItem(_lsScenarioKey('magic_passed_', sc));
-                        if (sc) localStorage.removeItem(_lsScenarioKey('magic_sentence_', sc));
-                      } catch {}
-                      if (socketRef.current?.readyState === WebSocket.OPEN) {
-                        socketRef.current.send(JSON.stringify({ type: 'reset_magic_phase' }));
-                      }
-                    }
-                  }}
-                  className={`flex flex-col items-center gap-1 transition-opacity ${
-                    ph.id === 'magic_repetition' && currentPhase !== 'magic_repetition'
-                      ? 'cursor-pointer opacity-70 hover:opacity-100'
-                      : 'cursor-default'
-                  }`}
-                >
-                  <span className={`text-[10px] tracking-wide ${currentPhase === ph.id ? 'text-indigo-300' : 'text-white/30'}`}>
-                    {ph.label}
-                  </span>
-                  <div className="flex gap-0.5">
-                    {[0,1,2].map(i => (
-                      <div key={i} className={`w-1.5 h-1.5 rounded-full transition-colors duration-300 ${
-                        ph.set.has(i) ? 'bg-emerald-400' : 'bg-white/20'
-                      }`} />
-                    ))}
-                  </div>
-                </button>
-              ))}
-            </div>
           </div>
         </div>
       </div>
@@ -2259,7 +2275,7 @@ function Conversation() {
       {/* Mission Tasks Dropdown Bar — only visible in scene_theater phase */}
       {currentPhase === 'scene_theater' && (tasks.length > 0 || tasksLoading) && (
         <div
-          className={`z-10 bg-green-500 border-b border-green-400 transition-all duration-700 shrink-0 relative ${!showTasks && taskBarFaded ? 'opacity-30' : 'opacity-100'}`}
+          className={`z-10 bg-[#637FF1] border-b border-indigo-400/30 transition-all duration-700 shrink-0 relative ${!showTasks && taskBarFaded ? 'opacity-30' : 'opacity-100'}`}
           onMouseEnter={() => {
             if (!showTasks && taskBarFaded) {
               clearTimeout(taskBarFadeTimerRef.current);
@@ -2282,7 +2298,7 @@ function Conversation() {
                 return next;
               });
             }}
-            className="w-full bg-green-500 hover:bg-green-600 active:bg-green-700 transition-colors"
+            className="w-full bg-[#637FF1] hover:bg-[#5570E0] active:bg-[#4860CF] transition-colors"
           >
             <div className="flex items-center justify-between px-5 py-3">
               <div className="flex items-center gap-3">
@@ -2295,7 +2311,7 @@ function Conversation() {
               </span>
             </div>
             {/* Overall progress bar — always visible in header */}
-            <div className="w-full h-1 bg-green-700/40">
+            <div className="w-full h-1 bg-indigo-900/30">
               <div
                 className="h-full bg-white/80 transition-all duration-500 ease-out"
                 style={{ width: `${currentTaskProgress}%` }}
@@ -2304,7 +2320,7 @@ function Conversation() {
           </button>
 
           {showTasks && (
-            <ul className="bg-green-500 px-5 pb-4 pt-2 space-y-3 border-t border-green-400">
+            <ul className="bg-[#637FF1] px-5 pb-4 pt-2 space-y-3 border-t border-indigo-400/30">
               {tasksLoading ? (
                 <li className="text-xs text-white/80 py-1">Loading tasks...</li>
               ) : (() => {
@@ -2321,9 +2337,9 @@ function Conversation() {
                   return (
                     <li key={idx} className="space-y-1.5">
                       <div className="flex items-start gap-2.5">
-                        <span className={`w-5 h-5 rounded-full flex items-center justify-center shrink-0 mt-0.5 ${isCompleted ? 'bg-white' : 'bg-white/30 border border-white'}`}>
+                        <span className={`w-3 h-3 rounded-full flex items-center justify-center shrink-0 mt-1 ${isCompleted ? 'bg-white' : 'bg-white/20'}`}>
                           {isCompleted && (
-                            <span className="material-symbols-outlined text-green-600 text-[13px] font-bold">check</span>
+                            <span className="material-symbols-outlined text-[#637FF1] text-[9px] font-bold">check</span>
                           )}
                         </span>
                         <div className="flex-1 min-w-0">
@@ -2332,7 +2348,7 @@ function Conversation() {
                             {taskText}
                           </span>
                           {/* Per-task progress bar */}
-                          <div className="w-full h-1 mt-1 bg-green-700/40 rounded-full overflow-hidden">
+                          <div className="w-full h-1 mt-1 bg-indigo-900/30 rounded-full overflow-hidden">
                             <div
                               className={`h-full rounded-full transition-all duration-500 ease-out ${isCompleted ? 'bg-white' : 'bg-white/70'}`}
                               style={{ width: `${progress}%` }}
@@ -2489,7 +2505,14 @@ function Conversation() {
           }
           
           const isAI = msg.type === 'ai';
-          const displayContent = msg.content ? msg.content.replace(/```json[\s\S]*?```/g, '').trim() : '';
+          const displayContent = msg.content
+            ? msg.content
+                .replace(/```json[\s\S]*?```/g, '')
+                .replace(/\[TASK_\d+_COMPLETE\]/gi, '')
+                .replace(/\[MAGIC_SENTENCE:[^\]]+\]/gi, '')
+                .replace(/\[MAGIC_PASS[^\]]*\]/gi, '')
+                .trim()
+            : '';
 
 
           if (!isAI && (!displayContent || displayContent === '...')) {
@@ -2500,27 +2523,50 @@ function Conversation() {
           }
 
           return (
-            <MessageBubble
-              key={index}
-              type={isAI ? 'ai' : 'user'}
-              message={displayContent}
-              state={!msg.isFinal && isAI ? 'loading' : 'default'}
-              footer={msg.audioUrl ? (
-                <AudioBar
-                  audioUrl={msg.audioUrl}
-                  duration={0}
-                  onClick={() => {
-                    if (playingAudioUrl === msg.audioUrl) {
-                      stopAudioPlayback();
-                    } else {
-                      playFullAudio(msg.audioUrl);
-                    }
-                  }}
-                  isOwnMessage={!isAI}
-                  isActive={playingAudioUrl === msg.audioUrl}
-                />
-              ) : null}
-            />
+            <div key={index}>
+              <MessageBubble
+                type={isAI ? 'ai' : 'user'}
+                message={displayContent}
+                state={isAI && (!msg.isFinal || (!msg.audioUrl && msg.audioPlayed !== true)) ? 'loading' : 'default'}
+                footer={msg.audioUrl ? (
+                  <AudioBar
+                    audioUrl={msg.audioUrl}
+                    duration={0}
+                    onClick={() => {
+                      if (playingAudioUrl === msg.audioUrl) {
+                        stopAudioPlayback();
+                      } else {
+                        playFullAudio(msg.audioUrl);
+                      }
+                    }}
+                    isOwnMessage={!isAI}
+                    isActive={playingAudioUrl === msg.audioUrl}
+                  />
+                ) : null}
+                translation={msg.translation}
+              />
+              {isAI && (msg.audioUrl || msg.audioPlayed === true) && !msg.translation && (
+                <div className="flex justify-start px-4 py-1">
+                  <button
+                    onClick={async () => {
+                      try {
+                        const result = await aiAPI.translate(displayContent, user?.native_language || 'zh');
+                        setMessages(prev => {
+                          const newMessages = [...prev];
+                          newMessages[index] = { ...newMessages[index], translation: result.translation };
+                          return newMessages;
+                        });
+                      } catch (err) {
+                        console.error('Translation error:', err);
+                      }
+                    }}
+                    className="text-xs text-slate-400 hover:text-slate-600 flex items-center gap-1 transition"
+                  >
+                    <span style={{fontSize:'13px'}}>🌐</span> 翻译
+                  </button>
+                </div>
+              )}
+            </div>
           );
         })}
         <div ref={messagesEndRef} className="h-4" />
@@ -2599,6 +2645,13 @@ function Conversation() {
           onSelectOther={handleSelectOtherScenario}
           hasNextScenario={currentScenarioIndex < allScenarios.length - 1}
           onCheckin={() => userAPI.checkin()}
+        />
+      )}
+      {showScorePopup && batchScores && (
+        <ScorePopup
+          scores={batchScores}
+          delta={latestDelta}
+          onClose={() => setShowScorePopup(false)}
         />
       )}
     </div>

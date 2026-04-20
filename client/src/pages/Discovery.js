@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useMemo } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import BottomNav from '../components/BottomNav';
 import { StreakRing } from '../components/StreakRing';
@@ -93,10 +93,8 @@ function getDifficulty(index) {
 
 function isScenarioUnlocked(index, scenarios, isPro) {
   if (isPro) return true;
-  if (index === 0) return true;
-  if (index >= 3) return false;
-  const prev = scenarios[index - 1];
-  return calcProgress(prev) === 100;
+  if (index < 3) return true;
+  return false;
 }
 
 function getScenarioCardState(scenario, unlocked, pct) {
@@ -236,11 +234,11 @@ function Discovery() {
     );
     if (existing) {
       navigate(`/conversation?sessionId=${existing.sessionId}&scenario=${encodeURIComponent(scenario.title)}`, {
-        state: { tasks: scenario.tasks },
+        state: { tasks: scenario.tasks, emoji: scenario.emoji },
       });
     } else {
       navigate(`/conversation?scenario=${encodeURIComponent(scenario.title)}`, {
-        state: { tasks: scenario.tasks },
+        state: { tasks: scenario.tasks, emoji: scenario.emoji },
       });
     }
   };
@@ -250,15 +248,15 @@ function Discovery() {
     else setShowUpgradeModal(true);
   };
 
-  // ── 派生数据 ──
-  const enrichedScenarios = scenarios.map((s, i) => {
+  // ── 派生数据（useMemo 避免每次 render 重算） ──
+  const enrichedScenarios = useMemo(() => scenarios.map((s, i) => {
     const pct = calcProgress(s);
     const unlocked = isScenarioUnlocked(i, scenarios, isPro);
     const cardState = getScenarioCardState(s, unlocked, pct);
     return { ...s, pct, unlocked, cardState, difficulty: getDifficulty(i), emoji: getEmoji(s.title), index: i };
-  });
+  }), [scenarios, isPro]);
 
-  const todayRecommended = enrichedScenarios.find(s => s.unlocked && s.pct < 100);
+  const todayRecommended = useMemo(() => enrichedScenarios.find(s => s.unlocked && s.pct < 100), [enrichedScenarios]);
 
   // 今日复述：从活跃场景中取第一个未完成任务作为复述句
   const recallTask = todayRecommended?.tasks?.find(t => t.status !== 'completed');
@@ -266,17 +264,17 @@ function Discovery() {
     ? (typeof recallTask === 'object' ? (recallTask.text || recallTask.description || recallTask.title || '') : String(recallTask))
     : '';
 
-  const overallProgress = scenarios.length > 0
+  const overallProgress = useMemo(() => scenarios.length > 0
     ? Math.round(enrichedScenarios.filter(s => s.pct === 100).length / scenarios.length * 100)
-    : 0;
+    : 0, [enrichedScenarios, scenarios.length]);
 
-  const filteredScenarios = enrichedScenarios.filter(s => {
+  const filteredScenarios = useMemo(() => enrichedScenarios.filter(s => {
     if (filterTab === 'all') return true;
     if (filterTab === 'in-progress') return s.unlocked && s.pct > 0 && s.pct < 100;
     if (filterTab === 'completed') return s.pct === 100;
     if (filterTab === 'not-started') return s.unlocked && s.pct === 0;
     return true;
-  });
+  }), [enrichedScenarios, filterTab]);
 
   const userName = user?.username || user?.name || '学习者';
   const greeting = (() => {
@@ -469,7 +467,7 @@ function Discovery() {
                   <button
                     onClick={() => navigate(
                       `/conversation?scenario=${encodeURIComponent(todayRecommended.scenarioKey || todayRecommended.title)}&mode=recall`,
-                      { state: { tasks: todayRecommended.tasks } }
+                      { state: { tasks: todayRecommended.tasks, emoji: todayRecommended.emoji } }
                     )}
                     className="flex items-center gap-1.5 px-4 py-1.5 rounded-xl text-xs font-bold text-white transition-all active:scale-95"
                     style={{ background: '#637FF1' }}>

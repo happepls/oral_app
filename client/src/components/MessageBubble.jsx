@@ -1,6 +1,6 @@
 import { User, Bot, Languages } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import designTokens from "../imports/design-tokens.json";
 
 export function MessageBubble({
@@ -16,6 +16,11 @@ export function MessageBubble({
   const isUser = type === "user";
   const tokens = designTokens.global;
   const [isTranslationVisible, setIsTranslationVisible] = useState(showTranslation);
+
+  // 当翻译内容首次到达时自动展开
+  useEffect(() => {
+    if (translation) setIsTranslationVisible(true);
+  }, [translation]);
 
   return (
     <div className={`flex gap-3 ${isUser ? "flex-row-reverse" : "flex-row"}`}>

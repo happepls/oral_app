@@ -127,6 +127,7 @@ User speaks → ai-omni-service (DashScope Qwen3-Omni streaming)
 - **Auth**: `AuthContext.js` wraps the entire app; **httpOnly Cookie** (migrated from localStorage); Google OAuth via `@react-oauth/google`. `token` state is always `null` in cookie mode — do NOT rely on it being set. WebSocket auth also uses cookie (comms-service reads `req.headers.cookie` as fallback).
 - **Key page**: `pages/Conversation.js` — the main practice interface. Handles WebSocket lifecycle, audio playback queue (`audioQueueRef`), proficiency notifications, task completion UI, and scenario review modal.
 - **WebSocket message types** handled in Conversation.js: `proficiency_update`, `task_completed`, `scenario_completed`, `connection_closed`
+- **AI message state machine** (text/audio sync): `isFinal=false` → loading (streaming); `isFinal=true && !audioUrl && audioPlayed!==true` → loading (waiting for audio); `isFinal=true && audioUrl` → default (both ready, sync display); `audioPlayed===true` → default (history message, skip loading even without audioUrl). WebSocket URL params (`scenario`/`voice`/`mode`) must use `encodeURIComponent()`.
 
 ### Internationalization (i18n)
 
@@ -191,6 +192,24 @@ The string `急急如律令` (with Chinese punctuation variants `。！？`) in 
 
 `POST /tts` is implemented in `ai-omni-service/app/main.py` (Nginx rewrites `/api/ai/tts` → `/tts`). Uses `qwen3-tts-flash` via `dashscope.MultiModalConversation.call()` with voice `Serena`. Supports 10 languages (Chinese, English, Japanese, Korean, French, Spanish, German, Italian, Portuguese, Russian) and mixed-language text in a single call. Returns WAV audio bytes fetched from the OSS URL in the response. Called by `aiAPI.tts()` in `api.js` → `playSelectedText()` in `Conversation.js` for the floating speaker button on selected AI message text.
 
+### TTS Re-synthesis: Marker Stripping
+
+DashScope Qwen3-Omni generates text+audio simultaneously in streaming — markers like `[TASK_1_COMPLETE]` embedded in text get spoken in audio. Post-processing in `upload_ai_task`:
+1. `_MARKER_RE` regex detects markers in `latest_ai_text`
+2. Strip markers → re-synthesize clean audio via `qwen3-tts-flash` (`_synth_clean`)
+3. `_wav_extract_pcm()` strips WAV RIFF header (44+ bytes) to extract raw PCM data — **critical** because `media-processing-service` uses ffmpeg `-f s16le` which interprets WAV header bytes as high-amplitude samples causing a "ping" sound
+4. Clean PCM uploaded to COS → `audio_url` sent to frontend
+
+**Gotcha**: `_trim_wav_onset()` (trims 150ms from audio data start) is only for the `/tts` endpoint (browser-facing WAV). Do NOT apply it to COS upload path — that path needs `_wav_extract_pcm()` instead.
+
+### URL Fetch Security: `_validated_urlopen`
+
+All `urllib.request.urlopen` calls on external URLs (DashScope TTS response URLs) go through `_validated_urlopen()` which enforces:
+- Domain allowlist: `dashscope.aliyuncs.com`, `oss-cn-{beijing,hangzhou,shanghai}.aliyuncs.com`
+- Scheme allowlist: `http`, `https` only
+
+If DashScope changes their audio URL domain, update `_ALLOWED_TTS_HOSTS` in `main.py`.
+
 ### Authentication: httpOnly Cookie
 
 - **Login/Register/Google**: `user-service` sets `accessToken` httpOnly cookie (`sameSite: lax`, `path: /api`, 7d TTL)
@@ -209,10 +228,10 @@ final = max(1, min(10, round(input_score × correction_penalty × sentence_quali
 
 - **input_score**: hits=0→2, hits=1→4, hits=2→7, hits≥3→9
 - **correction_penalty**: hard correction (说错了/全然違う/incorrect) → 0.5; soft (曖昧/不够具体/vague/もう少し具体的) → 0.7; teaching suggestion only → 1.0
-- **sentence_quality_factor**: <8 chars → 0.6; keyword-only sentence (remaining<4 chars) → 0.7; normal → 1.0
+- **sentence_quality_factor**: CJK languages (Japanese/Chinese/Korean) use `_min_len=4, _min_remaining=2`; others use `_min_len=8, _min_remaining=4`. Below `_min_len` → 0.6; keyword-only (remaining < `_min_remaining`) → 0.7; normal → 1.0
 - **Delta gate**: task_relevance ≤5 → delta=0; 6-7 → delta=1; ≥8 → delta=2
 - **Anti-cheat**: hits=1 always produces input_score=4 → final≤4 → delta=0 regardless of sentence length
-- **Repetitive input** (`_is_repetitive_input`): self-repetition (substring ≥3 chars appears 2+x) OR keyword parroting (≥80% content is keyword chars AND len≤20) → delta=0
+- **Repetitive input** (`_is_repetitive_input`): self-repetition (substring ≥5 chars appears 3+x, MIN_SEGMENT=5, MIN_COUNT=3) OR keyword parroting (≥90% content is keyword chars AND len≤15) → delta=0
 - **`task_title`/`scenario_title`**: populated from `current_task` parameter before early-return; DB query only runs when delta>0
 
 ### Docker: Python Service Rebuild Rules
@@ -273,18 +292,36 @@ Discovery.js shows a 今日复述 card linking to `/conversation?mode=recall&sce
 
 ### GoalSetting.js: Multi-Step Onboarding Wizard
 
-Replaced the old single-form GoalSetting with a 5-step animated wizard (`TOTAL_STEPS = 5`):
+5-step animated wizard (`TOTAL_STEPS = 5`):
 - **Step 1**: Welcome screen (🦜, feature cards)
-- **Step 2**: Target language (6 options) + target level (Beginner/Intermediate/Advanced)
-- **Step 3**: Proficiency quiz (4 questions from `QUIZ_QUESTIONS`, rendered one at a time via `currentQ` state; same scoring as Onboarding.js)
-- **Step 4**: Goal type + interests + AI voice selection; displays CEFR badge from quiz result
+- **Step 2**: Target language (**29 options**, Qwen3.5-Omni full support list) + target level; language grid uses `maxHeight:280px, overflowY:auto` scroll
+- **Step 3**: Proficiency quiz (4 questions from `QUIZ_QUESTIONS`, rendered one at a time via `currentQ` state)
+- **Step 4**: Goal type (5 presets + **"自定义" custom option**) + interests textarea (maxLength=100) + AI voice selection (Tina/Serena/Evan/Arda)
 - **Step 5**: AI-generated scenarios review (edit title/delete)
 
 Key implementation notes:
 - `displayStep = step - 1`, `displayTotal = TOTAL_STEPS - 1` — welcome step excluded from progress count.
 - `AnimatePresence key={step === 3 ? \`3-${currentQ}\` : step}` — question-level slide animation within step 3.
-- `QUIZ_QUESTIONS` and scoring functions (`calcQuizScore`, `scoreToProficiency`, `getLevel`) are duplicated from Onboarding.js. If Onboarding questions change, update GoalSetting too.
+- **QUIZ_QUESTIONS** and scoring functions (`calcQuizScore`, `scoreToProficiency`, `getLevel`) are **only in GoalSetting.js** — Onboarding.js no longer has a quiz step.
+- **Custom goal type**: `GOAL_TYPES` includes `{ value: 'custom', ... }`. When selected, a text input appears. `handleGenerateScenarios` and `handleSubmit` both use `finalGoalType = goalType === 'custom' ? customGoalType.trim() : goalType`.
+- **Voice validation**: `selectedVoice` initializes via lazy `useState(() => ...)` — validates stored value against `VOICE_OPTIONS` and falls back to `'Tina'` if invalid (guards against stale localStorage from old voice names like Nofish/Momo/Ryan).
 - `handleGenerateScenarios` calls `aiAPI.generateScenarios()` → result populates step 5 scenarios.
+
+### Onboarding.js: Single-Step Basic Info Only
+
+Onboarding is now a **single-step** form (nickname + gender + native language). The proficiency quiz has been removed — it only exists in GoalSetting Step 3.
+- `handleSubmit` calls `updateProfile({ nickname, gender, native_language })` then navigates directly to `/goal-setting` with no state payload.
+- `QUIZ_QUESTIONS`, `LEVEL_MAP`, `calcScore`, `scoreToProficiency`, `getLevel` — all deleted from Onboarding.js.
+- **Gotcha**: Previously Onboarding passed `suggestedLevel/proficiencyScore/cefrLabel` via navigation state. GoalSetting now ignores this (uses its own quiz result). No state needs to be passed.
+
+### AI Voice: Qwen3.5-Omni-Realtime Supported Voices
+
+Valid voices for `qwen3.5-omni-plus-realtime` (source: aliyun omni-voice-list):
+`Tina` (default), `Serena`, `Evan`, `Arda`
+
+**Gotcha**: `Nofish`, `Momo`, `Ryan`, `Cherry` are NOT valid for this model — they cause WebSocket 400 `InvalidParameter` errors. `Cherry` is the default for `Qwen3-Omni-Flash-Realtime`, not `Qwen3.5-Omni-Realtime`.
+- Default voice in `ai-omni-service/app/main.py` line ~703: `os.getenv("QWEN3_OMNI_VOICE", "Tina")`
+- Frontend `VOICE_OPTIONS` in `GoalSetting.js`: Tina / Serena / Evan / Arda
 
 ### Frontend Design: Figma Design System Reference
 
