@@ -98,5 +98,19 @@
   "onboarding_loading": "保存中...",
   "onboarding_success": "个人资料更新成功！",
   "err_onboarding_default": "更新失败",
-  "lang_switcher_label": "语言"
+  "lang_switcher_label": "语言",
+  "daily_qa_title": "今日问答",
+  "daily_qa_listen_prompt": "🔊 听一段外国人提出的问题",
+  "daily_qa_view_text": "查看文字",
+  "daily_qa_hide_text": "隐藏文字",
+  "daily_qa_start_answer": "开始回答",
+  "daily_qa_completed": "今日问答已完成",
+  "daily_qa_re_answer": "再次回答",
+  "daily_qa_change_question": "换一题",
+  "daily_qa_paywall_title": "升级解锁",
+  "daily_qa_paywall_desc": "Pro 会员可无限次再次回答与换题，随时巩固口语节奏。",
+  "daily_qa_paywall_cancel": "取消",
+  "daily_qa_paywall_upgrade": "去升级",
+  "task_confirm_next": "✅ 切到下个任务",
+  "task_confirm_continue": "继续深入练习"
 }

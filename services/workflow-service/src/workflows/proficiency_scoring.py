@@ -761,27 +761,22 @@ class ProficiencyScoringWorkflow:
         result["task_title"] = task_result.get("task_description", "Task") if task_result else "Task"
         result["scenario_title"] = task_result.get("scenario_title", "") if task_result else ""
 
-        # 检查是否达到任务完成标准 (累计 9 分且至少 3 轮交互)
-        if current_task_score >= 9 and task_result.get("interaction_count", 0) >= 3 and task_result.get("status") != "completed":
-            # 生成任务完成的详细反馈（根据用户母语）
+        # 任务完成改为 "ready_to_complete" 确认制：
+        # 累计 >=9 分时只发出"准备完成"信号，由 AI 询问用户是否切换任务，
+        # 用户确认后再由 user-service/confirm-complete 端点真正 UPDATE status。
+        # 这样避免系统替用户一票否决练习节奏。
+        if current_task_score >= 9 and task_result.get("status") != "completed":
+            # 生成任务完成的详细反馈（供前端/AI 参考）
             completion_feedback = self._generate_completion_feedback(scores, improvement_tips, native_language)
 
-            # 更新 task 状态为 completed
-            await db_connection.execute(
-                """
-                UPDATE user_tasks
-                SET status = 'completed',
-                    completed_at = NOW(),
-                    feedback = $1
-                WHERE id = $2
-                """,
-                completion_feedback,
-                task_id
-            )
-
-            result["task_completed"] = True
+            # 不再直接 UPDATE user_tasks.status — 等待用户确认
+            result["task_ready_to_complete"] = True
+            result["task_completed"] = False
+            result["completion_feedback"] = completion_feedback
             result["message"] = completion_feedback
         else:
+            result["task_ready_to_complete"] = False
+            result["task_completed"] = False
             result["message"] = f"+{proficiency_delta} 熟练度 | {feedback}"
 
         # 获取 goal 的当前熟练度

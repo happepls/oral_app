@@ -270,3 +270,19 @@ docker exec oral_app_client_app grep -o "!1===e.audioPlayed" /app/build/static/j
 # 验证服务响应
 curl -s http://localhost:5001/ | head -20
 ```
+
+## Daily QA 付费门控（Apr 2026，Task #13）
+
+通过后出口升级：`DailyQAPassModal` 庆祝弹窗后跳 `/discovery`，卡片从单纯 "✅ 今日问答已完成" 标签升级为「再次回答」+「换一题」两按钮。Pro 用户（`user.subscription_status === 'active'`）直接进入 `/conversation?mode=daily_qa`；免费用户弹 `DailyQAPaywallModal` 引导 `/subscription`。
+
+- **后端两端点**（`services/ai-omni-service/app/main.py`）：
+  - `POST /api/ai/daily-question/re-answer` — 清 `daily_qa_passed:{uid}:{date}` Redis key，返回当前 `picked`
+  - `POST /api/ai/daily-question/change-question` — 清 passed key + `_advance_daily_qa_pool` 轮转 pool index，返回新 picked
+  - 两接口均走 `_assert_pro(user_ctx)` 门闸，非 active → 403 `{"detail":"pro_required"}`
+- **Redis 缓存形状升级**（向后兼容）：`daily_qa_pool:{uid}:{date}` 由单 dict 升级为 `{"pool":[...], "index":n, "picked":{...}}`。`handle_daily_question` 读路径同时认识新旧两种形状；`_advance_daily_qa_pool` 透明迁移 legacy 形状。
+- **Pool 耗尽策略**：`index = (index+1) % len(pool)` 循环；若 `len(pool)<=1`，实时调 `_generate_daily_question_pool` 补齐再推进。
+- **前端**：`client/src/pages/Discovery.js` 新增 `handleDailyQAAction` + `DailyQAPaywallModal`；`client/src/services/api.js` 新增 `aiAPI.reAnswerDaily()` / `changeDailyQuestion()`（两方法对 403 单独抛带 `status` 的 Error 以便 UI 精确捕获）。
+- **顺手修复**：`DailyQAPassModal` 原本无关闭按钮且无 backdrop 点击响应 — 新增 `onClose` prop + 右上 `×`，保留既有 2.5s 自跳 `/discovery`。
+- **测试**：`services/ai-omni-service/tests/test_daily_qa.py` 扩展 7 个用例（advance/wrap/legacy-migrate/assert_pro 变体），并修补了 stub（补齐 `dashscope.audio.qwen_omni` 子模块 + 预设 `QWEN3_OMNI_API_KEY`），让历史 9 个测试从 skip 变成能真跑——现在全部 16 个测试全绿。
+- **Docker 热加载**：Python 源改动无 requirements 变动，用 `docker cp app/main.py oral_app_ai_omni_service:/app/app/main.py && docker compose restart ai-omni-service` 即可，无需 rebuild。
+```

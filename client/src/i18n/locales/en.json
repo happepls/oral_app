@@ -98,5 +98,19 @@
   "onboarding_loading": "Saving...",
   "onboarding_success": "Profile updated successfully!",
   "err_onboarding_default": "Update failed",
-  "lang_switcher_label": "Language"
+  "lang_switcher_label": "Language",
+  "daily_qa_title": "Daily Question",
+  "daily_qa_listen_prompt": "🔊 Listen to a question from a native speaker",
+  "daily_qa_view_text": "View Text",
+  "daily_qa_hide_text": "Hide Text",
+  "daily_qa_start_answer": "Start Answering",
+  "daily_qa_completed": "Daily question completed",
+  "daily_qa_re_answer": "Answer Again",
+  "daily_qa_change_question": "New Question",
+  "daily_qa_paywall_title": "Upgrade to Unlock",
+  "daily_qa_paywall_desc": "Pro members can re-answer and swap the daily question without limits — reinforce your speaking rhythm anytime.",
+  "daily_qa_paywall_cancel": "Cancel",
+  "daily_qa_paywall_upgrade": "Upgrade",
+  "task_confirm_next": "✅ Move to Next Task",
+  "task_confirm_continue": "Continue Deep Practice"
 }

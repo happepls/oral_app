@@ -229,6 +229,24 @@ export const userAPI = {
       credentials: 'include'
     });
     return handleResponse(response);
+  },
+
+  async confirmTaskComplete(taskId) {
+    const response = await fetch(`${API_BASE_URL}/users/goals/confirm-complete`, {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      credentials: 'include',
+      body: JSON.stringify({ task_id: taskId })
+    });
+    return handleResponse(response);
+  },
+
+  async getDailyQAPassStatus() {
+    const response = await fetch(`${API_BASE_URL}/users/daily-qa-pass`, {
+      headers: getAuthHeaders(),
+      credentials: 'include',
+    });
+    return handleResponse(response);
   }
 };
 
@@ -333,6 +351,72 @@ export const aiAPI = {
     } finally {
       reader.releaseLock();
     }
+  },
+
+  async getDailyQuestion(options = {}) {
+    const { signal } = options;
+    const response = await fetch(`${API_BASE_URL}/ai/daily-question`, {
+      headers: getAuthHeaders(),
+      credentials: 'include',
+      ...(signal && { signal })
+    });
+    return handleResponse(response);
+  },
+
+  async reAnswerDaily() {
+    const response = await fetch(`${API_BASE_URL}/ai/daily-question/re-answer`, {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      credentials: 'include',
+    });
+    if (response.status === 403) {
+      const err = new Error('pro_required');
+      err.status = 403;
+      throw err;
+    }
+    return handleResponse(response);
+  },
+
+  async changeDailyQuestion() {
+    const response = await fetch(`${API_BASE_URL}/ai/daily-question/change-question`, {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      credentials: 'include',
+    });
+    if (response.status === 403) {
+      const err = new Error('pro_required');
+      err.status = 403;
+      throw err;
+    }
+    return handleResponse(response);
+  },
+
+  async getDailyQuestionPool() {
+    const response = await fetch(`${API_BASE_URL}/ai/daily-question/pool`, {
+      headers: getAuthHeaders(),
+      credentials: 'include',
+    });
+    if (response.status === 403) {
+      const err = new Error('pro_required');
+      err.status = 403;
+      throw err;
+    }
+    return handleResponse(response);
+  },
+
+  async selectDailyQuestion(index) {
+    const response = await fetch(`${API_BASE_URL}/ai/daily-question/select`, {
+      method: 'POST',
+      headers: { ...getAuthHeaders(), 'Content-Type': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify({ index }),
+    });
+    if (response.status === 403) {
+      const err = new Error('pro_required');
+      err.status = 403;
+      throw err;
+    }
+    return handleResponse(response);
   }
 };
 

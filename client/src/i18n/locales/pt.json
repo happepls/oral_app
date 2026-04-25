@@ -98,5 +98,19 @@
   "onboarding_loading": "Salvando...",
   "onboarding_success": "Perfil atualizado com sucesso!",
   "err_onboarding_default": "Falha na atualização",
-  "lang_switcher_label": "Idioma"
+  "lang_switcher_label": "Idioma",
+  "daily_qa_title": "Pergunta do Dia",
+  "daily_qa_listen_prompt": "🔊 Ouça uma pergunta de um falante nativo",
+  "daily_qa_view_text": "Ver Texto",
+  "daily_qa_hide_text": "Ocultar Texto",
+  "daily_qa_start_answer": "Começar a Responder",
+  "daily_qa_completed": "Pergunta do dia concluída",
+  "daily_qa_re_answer": "Responder novamente",
+  "daily_qa_change_question": "Trocar pergunta",
+  "daily_qa_paywall_title": "Atualize para desbloquear",
+  "daily_qa_paywall_desc": "Membros Pro podem responder novamente e trocar a pergunta do dia sem limites — reforce seu ritmo de fala quando quiser.",
+  "daily_qa_paywall_cancel": "Cancelar",
+  "daily_qa_paywall_upgrade": "Atualizar",
+  "task_confirm_next": "✅ Ir para Próxima Tarefa",
+  "task_confirm_continue": "Continuar Praticando"
 }

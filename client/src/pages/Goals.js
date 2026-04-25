@@ -46,12 +46,14 @@ function GoalCard({ goal, isActive, onPractice, index }) {
             </span>
             <span
               className={`text-xs px-2 py-0.5 rounded-full font-medium ${
-                isActive
+                goal.status === 'active'
                   ? 'bg-primary/10 text-primary'
+                  : goal.status === 'paused'
+                  ? 'bg-amber-50 dark:bg-amber-900/20 text-amber-600 dark:text-amber-400'
                   : 'bg-emerald-50 dark:bg-emerald-900/20 text-emerald-600 dark:text-emerald-400'
               }`}
             >
-              {isActive ? '进行中' : '已完成'}
+              {goal.status === 'active' ? '进行中' : goal.status === 'paused' ? '已暂停' : '已完成'}
             </span>
           </div>
         </div>
@@ -110,13 +112,13 @@ function GoalCard({ goal, isActive, onPractice, index }) {
       )}
 
       {/* CTA Button */}
-      {isActive && (
+      {(goal.status === 'active' || goal.status === 'paused') && (
         <button
           onClick={onPractice}
           className="w-full py-2.5 rounded-xl text-sm font-semibold text-white transition-opacity hover:opacity-90 active:opacity-80"
           style={{ background: 'linear-gradient(135deg, #637FF1, #a47af6)' }}
         >
-          继续练习 →
+          {goal.status === 'active' ? '继续练习 →' : '切换并练习 →'}
         </button>
       )}
     </motion.div>
@@ -158,7 +160,7 @@ function Goals() {
     localStorage.setItem('ai_voice', id);
   };
 
-  const activeGoals = allGoals.filter(g => g.status !== 'completed');
+  const activeGoals = allGoals.filter(g => g.status === 'active' || g.status === 'paused');
   const completedGoals = allGoals.filter(g => g.status === 'completed');
   const totalCompletedScenes = allGoals.reduce((acc, g) => {
     return acc + (g.scenarios || []).filter(s =>
@@ -225,7 +227,17 @@ function Goals() {
                   goal={g}
                   isActive
                   index={i}
-                  onPractice={() => navigate('/discovery')}
+                  onPractice={async () => {
+                    if (g.status !== 'active') {
+                      try {
+                        await userAPI.switchGoal(g.id);
+                      } catch (e) {
+                        console.error('Failed to switch goal:', e);
+                        return;
+                      }
+                    }
+                    navigate('/discovery');
+                  }}
                 />
               ))}
             </>

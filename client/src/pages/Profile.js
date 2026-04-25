@@ -6,7 +6,7 @@ import { historyAPI, feedbackAPI, userAPI } from '../services/api';
 import { motion, AnimatePresence } from 'motion/react';
 import {
   ArrowLeft, Settings, Flame, Check, CheckCircle, LogOut,
-  History, User, Bell, Crown, Palette, MessageSquare,
+  User, Bell, Crown, Palette, MessageSquare,
   ChevronRight, PlusCircle, X, Info, Pencil
 } from 'lucide-react';
 
@@ -113,7 +113,6 @@ function Profile() {
   ];
 
   const menuItems = [
-    { icon: History, label: '对话历史', path: '/history' },
     { icon: User, label: '账户设置', path: '/settings' },
     { icon: Bell, label: '通知', path: '/notifications' },
     { icon: Crown, label: '订阅', path: '/subscription' },

@@ -449,7 +449,7 @@ exports.resetTask = async (req, res) => {
         if (task_id) {
             // Reset single task by ID
             await db.query(
-                `UPDATE user_tasks 
+                `UPDATE user_tasks
                  SET score = 0, status = 'pending', interaction_count = 0, feedback = NULL, completed_at = NULL, updated_at = NOW()
                  WHERE id = $1 AND user_id = $2`,
                 [task_id, userId]
@@ -458,7 +458,7 @@ exports.resetTask = async (req, res) => {
         } else if (scenario_title) {
             // Reset all tasks in a specific scenario
             await db.query(
-                `UPDATE user_tasks 
+                `UPDATE user_tasks
                  SET score = 0, status = 'pending', interaction_count = 0, feedback = NULL, completed_at = NULL, updated_at = NOW()
                  WHERE user_id = $1 AND scenario_title = $2`,
                 [userId, scenario_title]
@@ -611,6 +611,48 @@ exports.updateProficiencyInternal = async (req, res) => {
 
     }
 
+};
+
+exports.confirmCompleteTask = async (req, res) => {
+    try {
+        const userId = req.user?.id;
+        const taskId = req.params.id;
+        if (!userId) return res.status(401).json({ success: false, message: 'Unauthorized' });
+        if (!taskId) return res.status(400).json({ success: false, message: 'task id required' });
+
+        console.log(`[User] Confirm-Complete Task: User=${userId}, Task=${taskId}`);
+
+        const result = await User.confirmCompleteTaskById(userId, taskId);
+        if (result.error === 'not_found') {
+            return res.status(404).json({ success: false, message: 'Task not found' });
+        }
+        if (result.error === 'not_ready') {
+            return res.status(400).json({
+                success: false,
+                message: 'Task score is below completion threshold (score>=9 required)',
+                data: { score: result.task?.score || 0 },
+            });
+        }
+        if (result.error === 'already_completed') {
+            return res.json({
+                success: true,
+                message: 'Task already completed',
+                data: { completed_task: result.task, next_task: null },
+            });
+        }
+
+        return res.json({
+            success: true,
+            data: {
+                completed_task: result.completed_task,
+                next_task: result.next_task,
+                current_proficiency: result.current_proficiency,
+            },
+        });
+    } catch (error) {
+        console.error('Confirm-Complete Task Error:', error);
+        res.status(500).json({ success: false, message: 'Server Error' });
+    }
 };
 
 exports.completeTaskInternal = async (req, res) => {
@@ -853,6 +895,31 @@ exports.tokenMigrate = (req, res) => {
   } catch (error) {
     res.status(401).json({ success: false, message: '无效令牌，无法迁移' });
   }
+};
+
+// ===== Daily QA Pass APIs =====
+
+exports.getDailyQAPassStatus = async (req, res) => {
+    try {
+        const result = await User.getDailyQAPassStatus(req.user.id);
+        res.json({ success: true, data: result });
+    } catch (error) {
+        console.error('getDailyQAPassStatus error:', error);
+        res.status(500).json({ success: false, error: 'Internal server error' });
+    }
+};
+
+exports.recordDailyQAPassInternal = async (req, res) => {
+    try {
+        const { id } = req.params;
+        const rawText = req.body.question_text || '';
+        const question_text = typeof rawText === 'string' ? rawText.slice(0, 2000) : '';
+        const result = await User.recordDailyQAPass(id, question_text);
+        res.json({ success: true, data: result });
+    } catch (error) {
+        console.error('recordDailyQAPassInternal error:', error);
+        res.status(500).json({ success: false, error: 'Internal server error' });
+    }
 };
 
 // ===== Daily Scenario Count =====

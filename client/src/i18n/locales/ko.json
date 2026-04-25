@@ -98,5 +98,19 @@
   "onboarding_loading": "저장 중...",
   "onboarding_success": "프로필이 업데이트되었습니다!",
   "err_onboarding_default": "업데이트 실패",
-  "lang_switcher_label": "언어"
+  "lang_switcher_label": "언어",
+  "daily_qa_title": "오늘의 질문",
+  "daily_qa_listen_prompt": "🔊 원어민이 제시한 질문 듣기",
+  "daily_qa_view_text": "텍스트 보기",
+  "daily_qa_hide_text": "텍스트 숨기기",
+  "daily_qa_start_answer": "답변 시작",
+  "daily_qa_completed": "오늘의 질문 완료",
+  "daily_qa_re_answer": "다시 답변",
+  "daily_qa_change_question": "다른 질문",
+  "daily_qa_paywall_title": "업그레이드하여 잠금 해제",
+  "daily_qa_paywall_desc": "Pro 회원은 무제한 재답변과 질문 교체로 언제든 말하기 리듬을 강화할 수 있습니다.",
+  "daily_qa_paywall_cancel": "취소",
+  "daily_qa_paywall_upgrade": "업그레이드",
+  "task_confirm_next": "✅ 다음 작업으로",
+  "task_confirm_continue": "계속 깊이 있게 연습하기"
 }

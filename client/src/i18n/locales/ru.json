@@ -98,5 +98,19 @@
   "onboarding_loading": "Сохранение...",
   "onboarding_success": "Профиль успешно обновлён!",
   "err_onboarding_default": "Ошибка обновления",
-  "lang_switcher_label": "Язык"
+  "lang_switcher_label": "Язык",
+  "daily_qa_title": "Вопрос Дня",
+  "daily_qa_listen_prompt": "🔊 Послушайте вопрос от носителя языка",
+  "daily_qa_view_text": "Показать Текст",
+  "daily_qa_hide_text": "Скрыть Текст",
+  "daily_qa_start_answer": "Начать Отвечать",
+  "daily_qa_completed": "Вопрос дня выполнен",
+  "daily_qa_re_answer": "Ответить снова",
+  "daily_qa_change_question": "Сменить вопрос",
+  "daily_qa_paywall_title": "Обновите, чтобы разблокировать",
+  "daily_qa_paywall_desc": "Pro-пользователи могут неограниченно отвечать снова и менять ежедневный вопрос — поддерживайте темп речи в любое время.",
+  "daily_qa_paywall_cancel": "Отмена",
+  "daily_qa_paywall_upgrade": "Обновить",
+  "task_confirm_next": "✅ Перейти к Следующему Заданию",
+  "task_confirm_continue": "Продолжить Практику"
 }

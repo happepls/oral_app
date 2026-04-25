@@ -7,9 +7,10 @@ import { AiAvatar } from '../components/AiAvatar';
 import { PracticeReport } from '../components/PracticeReport';
 import { MessageBubble } from '../components/MessageBubble';
 import { useAuth } from '../contexts/AuthContext';
-import AudioBar from '../components/AudioBar.jsx'; // Import the new AudioBar component
+import AudioBar from '../components/AudioBar.jsx';
 import NetworkAdaptiveManager from '../utils/network-adaptive-manager';
 import OptimizedWebSocket from '../utils/websocket-optimized';
+import { motion, AnimatePresence } from 'motion/react';
 
 const MAGIC_TIPS = [
   '点击消息气泡右侧的喇叭图标，可重听 AI 的示范发音。',
@@ -20,6 +21,57 @@ const MAGIC_TIPS = [
   '闭眼想象句子的画面，有助于将语言与情景绑定记忆。',
   '说出来的速度不需要追求完美，意思准确是第一步。',
 ];
+
+function stripAIMarkers(text) {
+  if (!text) return text;
+  return text
+    .replace(/\[DAILY_QA_PASSED\]/gi, '')
+    .replace(/\[\s*NATIVE:\s*[^\]]*\]/gi, '')
+    .trim();
+}
+
+function DailyQAPassModal({ onClose, onReturn, isBonus }) {
+  return (
+    <div style={{
+      position: 'fixed', bottom: 80, left: '50%', transform: 'translateX(-50%)',
+      background: '#FFFFFF', borderRadius: 20, padding: '20px 28px',
+      boxShadow: '0 8px 32px rgba(0,0,0,0.18)', zIndex: 300,
+      maxWidth: 360, width: '90%', textAlign: 'center',
+      animation: 'slideUpBanner 0.4s ease-out'
+    }}>
+      <div style={{ fontSize: 48, marginBottom: 8 }}>{isBonus ? '👏' : '✅'}</div>
+      <h3 style={{ fontSize: 18, fontWeight: 700, color: '#1F2937', marginBottom: 6 }}>
+        {isBonus ? '回答完成' : '今日问答已完成'}
+      </h3>
+      <p style={{ fontSize: 13, color: '#6B7280', marginBottom: 16 }}>
+        {isBonus ? '这道题练习完成，可以继续选择其他题目。' : '很棒！继续保持每日学习的好习惯。'}
+      </p>
+      <button
+        onClick={onReturn}
+        style={{
+          width: '100%', padding: '12px 0', borderRadius: 12,
+          background: 'linear-gradient(135deg, #637FF1, #a47af6)', color: '#fff',
+          fontWeight: 700, fontSize: 15, border: 'none', cursor: 'pointer', marginBottom: 8
+        }}>
+        返回发现页
+      </button>
+      <button
+        onClick={onClose}
+        style={{
+          background: 'transparent', border: 'none', color: '#9CA3AF',
+          fontSize: 13, cursor: 'pointer', padding: '4px 0'
+        }}>
+        继续查看对话
+      </button>
+      <style>{`
+        @keyframes slideUpBanner {
+          0% { transform: translateX(-50%) translateY(30px); opacity: 0; }
+          100% { transform: translateX(-50%) translateY(0); opacity: 1; }
+        }
+      `}</style>
+    </div>
+  );
+}
 
 function ScorePopup({ scores, delta, onClose }) {
   const overall = Math.round(
@@ -74,6 +126,113 @@ function ScorePopup({ scores, delta, onClose }) {
         </button>
       </div>
     </div>
+  );
+}
+
+function TaskCompletionSheet({ taskReadyToComplete, tasks, completedTasks, onConfirm, onContinue }) {
+  const completedTitle = taskReadyToComplete?.task_title || '';
+  const taskList = tasks || [];
+  const completedCount = (completedTasks?.size || 0) + 1;
+  const totalCount = taskList.length || completedCount;
+
+  const nextTask = taskList.find(t => {
+    const text = typeof t === 'string' ? t : t.text;
+    return text !== completedTitle && !completedTasks?.has(text);
+  });
+  const nextTitle = typeof nextTask === 'string' ? nextTask : (nextTask?.text || '');
+
+  return (
+    <motion.div
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+      transition={{ duration: 0.2 }}
+      style={{
+        position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)',
+        display: 'flex', alignItems: 'flex-end', justifyContent: 'center', zIndex: 250,
+      }}
+      onClick={onContinue}
+    >
+      <motion.div
+        initial={{ y: '100%' }}
+        animate={{ y: 0 }}
+        exit={{ y: '100%' }}
+        transition={{ type: 'spring', damping: 28, stiffness: 320 }}
+        onClick={e => e.stopPropagation()}
+        style={{
+          width: '100%', maxWidth: 440,
+          background: 'linear-gradient(135deg, #637FF1 0%, #8B5CF6 100%)',
+          borderRadius: '24px 24px 0 0', padding: '28px 24px 32px',
+          color: '#fff',
+        }}
+      >
+        {/* Drag handle */}
+        <div style={{ width: 40, height: 4, borderRadius: 2, background: 'rgba(255,255,255,0.3)', margin: '0 auto 20px' }} />
+
+        {/* Completed task */}
+        <div style={{
+          display: 'flex', alignItems: 'center', gap: 12,
+          background: 'rgba(255,255,255,0.15)', borderRadius: 16, padding: '14px 16px', marginBottom: 12,
+        }}>
+          <div style={{
+            width: 40, height: 40, borderRadius: 12, background: 'rgba(255,255,255,0.25)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 20, flexShrink: 0,
+          }}>✅</div>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ fontSize: 12, opacity: 0.8, marginBottom: 2 }}>任务完成</div>
+            <div style={{ fontSize: 15, fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+              {completedTitle}
+            </div>
+          </div>
+          <div style={{ fontSize: 13, opacity: 0.8, flexShrink: 0 }}>{completedCount}/{totalCount}</div>
+        </div>
+
+        {/* Next task preview */}
+        {nextTitle && (
+          <div style={{
+            display: 'flex', alignItems: 'center', gap: 12,
+            background: 'rgba(255,255,255,0.1)', borderRadius: 16, padding: '14px 16px', marginBottom: 24,
+          }}>
+            <div style={{
+              width: 40, height: 40, borderRadius: 12, background: 'rgba(255,255,255,0.15)',
+              display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 20, flexShrink: 0,
+            }}>🎯</div>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ fontSize: 12, opacity: 0.7, marginBottom: 2 }}>下一个任务</div>
+              <div style={{ fontSize: 15, fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                {nextTitle}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Action buttons */}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+          <button
+            onClick={onConfirm}
+            style={{
+              width: '100%', padding: '14px', borderRadius: 16,
+              background: '#fff', color: '#637FF1', border: 'none',
+              fontWeight: 700, fontSize: 15, cursor: 'pointer',
+              display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
+            }}
+          >
+            <span>🚀</span>
+            <span>{nextTitle ? '切换下一个任务' : '完成当前任务'}</span>
+          </button>
+          <button
+            onClick={onContinue}
+            style={{
+              width: '100%', padding: '14px', borderRadius: 16,
+              background: 'rgba(255,255,255,0.15)', color: '#fff', border: '1px solid rgba(255,255,255,0.25)',
+              fontWeight: 600, fontSize: 15, cursor: 'pointer',
+            }}
+          >
+            继续深入当前任务
+          </button>
+        </div>
+      </motion.div>
+    </motion.div>
   );
 }
 
@@ -193,7 +352,8 @@ function Conversation() {
   const [batchScores, setBatchScores] = useState(null);
   const [latestDelta, setLatestDelta] = useState(0); // 高/中/低
   const previousProgressRef = useRef(0); // Track previous progress to prevent unreasonable jumps
-  
+  const lastSeenTaskIdRef = useRef(null); // Track task ID to detect task switches
+
   // Initialize showTasks based on whether we have scenario info
   // Tasks will be loaded from backend, so we show tasks if scenario is specified
   const [showTasks, setShowTasks] = useState(() => {
@@ -220,6 +380,7 @@ function Conversation() {
   // 双阶段 UI State（Magic Repetition 和 Scene Theater）
   // useRef 保证只在首次挂载时读取 URL，避免每次 render 重新解析
   const isRecallMode = useRef(new URLSearchParams(window.location.search).get('mode') === 'recall').current;
+  const isDailyQAMode = useRef(new URLSearchParams(window.location.search).get('mode') === 'daily_qa').current;
   const [currentPhase, setCurrentPhase] = useState(isRecallMode ? 'magic_repetition' : 'scene_theater');
   const currentPhaseRef = useRef(isRecallMode ? 'magic_repetition' : 'scene_theater');
   const [sceneImageUrl, setSceneImageUrl] = useState(null);
@@ -244,6 +405,18 @@ function Conversation() {
   const [isPeeking, setIsPeeking] = useState(false);
   const [showSkipButton, setShowSkipButton] = useState(false);
   const [tipIndex, setTipIndex] = useState(0);
+
+  // Daily QA Mode State
+  const [dailyQAQuestion, setDailyQAQuestion] = useState(null);
+  const [dailyQAError, setDailyQAError] = useState(false);
+  const [showDailyQAPassModal, setShowDailyQAPassModal] = useState(false);
+  const [dailyQAIsBonus, setDailyQAIsBonus] = useState(false);
+  const [dailyQAReferenceAnswer, setDailyQAReferenceAnswer] = useState('');
+  const [showReferenceAnswer, setShowReferenceAnswer] = useState(false);
+  const navTimeoutRef = useRef(null);
+
+  // Task Completion Confirmation State
+  const [taskReadyToComplete, setTaskReadyToComplete] = useState(null); // shape: { task_id, task_title } | null
 
   const getScoreFeedback = (score, reviewData = null) => {
     const stripEmoji = (s) => s.replace(
@@ -306,7 +479,7 @@ function Conversation() {
                   objectTaskCount++;
                   if (t.status === 'completed') {
                       completed.add(t.text);
-                      totalScore += (t.score || 100); // Default to 100 if score not set
+                      totalScore += (t.score || 0);
                       completedCount++;
                   }
               }
@@ -755,6 +928,22 @@ function Conversation() {
     navigate('/discovery');
   };
 
+  // Handle task completion confirmation
+  const handleConfirmComplete = () => {
+    if (!taskReadyToComplete) return;
+    const wsReadyState = socketRef.current?.getReadyState?.() || socketRef.current?.readyState;
+    if (wsReadyState === WebSocket.OPEN) {
+      console.log('🏁 Sending user_confirmed_complete:', taskReadyToComplete.task_id);
+      socketRef.current.send(JSON.stringify({
+        type: 'user_confirmed_complete',
+        payload: { task_id: taskReadyToComplete.task_id }
+      }));
+      setTaskReadyToComplete(null);
+    } else {
+      console.error('❌ WebSocket not open, cannot send confirmation');
+    }
+  };
+
   // Manual retry reconnect function
   const handleManualRetry = useCallback(() => {
     console.log('Manual retry triggered');
@@ -893,13 +1082,11 @@ function Conversation() {
                            });
                            setCompletedTasks(newCompleted);
 
-                           // Update progress bar from backend
-                           if (currentTaskProgress > 0) {
-                               setCurrentTaskProgress(currentTaskProgress);
-                               setCurrentTaskScore(currentTaskScore);
-                               // Save to localStorage for persistence
-                               localStorage.setItem(_lsScenarioKey('task_progress_', scenario), currentTaskProgress.toString());
-                           }
+                           // Force sync progress bar to backend true value (even if 0)
+                           setCurrentTaskProgress(currentTaskProgress);
+                           setCurrentTaskScore(currentTaskScore);
+                           previousProgressRef.current = currentTaskProgress;
+                           localStorage.setItem(_lsScenarioKey('task_progress_', scenario), currentTaskProgress.toString());
 
                            // Show toast for newly completed task
                            const completedTask = activeScenario.tasks.find(t => t.status === 'completed' && !newCompleted.has(t.text));
@@ -1159,19 +1346,26 @@ function Conversation() {
            }
            lastProficiencyUpdateRef.current = updateKey;
 
+           // Detect task switch and reset progress tracking
+           const newTaskId = profPayload.task_id;
+           if (newTaskId && lastSeenTaskIdRef.current !== null && newTaskId !== lastSeenTaskIdRef.current) {
+               // Only reset if we've already recorded a task_id and it's different (true task switch)
+               console.log(`🔄 Task switched: ${lastSeenTaskIdRef.current} → ${newTaskId}, resetting progress`);
+               previousProgressRef.current = 0;
+               setCurrentTaskProgress(0);
+               setCurrentTaskScore(0);
+           }
+           // Always update ref on first encounter or task switch
+           if (newTaskId) {
+               lastSeenTaskIdRef.current = newTaskId;
+           }
+
            console.log('📈 Proficiency Update:', profPayload);
            const delta = profPayload.delta || profPayload.proficiency_delta || 0;
            const total = profPayload.total || profPayload.current_proficiency || 0;
            const taskScore = profPayload.task_score || 0;
            const message = profPayload.message || '';
            const improvementTips = profPayload.improvement_tips || [];
-
-           // 批量评估弹窗：scores 含 keyword_coverage 时触发
-           if (profPayload.scores?.keyword_coverage !== undefined && delta > 0) {
-               setBatchScores(profPayload.scores);
-               setLatestDelta(delta);
-               setShowScorePopup(true);
-           }
 
            // Show improvement tips only outside magic_repetition phase
            if (improvementTips.length > 0 && currentPhaseRef.current !== 'magic_repetition') {
@@ -1419,6 +1613,13 @@ function Conversation() {
                setScenarioReviewData(data.payload);
                window.currentScenarioReview = data.payload;
                console.log('📚 AI 点评数据已存储，场景完成时将显示个性化点评');
+
+               // Trigger ScorePopup with consolidated scenario scores (not batch_eval)
+               if (data.payload.scores) {
+                   setBatchScores(data.payload.scores);
+                   setLatestDelta(data.payload.delta || 0);
+                   setShowScorePopup(true);
+               }
            }
            break;
         case 'test_scenario_review':
@@ -1430,6 +1631,17 @@ function Conversation() {
                setScenarioReviewData(data.payload);
                window.currentScenarioReview = data.payload;
                console.log('🧪 测试数据已存储，场景完成时将显示个性化 AI 点评');
+           }
+           break;
+        case 'daily_qa_completed':
+           console.log('✅ Daily QA Completed', data.payload?.is_bonus ? '(bonus)' : '');
+           setDailyQAIsBonus(!!data.payload?.is_bonus);
+           setTimeout(() => setShowDailyQAPassModal(true), 800);
+           break;
+        case 'task_ready_to_complete':
+           console.log('🏁 Task Ready to Complete:', data.payload);
+           if (data.payload) {
+               setTaskReadyToComplete(data.payload);
            }
            break;
         case 'dashscope_response':
@@ -1737,6 +1949,23 @@ function Conversation() {
       const scenario = searchParams.get('scenario') || location.state?.scenario;
       const topic = searchParams.get('topic');
 
+      // Load daily QA question if in daily_qa mode
+      if (isDailyQAMode) {
+        try {
+          const qaRes = await aiAPI.getDailyQuestion({ signal: abortController.signal });
+          if (qaRes && qaRes.question_text) {
+            setDailyQAQuestion(qaRes.question_text);
+            setDailyQAReferenceAnswer(qaRes.reference_answer || '');
+            setDailyQAError(false);
+          } else {
+            setDailyQAError(true);
+          }
+        } catch (err) {
+          console.error('Failed to load daily QA question:', err);
+          setDailyQAError(true);
+        }
+      }
+
       // Always refresh tasks from backend to ensure consistency
       if (scenario) {
           try {
@@ -1854,6 +2083,8 @@ function Conversation() {
                                   .replace(/\[MAGIC_SENTENCE:[^\]]+\]\s*/g, '')
                                   .replace(/\s*\[MAGIC_PASS[^\]]*\]/g, '')
                                   .replace(/\[TASK_\d+_COMPLETE\]/g, '')
+                                  .replace(/\[DAILY_QA_PASSED\]/gi, '')
+                                  .replace(/\[\s*NATIVE:\s*[^\]]*\]/gi, '')
                                   .trim();
                           }
                           return {
@@ -1934,6 +2165,12 @@ function Conversation() {
       // Clear any pending audio queue
       if (audioQueueRef.current) {
         audioQueueRef.current = [];
+      }
+
+      // Cleanup daily QA navigation timeout
+      if (navTimeoutRef.current) {
+        clearTimeout(navTimeoutRef.current);
+        navTimeoutRef.current = null;
       }
     };
   }, [token, user, isManualDisconnect]); // Removed connectWebSocket from dependencies to prevent infinite loop
@@ -2266,14 +2503,55 @@ function Conversation() {
       </div>
 
       {/* 每日限制 Banner */}
-      {dailyScenariosUsed >= 3 && (
+      {dailyScenariosUsed >= 3 && !isDailyQAMode && (
         <div className="flex items-center justify-center px-4 py-1.5 bg-amber-900/40 text-amber-300 text-xs">
           今日练习已满 3 个场景，明天继续加油
         </div>
       )}
 
-      {/* Mission Tasks Dropdown Bar — only visible in scene_theater phase */}
-      {currentPhase === 'scene_theater' && (tasks.length > 0 || tasksLoading) && (
+      {/* Daily QA Mode: Fixed question card at top */}
+      {isDailyQAMode && (
+        <div className="px-4 py-3 bg-indigo-50 border-b border-indigo-100 shrink-0">
+          {dailyQAError ? (
+            <div className="flex items-center justify-between">
+              <div className="flex-1">
+                <p className="text-sm text-gray-700">今日问题加载中...请稍候</p>
+              </div>
+              <button
+                onClick={() => navigate('/discovery')}
+                className="text-xs text-indigo-600 hover:text-indigo-700 font-medium">
+                返回发现
+              </button>
+            </div>
+          ) : dailyQAQuestion ? (
+            <div className="flex items-center gap-2">
+              <span className="text-lg flex-shrink-0">🔊</span>
+              <div className="flex-1">
+                <p className="text-sm text-gray-700 line-clamp-3">{dailyQAQuestion}</p>
+                {dailyQAReferenceAnswer && (
+                  <div className="mt-2">
+                    <button
+                      onClick={() => setShowReferenceAnswer(!showReferenceAnswer)}
+                      className="text-xs font-medium"
+                      style={{ color: '#6366F1', background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}>
+                      {showReferenceAnswer ? '隐藏参考答案 ▲' : '查看参考答案 ▼'}
+                    </button>
+                    {showReferenceAnswer && (
+                      <p className="mt-1 text-xs italic rounded-lg px-3 py-2"
+                         style={{ color: '#6B7280', background: '#EEF2FF' }}>
+                        💡 {dailyQAReferenceAnswer}
+                      </p>
+                    )}
+                  </div>
+                )}
+              </div>
+            </div>
+          ) : null}
+        </div>
+      )}
+
+      {/* Mission Tasks Dropdown Bar — only visible in scene_theater phase (not in daily_qa mode) */}
+      {!isDailyQAMode && currentPhase === 'scene_theater' && (tasks.length > 0 || tasksLoading) && (
         <div
           className={`z-10 bg-[#637FF1] border-b border-indigo-400/30 transition-all duration-700 shrink-0 relative ${!showTasks && taskBarFaded ? 'opacity-30' : 'opacity-100'}`}
           onMouseEnter={() => {
@@ -2511,6 +2789,8 @@ function Conversation() {
                 .replace(/\[TASK_\d+_COMPLETE\]/gi, '')
                 .replace(/\[MAGIC_SENTENCE:[^\]]+\]/gi, '')
                 .replace(/\[MAGIC_PASS[^\]]*\]/gi, '')
+                .replace(/\[DAILY_QA_PASSED\]/gi, '')
+                .replace(/\[\s*NATIVE:\s*[^\]]*\]/gi, '')
                 .trim()
             : '';
 
@@ -2639,7 +2919,6 @@ function Conversation() {
             setShowCompletionModal(false);
             hasViewedCompletionModalRef.current = true;
           }}
-          onRetry={() => handleRetryCurrentScenario({ keepHistory: true, resetProgress: false })}
           onRestart={() => handleRetryCurrentScenario({ keepHistory: false, resetProgress: true })}
           onNextScenario={handleNextScenario}
           onSelectOther={handleSelectOtherScenario}
@@ -2654,6 +2933,24 @@ function Conversation() {
           onClose={() => setShowScorePopup(false)}
         />
       )}
+      {showDailyQAPassModal && (
+        <DailyQAPassModal
+          onClose={() => setShowDailyQAPassModal(false)}
+          onReturn={() => navigate('/discovery')}
+          isBonus={dailyQAIsBonus}
+        />
+      )}
+      <AnimatePresence>
+        {taskReadyToComplete && (
+          <TaskCompletionSheet
+            taskReadyToComplete={taskReadyToComplete}
+            tasks={tasks}
+            completedTasks={completedTasks}
+            onConfirm={handleConfirmComplete}
+            onContinue={() => setTaskReadyToComplete(null)}
+          />
+        )}
+      </AnimatePresence>
     </div>
   );
 }

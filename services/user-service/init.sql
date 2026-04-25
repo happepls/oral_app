@@ -73,6 +73,17 @@ CREATE TABLE IF NOT EXISTS user_checkins (
 CREATE INDEX IF NOT EXISTS idx_user_checkins_user_id ON user_checkins(user_id);
 CREATE INDEX IF NOT EXISTS idx_user_checkins_date ON user_checkins(checkin_date);
 
+-- Create the daily_qa_passes table (Daily QA Pass Records)
+CREATE TABLE IF NOT EXISTS daily_qa_passes (
+    id SERIAL PRIMARY KEY,
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    pass_date DATE NOT NULL DEFAULT CURRENT_DATE,
+    question_text TEXT,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    UNIQUE(user_id, pass_date)
+);
+CREATE INDEX IF NOT EXISTS idx_daily_qa_passes_user_date ON daily_qa_passes(user_id, pass_date);
+
 -- Add indexes for better query performance
 CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);
 CREATE INDEX IF NOT EXISTS idx_user_identities_user_id ON user_identities(user_id);

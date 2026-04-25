@@ -62,6 +62,18 @@ cd client && npm test
 
 # Python scenario tests
 source .venv/bin/activate && python test_client_scenario.py
+
+# Batch-eval + daily-QA E2E scenarios
+python3 test_scenario_batch_and_daily_qa.py --scenario all --mock   # no backend needed
+python3 test_scenario_batch_and_daily_qa.py --scenario batch \
+    --api-base http://localhost:8081 \
+    --ws-url ws://localhost:8081/api/ws/ai \
+    --token "$JWT"                                                   # real stack
+# Scenarios: batch | daily | cheat | all
+# --mock uses in-process fakes that replay expected server frames, so the
+# assertion skeleton runs green today and serves as the contract spec
+# backend must satisfy (tip_source inline->batch_eval, [NATIVE:] in correct
+# mode, [DAILY_QA_PASSED] marker, daily_qa_completed WS event, cache hit).
 ```
 
 ### Check Service Health / Logs

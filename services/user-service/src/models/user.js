@@ -304,6 +304,90 @@ User.completeTask = async (userId, scenarioTitle, taskText) => {
     return await User.getActiveGoal(userId);
 };
 
+User.confirmCompleteTaskById = async (userId, taskId) => {
+    // 1. Load task — require ownership + score >= 9 (ready_to_complete gate)
+    const taskRes = await db.query(
+        `SELECT id, user_id, goal_id, scenario_title, task_description, score, status, feedback
+         FROM user_tasks
+         WHERE id = $1 AND user_id = $2`,
+        [taskId, userId]
+    );
+    const task = taskRes.rows[0];
+    if (!task) return { error: 'not_found' };
+    if (task.status === 'completed') return { error: 'already_completed', task };
+    if ((task.score || 0) < 9) return { error: 'not_ready', task };
+
+    // 2. Mark completed
+    const completedRes = await db.query(
+        `UPDATE user_tasks
+         SET status = 'completed', completed_at = NOW()
+         WHERE id = $1
+         RETURNING *`,
+        [taskId]
+    );
+    const completedTask = completedRes.rows[0];
+
+    // 3. Recompute goal proficiency based on completed-vs-total ratio (parity with User.completeTask)
+    const statsRes = await db.query(
+        `SELECT
+            COUNT(*) as total,
+            COUNT(*) FILTER (WHERE status = 'completed') as completed
+         FROM user_tasks
+         WHERE goal_id = $1`,
+        [task.goal_id]
+    );
+    const { total, completed } = statsRes.rows[0];
+    let newProficiency = 0;
+    if (parseInt(total) > 0) {
+        newProficiency = Math.round((parseInt(completed) / parseInt(total)) * 100);
+    }
+    await db.query(
+        `UPDATE user_goals
+         SET current_proficiency = $1, updated_at = NOW()
+         WHERE id = $2`,
+        [newProficiency, task.goal_id]
+    );
+
+    // 4. Find next pending task in the same scenario (fallback: any pending in goal)
+    let nextRes = await db.query(
+        `SELECT id, scenario_title, task_description, score, status
+         FROM user_tasks
+         WHERE goal_id = $1 AND user_id = $2
+           AND scenario_title = $3
+           AND status != 'completed'
+         ORDER BY id ASC
+         LIMIT 1`,
+        [task.goal_id, userId, task.scenario_title]
+    );
+    if (nextRes.rows.length === 0) {
+        nextRes = await db.query(
+            `SELECT id, scenario_title, task_description, score, status
+             FROM user_tasks
+             WHERE goal_id = $1 AND user_id = $2
+               AND status != 'completed'
+             ORDER BY id ASC
+             LIMIT 1`,
+            [task.goal_id, userId]
+        );
+    }
+    const nextTaskRow = nextRes.rows[0] || null;
+    const nextTask = nextTaskRow
+        ? {
+            id: nextTaskRow.id,
+            scenario_title: nextTaskRow.scenario_title,
+            text: nextTaskRow.task_description,
+            score: nextTaskRow.score,
+            status: nextTaskRow.status,
+        }
+        : null;
+
+    return {
+        completed_task: completedTask,
+        next_task: nextTask,
+        current_proficiency: newProficiency,
+    };
+};
+
 User.getUserGoals = async (userId) => {
     const { rows } = await db.query(
         `SELECT id, target_language, target_level, type, description,
@@ -314,6 +398,40 @@ User.getUserGoals = async (userId) => {
          ORDER BY created_at DESC`,
         [userId]
     );
+
+    for (const goal of rows) {
+        if (!goal.scenarios || !Array.isArray(goal.scenarios)) continue;
+        try {
+            const taskRes = await db.query(
+                `SELECT * FROM user_tasks WHERE goal_id = $1`,
+                [goal.id]
+            );
+            const dbTasks = taskRes.rows;
+
+            goal.scenarios = goal.scenarios.map(scenario => {
+                const scenarioTasks = scenario.tasks.map(t => {
+                    const tText = typeof t === 'string' ? t : t.text;
+                    const dbTask = dbTasks.find(dbt =>
+                        dbt.scenario_title === scenario.title &&
+                        dbt.task_description === tText
+                    );
+                    const taskScore = dbTask ? dbTask.score : 0;
+                    const taskProgress = Math.min(100, Math.round((taskScore / 9) * 100));
+                    return {
+                        id: dbTask ? dbTask.id : null,
+                        text: tText,
+                        status: dbTask ? dbTask.status : 'pending',
+                        score: taskScore,
+                        progress: taskProgress,
+                    };
+                });
+                return { ...scenario, tasks: scenarioTasks };
+            });
+        } catch (e) {
+            console.error('[User] Error merging task statuses for goal', goal.id, e);
+        }
+    }
+
     return rows;
 };
 
@@ -577,6 +695,30 @@ User.getCheckinStats = async (userId) => {
         totalPointsFromCheckins: parseInt(totalRes.rows[0].total_points) || 0
     };
 }
+
+// ===== Daily QA Pass Methods =====
+
+User.recordDailyQAPass = async (userId, questionText) => {
+    const { rows } = await db.query(
+        `INSERT INTO daily_qa_passes (user_id, question_text)
+         VALUES ($1, $2)
+         ON CONFLICT (user_id, pass_date) DO NOTHING
+         RETURNING *`,
+        [userId, questionText]
+    );
+    return rows[0] || null;
+};
+
+User.getDailyQAPassStatus = async (userId) => {
+    const { rows } = await db.query(
+        `SELECT id, pass_date, question_text, created_at
+         FROM daily_qa_passes
+         WHERE user_id = $1 AND pass_date = CURRENT_DATE
+         LIMIT 1`,
+        [userId]
+    );
+    return { passed: rows.length > 0, record: rows[0] || null };
+};
 
 User.findOrCreateFromGoogle = async ({ googleId, email, name }) => {
   try {

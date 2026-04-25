@@ -307,6 +307,707 @@ _TARGET_LANGUAGE_CODES = {
     'Indonesian': ['id'],
 }
 
+# ---------------------------------------------------------------------------
+# Batch Evaluation Helpers (Feature 1 — 批量评估 Agent)
+# ---------------------------------------------------------------------------
+
+_INLINE_TIP_RE = re.compile(
+    r'[「『"\u201c\u2018]([^」』"\u201d\u2019]{2,30})[」』"\u201d\u2019]'
+)
+
+def _extract_inline_tips(ai_response: str) -> list:
+    """Extract quoted phrases from AI response as inline tips (no LLM call).
+
+    Matches CJK quotes「」『』, straight double/single quotes, and curly quotes.
+    Dedupe + take first 2.
+    """
+    if not ai_response:
+        return []
+    matches = _INLINE_TIP_RE.findall(ai_response)
+    seen = set()
+    result = []
+    for m in matches:
+        s = m.strip()
+        if len(s) >= 2 and s not in seen:
+            seen.add(s)
+            result.append(s)
+        if len(result) >= 2:
+            break
+    return result
+
+
+def _format_teaching_directive(result: dict, target_language: str, native_language: str) -> str:
+    """Format a one-time teaching directive to append to the session prompt.
+
+    Consumed by DashScope on the NEXT response only — the caller MUST restore
+    base prompt on the turn after (see WebSocketCallback.pending_directive).
+    """
+    mode = (result or {}).get("teaching_mode", "guide")
+
+    if mode == "correct":
+        guidance = (result or {}).get("correction_guidance") or {}
+        native_expl = guidance.get("native_explanation", "") or ""
+        correct_ex = guidance.get("correct_example", "") or ""
+        retry_inst = guidance.get("retry_instruction", "") or ""
+        # Bug D.3: if both example and retry_instruction are empty, the CORRECT
+        # directive would produce an empty/broken response. Gracefully degrade
+        # to GUIDE mode with native_explanation as hint.
+        if not correct_ex.strip() and not retry_inst.strip():
+            hint = native_expl or (result or {}).get("next_topic_hint") or ""
+            return (
+                "[TEACHING DIRECTIVE — ONE-TIME USE, DO NOT MENTION TO STUDENT]\n"
+                "Mode: GUIDE (degraded from CORRECT — no example available)\n"
+                "In your NEXT response, naturally steer the conversation toward:\n"
+                f"\"{hint}\"\n"
+                "Continue the current task. Weave this direction into your response naturally."
+            )
+        return (
+            "[TEACHING DIRECTIVE — ONE-TIME USE, DO NOT MENTION TO STUDENT]\n"
+            "Mode: CORRECT\n"
+            "In your NEXT response ONLY (3-4 sentences max):\n"
+            f"1. Briefly acknowledge the student's attempt (1 sentence, in {target_language}).\n"
+            f"2. [NATIVE: {native_expl}]\n"
+            f"   → You MAY briefly use {native_language} to deliver this explanation.\n"
+            f"3. Provide model example: \"{correct_ex}\"\n"
+            f"4. End with: \"{retry_inst}\"\n"
+            "IMPORTANT: After this ONE correction response, the "
+            f"\"YOU MUST RESPOND ENTIRELY IN {target_language}\" rule resumes from the NEXT response onward.\n"
+        )
+
+    # default: guide
+    hint = (result or {}).get("next_topic_hint") or ""
+    return (
+        "[TEACHING DIRECTIVE — ONE-TIME USE, DO NOT MENTION TO STUDENT]\n"
+        "Mode: GUIDE\n"
+        "In your NEXT response, naturally steer the conversation toward:\n"
+        f"\"{hint}\"\n"
+        "Continue the current task. Weave this direction into your response naturally."
+    )
+
+
+async def _handle_turn_with_accumulator(
+    callback,
+    conversation,
+    websocket,
+    user_id: str,
+    goal_id: int,
+    task_id: int,
+    user_content: str,
+    ai_response: str,
+    current_task: dict,
+    native_language: str,
+    token: str,
+):
+    """Accumulate turns; dynamically trigger batch evaluation via workflow-service.
+
+    Window size: 3 turns for the first 2 evals (faster initial feedback),
+    then 4 turns for subsequent evals (deeper practice).
+
+    Returns None when still accumulating; returns a dict shaped like the old
+    `call_proficiency_workflow` result when a batch evaluation was performed,
+    so the caller can reuse the existing task_completed side-effects.
+    """
+    # Task-switch reset
+    if callback.current_eval_task_id != task_id:
+        callback.turn_accumulator = []
+        callback.current_eval_task_id = task_id
+        callback.batch_eval_count = 0
+
+    # Append current turn
+    callback.turn_accumulator.append({
+        "turn_index": len(callback.turn_accumulator) + 1,
+        "user_content": user_content or "",
+        "ai_response": ai_response or "",
+        "timestamp": datetime.utcnow().isoformat() + "Z",
+    })
+
+    # Dynamic window: 3 turns for first 2 evals, then 4
+    window_threshold = 3 if callback.batch_eval_count < 2 else 4
+
+    # Below threshold → inline tips only, no batch eval
+    if len(callback.turn_accumulator) < window_threshold:
+        tips = _extract_inline_tips(ai_response)
+        # Populate `total` from cache (last batch eval) or initial proficiency
+        # from user_context. Avoids a DB query on every inline turn.
+        if callback.last_total_proficiency is None:
+            try:
+                active_goal = (callback.user_context or {}).get('active_goal') or {}
+                callback.last_total_proficiency = int(active_goal.get('current_proficiency') or 0)
+            except (TypeError, ValueError):
+                callback.last_total_proficiency = 0
+        total_proficiency = callback.last_total_proficiency
+        await callback._safe_send({
+            "type": "proficiency_update",
+            "payload": {
+                "delta": 0,
+                "total": total_proficiency,
+                "task_id": task_id,
+                "task_score": 0,
+                "message": "",
+                "improvement_tips": tips,
+                "tips": tips,
+                "tip_source": "inline",
+            },
+        })
+        logger.info(f"[BATCH_EVAL] accumulating turn {len(callback.turn_accumulator)}/{window_threshold}, inline tips={len(tips)}, total={total_proficiency}")
+        return None
+
+    # ≥threshold turns — trigger batch eval
+    logger.info(f"[BATCH_EVAL] triggering eval #{callback.batch_eval_count + 1} with {len(callback.turn_accumulator)} turns (threshold={window_threshold})")
+    payload = {
+        "user_id": user_id,
+        "goal_id": goal_id,
+        "task_id": task_id,
+        "current_task": current_task,
+        "native_language": native_language,
+        "turn_window": callback.turn_accumulator,
+        "window_size": len(callback.turn_accumulator),
+    }
+    # Reset accumulator and increment eval counter
+    callback.turn_accumulator = []
+    callback.batch_eval_count += 1
+
+    result = None
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            resp = await client.post(
+                f"{WORKFLOW_SERVICE_URL}/api/workflows/proficiency-scoring/batch-evaluate",
+                json=payload,
+                headers={"Authorization": f"Bearer {token}"} if token else None,
+            )
+            if resp.status_code == 200:
+                result = resp.json().get("data", {}) or {}
+                logger.info(
+                    f"[BATCH_EVAL] batch_evaluate called → delta={result.get('delta')} "
+                    f"mode={result.get('teaching_mode')} "
+                    f"task_completed={result.get('task_completed')}"
+                )
+            else:
+                logger.error(f"[BATCH_EVAL] workflow returned {resp.status_code}: {resp.text[:300]}")
+                return None
+    except Exception as e:
+        logger.error(f"[BATCH_EVAL] HTTP error: {e}")
+        return None
+
+    delta = int(result.get("delta", 0) or 0)
+    task_completed = bool(result.get("task_completed", False))
+    improvement_tips = result.get("improvement_tips", []) or []
+    target_language = current_task.get("target_language") or callback.user_context.get("target_language", "English")
+
+    # Refresh cached total so subsequent inline turns reflect latest DB value
+    try:
+        callback.last_total_proficiency = int(result.get("total_proficiency", 0) or 0)
+    except (TypeError, ValueError):
+        pass
+
+    # Send proficiency_update (backward-compatible shape + new fields)
+    await callback._safe_send({
+        "type": "proficiency_update",
+        "payload": {
+            "delta": delta,
+            "total": result.get("total_proficiency", 0),
+            "task_id": result.get("task_id", task_id),
+            "task_score": result.get("task_score", 0),
+            "message": "",
+            "improvement_tips": improvement_tips,
+            "tips": improvement_tips,
+            "tip_source": "batch_eval",
+            "scores": result.get("scores"),
+            "teaching_mode": result.get("teaching_mode"),
+            "task_completed": task_completed,
+        },
+    })
+
+    # Inject teaching directive (only if task NOT completed — on completion we'll
+    # refresh the whole prompt anyway)
+    if not task_completed:
+        try:
+            directive = _format_teaching_directive(result, target_language, native_language)
+            if directive:
+                callback.pending_directive = directive
+                # Refresh session prompt WITH directive appended
+                callback._update_session_prompt(extra_directive=directive)
+                logger.info(f"[BATCH_EVAL] directive injected (mode={result.get('teaching_mode')})")
+        except Exception as e:
+            logger.warning(f"[BATCH_EVAL] directive injection failed: {e}")
+
+    # Return in the shape expected by the existing call-site (so task_completed
+    # side-effects — next-task fetch, prompt refresh — work unchanged).
+    return {
+        "proficiency_delta": delta,
+        "total_proficiency": result.get("total_proficiency", 0),
+        "task_completed": task_completed,
+        "task_ready_to_complete": bool(result.get("task_ready_to_complete", False)),
+        "task_score": result.get("task_score", 0),
+        "improvement_tips": improvement_tips,
+        "task_id": result.get("task_id", task_id),
+        "task_title": result.get("task_title", current_task.get("task_description", "Task")),
+        "scenario_title": result.get("scenario_title", current_task.get("scenario_title", "")),
+        "message": "",
+    }
+
+
+# ---------------------------------------------------------------------------
+# Daily Q&A Helpers (Feature 2 — 今日问答)
+# ---------------------------------------------------------------------------
+
+_DAILY_QA_PASSED_MARKER = "[DAILY_QA_PASSED]"
+_DAILY_QA_PASSED_RE = re.compile(r"\[DAILY_QA_PASSED\]", re.IGNORECASE)
+_DAILY_QA_TTL_SECONDS = 48 * 3600  # 48h matches test expectation
+_DAILY_QA_POOL_TTL_SECONDS = 30 * 24 * 3600  # 30d per design
+_DAILY_QA_POOL_CAP = 10
+
+_DAILY_QA_FALLBACK = {
+    "English": [
+        {"question_text": "Hi, could you help me find the nearest subway station?",
+         "reference_answer": "当然可以！最近的地铁站就在前面那条街，往前走两个路口左转就能看到入口。如果你愿意，我可以陪你走过去。"},
+        {"question_text": "Excuse me, do you know a good local restaurant around here?",
+         "reference_answer": "我推荐街角那家小餐馆，他们的招牌菜很地道，价格也实惠。我自己周末经常去，每次都吃得很满足。"},
+        {"question_text": "Hello! I'm visiting for the first time. What's a must-see place?",
+         "reference_answer": "你一定要去市中心的老城区逛一逛！那里的建筑很有历史感，街边还有不少特色小店和咖啡馆，非常适合慢慢散步。"},
+    ],
+    "Japanese": [
+        {"question_text": "すみません、この近くで美味しいレストランを知っていますか？",
+         "reference_answer": "附近这家拉面店真的很不错，汤头很浓郁，配料也很丰富。我经常带朋友去，他们都说比想象中还要好吃。"},
+        {"question_text": "こんにちは！初めて来たんですが、おすすめの場所はありますか？",
+         "reference_answer": "我建议你去附近的神社看看，环境很安静，走在那边会让人心情放松。如果天气好，傍晚的景色也特别漂亮。"},
+        {"question_text": "ちょっと道に迷ったんですが、駅はどちらですか？",
+         "reference_answer": "车站就在前面，沿着这条路一直走，过了第二个红绿灯往右拐就能看到。大概步行五分钟左右就到了。"},
+    ],
+    "Chinese": [
+        {"question_text": "你好，请问附近有什么好吃的餐厅吗？",
+         "reference_answer": "Yes! There's a really nice noodle place just around the corner. The portions are generous and the prices are pretty reasonable, so I go there pretty often."},
+        {"question_text": "不好意思，最近的地铁站在哪里？",
+         "reference_answer": "The nearest subway station is about a five-minute walk from here. Just head straight down this street and turn left at the second traffic light."},
+        {"question_text": "你好！我第一次来这里，有什么推荐的地方吗？",
+         "reference_answer": "I'd suggest checking out the riverside park in the late afternoon. The view is really nice, and there are plenty of small cafes nearby if you want to take a break."},
+    ],
+}
+
+_DAILY_QA_LANG_CODE = {"English": "en", "Japanese": "ja", "Chinese": "zh"}
+
+
+def _fallback_by_language(target_language: str) -> list:
+    """Return a list of fallback question dicts keyed by target language.
+
+    Unknown languages fall back to English so behaviour is predictable for the
+    other 26 supported languages.
+    """
+    key = target_language if target_language in _DAILY_QA_FALLBACK else "English"
+    lang_code = _DAILY_QA_LANG_CODE.get(key, "en")
+    return [
+        {
+            "question_text": item["question_text"],
+            "lang": lang_code,
+            "reference_answer": item.get("reference_answer", ""),
+        }
+        for item in _DAILY_QA_FALLBACK[key]
+    ]
+
+
+# Back-compat shim: some callers still reference the old constant shape.
+_DAILY_QA_FALLBACK_POOL = _fallback_by_language("English")
+
+
+def _today_utc_str() -> str:
+    from datetime import datetime, timezone
+    return datetime.now(timezone.utc).strftime("%Y-%m-%d")
+
+
+def _strip_daily_qa_marker(text: str) -> str:
+    """Remove [DAILY_QA_PASSED] marker from a string (used before TTS)."""
+    if not text:
+        return text or ""
+    return _DAILY_QA_PASSED_RE.sub("", text).strip()
+
+
+def _parse_daily_qa_pool_text(text: str) -> list:
+    """Parse a qwen-turbo reply (possibly markdown-wrapped) into a list of question dicts."""
+    if not text:
+        return []
+    stripped = text.strip()
+    # Strip ```json fences if present
+    fence = re.match(r"^```(?:json)?\s*(.*?)\s*```$", stripped, flags=re.DOTALL | re.IGNORECASE)
+    if fence:
+        stripped = fence.group(1).strip()
+    try:
+        parsed = json.loads(stripped)
+    except Exception:
+        return []
+    if not isinstance(parsed, list):
+        return []
+    out = []
+    for item in parsed:
+        if isinstance(item, dict) and item.get("question_text"):
+            out.append({
+                "question_text": str(item.get("question_text")),
+                "lang": str(item.get("lang") or ""),
+                "reference_answer": str(item.get("reference_answer") or ""),
+            })
+        elif isinstance(item, str) and item.strip():
+            out.append({"question_text": item.strip(), "lang": "", "reference_answer": ""})
+    return out
+
+
+async def _generate_daily_question_pool(target_language: str, native_language: str, count: int = 10) -> list:
+    """Call qwen-turbo to generate a pool of daily practice questions.
+
+    Two-step generation: 1) questions in target_language, 2) reference answers in native_language.
+    On any error falls back to _DAILY_QA_FALLBACK_POOL.
+    """
+    count = max(1, min(int(count or 10), _DAILY_QA_POOL_CAP))
+    prompt = (
+        f"Generate exactly {count} short, friendly daily speaking-practice questions "
+        f"for a learner practising {target_language}. Each question must be answerable "
+        f"in 2-4 sentences and touch everyday life (food, hobbies, goals, feelings). "
+        f"Return ONLY valid JSON: [{{\"question_text\": \"...\", \"lang\": \"<ISO 639-1>\"}}]. "
+        f"Do NOT wrap in markdown. Questions must be in {target_language}."
+    )
+    loop = asyncio.get_running_loop()
+
+    def _call():
+        return dashscope.Generation.call(
+            model=os.getenv("DAILY_QA_MODEL", "qwen-turbo"),
+            messages=[{"role": "user", "content": prompt}],
+            result_format="message",
+        )
+
+    try:
+        resp = await loop.run_in_executor(None, _call)
+    except Exception as e:
+        logger.warning(f"[DAILY_QA] pool generation LLM call failed: {e} — using {target_language} fallback")
+        return _fallback_by_language(target_language)
+
+    # Extract text payload (DashScope result_format='message' vs 'text')
+    text = None
+    try:
+        text = getattr(getattr(resp, "output", None), "text", None)
+        if not text:
+            choices = getattr(getattr(resp, "output", None), "choices", None) or []
+            if choices:
+                msg = getattr(choices[0], "message", None)
+                text = getattr(msg, "content", None) if msg is not None else None
+    except Exception as e:
+        logger.warning(f"[DAILY_QA] unable to read response text: {e}")
+
+    parsed = _parse_daily_qa_pool_text(text or "")
+    if not parsed:
+        logger.warning(f"[DAILY_QA] malformed/empty LLM output — using {target_language} fallback. raw={str(text)[:200]}")
+        return _fallback_by_language(target_language)
+    pool = parsed[:_DAILY_QA_POOL_CAP]
+
+    # Step 2: Generate reference answers in native_language via a separate LLM call
+    questions_for_ref = [q["question_text"] for q in pool]
+    ref_prompt = (
+        f"I have these {target_language} questions:\n"
+        + "\n".join(f"{i+1}. {q}" for i, q in enumerate(questions_for_ref))
+        + f"\n\nFor each question, write a short sample answer (2-3 sentences) "
+        f"in {native_language} ONLY. The answers must be entirely in {native_language}. "
+        f"Return ONLY a JSON array of strings, one answer per question, in the same order. "
+        f"Example: [\"answer1 in {native_language}\", \"answer2 in {native_language}\"]"
+    )
+    try:
+        def _call_ref():
+            return dashscope.Generation.call(
+                model=os.getenv("DAILY_QA_MODEL", "qwen-turbo"),
+                messages=[{"role": "user", "content": ref_prompt}],
+                result_format="message",
+            )
+        ref_resp = await loop.run_in_executor(None, _call_ref)
+        ref_text = None
+        try:
+            ref_text = getattr(getattr(ref_resp, "output", None), "text", None)
+            if not ref_text:
+                choices = getattr(getattr(ref_resp, "output", None), "choices", None) or []
+                if choices:
+                    msg = getattr(choices[0], "message", None)
+                    ref_text = getattr(msg, "content", None) if msg is not None else None
+        except Exception:
+            pass
+        if ref_text:
+            ref_text = ref_text.strip()
+            fence = re.match(r"^```(?:json)?\s*(.*?)\s*```$", ref_text, flags=re.DOTALL | re.IGNORECASE)
+            if fence:
+                ref_text = fence.group(1).strip()
+            ref_answers = json.loads(ref_text)
+            if isinstance(ref_answers, list):
+                for i, ans in enumerate(ref_answers):
+                    if i < len(pool) and isinstance(ans, str):
+                        pool[i]["reference_answer"] = ans
+                logger.info(f"[DAILY_QA] reference answers generated in {native_language} for {len(ref_answers)} questions")
+    except Exception as e:
+        logger.warning(f"[DAILY_QA] reference answer generation failed: {e}")
+
+    return pool
+
+
+async def handle_daily_question(redis, user_id: str, target_language: str = "English",
+                                native_language: str = "Chinese") -> dict:
+    """Return today's daily question for the user, hitting Redis cache first.
+
+    Redis keys:
+      daily_qa_pool:{user_id}:{YYYY-MM-DD}  — today's chosen question (48h TTL)
+      daily_qa_passed:{user_id}:{YYYY-MM-DD} — set when student passes
+    Returns: {"question_text": ..., "qa_date": ..., "passed": bool, "lang": ...}
+    """
+    if not user_id:
+        raise ValueError("user_id required")
+    date_str = _today_utc_str()
+    cache_key = f"daily_qa_pool:{user_id}:{date_str}"
+    passed_key = f"daily_qa_passed:{user_id}:{date_str}"
+
+    cached_raw = await redis.get(cache_key)
+    passed_raw = await redis.get(passed_key)
+    passed = bool(passed_raw)
+
+    if cached_raw is not None:
+        try:
+            data = json.loads(cached_raw if isinstance(cached_raw, str) else cached_raw.decode("utf-8"))
+        except Exception:
+            data = None
+        # New shape: {"pool": [...], "index": n, "picked": {...}}
+        if isinstance(data, dict) and isinstance(data.get("picked"), dict) and data["picked"].get("question_text"):
+            picked = data["picked"]
+            return {
+                "question_text": picked.get("question_text", ""),
+                "lang": picked.get("lang", ""),
+                "reference_answer": picked.get("reference_answer", ""),
+                "qa_date": date_str,
+                "passed": passed,
+            }
+        # Legacy shape: {"question_text": ..., "lang": ...}
+        if isinstance(data, dict) and data.get("question_text"):
+            return {
+                "question_text": data["question_text"],
+                "lang": data.get("lang", ""),
+                "reference_answer": data.get("reference_answer", ""),
+                "qa_date": date_str,
+                "passed": passed,
+            }
+        if isinstance(data, list) and data:
+            first = data[0] if isinstance(data[0], dict) else {"question_text": str(data[0])}
+            return {
+                "question_text": first.get("question_text", ""),
+                "lang": first.get("lang", ""),
+                "reference_answer": first.get("reference_answer", ""),
+                "qa_date": date_str,
+                "passed": passed,
+            }
+
+    # Miss — generate a pool, take the first question, cache pool+index+picked (new shape)
+    pool = await _generate_daily_question_pool(target_language, native_language, count=_DAILY_QA_POOL_CAP)
+    if not pool:
+        pool = _fallback_by_language(target_language)
+    picked = pool[0]
+    payload = {"pool": pool, "index": 0, "picked": picked}
+    try:
+        await redis.setex(cache_key, _DAILY_QA_TTL_SECONDS, json.dumps(payload, ensure_ascii=False))
+    except Exception as e:
+        logger.warning(f"[DAILY_QA] failed to cache question: {e}")
+
+    return {
+        "question_text": picked.get("question_text", ""),
+        "lang": picked.get("lang", ""),
+        "reference_answer": picked.get("reference_answer", ""),
+        "qa_date": date_str,
+        "passed": passed,
+    }
+
+
+async def get_daily_question_pool(redis, user_id: str, target_language: str = "English",
+                                  native_language: str = "Chinese", count: int = 3) -> list:
+    """Return up to `count` questions from today's pool for Pro user selection."""
+    if not user_id:
+        raise ValueError("user_id required")
+    date_str = _today_utc_str()
+    cache_key = f"daily_qa_pool:{user_id}:{date_str}"
+
+    cached_raw = await redis.get(cache_key)
+    pool = None
+
+    if cached_raw is not None:
+        try:
+            data = json.loads(cached_raw if isinstance(cached_raw, str) else cached_raw.decode("utf-8"))
+        except Exception:
+            data = None
+        if isinstance(data, dict) and isinstance(data.get("pool"), list):
+            pool = data["pool"]
+        elif isinstance(data, list):
+            pool = data
+
+    if not pool:
+        pool = await _generate_daily_question_pool(target_language, native_language, count=_DAILY_QA_POOL_CAP)
+        if not pool:
+            pool = _fallback_by_language(target_language)
+        picked = pool[0]
+        payload = {"pool": pool, "index": 0, "picked": picked}
+        try:
+            await redis.setex(cache_key, _DAILY_QA_TTL_SECONDS, json.dumps(payload, ensure_ascii=False))
+        except Exception as e:
+            logger.warning(f"[DAILY_QA] failed to cache pool: {e}")
+
+    result = []
+    for i, q in enumerate(pool[:count]):
+        if isinstance(q, dict):
+            result.append({
+                "question_text": q.get("question_text", ""),
+                "reference_answer": q.get("reference_answer", ""),
+                "lang": q.get("lang", ""),
+                "index": i,
+            })
+        else:
+            result.append({
+                "question_text": str(q),
+                "reference_answer": "",
+                "lang": "",
+                "index": i,
+            })
+    return result
+
+
+async def _handle_daily_qa_marker(redis, user_id: str, websocket, ai_text: str) -> bool:
+    """Detect [DAILY_QA_PASSED] in AI text → write Redis passed key + push WS frame.
+
+    Returns True iff the marker was detected. No-op when marker absent.
+    """
+    if not ai_text or not _DAILY_QA_PASSED_RE.search(ai_text):
+        return False
+    date_str = _today_utc_str()
+    passed_key = f"daily_qa_passed:{user_id}:{date_str}"
+    try:
+        await redis.setex(passed_key, _DAILY_QA_TTL_SECONDS, "1")
+    except Exception as e:
+        logger.warning(f"[DAILY_QA] failed to write passed key: {e}")
+
+    # Persist pass to DB (fire-and-forget)
+    try:
+        _user_svc = os.getenv("USER_SERVICE_URL", "http://user-service:3000")
+        async with httpx.AsyncClient() as _cli:
+            await _cli.post(
+                f"{_user_svc}/api/users/internal/users/{user_id}/daily-qa-pass",
+                json={"question_text": (ai_text or "")[:500]},
+                timeout=3.0,
+            )
+    except Exception as _e:
+        logger.warning(f"[DAILY_QA] failed to persist pass to DB: {_e}")
+
+    try:
+        await websocket.send_json({
+            "type": "daily_qa_completed",
+            "payload": {"qa_date": date_str, "passed": True},
+        })
+    except Exception as e:
+        logger.warning(f"[DAILY_QA] failed to push daily_qa_completed: {e}")
+    logger.info(f"[DAILY_QA] marker detected → {passed_key} set + WS push")
+    return True
+
+
+async def _advance_daily_qa_pool(redis, user_id: str, date_str: str, *,
+                                 target_language: str, native_language: str) -> dict:
+    """Advance the user's daily-QA pool index and return the new picked question.
+
+    Handles both new-shape (`{pool, index, picked}`) and legacy-shape cache values.
+    If the pool has only one item, regenerates a fresh pool before advancing.
+    Returns the new picked dict `{"question_text": ..., "lang": ...}`.
+    """
+    cache_key = f"daily_qa_pool:{user_id}:{date_str}"
+
+    # Read + parse existing cache
+    data = None
+    try:
+        cached_raw = await redis.get(cache_key)
+        if cached_raw is not None:
+            data = json.loads(cached_raw if isinstance(cached_raw, str) else cached_raw.decode("utf-8"))
+    except Exception as e:
+        logger.warning(f"[DAILY_QA] advance: read cache failed: {e}")
+        data = None
+
+    # Normalize into {pool, index, picked}
+    pool: list = []
+    index = 0
+    if isinstance(data, dict) and isinstance(data.get("pool"), list) and data["pool"]:
+        pool = data["pool"]
+        try:
+            index = int(data.get("index", 0))
+        except Exception:
+            index = 0
+    elif isinstance(data, dict) and data.get("question_text"):
+        # Legacy single-question shape → wrap, treat as index 0
+        pool = [{"question_text": data["question_text"], "lang": data.get("lang", "")}]
+        index = 0
+    elif isinstance(data, list) and data:
+        # Legacy list shape
+        pool = [item if isinstance(item, dict) else {"question_text": str(item), "lang": ""} for item in data]
+        index = 0
+
+    # Regenerate if pool is empty or has <=1 item (no real alternative to rotate to)
+    if len(pool) <= 1:
+        try:
+            fresh = await _generate_daily_question_pool(target_language, native_language, count=_DAILY_QA_POOL_CAP)
+        except Exception as e:
+            logger.warning(f"[DAILY_QA] advance: pool regeneration failed: {e}")
+            fresh = []
+        if not fresh:
+            fresh = _fallback_by_language(target_language)
+        # Append any new questions not already present, keep current first if any
+        existing_texts = {p.get("question_text") for p in pool}
+        for q in fresh:
+            if q.get("question_text") not in existing_texts:
+                pool.append(q)
+        if not pool:
+            pool = fresh
+
+    new_index = (index + 1) % max(len(pool), 1)
+    picked = pool[new_index] if pool else {"question_text": "", "lang": ""}
+    payload = {"pool": pool, "index": new_index, "picked": picked}
+    try:
+        await redis.setex(cache_key, _DAILY_QA_TTL_SECONDS, json.dumps(payload, ensure_ascii=False))
+    except Exception as e:
+        logger.warning(f"[DAILY_QA] advance: write cache failed: {e}")
+
+    logger.info(f"[DAILY_QA] advanced pool for user={user_id}: index {index} → {new_index} (pool_size={len(pool)})")
+    return picked
+
+
+def _assert_pro(user_ctx: dict) -> None:
+    """Raise 403 if user is not a Pro subscriber.
+
+    Pro source of truth: `subscription_status == 'active'` on the users table
+    (set by Stripe webhook handlers in user-service).
+    """
+    status = (user_ctx or {}).get("subscription_status")
+    if status != "active":
+        raise HTTPException(status_code=403, detail="pro_required")
+
+
+def _get_redis_client():
+    """Lazy accessor for a module-level redis.asyncio client.
+
+    Returns None if redis library is unavailable (e.g. in test environments
+    without the dep installed) so callers can degrade gracefully.
+    """
+    global _redis_client_singleton
+    if _redis_client_singleton is not None:
+        return _redis_client_singleton
+    try:
+        import redis.asyncio as _redis_async
+    except Exception as e:
+        logger.warning(f"[DAILY_QA] redis.asyncio not available: {e}")
+        return None
+    host = os.getenv("REDIS_HOST", "redis")
+    port = int(os.getenv("REDIS_PORT", "6379"))
+    db = int(os.getenv("REDIS_DB", "0"))
+    try:
+        _redis_client_singleton = _redis_async.Redis(host=host, port=port, db=db, decode_responses=True)
+    except Exception as e:
+        logger.error(f"[DAILY_QA] failed to init redis client: {e}")
+        _redis_client_singleton = None
+    return _redis_client_singleton
+
+
+_redis_client_singleton = None
+
+
 async def call_proficiency_workflow(user_id: str, goal_id: int, task_id: int, conversation_history: list, user_context: dict, token: str, scenario: str = None, websocket = None, detected_language: str = None):
     """
     调用工作流 2（熟练度打分）来分析对话并更新分数
@@ -447,7 +1148,26 @@ async def call_proficiency_workflow(user_id: str, goal_id: int, task_id: int, co
                             logger.info(f"All tasks completed in scenario: {scenario_title}")
                             user_context['custom_topic'] = f"{scenario_title} (All tasks completed!)"
                             user_context['next_task_text'] = None
-                            
+
+                            # Guard: require at least 3 real user turns before deep evaluation
+                            recent_history = conversation_history[-50:]
+                            user_msg_count = sum(1 for m in recent_history if (m.get('role') == 'user') and (m.get('content') or '').strip())
+                            if user_msg_count < 3:
+                                logger.warning(
+                                    f"[SCENARIO_REVIEW] Skipping deep evaluation: only {user_msg_count} user turns (<3) in scenario '{scenario_title}'."
+                                )
+                                if websocket:
+                                    await websocket.send_json({
+                                        "type": "scenario_completed",
+                                        "payload": {
+                                            "scenario_title": scenario_title,
+                                            "reason": "insufficient_practice",
+                                            "user_turn_count": user_msg_count,
+                                            "message": "本场景练习数据不足，建议完整完成 3 个子任务后再查看报告。"
+                                        }
+                                    })
+                                return result_data
+
                             # 场景完成，调用 scenario review 工作流生成个性化点评
                             logger.info("Scenario completed, calling scenario review workflow...")
                             try:
@@ -458,7 +1178,7 @@ async def call_proficiency_workflow(user_id: str, goal_id: int, task_id: int, co
                                         "goal_id": goal_id,
                                         "scenario_title": scenario_title,
                                         "completed_tasks": [],  # 由 workflow 从数据库获取
-                                        "conversation_history": conversation_history[-50:]  # 最近 50 轮对话
+                                        "conversation_history": recent_history  # 最近 50 轮对话
                                     },
                                     headers={"Authorization": f"Bearer {token}"}
                                 )
@@ -546,6 +1266,21 @@ class WebSocketCallback(OmniRealtimeCallback):
         self._reconnect_failures = 0   # Count of "opened then closed quickly" events
         self._last_open_time = 0       # Timestamp of last on_open
         self.auth_denied = False        # Set True after too many quick-close failures (rate-limit / access-denied)
+        # Batch evaluation state (Feature 1 — 批量评估 Agent)
+        self.turn_accumulator = []          # [{turn_index, user_content, ai_response, timestamp}, ...]
+        self.current_eval_task_id = None    # Reset accumulator on task switch
+        self.batch_eval_count = 0           # How many batch evals done for current task (dynamic window: 3 for first 2, then 4)
+        self.pending_directive = None       # One-turn teaching directive (consumed at upload_ai_task head)
+        self.last_total_proficiency = None  # Cache of last known total; inline turns reuse to avoid DB query
+        # Daily Q&A state (Feature 2)
+        self.is_daily_qa_mode = False
+        self.daily_qa_question = ""
+        self.daily_qa_completed = False   # Set True after [DAILY_QA_PASSED] detected, suppresses retriggers
+        self.daily_qa_ai_response_count = 0  # Counts AI responses; auto-pass fallback after 2nd
+        self.daily_qa_suppress_modal = False  # True when user already passed today; skip WS event
+        # Track DashScope server-side conversation items so we can delete them
+        # on task switch (otherwise the AI keeps hearing prior-task transcripts).
+        self.item_ids = []
 
     async def _safe_send(self, message: dict):
         """Safely send a WebSocket message, ignoring errors if client is disconnected."""
@@ -555,6 +1290,29 @@ class WebSocketCallback(OmniRealtimeCallback):
             await self.websocket.send_json(message)
         except (WebSocketDisconnect, Exception):
             pass  # Ignore errors if WebSocket is already closed
+
+    def _clear_dashscope_items(self, reason: str = "task_switch"):
+        """Delete all tracked server-side DashScope conversation.items.
+
+        DashScope Realtime keeps an internal conversation buffer of items
+        (user transcripts + AI responses). Clearing `self.messages` only
+        removes OUR view; the AI keeps hearing prior-task context until we
+        explicitly delete the items. Call this on any task/phase switch.
+        """
+        if not self.conversation:
+            self.item_ids = []
+            return
+        _count = len(self.item_ids)
+        for _iid in list(self.item_ids):
+            try:
+                self.conversation.send_raw(json.dumps({
+                    "type": "conversation.item.delete",
+                    "item_id": _iid
+                }))
+            except Exception as _e:
+                logger.warning(f"[{reason}] delete DashScope item {_iid} failed: {_e}")
+        self.item_ids = []
+        logger.info(f"[{reason}] Deleted {_count} server-side DashScope items")
 
     def _determine_role(self, context):
         if not context or isinstance(context, str): return "InfoCollector"
@@ -610,7 +1368,7 @@ class WebSocketCallback(OmniRealtimeCallback):
             logger.warning("connection_established already sent, skipping")
         self._update_session_prompt()
 
-    def _update_session_prompt(self):
+    def _update_session_prompt(self, extra_directive: str = None):
         if self.conversation:
             full_ctx = {**self.user_context}
             active_goal = self.user_context.get('active_goal') or {}
@@ -645,12 +1403,14 @@ class WebSocketCallback(OmniRealtimeCallback):
                         full_ctx['task_description'] = task_text  # Explicitly set for prompt template
 
                         # Also update active_goal.current_task for prompt_manager
+                        # CRITICAL: preserve 'id' so proficiency/batch_evaluate can resolve the task row.
                         full_ctx['active_goal']['current_task'] = {
+                            'id': current_task.get('id'),
                             'scenario_title': self.scenario,
                             'task_description': task_text
                         }
 
-                        logger.info(f"Selected Scenario: {self.scenario}, Current Task: {task_text}")
+                        logger.info(f"Selected Scenario: {self.scenario}, Current Task: {task_text} (id={current_task.get('id')})")
                     else:
                         # All tasks completed
                         self.user_context['custom_topic'] = f"{self.scenario} (All tasks completed!)"
@@ -668,6 +1428,39 @@ class WebSocketCallback(OmniRealtimeCallback):
             phase_info = session_phases.get(self.phase_key, {"phase": "magic_repetition", "task_index": 0})
             target_lang = full_ctx.get('target_language', 'English')
             native_lang = full_ctx.get('native_language', '中文')
+
+            # Daily Q&A mode short-circuits normal phase selection (Feature 2)
+            if self.is_daily_qa_mode and self.daily_qa_question:
+                target_level = (
+                    full_ctx.get('target_level')
+                    or self.user_context.get('target_level')
+                    or (full_ctx.get('active_goal') or {}).get('target_level')
+                    or 'B1'
+                )
+                system_prompt = prompt_manager.generate_daily_qa_prompt(
+                    question=self.daily_qa_question,
+                    target_language=target_lang,
+                    native_language=native_lang,
+                    target_level=target_level,
+                )
+                # Daily QA prompt must NOT be polluted by teaching directives
+                if extra_directive:
+                    logger.info(f"[BATCH_EVAL] Skipping teaching directive in daily_qa mode ({len(extra_directive)} chars)")
+                selected_voice = self.user_context.get('voice') or os.getenv("QWEN3_OMNI_VOICE", "Tina")
+                logger.info(f"[DAILY_QA] Sending daily_qa system prompt (question={self.daily_qa_question[:80]!r})")
+                try:
+                    self.conversation.update_session(
+                        instructions=system_prompt,
+                        voice=selected_voice,
+                        output_modalities=[MultiModality.TEXT, MultiModality.AUDIO],
+                        enable_input_audio_transcription=True,
+                        input_audio_transcription_model="qwen3-asr-flash-realtime",
+                        enable_turn_detection=False,
+                    )
+                except Exception as e:
+                    logger.error(f"[DAILY_QA] Failed to update session prompt: {e}")
+                    logger.error(traceback.format_exc())
+                return
 
             if self.scenario and phase_info.get("phase") == "magic_repetition":
                 tasks_list = []
@@ -688,16 +1481,39 @@ class WebSocketCallback(OmniRealtimeCallback):
                 )
                 logger.info(f"[Phase] magic_repetition task[{task_idx}]: {task_text[:50]}, memory_mode={memory_mode}, next: {next_task_text[:50] if next_task_text else 'None'}")
             elif self.scenario and phase_info.get("phase") == "scene_theater":
-                tasks_list = []
+                # A.2: only expose the CURRENT sub-task to the AI, never the full list.
+                all_task_objs = []
+                all_task_texts = []
                 if active_goal.get('scenarios'):
                     matched = next((s for s in active_goal.get('scenarios', []) if s.get('title') == self.scenario), None)
                     if matched:
-                        tasks_list = [t.get('text', '') if isinstance(t, dict) else str(t) for t in matched.get('tasks', [])]
+                        all_task_objs = matched.get('tasks', []) or []
+                        all_task_texts = [t.get('text', '') if isinstance(t, dict) else str(t) for t in all_task_objs]
+
+                # Pick current pending task: first non-completed in original order.
+                current_idx = 0
+                for i, t in enumerate(all_task_objs):
+                    if isinstance(t, dict) and t.get('status') != 'completed':
+                        current_idx = i
+                        break
+                else:
+                    # All completed: show the last one for graceful final state
+                    current_idx = max(0, len(all_task_texts) - 1)
+
+                current_task_text = all_task_texts[current_idx] if current_idx < len(all_task_texts) else "日常对话"
+                total_tasks = len(all_task_texts) if all_task_texts else 3
+
                 system_prompt = prompt_manager.generate_scene_theater_prompt(
                     image_url=phase_info.get("scene_image_url", ""),
-                    tasks=tasks_list, target_language=target_lang, native_language=native_lang
+                    tasks=[current_task_text],
+                    target_language=target_lang,
+                    native_language=native_lang,
+                    current_task_number=current_idx + 1,
+                    total_tasks=total_tasks,
                 )
-                logger.info(f"[Phase] scene_theater prompt, image={phase_info.get('scene_image_url', '')[:60]}")
+                logger.info(
+                    f"[Phase] scene_theater prompt (single-task view): task #{current_idx + 1}/{total_tasks} = {current_task_text[:60]}"
+                )
             else:
                 system_prompt = prompt_manager.generate_system_prompt(full_ctx, role=self.role)
 
@@ -740,6 +1556,11 @@ class WebSocketCallback(OmniRealtimeCallback):
                         history_text += f"{role_label}: {content}\n"
                     history_text += "\n**NOW**: Wait silently for user to speak. Greet briefly if needed, then listen.\n"
                     system_prompt += history_text
+
+            # Append one-time teaching directive if provided (Feature 1)
+            if extra_directive:
+                system_prompt = system_prompt + "\n\n" + extra_directive
+                logger.info(f"[BATCH_EVAL] Appending teaching directive to session prompt ({len(extra_directive)} chars)")
 
             logger.info(f"Sending System Prompt ({self.role}) full:\n{system_prompt}")
             try:
@@ -842,6 +1663,70 @@ class WebSocketCallback(OmniRealtimeCallback):
                             # Yield so any pending audio_transcript.done event can populate self.messages
                             await asyncio.sleep(0)
 
+                            # ── Consume one-time teaching directive (Feature 1) ──
+                            # The directive was injected on the PREVIOUS turn and consumed by DashScope
+                            # on THIS response. Restore base prompt so the next turn is clean.
+                            if self.pending_directive:
+                                logger.info("[BATCH_EVAL] Directive consumed — restoring base session prompt")
+                                self.pending_directive = None
+                                try:
+                                    self._update_session_prompt()
+                                except Exception as _de:
+                                    logger.warning(f"[BATCH_EVAL] Failed to restore base prompt: {_de}")
+
+                            # ── Daily Q&A: detect [DAILY_QA_PASSED] (Feature 2) ──
+                            if self.is_daily_qa_mode and not self.daily_qa_completed:
+                                self.daily_qa_ai_response_count += 1
+                                _latest_ai_for_marker = ""
+                                for _m in reversed(self.messages):
+                                    if _m.get("role") == "assistant":
+                                        _latest_ai_for_marker = _m.get("content", "") or ""
+                                        break
+                                _marker_found = _DAILY_QA_PASSED_RE.search(_latest_ai_for_marker)
+                                # Auto-pass fallback: if AI responded >= 2 times (1st=question, 2nd=evaluation),
+                                # marker not found, but AI response is positive (no retry/correction indicators)
+                                _auto_pass = False
+                                if not _marker_found and self.daily_qa_ai_response_count >= 3:
+                                    _ai_lower = _latest_ai_for_marker.lower()
+                                    _negative_indicators = [
+                                        # Retry / correction
+                                        "try again", "もう一度", "再试", "再说", "重新",
+                                        "let's try", "could you", "can you try",
+                                        "もう少し", "やり直", "言い直",
+                                        "not quite", "not correct", "incorrect",
+                                        # Off-topic / wrong language
+                                        "off-topic", "off topic", "関係ない", "关系不大",
+                                        "话题", "質問に", "question", "about the question",
+                                        "答えてみ", "回答一下", "answer the",
+                                        "今日の質問", "今天的问题", "today's question",
+                                        # Wrong language
+                                        "日本語で", "in japanese", "in english", "用日语", "用英语",
+                                        "please use", "please answer",
+                                    ]
+                                    _has_negative = any(ind in _ai_lower for ind in _negative_indicators)
+                                    if not _has_negative:
+                                        _auto_pass = True
+                                        logger.info(f"[DAILY_QA] Auto-pass fallback: positive AI response (count={self.daily_qa_ai_response_count})")
+                                _should_pass = _marker_found or _auto_pass
+                                if _should_pass:
+                                    if not _marker_found:
+                                        logger.info(f"[DAILY_QA] Auto-pass fallback triggered (ai_response_count={self.daily_qa_ai_response_count})")
+                                    self.daily_qa_completed = True
+                                    _is_bonus = self.daily_qa_suppress_modal
+                                    try:
+                                        _rc = _get_redis_client()
+                                        if _rc is not None and not _is_bonus:
+                                            await _handle_daily_qa_marker(
+                                                _rc, self.user_id, self.websocket, _latest_ai_for_marker
+                                            )
+                                        else:
+                                            await self._safe_send({
+                                                "type": "daily_qa_completed",
+                                                "payload": {"qa_date": _today_utc_str(), "passed": True, "is_bonus": _is_bonus},
+                                            })
+                                    except Exception as _qae:
+                                        logger.warning(f"[DAILY_QA] marker handler error: {_qae}")
+
                             # ── Pre-upload: strip spoken markers, re-synthesize clean TTS if needed ──
                             latest_ai_text = ""
                             for _m in reversed(self.messages):
@@ -852,7 +1737,9 @@ class WebSocketCallback(OmniRealtimeCallback):
                             _MARKER_RE = re.compile(
                                 r'\[TASK_\d+_COMPLETE\]'
                                 r'|[\[<]MAGIC_SENTENCE:[^\]>]*[\]>]?'
-                                r'|\[MAGIC_PASS[^\]]*\]',
+                                r'|\[MAGIC_PASS[^\]]*\]'
+                                r'|\[DAILY_QA_PASSED\]'
+                                r'|\[\s*NATIVE:\s*[^\]]*\]',
                                 re.IGNORECASE
                             )
                             audio_data = d
@@ -999,6 +1886,7 @@ class WebSocketCallback(OmniRealtimeCallback):
                                                     })
                                                     self.messages = []
                                                     self.task_history_cutoff = 0
+                                                    self._clear_dashscope_items(reason=f"MAGIC_SWITCH[A+B] → task[{next_index}]")
                                                     self._update_session_prompt()
                                                     logger.info(f"[Phase] Merged A+B — skipped response.create, updated session prompt for task[{next_index}]")
                                                 else:
@@ -1011,6 +1899,7 @@ class WebSocketCallback(OmniRealtimeCallback):
                                                     })
                                                     self.messages = []
                                                     self.task_history_cutoff = 0
+                                                    self._clear_dashscope_items(reason=f"MAGIC_SWITCH[fallback] → task[{next_index}]")
                                                     self._update_session_prompt()
                                                     # 短暂延迟确保 DashScope session 更新生效
                                                     await asyncio.sleep(0.5)
@@ -1047,6 +1936,7 @@ class WebSocketCallback(OmniRealtimeCallback):
                                                 phase_info["scene_image_url"] = ""  # 图片未就绪时先置空
                                                 self.messages = []
                                                 self.task_history_cutoff = 0
+                                                self._clear_dashscope_items(reason="PHASE_SWITCH → scene_theater")
                                                 self._update_session_prompt()  # 提前到 await 之前，防止竞态条件
                                                 logger.info(f"[Phase] scene_theater prompt 已提前注入（图片生成中）")
                                                 try:
@@ -1100,102 +1990,108 @@ class WebSocketCallback(OmniRealtimeCallback):
                                     if marker in latest_ai_text:
                                         await send_phase_event(self.websocket, "theater_task_complete", {"task_index": _n})
 
-                                # 调用工作流 2（熟练度打分）- 只在用户有输入后才调用
-                                # Skip workflow call if this is the welcome message (no user input yet)
+                                # 调用批量评估 Agent（F1）- 只在用户有输入后才调用
+                                # Skip if this is the welcome message (no user input yet)
                                 user_message_count = sum(1 for m in self.messages if m.get("role") == "user")
                                 _magic_phase_info = session_phases.get(self.phase_key, {})
                                 if goal_id and user_message_count > 0 and _magic_phase_info.get("phase") != "magic_repetition":
-                                    workflow_result = await call_proficiency_workflow(
+                                    # Extract last user message content
+                                    _last_user_content = ""
+                                    for _msg in reversed(self.messages):
+                                        if _msg.get("role") == "user":
+                                            _last_user_content = _msg.get("content", "") or ""
+                                            break
+
+                                    # Build current_task context for the helper
+                                    _active_goal = self.user_context.get('active_goal') or {}
+                                    _target_language = _active_goal.get('target_language', 'English')
+                                    _native_language = self.user_context.get('native_language') or _active_goal.get('native_language') or '中文'
+                                    _custom_topic = self.user_context.get('custom_topic') or 'General Practice'
+                                    _scenario_title = (_custom_topic.split(" (")[0]).strip()
+                                    _task_description = self.user_context.get('current_task_text') or _custom_topic
+                                    _current_task_ctx = {
+                                        "id": task_id or 0,
+                                        "task_description": _task_description,
+                                        "scenario_title": _scenario_title,
+                                        "target_language": _target_language,
+                                    }
+
+                                    workflow_result = await _handle_turn_with_accumulator(
+                                        self,
+                                        self.conversation,
+                                        self.websocket,
                                         self.user_id,
                                         goal_id,
                                         task_id or 0,
-                                        self.messages,
-                                        self.user_context,
+                                        _last_user_content,
+                                        latest_ai_text,
+                                        _current_task_ctx,
+                                        _native_language,
                                         self.token,
-                                        self.scenario,
-                                        self.websocket,
-                                        detected_language=self.last_detected_language
                                     )
-                                    
+
                                     if workflow_result:
                                         delta = workflow_result.get('proficiency_delta', 0)
                                         total = workflow_result.get('total_proficiency', 0)
                                         task_completed = workflow_result.get('task_completed', False)
+                                        task_ready_to_complete = workflow_result.get('task_ready_to_complete', False)
                                         task_score = workflow_result.get('task_score', 0)
                                         improvement_tips = workflow_result.get('improvement_tips', [])
-                                        
+
                                         # 计算进度条百分比
                                         progress = min(100, round((task_score / 9) * 100)) if task_score else 0
-                                        
-                                        # 发送proficiency_update到前端
-                                        if delta > 0 or improvement_tips:
+
+                                        # NOTE: proficiency_update already sent by _handle_turn_with_accumulator.
+                                        # Skip duplicate send here.
+                                        logger.info(
+                                            f"[BATCH_EVAL] workflow_result: delta={delta}, total={total}, "
+                                            f"task_id={workflow_result.get('task_id')}, task_score={task_score}, "
+                                            f"task_completed={task_completed}, task_ready_to_complete={task_ready_to_complete}"
+                                        )
+
+                                        # task_ready_to_complete：询问用户确认，不自动切换
+                                        if task_ready_to_complete and not task_completed:
+                                            task_title = workflow_result.get('task_title', 'Task')
                                             await self._safe_send({
-                                                "type": "proficiency_update",
+                                                "type": "task_ready_to_complete",
                                                 "payload": {
-                                                    "delta": delta,
-                                                    "total": total,
-                                                    "task_id": workflow_result.get('task_id', 0),
-                                                    "task_score": task_score,
-                                                    "message": workflow_result.get('message', ''),
-                                                    "improvement_tips": workflow_result.get('improvement_tips', [])
-                                                }
-                                            })
-                                            logger.info(f"Sent proficiency_update: delta={delta}, total={total}, task_id={workflow_result.get('task_id')}, task_score={task_score}")
-                                        
-                                        # 发送task_completed到前端
-                                        if task_completed:
-                                            # 获取下一个任务信息
-                                            next_task_text = self.user_context.get('next_task_text')
-                                            
-                                            await self._safe_send({
-                                                "type": "task_completed",
-                                                "payload": {
-                                                    "task_title": workflow_result.get('task_title', 'Task'),
+                                                    "task_id": workflow_result.get('task_id'),
+                                                    "task_title": task_title,
                                                     "scenario_title": self.user_context.get('custom_topic', 'General Practice').split(" (Tasks:")[0].strip(),
                                                     "score": task_score,
-                                                    "message": workflow_result.get('message', 'Task completed!'),
-                                                    "next_task": next_task_text  # 添加下一个任务信息
+                                                    "message": workflow_result.get('message', 'You have mastered this task!'),
                                                 }
                                             })
-                                            logger.info(f"Task completed: {workflow_result.get('task_title')}, Next: {next_task_text}")
+                                            logger.info(f"[TASK_READY] Task ready to complete: {task_title} (score={task_score})")
 
-                                            # 刷新 AI 的 session prompt 以更新任务上下文
-                                            logger.info("Refreshing AI session prompt with new task context...")
-
-                                            # 先从数据库获取最新的任务状态
+                                            # 注入 AI 一次性指令：用目标语言询问学生是否继续或切换
                                             try:
-                                                user_service_url = os.getenv("USER_SERVICE_URL", "http://user-service:3000")
-                                                async with httpx.AsyncClient() as client:
-                                                    # Fetch updated goal and tasks from backend
-                                                    goal_resp = await client.get(
-                                                        f"{user_service_url}/api/users/goals/active",
-                                                        headers={"Authorization": f"Bearer {self.token}"},
-                                                        timeout=5.0
-                                                    )
-                                                    if goal_resp.status_code == 200:
-                                                        goal_data = goal_resp.json().get('data', {})
-                                                        active_goal = goal_data.get('goal', goal_data)
-
-                                                        # Update user_context with fresh task data
-                                                        if active_goal and active_goal.get('scenarios'):
-                                                            scenarios = active_goal.get('scenarios', [])
-                                                            matched_scenario = next((s for s in scenarios if s.get('title') == self.scenario), None)
-                                                            if matched_scenario:
-                                                                # Update the scenario tasks in user_context
-                                                                self.user_context['active_goal']['scenarios'] = scenarios
-                                                                logger.info(f"Updated task data from backend: {len(matched_scenario.get('tasks', []))} tasks")
-                                            except Exception as e:
-                                                logger.error(f"Failed to fetch updated task data: {e}")
-
-                                            # Clear ALL conversation history on task switch to prevent
-                                            # the AI from referencing the completed task's context.
-                                            self.messages = []
-                                            self.task_history_cutoff = 0
-                                            self.just_switched_task = True
-                                            logger.info("Cleared ALL conversation history on task switch")
-
-                                            # Now refresh AI session prompt with updated task data
-                                            self._update_session_prompt()
+                                                _target_lang_ask = (
+                                                    self.user_context.get('target_language')
+                                                    or (self.user_context.get('active_goal') or {}).get('target_language')
+                                                    or 'the target language'
+                                                )
+                                                _native_lang_ask = (
+                                                    self.user_context.get('native_language')
+                                                    or _native_language
+                                                    or 'Chinese'
+                                                )
+                                                self.conversation.send_raw(json.dumps({
+                                                    "type": "response.create",
+                                                    "response": {
+                                                        "modalities": ["text", "audio"],
+                                                        "instructions": (
+                                                            f"The student has practiced this sub-task well (score >= 9). "
+                                                            f"In {_target_lang_ask}, briefly acknowledge their progress (1 short sentence), "
+                                                            f"then ask them: would they like to move on to the next sub-topic, or continue practicing this one more deeply? "
+                                                            f"Keep it natural and warm. Do NOT say 'task complete' or '[TASK_N_COMPLETE]'. "
+                                                            f"Wait for the student's answer before proceeding."
+                                                        )
+                                                    }
+                                                }))
+                                                logger.info("[TASK_READY] Injected confirmation-ask directive to AI")
+                                            except Exception as _ask_err:
+                                                logger.warning(f"[TASK_READY] Failed to inject confirmation directive: {_ask_err}")
                                         
                         asyncio.create_task(upload_ai_task(data, self.current_response_id))
 
@@ -1208,6 +2104,14 @@ class WebSocketCallback(OmniRealtimeCallback):
                         }
                     })
                     logger.info(f"Sent response.audio.done to client for response {self.current_response_id}")
+                elif event_name == 'conversation.item.created':
+                    # Track DashScope server-side conversation item IDs so we
+                    # can delete them on task switch and stop prior-task
+                    # transcripts leaking into the next task's AI context.
+                    _item = response.get('item') or {}
+                    _item_id = _item.get('id')
+                    if _item_id:
+                        self.item_ids.append(_item_id)
                 elif event_name == 'conversation.item.input_audio_transcription.completed':
                     # Handle user audio transcription - send immediately to ensure correct UI order
                     user_transcript = response.get('transcript', '')
@@ -1297,6 +2201,7 @@ class WebSocketCallback(OmniRealtimeCallback):
                                                     self.messages = []
                                                     self.task_history_cutoff = 0
                                                     self.just_switched_task = True
+                                                    self._clear_dashscope_items(reason="TASK_SWITCH[magic_passcode]")
                                                     self._update_session_prompt()
                                                 else:
                                                     logger.info(f"All tasks completed in scenario: {self.scenario}")
@@ -1310,38 +2215,64 @@ class WebSocketCallback(OmniRealtimeCallback):
                                                         conv_history = self.messages[-50:] if len(self.messages) > 50 else self.messages
                                                         logger.info(f"Scenario review: conv_history length={len(conv_history)}, messages={self.messages[:3]}...")
 
-                                                        review_resp = await client.post(
-                                                            f"{os.getenv('WORKFLOW_SERVICE_URL', 'http://workflow-service:3006')}/api/workflows/scenario-review/generate",
-                                                            json={
-                                                                "user_id": self.user_id,
-                                                                "goal_id": goal_id,
-                                                                "scenario_title": self.scenario,
-                                                                "completed_tasks": [],
-                                                                "conversation_history": conv_history
-                                                            },
-                                                            headers={"Authorization": f"Bearer {self.token}"}
-                                                        )
-                                                        if review_resp.status_code == 200:
+                                                        # Guard: require at least 3 real user turns before deep evaluation
+                                                        user_msg_count = sum(1 for m in conv_history if (m.get('role') == 'user') and (m.get('content') or '').strip())
+                                                        if user_msg_count < 3:
+                                                            logger.warning(
+                                                                f"[SCENARIO_REVIEW] Skipping deep evaluation (magic passcode): only {user_msg_count} user turns (<3) in scenario '{self.scenario}'."
+                                                            )
+                                                            await self._safe_send({
+                                                                "type": "scenario_completed",
+                                                                "payload": {
+                                                                    "scenario_title": self.scenario,
+                                                                    "reason": "insufficient_practice",
+                                                                    "user_turn_count": user_msg_count,
+                                                                    "message": "本场景练习数据不足，建议完整完成 3 个子任务后再查看报告。"
+                                                                }
+                                                            })
+                                                            await self._safe_send({
+                                                                "type": "task_completed",
+                                                                "payload": {
+                                                                    "task_title": completed_task_title,
+                                                                    "next_task": None,
+                                                                    "scenario_completed": True,
+                                                                    "reason": "insufficient_practice"
+                                                                }
+                                                            })
+                                                            review_resp = None
+                                                        else:
+                                                            review_resp = await client.post(
+                                                                f"{os.getenv('WORKFLOW_SERVICE_URL', 'http://workflow-service:3006')}/api/workflows/scenario-review/generate",
+                                                                json={
+                                                                    "user_id": self.user_id,
+                                                                    "goal_id": goal_id,
+                                                                    "scenario_title": self.scenario,
+                                                                    "completed_tasks": [],
+                                                                    "conversation_history": conv_history
+                                                                },
+                                                                headers={"Authorization": f"Bearer {self.token}"}
+                                                            )
+                                                        if review_resp is not None and review_resp.status_code == 200:
                                                             review_data = review_resp.json()
                                                             # API returns {"success": True, "data": {...}}
                                                             data = review_data.get('data', {})
                                                             logger.info(f"Scenario review generated: recommendations={data.get('recommendations', [])}")
                                                             logger.info(f"Scenario review analysis: {data.get('analysis', {})}")
-                                                            
+
                                                             # Build review payload for frontend
                                                             review_payload = {
                                                                 "review_report": data.get('review_report', ''),
                                                                 "recommendations": data.get('recommendations', []),
                                                                 "analysis": data.get('analysis', {})
                                                             }
-                                                            
+
                                                             # Send scenario_review message to frontend
                                                             await self._safe_send({
                                                                 "type": "scenario_review",
                                                                 "payload": review_payload
                                                             })
                                                             logger.info(f"Sent scenario_review to frontend (via magic passcode): payload={review_payload}")
-                                                            
+
                                                             # Also send task_completed for the last task to trigger completion modal
                                                             await self._safe_send({
                                                                 "type": "task_completed",
@@ -1352,7 +2283,7 @@ class WebSocketCallback(OmniRealtimeCallback):
                                                                 }
                                                             })
                                                             logger.info("Sent task_completed (scenario completed) to frontend")
-                                                        else:
+                                                        elif review_resp is not None:
                                                             logger.error(f"Failed to generate scenario review: {review_resp.status_code}")
                                                     except Exception as e:
                                                         logger.error(f"Error calling scenario review: {e}")
@@ -1532,6 +2463,42 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query(None), ses
     
     callback = WebSocketCallback(websocket, loop, user_context, token, user_id, session_id, history_messages, scenario)
     phase_key = callback.phase_key  # f"{user_id}:{scenario or ''}" — 每个场景独立
+
+    # ── Daily Q&A mode bootstrap (Feature 2) ──
+    # Must run BEFORE connect_dashscope so _update_session_prompt picks the daily_qa prompt.
+    if mode == 'daily_qa':
+        callback.is_daily_qa_mode = True
+        target_language = (user_context.get("active_goal") or {}).get("target_language") or user_context.get("target_language") or "English"
+        native_language = user_context.get("native_language") or "Chinese"
+        _rc = _get_redis_client()
+        _qa_payload = None
+        if _rc is not None:
+            try:
+                _qa_payload = await handle_daily_question(
+                    _rc, user_id, target_language=target_language, native_language=native_language,
+                )
+            except Exception as _qe:
+                logger.warning(f"[DAILY_QA] handle_daily_question failed: {_qe}")
+        if not _qa_payload:
+            _fb = _fallback_by_language(target_language)
+            _qa_payload = {
+                "question_text": _fb[0]["question_text"],
+                "lang": _fb[0].get("lang", ""),
+                "reference_answer": _fb[0].get("reference_answer", ""),
+                "qa_date": _today_utc_str(),
+                "passed": False,
+            }
+        callback.daily_qa_question = _qa_payload.get("question_text", "")
+        callback.daily_qa_completed = False  # Always allow detection for new questions
+        callback.daily_qa_suppress_modal = bool(_qa_payload.get("passed"))  # Suppress WS event if already passed today
+        try:
+            await websocket.send_json({
+                "type": "daily_qa_ready",
+                "payload": _qa_payload,
+            })
+        except Exception as _we:
+            logger.warning(f"[DAILY_QA] failed to send daily_qa_ready: {_we}")
+        logger.info(f"[DAILY_QA] mode=daily_qa activated; question={callback.daily_qa_question[:80]!r}")
 
     # ── 初始化双阶段会话状态 ──
     is_recall_mode = (mode == 'recall')
@@ -1843,6 +2810,104 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query(None), ses
                             conversation.cancel_response()
                         except Exception as e:
                             logger.error(f"Error cancelling response: {e}")
+
+                elif msg_type == 'user_confirmed_complete':
+                    # 用户确认切换到下一个任务 → 调用 user-service 真正完成 + 加载下一个任务
+                    try:
+                        confirm_task_id = payload.get('task_id') or callback.user_context.get('current_task', {}).get('id')
+                        if not confirm_task_id:
+                            logger.warning("[TASK_CONFIRM] Missing task_id in user_confirmed_complete payload")
+                            continue
+
+                        user_service_url = os.getenv("USER_SERVICE_URL", "http://user-service:3000")
+                        async with httpx.AsyncClient() as client:
+                            confirm_resp = await client.post(
+                                f"{user_service_url}/api/users/tasks/{confirm_task_id}/confirm-complete",
+                                headers={"Authorization": f"Bearer {callback.token}"},
+                                json={},
+                                timeout=5.0,
+                            )
+                            if confirm_resp.status_code != 200:
+                                logger.error(f"[TASK_CONFIRM] confirm-complete failed: {confirm_resp.status_code} {confirm_resp.text[:200]}")
+                                await callback._safe_send({
+                                    "type": "task_switch_error",
+                                    "payload": {"message": "任务切换失败，请重试", "task_id": confirm_task_id}
+                                })
+                                continue
+
+                            confirm_data = confirm_resp.json().get('data', {}) or {}
+                            next_task_obj = confirm_data.get('next_task')
+                            completed_task = confirm_data.get('completed_task') or {}
+
+                            # 刷新 active_goal scenarios
+                            goal_resp = await client.get(
+                                f"{user_service_url}/api/users/goals/active",
+                                headers={"Authorization": f"Bearer {callback.token}"},
+                                timeout=5.0,
+                            )
+                            if goal_resp.status_code == 200:
+                                goal_data = goal_resp.json().get('data', {})
+                                active_goal = goal_data.get('goal', goal_data)
+                                if active_goal and active_goal.get('scenarios'):
+                                    callback.user_context['active_goal']['scenarios'] = active_goal.get('scenarios', [])
+
+                        # 通知前端任务切换
+                        await callback._safe_send({
+                            "type": "task_completed",
+                            "payload": {
+                                "task_title": completed_task.get('task_description') or completed_task.get('text', 'Task'),
+                                "scenario_title": callback.user_context.get('custom_topic', 'General Practice').split(" (Tasks:")[0].strip(),
+                                "score": completed_task.get('score', 9),
+                                "message": completed_task.get('feedback') or "Task completed!",
+                                "next_task": (next_task_obj or {}).get('text') if isinstance(next_task_obj, dict) else None,
+                            }
+                        })
+
+                        # 更新 user_context 到新任务
+                        if isinstance(next_task_obj, dict):
+                            callback.user_context['next_task_text'] = next_task_obj.get('text', '')
+                            callback.user_context['current_task'] = next_task_obj
+                        else:
+                            callback.user_context['next_task_text'] = None
+                            callback.user_context['current_task'] = None
+
+                        # 清理服务端 history + items，刷新 session prompt
+                        callback.messages = []
+                        callback.task_history_cutoff = 0
+                        callback.just_switched_task = True
+                        callback._clear_dashscope_items(reason="TASK_SWITCH[user_confirmed]")
+                        callback._update_session_prompt()
+
+                        # Plan D: per-response directive 锁定新任务
+                        try:
+                            _next_task_for_directive = callback.user_context.get('next_task_text') or ''
+                            _target_lang_directive = (
+                                callback.user_context.get('target_language')
+                                or (callback.user_context.get('active_goal') or {}).get('target_language')
+                                or 'the target language'
+                            )
+                            if _next_task_for_directive:
+                                conversation.send_raw(json.dumps({
+                                    "type": "response.create",
+                                    "response": {
+                                        "modalities": ["text", "audio"],
+                                        "instructions": (
+                                            f"The previous sub-task is COMPLETED. You are now starting the new sub-task: "
+                                            f"\"{_next_task_for_directive}\". Greet briefly in {_target_lang_directive} and invite "
+                                            f"the student to start this new sub-task immediately. Do NOT reference the previous sub-task. "
+                                            f"Do NOT say \"task complete\" or \"let's move on\" — just start the new sub-task naturally."
+                                        )
+                                    }
+                                }))
+                                logger.info(f"[TASK_CONFIRM] Switched to next task: {_next_task_for_directive[:60]}")
+                            else:
+                                logger.info("[TASK_CONFIRM] No more tasks — scenario may be complete")
+                        except Exception as _directive_err:
+                            logger.warning(f"[TASK_CONFIRM] Failed to inject per-response directive: {_directive_err}")
+
+                    except Exception as confirm_err:
+                        logger.error(f"[TASK_CONFIRM] Error handling user_confirmed_complete: {confirm_err}")
+                        logger.error(traceback.format_exc())
             except WebSocketDisconnect:
                 logger.info(f"WebSocket disconnected for session {session_id}")
                 break
@@ -1867,6 +2932,284 @@ async def send_phase_event(websocket, event_type: str, data: dict):
 @app.get("/health")
 async def health_check():
     return {"status": "ok"}
+
+
+# ---------------------------------------------------------------------------
+# GET /daily-question - Feature 2: 今日问答
+# ---------------------------------------------------------------------------
+from fastapi import Request as _FastAPIRequest
+
+
+@app.get("/daily-question")
+async def daily_question_endpoint(request: _FastAPIRequest):
+    """Return today's daily practice question for the authenticated user.
+
+    Auth: JWT via httpOnly cookie `accessToken` or Authorization Bearer header.
+    """
+    token = request.cookies.get("accessToken")
+    if not token:
+        auth_header = request.headers.get("Authorization", "")
+        if auth_header.startswith("Bearer "):
+            token = auth_header[7:]
+    if not token:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+    user_ctx = await get_user_context(token)
+    if not user_ctx or not user_ctx.get("id"):
+        raise HTTPException(status_code=401, detail="Invalid token")
+
+    user_id = str(user_ctx["id"])
+    target_language = (user_ctx.get("active_goal") or {}).get("target_language") or user_ctx.get("target_language") or "English"
+    native_language = user_ctx.get("native_language") or "Chinese"
+
+    redis_client = _get_redis_client()
+    if redis_client is None:
+        # Degrade: return a language-appropriate fallback question without caching
+        fallback = _fallback_by_language(target_language)[0]
+        return {
+            "data": {
+                "question_text": fallback["question_text"],
+                "lang": fallback.get("lang", ""),
+                "reference_answer": fallback.get("reference_answer", ""),
+                "qa_date": _today_utc_str(),
+                "passed": False,
+                "cached": False,
+            }
+        }
+
+    try:
+        payload = await handle_daily_question(
+            redis_client, user_id,
+            target_language=target_language,
+            native_language=native_language,
+        )
+    except Exception as e:
+        logger.error(f"[DAILY_QA] /daily-question handler error: {e}")
+        raise HTTPException(status_code=500, detail="Failed to get daily question")
+
+    return {"data": payload}
+
+
+# ---------------------------------------------------------------------------
+# POST /daily-question/re-answer — Pro-only: clear today's passed state so
+# the user can answer the SAME question again.
+# ---------------------------------------------------------------------------
+@app.post("/daily-question/re-answer")
+async def daily_question_re_answer(request: _FastAPIRequest):
+    token = request.cookies.get("accessToken")
+    if not token:
+        auth_header = request.headers.get("Authorization", "")
+        if auth_header.startswith("Bearer "):
+            token = auth_header[7:]
+    if not token:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+    user_ctx = await get_user_context(token)
+    if not user_ctx or not user_ctx.get("id"):
+        raise HTTPException(status_code=401, detail="Invalid token")
+    _assert_pro(user_ctx)
+
+    user_id = str(user_ctx["id"])
+    target_language = (user_ctx.get("active_goal") or {}).get("target_language") or user_ctx.get("target_language") or "English"
+    native_language = user_ctx.get("native_language") or "Chinese"
+    date_str = _today_utc_str()
+
+    redis_client = _get_redis_client()
+    if redis_client is None:
+        raise HTTPException(status_code=503, detail="redis_unavailable")
+
+    # Keep passed key — extra practice should not re-trigger pass ceremony
+
+    try:
+        payload = await handle_daily_question(
+            redis_client, user_id,
+            target_language=target_language,
+            native_language=native_language,
+        )
+    except Exception as e:
+        logger.error(f"[DAILY_QA] re-answer: handle_daily_question error: {e}")
+        raise HTTPException(status_code=500, detail="Failed to get daily question")
+
+    payload["passed"] = False
+    logger.info(f"[DAILY_QA] re-answer: user={user_id} passed key cleared")
+    return {"data": payload}
+
+
+# ---------------------------------------------------------------------------
+# POST /daily-question/change-question — Pro-only: advance pool to next
+# question AND clear today's passed state.
+# ---------------------------------------------------------------------------
+@app.post("/daily-question/change-question")
+async def daily_question_change_question(request: _FastAPIRequest):
+    token = request.cookies.get("accessToken")
+    if not token:
+        auth_header = request.headers.get("Authorization", "")
+        if auth_header.startswith("Bearer "):
+            token = auth_header[7:]
+    if not token:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+    user_ctx = await get_user_context(token)
+    if not user_ctx or not user_ctx.get("id"):
+        raise HTTPException(status_code=401, detail="Invalid token")
+    _assert_pro(user_ctx)
+
+    user_id = str(user_ctx["id"])
+    target_language = (user_ctx.get("active_goal") or {}).get("target_language") or user_ctx.get("target_language") or "English"
+    native_language = user_ctx.get("native_language") or "Chinese"
+    date_str = _today_utc_str()
+
+    redis_client = _get_redis_client()
+    if redis_client is None:
+        raise HTTPException(status_code=503, detail="redis_unavailable")
+
+    try:
+        await redis_client.delete(f"daily_qa_passed:{user_id}:{date_str}")
+    except Exception as e:
+        logger.warning(f"[DAILY_QA] change-question: delete passed key failed: {e}")
+
+    try:
+        picked = await _advance_daily_qa_pool(
+            redis_client, user_id, date_str,
+            target_language=target_language,
+            native_language=native_language,
+        )
+    except Exception as e:
+        logger.error(f"[DAILY_QA] change-question: advance failed: {e}")
+        raise HTTPException(status_code=500, detail="Failed to change daily question")
+
+    payload = {
+        "question_text": picked.get("question_text", ""),
+        "lang": picked.get("lang", ""),
+        "reference_answer": picked.get("reference_answer", ""),
+        "qa_date": date_str,
+        "passed": False,
+    }
+    logger.info(f"[DAILY_QA] change-question: user={user_id} new_question={payload['question_text'][:60]!r}")
+    return {"data": payload}
+
+
+# ---------------------------------------------------------------------------
+# GET /daily-question/pool — Pro-only: return 3 candidate questions for
+# selection from today's pool.
+# ---------------------------------------------------------------------------
+@app.get("/daily-question/pool")
+async def daily_question_pool_endpoint(request: _FastAPIRequest):
+    token = request.cookies.get("accessToken")
+    if not token:
+        auth_header = request.headers.get("Authorization", "")
+        if auth_header.startswith("Bearer "):
+            token = auth_header[7:]
+    if not token:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+    user_ctx = await get_user_context(token)
+    if not user_ctx or not user_ctx.get("id"):
+        raise HTTPException(status_code=401, detail="Invalid token")
+    _assert_pro(user_ctx)
+
+    user_id = str(user_ctx["id"])
+    target_language = (user_ctx.get("active_goal") or {}).get("target_language") or user_ctx.get("target_language") or "English"
+    native_language = user_ctx.get("native_language") or "Chinese"
+
+    redis_client = _get_redis_client()
+    if redis_client is None:
+        raise HTTPException(status_code=503, detail="redis_unavailable")
+
+    try:
+        questions = await get_daily_question_pool(
+            redis_client, user_id,
+            target_language=target_language,
+            native_language=native_language,
+            count=3,
+        )
+    except Exception as e:
+        logger.error(f"[DAILY_QA] /daily-question/pool error: {e}")
+        raise HTTPException(status_code=500, detail="Failed to get question pool")
+
+    logger.info(f"[DAILY_QA] pool: user={user_id} returned {len(questions)} candidates")
+    return {"data": {"questions": questions}}
+
+
+# ---------------------------------------------------------------------------
+# POST /daily-question/select — Pro-only: select a question from today's pool
+# by index, update Redis picked/index, clear passed state.
+# ---------------------------------------------------------------------------
+@app.post("/daily-question/select")
+async def daily_question_select_endpoint(request: _FastAPIRequest):
+    token = request.cookies.get("accessToken")
+    if not token:
+        auth_header = request.headers.get("Authorization", "")
+        if auth_header.startswith("Bearer "):
+            token = auth_header[7:]
+    if not token:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+    user_ctx = await get_user_context(token)
+    if not user_ctx or not user_ctx.get("id"):
+        raise HTTPException(status_code=401, detail="Invalid token")
+    _assert_pro(user_ctx)
+
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    try:
+        idx = int(body.get("index", 0))
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=400, detail="index must be an integer")
+
+    user_id = str(user_ctx["id"])
+    date_str = _today_utc_str()
+    cache_key = f"daily_qa_pool:{user_id}:{date_str}"
+    passed_key = f"daily_qa_passed:{user_id}:{date_str}"
+
+    redis_client = _get_redis_client()
+    if redis_client is None:
+        raise HTTPException(status_code=503, detail="redis_unavailable")
+
+    # Keep passed key intact — Pro users doing extra practice should not
+    # re-trigger the pass ceremony. The WS bootstrap reads passed=True
+    # and skips marker detection / auto-pass entirely.
+
+    cached_raw = await redis_client.get(cache_key)
+    if not cached_raw:
+        raise HTTPException(status_code=404, detail="No pool cached")
+
+    try:
+        data = json.loads(cached_raw if isinstance(cached_raw, str) else cached_raw.decode("utf-8"))
+    except Exception:
+        raise HTTPException(status_code=500, detail="Corrupted pool cache")
+
+    if isinstance(data, dict):
+        pool = data.get("pool", []) or []
+    elif isinstance(data, list):
+        pool = data
+    else:
+        pool = []
+
+    if not pool:
+        raise HTTPException(status_code=404, detail="Empty pool")
+    if idx < 0 or idx >= len(pool):
+        raise HTTPException(status_code=400, detail=f"Invalid index {idx}, pool size {len(pool)}")
+
+    picked = pool[idx] if isinstance(pool[idx], dict) else {"question_text": str(pool[idx]), "lang": "", "reference_answer": ""}
+    new_payload = {"pool": pool, "index": idx, "picked": picked}
+    try:
+        await redis_client.setex(cache_key, _DAILY_QA_TTL_SECONDS, json.dumps(new_payload, ensure_ascii=False))
+    except Exception as e:
+        logger.warning(f"[DAILY_QA] select: setex failed: {e}")
+
+    logger.info(f"[DAILY_QA] select: user={user_id} index={idx} question={picked.get('question_text', '')[:60]!r}")
+    return {
+        "data": {
+            "question_text": picked.get("question_text", ""),
+            "reference_answer": picked.get("reference_answer", ""),
+            "lang": picked.get("lang", ""),
+            "qa_date": date_str,
+            "passed": False,
+        }
+    }
 
 
 # ---------------------------------------------------------------------------

@@ -315,6 +315,151 @@ class ScenarioReviewWorkflow:
 {achievement_message}
 """
     
+    @staticmethod
+    def _heuristic_detail_scores(analysis: Dict[str, Any]) -> Dict[str, int]:
+        """Conservative 0-100 scores when LLM is unavailable.
+
+        Derived from existing heuristic fields so the response shape stays stable.
+        Intentionally capped below 90 — the LLM path is the canonical source of truth.
+        """
+        vocab_diversity = analysis.get("vocabulary_diversity", 0) or 0
+        avg_len = analysis.get("avg_message_length", 0) or 0
+        grammar_errors = analysis.get("grammar_errors", 0) or 0
+        user_msgs = analysis.get("user_messages", 0) or 0
+
+        # Baseline 60, adjusted by signals. Cap at 85 (LLM path can go higher).
+        def _clamp(x): return max(30, min(85, int(x)))
+        fluency = _clamp(50 + min(avg_len, 20) * 1.5)          # up to 80
+        vocabulary = _clamp(40 + vocab_diversity * 70)          # up to 85 @ diversity ≥0.64
+        grammar = _clamp(80 - grammar_errors * 10)              # -10 per error
+        pronunciation = _clamp(55 + min(user_msgs, 10) * 2)     # participation proxy
+        return {
+            "pronunciation": pronunciation,
+            "fluency": fluency,
+            "intonation": (fluency + vocabulary) // 2,
+            "vocabulary": vocabulary,
+        }
+
+    async def _llm_deep_evaluate(
+        self,
+        scenario_title: str,
+        completed_tasks: List[Dict[str, Any]],
+        conversation_history: List[Dict[str, Any]],
+        native_language: str = "English",
+    ) -> Optional[Dict[str, Any]]:
+        """Strict LLM evaluation of the entire scenario conversation.
+
+        Returns 4-dimension scores (0-100) reflecting ACTUAL conversation quality —
+        penalizes abstract filler, numeric parroting, off-task answers. Replaces the
+        old DB-cumulative `user_tasks.score` path that always returned ~100/100.
+        """
+        api_key = os.getenv("QWEN3_OMNI_API_KEY") or os.getenv("DASHSCOPE_API_KEY")
+        if not api_key:
+            logger.warning("[SCENARIO_REVIEW] No API key for deep evaluation, skipping")
+            return None
+
+        user_turns = [
+            m.get("content", "").strip()
+            for m in conversation_history
+            if m.get("role") == "user" and m.get("content", "").strip()
+        ]
+        if not user_turns:
+            return None
+
+        tasks_text = "\n".join(
+            f"- {t.get('task_description', t.get('text', ''))}"
+            for t in completed_tasks
+        ) or "- (tasks completed)"
+        convo_text = "\n".join(f"Turn {i+1}: {t}" for i, t in enumerate(user_turns[-20:]))
+
+        prompt = f"""You are a strict oral-language evaluator. Score a student's full-scenario conversation on 4 dimensions, each 0-100.
+
+Scenario: "{scenario_title}"
+Tasks the student was supposed to complete:
+{tasks_text}
+
+Student's actual turns (most recent, up to 20):
+{convo_text}
+
+## Dimensions (0-100 each)
+- pronunciation: clarity, accuracy of sounds (infer from fluency markers / self-corrections)
+- fluency: sentence completeness, connectors, avoidance of fragments
+- intonation: natural sentence flow, appropriate hedges/particles
+- vocabulary: task-relevant word choice, variety, avoidance of abstract filler
+
+## STRICT SCORING RULES
+- If the student used **numbers-as-words** (e.g. "七七六六零", "one two three"), abstract filler ("积极努力", "be positive"), or clearly irrelevant content → cap ALL 4 dimensions at 50.
+- If turns are mostly single words or < 3 words → cap fluency at 40.
+- If fewer than half the required task keywords appear → cap vocabulary at 50.
+- If responses are well-formed, on-task, and use task keywords → 70-90 is normal; 90-100 only for truly excellent performance.
+- DO NOT default to 90+. Average performance is 60-75.
+
+## Output — strict JSON, no markdown fences
+{{
+  "pronunciation": 0-100,
+  "fluency": 0-100,
+  "intonation": 0-100,
+  "vocabulary": 0-100,
+  "overall_score": 0-100,
+  "stars": 1-5,
+  "reason": "<one-sentence justification in {native_language}>"
+}}"""
+
+        try:
+            async with httpx.AsyncClient(timeout=25.0) as client:
+                resp = await client.post(
+                    "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions",
+                    headers={
+                        "Authorization": f"Bearer {api_key}",
+                        "Content-Type": "application/json",
+                    },
+                    json={
+                        "model": "qwen-turbo",
+                        "messages": [{"role": "user", "content": prompt}],
+                        "temperature": 0.3,
+                        "max_tokens": 300,
+                    },
+                )
+                if resp.status_code != 200:
+                    logger.warning(
+                        f"[SCENARIO_REVIEW] deep-eval LLM error {resp.status_code}: {resp.text[:200]}"
+                    )
+                    return None
+                content = resp.json()["choices"][0]["message"]["content"].strip()
+                content = re.sub(r"^```json\s*|\s*```$", "", content, flags=re.DOTALL).strip()
+                parsed = json.loads(content)
+            # Clamp and normalize
+            def _clamp(x, lo, hi):
+                try:
+                    v = int(round(float(x)))
+                except (TypeError, ValueError):
+                    return lo
+                return max(lo, min(hi, v))
+            scores = {
+                "pronunciation": _clamp(parsed.get("pronunciation", 0), 0, 100),
+                "fluency": _clamp(parsed.get("fluency", 0), 0, 100),
+                "intonation": _clamp(parsed.get("intonation", 0), 0, 100),
+                "vocabulary": _clamp(parsed.get("vocabulary", 0), 0, 100),
+            }
+            overall = parsed.get("overall_score")
+            if overall is None:
+                overall = sum(scores.values()) // 4
+            overall = _clamp(overall, 0, 100)
+            stars = parsed.get("stars")
+            if stars is None:
+                stars = max(1, min(5, round(overall / 20)))
+            else:
+                stars = _clamp(stars, 1, 5)
+            return {
+                "detail_scores": scores,
+                "overall_score": overall,
+                "stars": stars,
+                "reason": str(parsed.get("reason", "")).strip(),
+            }
+        except Exception as e:
+            logger.warning(f"[SCENARIO_REVIEW] deep-eval failed: {e}")
+            return None
+
     async def _generate_ai_feedback(
         self,
         scenario_title: str,
@@ -339,6 +484,14 @@ class ScenarioReviewWorkflow:
         ][-12:]
 
         if not user_turns:
+            return None
+
+        # Defense-in-depth: with <3 real user turns there is no meaningful
+        # signal for the LLM to critique. Skip the call to save latency/tokens.
+        if len(user_turns) < 3:
+            logger.info(
+                f"[SCENARIO_REVIEW] _generate_ai_feedback skipped: only {len(user_turns)} user turns"
+            )
             return None
 
         tasks_text = "\n".join(
@@ -429,6 +582,87 @@ Write a short, personalized performance review in {native_language}. Requirement
             completed_tasks,
             native_language
         )
+
+        # Guard: require >=3 real user turns for meaningful evaluation.
+        # Below that, skip both deep LLM eval and heuristic scoring; return a
+        # flat-40 placeholder with sufficient=False so the UI can flag the user.
+        _real_user_turns = [
+            m for m in conversation_history
+            if m.get("role") == "user" and (m.get("content") or "").strip()
+        ]
+        if len(_real_user_turns) < 3:
+            logger.warning(
+                f"[SCENARIO_REVIEW] Insufficient practice: only {len(_real_user_turns)} user turns "
+                f"(<3) for scenario '{scenario_title}'. Returning placeholder report."
+            )
+            analysis["sufficient"] = False
+            analysis["user_turn_count"] = len(_real_user_turns)
+            analysis["detail_scores"] = {
+                "pronunciation": 40,
+                "fluency": 40,
+                "intonation": 40,
+                "vocabulary": 40,
+            }
+            analysis["overall_score"] = 40
+            analysis["stars"] = 2
+            analysis["summary"] = "本场景练习数据不足，建议完整完成 3 个子任务后再查看报告。"
+            analysis["strengths"] = []
+            analysis["areas_to_improve"] = ["需要进行至少 3 轮完整对话以生成有意义的评估"]
+
+            placeholder_report = analysis["summary"]
+            placeholder_recs = ["完整完成 3 个子任务后再生成详细复盘报告"]
+
+            await self._save_review_to_db(
+                user_id=user_id,
+                goal_id=goal_id,
+                scenario_title=scenario_title,
+                review_report=placeholder_report,
+                recommendations=placeholder_recs,
+                analysis=analysis,
+                db_connection=db_connection
+            )
+
+            return {
+                "workflow": "scenario_review",
+                "scenario_title": scenario_title,
+                "review_report": placeholder_report,
+                "recommendations": placeholder_recs,
+                "analysis": analysis,
+                "all_scenarios_completed": False,
+                "sufficient": False,
+                "reason": "insufficient_practice",
+            }
+
+        analysis["sufficient"] = True
+
+        # LLM 深度评估：基于实际对话生成 4 维度 0-100 分
+        # （替代原来读 user_tasks.score 累积值 → 避免"满分 bug"）
+        deep_eval = await self._llm_deep_evaluate(
+            scenario_title,
+            completed_tasks,
+            conversation_history,
+            native_language,
+        )
+        if deep_eval:
+            analysis["detail_scores"] = deep_eval["detail_scores"]
+            analysis["overall_score"] = deep_eval["overall_score"]
+            analysis["stars"] = deep_eval["stars"]
+            if deep_eval.get("reason"):
+                analysis["eval_reason"] = deep_eval["reason"]
+            logger.info(
+                f"[SCENARIO_REVIEW] deep-eval scores={deep_eval['detail_scores']} "
+                f"overall={deep_eval['overall_score']} stars={deep_eval['stars']}"
+            )
+        else:
+            # Fallback: derive conservative scores from existing heuristics so the
+            # payload always contains detail_scores (frontend depends on this shape).
+            analysis["detail_scores"] = self._heuristic_detail_scores(analysis)
+            analysis["overall_score"] = sum(analysis["detail_scores"].values()) // 4
+            analysis["stars"] = max(1, min(5, round(analysis["overall_score"] / 20)))
+            logger.info(
+                f"[SCENARIO_REVIEW] heuristic scores (no LLM)={analysis['detail_scores']} "
+                f"overall={analysis['overall_score']}"
+            )
 
         # 尝试用 LLM 生成个性化点评（基于实际对话内容）
         ai_feedback = await self._generate_ai_feedback(

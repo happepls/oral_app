@@ -4,8 +4,17 @@
 
 ## Backlog
 
+- [ ] [Performance] user.js getUserGoals() N+1 查询：每个 goal 单独查 user_tasks，应改为单次 JOIN 查询（用户 5 个 goal = 6 次 DB query）
+- [ ] [Performance] ai-omni-service _generate_daily_question_pool 两次 LLM 调用：问题生成和参考答案分开调用 qwen-turbo，应考虑合并为单次调用降低延迟和成本
+- [ ] [Performance] Discovery.js handleOpenQAPool 缺 AbortController，组件卸载后 setState 可能触发内存泄漏
+- [ ] [Testing] user.js recordDailyQAPass/getDailyQAPassStatus 零测试覆盖（INSERT ON CONFLICT 幂等性、CURRENT_DATE 边界）
+- [ ] [Testing] ai-omni-service get_daily_question_pool/daily_question_select 端点零测试覆盖（pool 读取、index 校验、cache 形状兼容）
+- [ ] [Testing] ai-omni-service auto-pass fallback 逻辑零测试覆盖（negative_indicators 匹配、response_count 阈值、suppress_modal 标志）
+- [ ] [Testing] Conversation.js stripAIMarkers/DailyQAPassModal(isBonus) 零测试覆盖（正则变体、null 输入、bonus/非 bonus UI 区分）
+- [ ] [Testing] Discovery.js 付费门控逻辑零测试覆盖（free/pro 状态切换、passed 状态组合、选题弹窗交互）
+- [ ] [Security] Daily QA 端点（/pool, /select）无速率限制，Pro 用户可大量请求消耗资源
+- [ ] [Testing] E2E test_scenario_batch_and_daily_qa.py 缺少 free-user 负面用例（非 Pro 用户访问 /pool /select 应返回 403）
 
-- [x] [Bug] 魔法重复阶段：通过一句后台词卡不自动刷新新句子（DashScope trigger 逻辑已修复，magic_pass 后端正确切换新句）
 - [ ] [Commercialization]  Defined a tiered subscription model (Freemium/Pro) and cost-per-minute unit economics for AI-driven oral practice.
 - [ ] [Feature]  Tell me a good way to plan a live activity for when I background the app.
 - [ ] [Performance] Goals.js: summary stats 数组（含 JSX icon）每次 render 重建，可用 useMemo 按 activeGoals/totalCompletedScenes/streak 依赖缓存
@@ -48,7 +57,7 @@
 - [x] [Optimization] GoalSetting.js 兴趣/学习重点 textarea 添加 maxLength=100 + 字符计数器（>80字变红）
 - [x] [Refactor] Onboarding.js 移除重复口语评测问卷（QUIZ_QUESTIONS/LEVEL_MAP/quiz步骤全部删除），精简为单步基础信息收集，直接跳转 GoalSetting
 - [x] [Bug] ai-omni-service/main.py 默认音色 Cherry → Tina（Cherry 是 Qwen3-Omni-Flash-Realtime 音色，当前使用 Qwen3.5-Omni-Realtime 应用 Tina）
-
+- [x] [Bug] 魔法重复阶段：通过一句后台词卡不自动刷新新句子（DashScope trigger 逻辑已修复，magic_pass 后端正确切换新句）
 - [x] [Bug] 魔法重复音频割裂修复：`stop_audio` 改为 False + `playFullAudio` 增加 `autoQueue` 参数（`autoQueue=true` 用 `nextStartTimeRef` 排队，不中断当前播放；auto-play useEffect 改用 `autoQueue=true`）
 - [x] [Bug] 魔法重复台词卡不切换修复：prompt_manager 背诵通过规则重写为强制格式（`[MAGIC_PASS]` + `[MAGIC_SENTENCE: ...]` 必须在同一响应），提示词严格要求使用方括号而非角括号；后端 MAGIC_SENTENCE regex 兼容 `[]` 和 `<>` 两种括号；fallback `response.create` instructions 修改为要求 AI 生成新句子
 - [x] [Bug] 魔法重复 Response A 误导文字修复：彻底移除 `suppressNextAIAudioRef`（时序 bug），改为 `magic_pass` 触发时直接删除最后一条 AI 消息气泡（`setMessages` 反向扫描删除）+ `stopAudioPlayback()`，对话框只显示 Response B
@@ -234,3 +243,18 @@
 - [x] [Testing] proficiency_scoring _extract_ai_example_phrases 测试覆盖（9个用例：空历史/无AI消息/日文括号/curly引号/straight引号/最新消息/去重/上限2/transcript fallback）
 - [x] [Testing] proficiency_scoring _generate_improvement_tips 测试覆盖（6个用例：高分返空/边界/低分有例句/低分无例句fallback/空历史fallback/7分触发）
 - [x] [Bug] BottomNav.js 默认3-Tab "目标" 路由修正：/goal-setting → /goals
+
+- [x] [Bug] Goals.js 进度始终0%修复：getUserGoals() 现在合并 user_tasks 状态到 scenarios（与 getActiveGoal 对齐）
+- [x] [Bug] Goals.js 点击目标不切换修复：非 active 目标点击时先调 switchGoal API 再导航到 Discovery
+- [x] [Bug] Goals.js 显示多余目标修复：过滤改为 active+paused（排除 abandoned），状态徽章区分"进行中/已暂停"
+- [x] [Feature] 删除对话历史页面 /history（History.js、App.js 路由、BottomNav 菜单、Profile 菜单项全部移除）
+- [x] [Feature] 今日问答通过状态持久化：新建 daily_qa_passes 表（PostgreSQL），ai-omni-service 检测到 DAILY_QA_PASSED 后 fire-and-forget POST 到 user-service 持久化
+- [x] [Feature] 今日问答付费门控：免费用户首次可答题，通过后再次点击触发 DailyQAPaywallModal；Pro 用户可选择 3 题
+- [x] [Feature] 今日问答参考答案：两步 LLM 生成（问题→参考答案独立调用确保母语输出），Conversation.js 可折叠展示
+- [x] [Feature] 今日问答完成弹窗重设计：移除 2.5s 自动跳转，改为底部浮动卡片（首次✅庆祝 / 额外练习👏轻量提示）+ 用户主动点击返回
+- [x] [Feature] Pro 用户 3 题选择：GET /daily-question/pool + POST /daily-question/select 端点，Discovery.js 底部弹出选题面板
+- [x] [Bug] Daily QA prompt BATCH_EVAL 污染修复：daily_qa 模式下跳过 teaching directive 注入
+- [x] [Bug] Daily QA auto-pass fallback：AI 第 3 次回复后若无 marker 且无纠错/离题指示词则自动通过（规避 Qwen3.5-Omni 不输出 marker 问题）
+- [x] [Bug] AI 消息文本 marker 过滤：前端 stripAIMarkers 过滤 [DAILY_QA_PASSED] 和 [NATIVE:...] （含空格变体 [ NATIVE:]）
+- [x] [Bug] TTS 混合语言发音修复：_MARKER_RE 新增 [NATIVE:...] 模式，触发 TTS 重合成纯目标语言音频
+- [x] [Security] recordDailyQAPassInternal question_text 长度校验：截断至 2000 字符防止存储滥用

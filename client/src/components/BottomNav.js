@@ -14,7 +14,6 @@ function BottomNav({ currentPage, showFab = false }) {
   // 5-Tab 布局（showFab=true）
   const fabItems = [
     { id: 'home',    icon: 'home',    label: '首页', path: '/discovery' },
-    { id: 'history', icon: 'history', label: '记录', path: '/history' },
     null, // FAB 占位
     { id: 'goals',   icon: 'target',  label: '目标', path: '/goals' },
     { id: 'profile', icon: 'person',  label: '我的', path: '/profile' },

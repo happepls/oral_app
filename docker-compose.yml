@@ -231,8 +231,10 @@ services:
       - REDIS_HOST=redis
       - REDIS_PORT=6379
       - REDIS_DB=0
+      - BATCH_EVAL_MODEL=qwen-turbo
     env_file:
       - ./.env
+      - ./services/ai-omni-service/.env
     depends_on:
       - postgres
       - redis

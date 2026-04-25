@@ -5,3 +5,4 @@ pydantic==2.6.1
 python-dotenv==1.0.1
 httpx
 redis==5.0.1
+dashscope>=1.20.0

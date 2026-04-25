@@ -98,5 +98,19 @@
   "onboarding_loading": "Enregistrement...",
   "onboarding_success": "Profil mis à jour avec succès !",
   "err_onboarding_default": "Échec de la mise à jour",
-  "lang_switcher_label": "Langue"
+  "lang_switcher_label": "Langue",
+  "daily_qa_title": "Question du Jour",
+  "daily_qa_listen_prompt": "🔊 Écoutez une question d'un locuteur natif",
+  "daily_qa_view_text": "Afficher le Texte",
+  "daily_qa_hide_text": "Masquer le Texte",
+  "daily_qa_start_answer": "Commencer à Répondre",
+  "daily_qa_completed": "Question du jour complétée",
+  "daily_qa_re_answer": "Répondre à nouveau",
+  "daily_qa_change_question": "Changer de question",
+  "daily_qa_paywall_title": "Passez Pro pour débloquer",
+  "daily_qa_paywall_desc": "Les membres Pro peuvent répondre à nouveau et changer la question du jour sans limite — pour entretenir votre rythme à tout moment.",
+  "daily_qa_paywall_cancel": "Annuler",
+  "daily_qa_paywall_upgrade": "Mettre à niveau",
+  "task_confirm_next": "✅ Passer à la Tâche Suivante",
+  "task_confirm_continue": "Continuer à Pratiquer"
 }

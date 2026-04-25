@@ -71,7 +71,12 @@ wss.on('connection', async function connection(clientWs, req) {
     const sessionId = queryObject.sessionId;
     const scenario = queryObject.scenario;
     const voice = queryObject.voice;
-    const mode = queryObject.mode;
+    const ALLOWED_MODES = new Set(['recall', 'daily_qa']);
+    const rawMode = queryObject.mode;
+    const mode = (rawMode && ALLOWED_MODES.has(rawMode)) ? rawMode : null;
+    if (rawMode && !mode) {
+      console.warn(`[comms] Rejected unknown mode='${rawMode}' from client; forwarding without mode`);
+    }
 
     if (!sessionId) {
       console.log('Connection rejected: No sessionId provided.');

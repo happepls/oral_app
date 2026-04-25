@@ -4,7 +4,7 @@ import BottomNav from '../components/BottomNav';
 import { StreakRing } from '../components/StreakRing';
 import { ScenarioCard } from '../components/ScenarioCard';
 import { useAuth } from '../contexts/AuthContext';
-import { userAPI, historyAPI } from '../services/api';
+import { userAPI, historyAPI, aiAPI } from '../services/api';
 import { StatCard } from '../components/StatCard';
 import { motion } from 'motion/react';
 import { MessageSquare, Calendar, Trophy, Crown } from 'lucide-react';
@@ -112,6 +112,53 @@ const FILTER_TABS = [
   { id: 'not-started', label: '未开始' },
 ];
 
+function DailyQAPaywallModal({ onClose, onUpgrade }) {
+  return (
+    <div
+      style={{
+        position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)',
+        display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 300,
+      }}
+      onClick={onClose}>
+      <div
+        onClick={(e) => e.stopPropagation()}
+        style={{
+          background: '#FFFFFF', borderRadius: 24, padding: 32,
+          maxWidth: 360, width: '90%', textAlign: 'center',
+          boxShadow: '0 20px 40px rgba(0,0,0,0.2)',
+        }}>
+        <div style={{ fontSize: 56, marginBottom: 12 }}>🔒</div>
+        <h2 style={{ fontSize: 20, fontWeight: 700, color: '#1F2937', marginBottom: 8 }}>
+          升级解锁
+        </h2>
+        <p style={{ fontSize: 14, color: '#6B7280', marginBottom: 24, lineHeight: 1.55 }}>
+          Pro 会员可无限次再次回答与换题，随时巩固口语节奏。
+        </p>
+        <div style={{ display: 'flex', gap: 12 }}>
+          <button
+            onClick={onClose}
+            style={{
+              flex: 1, padding: '10px 0', borderRadius: 12,
+              background: '#F3F4F6', color: '#374151', border: 'none',
+              fontWeight: 600, fontSize: 14, cursor: 'pointer',
+            }}>
+            取消
+          </button>
+          <button
+            onClick={onUpgrade}
+            style={{
+              flex: 1, padding: '10px 0', borderRadius: 12,
+              background: '#6366F1', color: '#fff', border: 'none',
+              fontWeight: 700, fontSize: 14, cursor: 'pointer',
+            }}>
+            去升级
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function Discovery() {
   const navigate = useNavigate();
   const location = useLocation();
@@ -130,10 +177,81 @@ function Discovery() {
   const [allGoals, setAllGoals] = useState([]);
   const [switching, setSwitching] = useState(false);
   const [hasOtherGoals, setHasOtherGoals] = useState(false);
+  const [dailyQA, setDailyQA] = useState(null);
+  const [dailyQAError, setDailyQAError] = useState(false);
+  const [dailyQALoading, setDailyQALoading] = useState(true);
+  const [isQAPlaying, setIsQAPlaying] = useState(false);
+  const [showQATranscript, setShowQATranscript] = useState(false);
+  const [qaAudioBlobUrl, setQaAudioBlobUrl] = useState(null);
+  const [showDailyQAPaywall, setShowDailyQAPaywall] = useState(false);
+  const [qaActionLoading, setQaActionLoading] = useState(false);
+  const [dailyQAPassedDB, setDailyQAPassedDB] = useState(false);
+  const [showQAPool, setShowQAPool] = useState(false);
+  const [qaPool, setQaPool] = useState([]);
+  const [qaPoolLoading, setQaPoolLoading] = useState(false);
 
   const isPro = user?.subscription_status === 'active';
 
+  const handleDailyQAAction = async (kind) => {
+    if (!isPro) { setShowDailyQAPaywall(true); return; }
+    if (qaActionLoading) return;
+    setQaActionLoading(true);
+    try {
+      const fresh = kind === 're-answer'
+        ? await aiAPI.reAnswerDaily()
+        : await aiAPI.changeDailyQuestion();
+      if (fresh && fresh.question_text) {
+        setDailyQA(fresh);
+        setQaAudioBlobUrl(null);
+        setShowQATranscript(false);
+      }
+      navigate('/conversation?mode=daily_qa');
+    } catch (err) {
+      if (err?.status === 403) {
+        setShowDailyQAPaywall(true);
+      } else {
+        console.error('[DAILY_QA] action failed', err);
+      }
+    } finally {
+      setQaActionLoading(false);
+    }
+  };
+
+  const handleOpenQAPool = async () => {
+    setShowQAPool(true);
+    if (qaPool.length > 0) return;
+    setQaPoolLoading(true);
+    try {
+      const res = await aiAPI.getDailyQuestionPool();
+      const questions = res?.questions || res?.data?.questions;
+      if (questions) setQaPool(questions);
+    } catch (err) {
+      console.error('[DAILY_QA] pool fetch failed', err);
+    } finally {
+      setQaPoolLoading(false);
+    }
+  };
+
+  const handleSelectQuestion = async (index) => {
+    try {
+      const res = await aiAPI.selectDailyQuestion(index);
+      const selected = res?.question_text ? res : res?.data;
+      if (selected) {
+        setDailyQA({ ...selected, passed: false });
+        setDailyQAPassedDB(false);
+        setQaAudioBlobUrl(null);
+        setShowQATranscript(false);
+      }
+      setShowQAPool(false);
+      navigate('/conversation?mode=daily_qa');
+    } catch (err) {
+      console.error('[DAILY_QA] select failed', err);
+    }
+  };
+
   useEffect(() => {
+    const abortController = new AbortController();
+
     const fetchData = async () => {
       if (!user) return;
       try {
@@ -156,10 +274,11 @@ function Discovery() {
           setScenarios(generateScenarios(goalRes.goal.target_language, goalRes.goal.interests));
         }
 
-        const [statsRes, histRes, checkinRes] = await Promise.allSettled([
+        const [statsRes, histRes, checkinRes, qaRes] = await Promise.allSettled([
           historyAPI.getStats(user.id),
           historyAPI.getUserHistory(user.id),
           userAPI.getCheckinStats(),
+          aiAPI.getDailyQuestion({ signal: abortController.signal }),
         ]);
 
         if (statsRes.status === 'fulfilled' && statsRes.value?.data) {
@@ -176,14 +295,30 @@ function Discovery() {
             totalCheckins: d.totalCheckins || 0,
           });
         }
+        if (qaRes.status === 'fulfilled' && qaRes.value?.question_text) {
+          setDailyQA(qaRes.value);
+          setDailyQAError(false);
+        } else if (qaRes.status === 'rejected') {
+          setDailyQAError(true);
+        }
+        setDailyQALoading(false);
+
+        // Check daily QA pass status from database
+        userAPI.getDailyQAPassStatus().then(res => {
+          if (res?.data?.passed) setDailyQAPassedDB(true);
+        }).catch(() => {});
       } catch (e) {
         console.error('Dashboard fetch error:', e);
+        setDailyQAError(true);
+        setDailyQALoading(false);
       } finally {
         setLoading(false);
       }
     };
 
     fetchData();
+
+    return () => abortController.abort();
   }, [user, navigate, location.key]);
 
   const checkAchievement = (goal) => {
@@ -246,6 +381,35 @@ function Discovery() {
   const handleCustomScenario = () => {
     if (isPro) navigate('/goal-setting?mode=custom');
     else setShowUpgradeModal(true);
+  };
+
+  const handleQAPlay = async () => {
+    if (isQAPlaying || !dailyQA) return;
+
+    setIsQAPlaying(true);
+    try {
+      if (!qaAudioBlobUrl) {
+        try {
+          const blob = await aiAPI.tts(dailyQA.question_text, 'Serena');
+          const blobUrl = URL.createObjectURL(blob);
+          setQaAudioBlobUrl(blobUrl);
+
+          const audio = new Audio(blobUrl);
+          audio.onended = () => setIsQAPlaying(false);
+          audio.play();
+        } catch (ttsErr) {
+          console.warn('TTS synthesis failed:', ttsErr);
+          setIsQAPlaying(false);
+        }
+      } else {
+        const audio = new Audio(qaAudioBlobUrl);
+        audio.onended = () => setIsQAPlaying(false);
+        audio.play();
+      }
+    } catch (err) {
+      console.warn('QA audio playback error:', err);
+      setIsQAPlaying(false);
+    }
   };
 
   // ── 派生数据（useMemo 避免每次 render 重算） ──
@@ -350,6 +514,67 @@ function Discovery() {
               <p className="text-sm text-slate-400 text-center py-6">暂无其他学习目标</p>
             )}
           </motion.div>
+        </div>
+      )}
+
+      {/* ── Daily QA Paywall Modal ── */}
+      {showDailyQAPaywall && (
+        <DailyQAPaywallModal
+          onClose={() => setShowDailyQAPaywall(false)}
+          onUpgrade={() => { setShowDailyQAPaywall(false); navigate('/subscription'); }}
+        />
+      )}
+
+      {showQAPool && (
+        <div style={{
+          position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)',
+          display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 200,
+          padding: '20px'
+        }} onClick={() => setShowQAPool(false)}>
+          <div
+            onClick={e => e.stopPropagation()}
+            style={{
+              background: '#fff', borderRadius: 20, padding: '24px 20px 24px',
+              width: '100%', maxWidth: 400, maxHeight: '70vh', overflowY: 'auto',
+              animation: 'slideUpBanner 0.3s ease-out'
+            }}>
+            <h3 style={{ fontSize: 16, fontWeight: 700, color: '#1F2937', marginBottom: 16 }}>
+              选择今日问题
+            </h3>
+            {qaPoolLoading ? (
+              <div style={{ textAlign: 'center', padding: 24, color: '#9CA3AF' }}>加载中...</div>
+            ) : qaPool.length === 0 ? (
+              <div style={{ textAlign: 'center', padding: 24, color: '#9CA3AF' }}>暂无候选问题</div>
+            ) : (
+              qaPool.map((q, i) => (
+                <button
+                  key={i}
+                  onClick={() => handleSelectQuestion(q.index)}
+                  style={{
+                    display: 'block', width: '100%', textAlign: 'left', padding: '14px 16px',
+                    marginBottom: 8, borderRadius: 12, border: '1px solid #E5E7EB',
+                    background: '#F9FAFB', cursor: 'pointer', transition: 'all 0.15s'
+                  }}
+                  onMouseEnter={e => { e.target.style.borderColor = '#6366F1'; e.target.style.background = '#EEF2FF'; }}
+                  onMouseLeave={e => { e.target.style.borderColor = '#E5E7EB'; e.target.style.background = '#F9FAFB'; }}>
+                  <p style={{ fontSize: 14, color: '#1F2937', marginBottom: 4, fontWeight: 500 }}>
+                    {q.question_text}
+                  </p>
+                  {q.reference_answer && (
+                    <p style={{ fontSize: 11, color: '#9CA3AF', fontStyle: 'italic' }}>
+                      💡 {q.reference_answer}
+                    </p>
+                  )}
+                </button>
+              ))
+            )}
+            <style>{`
+              @keyframes slideUpBanner {
+                0% { transform: translateY(30px); opacity: 0; }
+                100% { transform: translateY(0); opacity: 1; }
+              }
+            `}</style>
+          </div>
         </div>
       )}
 
@@ -477,6 +702,81 @@ function Discovery() {
                 <span className="text-4xl flex-shrink-0">🎯</span>
               </div>
             </div>
+          </section>
+        )}
+
+        {/* ── 今日问答 ── */}
+        {!dailyQAError && (
+          <section>
+            <h2 className="text-sm font-semibold text-slate-500 dark:text-slate-400 mb-2 uppercase tracking-wide">今日问答</h2>
+            {dailyQALoading ? (
+              <div className="rounded-2xl p-4 h-20 bg-white dark:bg-slate-800 shadow-brand animate-pulse"
+                style={{ background: '#F3F4F6' }}></div>
+            ) : dailyQA ? (
+              <div className="rounded-2xl p-4 relative overflow-hidden shadow-brand"
+                style={{ background: '#FFFFFF', border: '1px solid #E5E7EB' }}>
+                <div className="flex items-start justify-between gap-3">
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2 mb-3">
+                      <button
+                        onClick={handleQAPlay}
+                        disabled={isQAPlaying}
+                        className="w-10 h-10 rounded-full flex items-center justify-center text-white font-bold transition-all active:scale-90 flex-shrink-0"
+                        style={{
+                          background: isQAPlaying ? '#A78BFA' : '#6366F1',
+                          opacity: isQAPlaying ? 0.7 : 1,
+                        }}>
+                        {isQAPlaying ? '⏸' : '▶'}
+                      </button>
+                      <span className="text-xs text-slate-500">
+                        {!showQATranscript && !qaAudioBlobUrl ? '🔊 听一段外国人提出的问题' : ''}
+                      </span>
+                    </div>
+
+                    {showQATranscript && (
+                      <p className="text-xs text-slate-700 mb-3 leading-relaxed line-clamp-3">
+                        {dailyQA.question_text}
+                      </p>
+                    )}
+
+                    <div className="flex items-center gap-2">
+                      <button
+                        onClick={() => setShowQATranscript(!showQATranscript)}
+                        className="text-xs text-indigo-600 hover:text-indigo-700 font-medium transition">
+                        {showQATranscript ? '隐藏文字' : '查看文字'}
+                      </button>
+                      {(dailyQA?.passed || dailyQAPassedDB) && (
+                        <span className="text-xs text-green-600 font-bold">✅ 今日问答已完成</span>
+                      )}
+                    </div>
+
+                    {/* 主操作按钮 */}
+                    {!(dailyQA?.passed || dailyQAPassedDB) ? (
+                      <button
+                        onClick={() => navigate('/conversation?mode=daily_qa')}
+                        className="mt-3 px-4 py-1.5 rounded-xl text-xs font-bold text-white transition-all active:scale-95"
+                        style={{ background: '#6366F1' }}>
+                        开始回答 →
+                      </button>
+                    ) : !isPro ? (
+                      <button
+                        onClick={() => setShowDailyQAPaywall(true)}
+                        className="mt-3 px-4 py-1.5 rounded-xl text-xs font-bold text-white transition-all active:scale-95"
+                        style={{ background: '#6366F1' }}>
+                        再次回答 🔒
+                      </button>
+                    ) : (
+                      <button
+                        onClick={handleOpenQAPool}
+                        className="mt-3 px-4 py-1.5 rounded-xl text-xs font-bold text-white transition-all active:scale-95"
+                        style={{ background: '#6366F1' }}>
+                        选择题目并回答 →
+                      </button>
+                    )}
+                  </div>
+                </div>
+              </div>
+            ) : null}
           </section>
         )}
 

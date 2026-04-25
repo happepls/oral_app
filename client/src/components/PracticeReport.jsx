@@ -262,7 +262,6 @@ export function PracticeReport({
   messages = [],
   durationSeconds,
   onClose,
-  onRetry,
   onRestart,
   onNextScenario,
   onSelectOther,
@@ -292,15 +291,22 @@ export function PracticeReport({
   const grammarErrors = analysis.grammar_errors || 0;
   const totalUserMsgs = analysis.user_messages || 1;
 
-  // Map available metrics → 4 skill scores (0–100)
-  const pronunciationScore = Math.min(100, Math.round(scenarioScore * 1.05));
-  const fluencyScore = Math.min(100, Math.round(vocabDiversity * 100 * 0.7 + scenarioScore * 0.3));
-  const intonationScore = Math.min(100, Math.round(scenarioScore * 0.98 + Math.random() * 4 - 2));
-  const vocabularyScore = Math.min(100, Math.round(
+  // Fallback 4 skill scores when backend detail_scores not available
+  const fallbackPronunciation = Math.min(100, Math.round(scenarioScore * 1.05));
+  const fallbackFluency = Math.min(100, Math.round(vocabDiversity * 100 * 0.7 + scenarioScore * 0.3));
+  const fallbackIntonation = Math.min(100, Math.round(scenarioScore * 0.98 + Math.random() * 4 - 2));
+  const fallbackVocabulary = Math.min(100, Math.round(
     vocabDiversity > 0
       ? vocabDiversity * 80 + 20
       : scenarioScore * 0.95
   ));
+
+  // Prefer backend detail_scores from qwen-turbo deep evaluation
+  const backendScores = analysis?.detail_scores;
+  const pronunciationScore = backendScores?.pronunciation ?? fallbackPronunciation;
+  const fluencyScore = backendScores?.fluency ?? fallbackFluency;
+  const intonationScore = backendScores?.intonation ?? fallbackIntonation;
+  const vocabularyScore = backendScores?.vocabulary ?? fallbackVocabulary;
 
   const skills = [
     { icon: '🎯', name: '发音准确度', score: pronunciationScore, delay: 0 },
@@ -327,8 +333,8 @@ export function PracticeReport({
     ? `${Math.floor(durationSeconds / 60)} 分 ${durationSeconds % 60} 秒`
     : null;
 
-  // Stars
-  const stars = Math.max(1, Math.min(5, Math.ceil(scenarioScore / 20)));
+  // Stars: prefer backend true value
+  const stars = analysis?.stars ?? Math.max(1, Math.min(5, Math.ceil(scenarioScore / 20)));
 
   return (
     <div className="fixed inset-0 z-50 bg-background-light dark:bg-background-dark overflow-y-auto">
@@ -346,6 +352,19 @@ export function PracticeReport({
           <h1 className="text-base font-bold text-slate-900 dark:text-white">练习报告</h1>
           <div className="w-16" />
         </div>
+
+        {/* Practice insufficient warning */}
+        {analysis.sufficient === false && (
+          <div className="bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded-2xl p-4 mb-5">
+            <div className="flex items-start gap-3">
+              <span className="text-xl flex-shrink-0">⚠️</span>
+              <div className="flex-1">
+                <h3 className="font-semibold text-amber-900 dark:text-amber-100 text-sm">练习不足</h3>
+                <p className="text-xs text-amber-800 dark:text-amber-200 mt-1">本轮练习数据不足，难以生成完整评估。建议继续练习以获得更准确的反馈。</p>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* ── Score Card ── */}
         <motion.div
@@ -384,12 +403,19 @@ export function PracticeReport({
             </div>
           </div>
 
-          {/* Summary */}
-          {analysis.summary && (
-            <p className="text-sm text-slate-500 dark:text-slate-400 text-center leading-relaxed px-2 border-t border-slate-100 dark:border-slate-700 pt-4 w-full">
-              {analysis.summary}
-            </p>
-          )}
+          {/* AI Comprehensive Feedback */}
+          <div className="w-full border-t border-slate-100 dark:border-slate-700 pt-4 space-y-2">
+            {analysis.eval_reason && (
+              <p className="text-xs text-indigo-600 dark:text-indigo-400 text-center font-medium">
+                {analysis.eval_reason}
+              </p>
+            )}
+            {analysis.summary && (
+              <p className="text-sm text-slate-600 dark:text-slate-300 text-center leading-relaxed">
+                {analysis.summary}
+              </p>
+            )}
+          </div>
         </motion.div>
 
         {/* ── Skill Analysis ── */}
@@ -466,20 +492,11 @@ export function PracticeReport({
           <motion.button
             whileHover={{ scale: 1.01 }}
             whileTap={{ scale: 0.98 }}
-            onClick={onRetry}
+            onClick={onRestart}
             className="w-full py-3.5 rounded-2xl font-semibold flex items-center justify-center gap-2 border-2 border-primary text-primary bg-primary/5 hover:bg-primary/10 transition"
           >
             <RotateCcw className="w-4 h-4" />
-            再次练习
-          </motion.button>
-
-          <motion.button
-            whileHover={{ scale: 1.01 }}
-            whileTap={{ scale: 0.98 }}
-            onClick={onRestart}
-            className="w-full py-3.5 rounded-2xl font-semibold text-slate-600 dark:text-slate-300 border border-slate-200 dark:border-slate-600 hover:border-primary/40 hover:text-primary transition"
-          >
-            重新开始
+            重新练习
           </motion.button>
 
           <button

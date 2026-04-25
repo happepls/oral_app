@@ -38,10 +38,17 @@ router.post('/api/users/goals/reset-task', protect, userController.resetTask);
 // Daily scenario count (for enforcing per-day scenario limits)
 router.get('/api/users/daily-scenario-count', protect, userController.getDailyScenarioCount);
 
+// Task confirm-complete: user (or AI on behalf of user via Bearer token) confirms switching to next task
+router.post('/api/users/tasks/:id/confirm-complete', protect, userController.confirmCompleteTask);
+
 // Check-in routes
 router.post('/api/users/checkin', protect, userController.checkin);
 router.get('/api/users/checkin/history', protect, userController.getCheckinHistory);
 router.get('/api/users/checkin/stats', protect, userController.getCheckinStats);
+
+// Daily QA pass routes
+router.get('/api/users/daily-qa-pass', protect, userController.getDailyQAPassStatus);
+router.post('/api/users/internal/users/:id/daily-qa-pass', internalAuthWithNetworkSkip, userController.recordDailyQAPassInternal);
 
 // Internal Routes (Protected with internalAuthWithNetworkSkip for service-to-service communication)
 // Uses network-based skip for Docker internal network (172.x.x.x) for backward compatibility

@@ -9,7 +9,6 @@ import Register from './pages/Register';
 import Conversation from './pages/Conversation';
 import Discovery from './pages/Discovery';
 import Profile from './pages/Profile';
-import History from './pages/History';
 import Onboarding from './pages/Onboarding';
 import GoalSetting from './pages/GoalSetting';
 import Checkin from './pages/Checkin';
@@ -32,7 +31,6 @@ const AppRoutes = () => {
             <Route path="/conversation" element={<Conversation />} />
             <Route path="/discovery" element={<Discovery />} />
             <Route path="/profile" element={<Profile />} />
-            <Route path="/history" element={<History />} />
             <Route path="/checkin" element={<Checkin />} />
             <Route path="/goals" element={<Goals />} />
             <Route path="/subscription" element={<Subscription />} />

@@ -98,5 +98,19 @@
   "onboarding_loading": "保存中...",
   "onboarding_success": "プロフィールが更新されました！",
   "err_onboarding_default": "更新に失敗しました",
-  "lang_switcher_label": "言語"
+  "lang_switcher_label": "言語",
+  "daily_qa_title": "今日の質問",
+  "daily_qa_listen_prompt": "🔊 ネイティブスピーカーからの質問を聞く",
+  "daily_qa_view_text": "テキストを表示",
+  "daily_qa_hide_text": "テキストを非表示",
+  "daily_qa_start_answer": "答え始める",
+  "daily_qa_completed": "今日の質問が完了しました",
+  "daily_qa_re_answer": "もう一度回答",
+  "daily_qa_change_question": "質問を変える",
+  "daily_qa_paywall_title": "アップグレードで解除",
+  "daily_qa_paywall_desc": "Proメンバーは無制限に再回答・質問変更が可能。いつでもスピーキングのリズムを強化できます。",
+  "daily_qa_paywall_cancel": "キャンセル",
+  "daily_qa_paywall_upgrade": "アップグレード",
+  "task_confirm_next": "✅ 次のタスクへ",
+  "task_confirm_continue": "さらに深く練習を続ける"
 }

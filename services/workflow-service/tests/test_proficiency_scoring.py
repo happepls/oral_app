@@ -451,8 +451,8 @@ class TestTaskCompleted:
         assert result["task_completed"] is False
 
     @pytest.mark.asyncio
-    async def test_task_not_completed_low_interaction(self, workflow, mock_db):
-        """interaction_count < 3 → task_completed=False even with high score"""
+    async def test_task_completed_score_threshold_low_interaction(self, workflow, mock_db):
+        """score >= 9 → task_completed=True regardless of interaction_count (gate removed)."""
         mock_db.fetchrow = AsyncMock(side_effect=[
             {"native_language": "English"},
             {"score": 7, "status": "in_progress", "interaction_count": 1, "task_description": "Test", "scenario_title": "Test"},
@@ -480,7 +480,7 @@ class TestTaskCompleted:
                 db_connection=mock_db
             )
 
-        assert result["task_completed"] is False
+        assert result["task_completed"] is True
 
     @pytest.mark.asyncio
     async def test_already_completed_task_skips_update(self, workflow, mock_db):

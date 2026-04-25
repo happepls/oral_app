@@ -22,6 +22,7 @@ from workflows.oral_tutor import oral_tutor_workflow
 from workflows.proficiency_scoring import proficiency_scoring_workflow
 from workflows.scenario_review import scenario_review_workflow
 from workflows.goal_planning import goal_planning_workflow
+from workflows.batch_evaluation import batch_evaluation_workflow
 from cache import cache, get_user_language_with_cache
 
 
@@ -182,6 +183,23 @@ class MagicPassEvaluateRequest(BaseModel):
     target_language: Optional[str] = "en"
 
 
+class BatchEvaluateTurn(BaseModel):
+    turn_index: int
+    user_content: str
+    ai_response: str
+    timestamp: Optional[str] = None
+
+
+class BatchEvaluateRequest(BaseModel):
+    user_id: str
+    goal_id: int
+    task_id: int
+    current_task: Dict[str, Any]
+    native_language: str = "English"
+    turn_window: List[BatchEvaluateTurn]
+    window_size: int = 4
+
+
 # ============== API Endpoints ==============
 
 @app.get("/health")
@@ -238,6 +256,42 @@ async def update_proficiency_score(request: ProficiencyUpdateRequest, conn = Dep
         )
         return {"success": True, "data": result}
     except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/workflows/proficiency-scoring/batch-evaluate")
+async def batch_evaluate_proficiency(
+    request: BatchEvaluateRequest,
+    conn = Depends(get_db_connection)
+):
+    """
+    Workflow: Batch Evaluation — analyze a window of N turns (default 4)
+    with qwen-turbo LLM and update proficiency when delta > 0.
+    Falls back to rule-based scoring on LLM failure.
+
+    Design: docs/batch-evaluation-agent-design.md
+    """
+    try:
+        logger.info(
+            f"[BATCH_EVAL] user={request.user_id} goal={request.goal_id} "
+            f"task={request.task_id} turns={len(request.turn_window)}"
+        )
+        result = await batch_evaluation_workflow.evaluate_window(
+            user_id=request.user_id,
+            goal_id=request.goal_id,
+            turn_window=[t.dict() for t in request.turn_window],
+            current_task=request.current_task,
+            native_language=request.native_language,
+            db_connection=conn,
+        )
+        logger.info(
+            f"[BATCH_EVAL] result: delta={result.get('delta')} "
+            f"mode={result.get('teaching_mode')} "
+            f"task_completed={result.get('task_completed')}"
+        )
+        return {"success": True, "data": result}
+    except Exception as e:
+        logger.error(f"[BATCH_EVAL] Error: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
 
