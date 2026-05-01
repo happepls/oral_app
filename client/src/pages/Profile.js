@@ -112,11 +112,17 @@ function Profile() {
     { name: '多语言Master', icon: '🌍', desc: '掌握3种以上目标语言练习闭环', unlocked: false }
   ];
 
+  const [isDarkMode, setIsDarkMode] = useState(() => document.documentElement.classList.contains('dark'));
+  const toggleTheme = () => {
+    const next = !isDarkMode;
+    setIsDarkMode(next);
+    document.documentElement.classList.toggle('dark', next);
+    localStorage.setItem('theme', next ? 'dark' : 'light');
+  };
+
   const menuItems = [
-    { icon: User, label: '账户设置', path: '/settings' },
-    { icon: Bell, label: '通知', path: '/notifications' },
     { icon: Crown, label: '订阅', path: '/subscription' },
-    { icon: Palette, label: '主题', value: '深色' },
+    { icon: Palette, label: '主题', value: isDarkMode ? '深色' : '浅色', onPress: toggleTheme },
     { icon: MessageSquare, label: '意见反馈', onPress: () => setShowFeedbackModal(true) }
   ];
 
@@ -225,7 +231,7 @@ function Profile() {
           <ArrowLeft className="w-5 h-5" />
         </button>
         <h1 className="text-lg font-bold text-slate-900 dark:text-white">我的账户</h1>
-        <button className="flex items-center justify-center p-2 -mr-1 text-slate-600 dark:text-slate-400 hover:text-primary transition-colors">
+        <button className="flex items-center justify-center p-2 -mr-1 invisible">
           <Settings className="w-5 h-5" />
         </button>
       </div>
@@ -239,20 +245,12 @@ function Profile() {
             className="mx-4 mt-4 p-3 rounded-xl"
             style={{ background: 'linear-gradient(135deg, #637FF1, #a47af6)' }}
           >
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <span className="text-xl">👑</span>
-                <div>
-                  <p className="text-white font-bold text-sm">会员已激活</p>
-                  <p className="text-white/70 text-xs">享受全部高级功能</p>
-                </div>
+            <div className="flex items-center gap-2">
+              <span className="text-xl">👑</span>
+              <div>
+                <p className="text-white font-bold text-sm">会员已激活</p>
+                <p className="text-white/70 text-xs">享受全部高级功能</p>
               </div>
-              <button
-                onClick={() => navigate('/subscription')}
-                className="px-3 py-1 bg-white/20 hover:bg-white/30 text-white text-xs rounded-lg transition"
-              >
-                管理
-              </button>
             </div>
           </motion.div>
         )}
@@ -281,13 +279,7 @@ function Profile() {
             )}
             <div className="flex flex-col items-center gap-1">
               <p className="text-2xl font-bold text-slate-900 dark:text-white">{user?.username || '用户'}</p>
-              {activeGoal ? (
-                <p className="text-sm text-slate-500 dark:text-slate-400">
-                  学习 {activeGoal.target_language}{activeGoal.target_level ? ` · ${activeGoal.target_level}` : ''}
-                </p>
-              ) : (
-                <p className="text-sm text-slate-500 dark:text-slate-400">开始你的语言之旅</p>
-              )}
+              <p className="text-sm text-slate-500 dark:text-slate-400">{user?.email || ''}</p>
             </div>
           </div>
         </motion.div>

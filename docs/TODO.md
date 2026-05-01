@@ -4,17 +4,18 @@
 
 ## Backlog
 
-- [ ] [Performance] user.js getUserGoals() N+1 查询：每个 goal 单独查 user_tasks，应改为单次 JOIN 查询（用户 5 个 goal = 6 次 DB query）
-- [ ] [Performance] ai-omni-service _generate_daily_question_pool 两次 LLM 调用：问题生成和参考答案分开调用 qwen-turbo，应考虑合并为单次调用降低延迟和成本
-- [ ] [Performance] Discovery.js handleOpenQAPool 缺 AbortController，组件卸载后 setState 可能触发内存泄漏
-- [ ] [Testing] user.js recordDailyQAPass/getDailyQAPassStatus 零测试覆盖（INSERT ON CONFLICT 幂等性、CURRENT_DATE 边界）
-- [ ] [Testing] ai-omni-service get_daily_question_pool/daily_question_select 端点零测试覆盖（pool 读取、index 校验、cache 形状兼容）
-- [ ] [Testing] ai-omni-service auto-pass fallback 逻辑零测试覆盖（negative_indicators 匹配、response_count 阈值、suppress_modal 标志）
-- [ ] [Testing] Conversation.js stripAIMarkers/DailyQAPassModal(isBonus) 零测试覆盖（正则变体、null 输入、bonus/非 bonus UI 区分）
-- [ ] [Testing] Discovery.js 付费门控逻辑零测试覆盖（free/pro 状态切换、passed 状态组合、选题弹窗交互）
-- [ ] [Security] Daily QA 端点（/pool, /select）无速率限制，Pro 用户可大量请求消耗资源
-- [ ] [Testing] E2E test_scenario_batch_and_daily_qa.py 缺少 free-user 负面用例（非 Pro 用户访问 /pool /select 应返回 403）
 
+- [ ] [Testing] E2E test_scenario_batch_and_daily_qa.py 缺少 free-user 负面用例（非 Pro 用户访问 /pool /select 应返回 403）
+- [ ] [Security] Subscription.js 开放重定向：Stripe API 返回的 URL 未验证域名，直接 window.location.href 跳转
+- [ ] [Security] ai-omni-service CORS allow_origins=["*"] 过于宽松，应限制为已知来源
+- [ ] [Security] ai-omni-service /generate-scenarios, /tts, /translate 端点缺速率限制（DDoS/资源消耗风险）
+- [ ] [Performance] user.js User.create / User.createGoal 缺事务保护（中间失败导致孤立数据）
+- [ ] [Performance] user.js User.findById N+1 查询（users + user_identities 两次 SELECT，应 JOIN）
+- [ ] [Performance] Conversation.js DEFAULT_SCENARIOS 大对象在组件内重复创建，应移至模块顶层
+- [ ] [Performance] Profile.js useEffect 4 个并发请求缺 AbortController
+- [ ] [Testing] Achievements.js 新页面零测试覆盖（数据获取/分类网格/解锁状态渲染）
+- [ ] [Testing] user.js submitFeedback/getDailyProgress/recordPracticeTime 零测试覆盖
+- [ ] [Testing] ai-omni-service magic_sentence 提取正则零测试覆盖（「」引号匹配/""fallback）
 - [ ] [Commercialization]  Defined a tiered subscription model (Freemium/Pro) and cost-per-minute unit economics for AI-driven oral practice.
 - [ ] [Feature]  Tell me a good way to plan a live activity for when I background the app.
 - [ ] [Performance] Goals.js: summary stats 数组（含 JSX icon）每次 render 重建，可用 useMemo 按 activeGoals/totalCompletedScenes/streak 依赖缓存
@@ -38,6 +39,14 @@
 
 ## Done
 
+- [x] [Feature] AI 导师角色(Persona)系统：4 音色 × 4 角色性格（Tina/Serena/Evan/Arda），字母头像，免费用户限 Tina，前后端 personaConfig + persona_config.py + prompt 注入
+- [x] [Feature] Achievements 成就页面：前端页面 + 后端 API + user_achievements 表 + 12 个成就定义 + BottomNav Awards tab
+- [x] [Feature] 每日任务环：3 环（复述/问答/练习）+ 练习时长计时器 + 自动打卡 + daily_practice_time 表 + daily_practice_goal 用户设定
+- [x] [Optimization] TTS 标记系统重构：从所有 prompt 中移除 5 类标记（TASK_COMPLETE/MAGIC_PASS/MAGIC_SENTENCE/DAILY_QA_PASSED/NATIVE），改为关键词检测 + auto-pass + response.create fallback，消除 TTS 重合成需求，用户选择的音色全程保持
+- [x] [Bug] Profile 页面修复：移除无效设置按钮/学习目标标签/重复菜单项，修复主题切换（浅色↔深色 + localStorage 持久化），修复意见反馈（新建 user_feedback 表 + POST /api/users/feedback 端点）
+- [x] [Bug] BATCH_EVAL 进度失效修复：恢复被误删的 latest_ai_text 赋值
+- [x] [Bug] Goals.js 音色选择 Pro 用户解锁：subscription_status === 'active' 时移除锁定
+- [x] [Bug] Discovery.js 每日任务环字段名对齐（camelCase vs snake_case）+ 练习时长进度条 + StreakRing 本月打卡天数
 - [x] [Bug] 今日复述(recall mode)闪退修复：session_phases 旧 scene_theater 状态未被 recall 覆盖 + WebSocket URL 缺少 mode=recall 参数（ai-omni-service + Conversation.js）
 - [x] [Bug] TTS 音频播报 [TASK_N_COMPLETE] 等标记文字修复：检测 marker → 剥离 → qwen3-tts-flash 重合成干净音频 → COS 上传（ai-omni-service upload_ai_task）
 - [x] [Bug] TTS 重合成音频开头"ping"尖锐声修复：新增 `_wav_extract_pcm()` 正确剥离 WAV RIFF header，避免 ffmpeg `-f s16le` 将 header 字节误读为高振幅 PCM（ai-omni-service）
@@ -63,9 +72,7 @@
 - [x] [Bug] 魔法重复 Response A 误导文字修复：彻底移除 `suppressNextAIAudioRef`（时序 bug），改为 `magic_pass` 触发时直接删除最后一条 AI 消息气泡（`setMessages` 反向扫描删除）+ `stopAudioPlayback()`，对话框只显示 Response B
 - [x] [Bug] 场景切换后错误进入情景剧场修复：`session_phases` key 从 `user_id` 改为 `f"{user_id}:{scenario}"` 复合键，每个场景独立维护阶段状态；`WebSocketCallback` 增加 `self.phase_key` 属性；`/reset-phase` 端点新增 `scenario` 参数；`api.js resetTask()` 调用时传入 `scenarioTitle`
 - [x] [Performance] `setMessages` magic_pass 删气泡由 `map→filter→pop`（O(n) 两次遍历 + 中间数组）改为反向单次 for 循环
-
 - [x] [Frontend] 添加多语言界面支持（9语言 i18n + IP/浏览器语言自动检测 + LanguageSwitcher 组件）
-
 - [x] [Monitoring] 实现用户行为分析和性能指标收集 (Added Nginx logging and stats API)
 - [x] [Frontend] Profile 页面数据对接：将静态展示替换为真实用户的动态个人资料 (Integrated with history-analytics-service)
 - [x] [Docs] 更新 user_service/docs/schema.md 文档以对齐数据库表结构
@@ -258,3 +265,12 @@
 - [x] [Bug] AI 消息文本 marker 过滤：前端 stripAIMarkers 过滤 [DAILY_QA_PASSED] 和 [NATIVE:...] （含空格变体 [ NATIVE:]）
 - [x] [Bug] TTS 混合语言发音修复：_MARKER_RE 新增 [NATIVE:...] 模式，触发 TTS 重合成纯目标语言音频
 - [x] [Security] recordDailyQAPassInternal question_text 长度校验：截断至 2000 字符防止存储滥用
+- [x] [Performance] user.js getUserGoals() N+1 查询：已改为 `WHERE goal_id = ANY($1::int[])` 批量查询
+- [x] [Performance] ai-omni-service _generate_daily_question_pool：已合并为单次 LLM 调用（问题+参考答案同时生成）
+- [x] [Performance] Discovery.js handleOpenQAPool：已添加 AbortController，组件卸载时自动取消请求
+- [x] [Testing] user.js recordDailyQAPass/getDailyQAPassStatus：Jest 测试补全（4 tests，INSERT 幂等性 + CURRENT_DATE 边界）
+- [x] [Testing] ai-omni-service get_daily_question_pool/daily_question_select：pytest 测试扩展（缓存命中/格式验证/count截断）
+- [x] [Testing] ai-omni-service auto-pass fallback：新建 test_auto_pass.py（16 tests，中英日负面词 + 阈值 + 大小写）
+- [x] [Testing] Conversation.js stripAIMarkers/DailyQAPassModal：新建 stripAIMarkers.test.js（13 tests，正则变体/null/bonus UI 区分）
+- [x] [Testing] Discovery.js 付费门控逻辑：新建 discovery-paywall.test.js（13 tests，free/pro 切换/passed 组合/场景解锁）
+- [x] [Security] Daily QA 端点速率限制：slowapi 10/minute（/pool + /select），requirements.txt 已添加 slowapi

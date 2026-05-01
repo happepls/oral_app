@@ -247,6 +247,32 @@ export const userAPI = {
       credentials: 'include',
     });
     return handleResponse(response);
+  },
+
+  async achievements() {
+    const response = await fetch(`${API_BASE_URL}/users/achievements`, {
+      headers: getAuthHeaders(),
+      credentials: 'include',
+    });
+    return handleResponse(response);
+  },
+
+  async recordPracticeTime(minutes) {
+    const response = await fetch(`${API_BASE_URL}/users/practice-time`, {
+      method: 'POST',
+      headers: { ...getAuthHeaders(), 'Content-Type': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify({ minutes }),
+    });
+    return response.json();
+  },
+
+  async getDailyProgress() {
+    const response = await fetch(`${API_BASE_URL}/users/daily-progress`, {
+      headers: getAuthHeaders(),
+      credentials: 'include',
+    });
+    return response.json();
   }
 };
 
@@ -518,7 +544,7 @@ export const historyAPI = {
 
 export const feedbackAPI = {
   async submit({ category, message }) {
-    const response = await fetch(`${API_BASE_URL}/feedback`, {
+    const response = await fetch(`${API_BASE_URL}/users/feedback`, {
       method: 'POST',
       headers: getAuthHeaders(),
       credentials: 'include',

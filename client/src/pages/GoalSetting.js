@@ -3,6 +3,8 @@ import { useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { userAPI, aiAPI } from '../services/api';
 import { motion, AnimatePresence } from 'motion/react';
+import { Lock } from 'lucide-react';
+import { VOICE_OPTIONS, DEFAULT_VOICE } from '../config/personaConfig';
 
 const TOTAL_STEPS = 5;  // Welcome + Language + Quiz + Goal/Voice + Scenarios
 
@@ -139,12 +141,7 @@ const GOAL_TYPES = [
   { value: 'custom',             label: '自定义',   emoji: '✏️' },
 ];
 
-const VOICE_OPTIONS = [
-  { id: 'Tina',   name: 'Tina',   desc: '甜甜女声（默认）', emoji: '👩' },
-  { id: 'Serena', name: 'Serena', desc: '温柔女声',         emoji: '👧' },
-  { id: 'Evan',   name: 'Evan',   desc: '清亮男声',         emoji: '👨' },
-  { id: 'Arda',   name: 'Arda',   desc: '阳光男声',         emoji: '🧑' },
-];
+// VOICE_OPTIONS imported from personaConfig.js
 
 const FEATURES = [
   { icon: '🎯', title: '个性化学习', desc: '根据你的水平定制内容' },
@@ -543,20 +540,32 @@ export default function GoalSetting() {
                 <div>
                   <label className="block text-sm font-bold text-slate-900 mb-2">AI 导师音色</label>
                   <div className="grid grid-cols-2 gap-2">
-                    {VOICE_OPTIONS.map(v => (
-                      <button key={v.id} onClick={() => setSelectedVoice(v.id)}
-                        className="flex items-center gap-2 p-3 rounded-2xl border-2 transition-all"
-                        style={{
-                          borderColor: selectedVoice === v.id ? '#637FF1' : '#E5E7EB',
-                          background:  selectedVoice === v.id ? 'rgba(99,127,241,0.07)' : '#fff',
-                        }}>
-                        <span className="text-xl">{v.emoji}</span>
-                        <div className="text-left">
-                          <p className="font-bold text-sm text-slate-900">{v.name}</p>
-                          <p className="text-xs text-slate-400">{v.desc}</p>
-                        </div>
-                      </button>
-                    ))}
+                    {VOICE_OPTIONS.map(v => {
+                      const isPro = user?.subscription_status === 'active';
+                      const locked = !v.isFree && !isPro;
+                      return (
+                        <button key={v.id}
+                          onClick={() => !locked && setSelectedVoice(v.id)}
+                          className={`relative flex items-center gap-3 p-3 rounded-2xl border-2 transition-all ${locked ? 'opacity-50 cursor-not-allowed' : ''}`}
+                          style={{
+                            borderColor: selectedVoice === v.id ? '#637FF1' : '#E5E7EB',
+                            background:  selectedVoice === v.id ? 'rgba(99,127,241,0.07)' : '#fff',
+                          }}>
+                          <div className="w-10 h-10 rounded-full flex items-center justify-center flex-shrink-0"
+                            style={{ background: v.bgGradient }}>
+                            <span className="text-white font-bold text-base">{v.letter}</span>
+                          </div>
+                          <div className="text-left">
+                            <p className="font-bold text-sm text-slate-900">{v.name}</p>
+                            <p className="text-xs text-slate-500">{v.desc}</p>
+                            <p className="text-xs text-slate-400">{v.subtitle}</p>
+                          </div>
+                          {locked && (
+                            <Lock className="absolute top-2 right-2 w-4 h-4 text-slate-400" />
+                          )}
+                        </button>
+                      );
+                    })}
                   </div>
                 </div>
                 {error && <p className="text-red-500 text-sm text-center">{error}</p>}

@@ -4,8 +4,9 @@ import React from 'react';
  * StreakRing — 连续学习进度环
  * 橙色渐变背景卡片 + SVG 进度环 + 打卡按钮
  */
-export function StreakRing({ streak = 0, monthlyTarget = 30, checkedInToday = false, onCheckin }) {
-  const pct = Math.min(100, Math.round((streak / monthlyTarget) * 100));
+export function StreakRing({ streak = 0, monthlyCheckinDays = 0, checkedInToday = false, onCheckin, totalPracticeMinutes = 0 }) {
+  const daysInMonth = new Date(new Date().getFullYear(), new Date().getMonth() + 1, 0).getDate();
+  const pct = Math.min(100, Math.round((monthlyCheckinDays / daysInMonth) * 100));
   // SVG stroke-dasharray: circumference 约100，用 pct 表示填充
   const dashFill = pct;
 
@@ -19,7 +20,7 @@ export function StreakRing({ streak = 0, monthlyTarget = 30, checkedInToday = fa
       <div className="absolute -bottom-6 -left-6 w-24 h-24 bg-white opacity-10 rounded-full blur-xl" />
 
       <div className="relative z-10 flex items-center justify-between">
-        {/* 左侧：火焰 + 天数 */}
+        {/* 左侧：火焰 + 天数 + 总练习时长 */}
         <div className="flex items-center gap-3">
           <span className="text-4xl animate-pulse select-none">🔥</span>
           <div>
@@ -28,6 +29,11 @@ export function StreakRing({ streak = 0, monthlyTarget = 30, checkedInToday = fa
               <span className="text-base font-medium opacity-80">天</span>
             </div>
             <p className="text-sm opacity-75 mt-0.5">连续学习</p>
+            {totalPracticeMinutes > 0 && (
+              <p className="text-xs opacity-60 mt-1">
+                累计练习 {totalPracticeMinutes >= 60 ? `${Math.floor(totalPracticeMinutes / 60)}h${totalPracticeMinutes % 60 > 0 ? `${totalPracticeMinutes % 60}m` : ''}` : `${totalPracticeMinutes}m`}
+              </p>
+            )}
           </div>
         </div>
 
@@ -59,7 +65,7 @@ export function StreakRing({ streak = 0, monthlyTarget = 30, checkedInToday = fa
               {pct}%
             </span>
           </div>
-          <p className="text-xs opacity-70 whitespace-nowrap">本月 {monthlyTarget} 天</p>
+          <p className="text-xs opacity-70 whitespace-nowrap">本月 {monthlyCheckinDays} 天</p>
 
           {/* 打卡按钮 */}
           {!checkedInToday && onCheckin && (

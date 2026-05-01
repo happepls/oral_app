@@ -14,6 +14,7 @@ import GoalSetting from './pages/GoalSetting';
 import Checkin from './pages/Checkin';
 import Goals from './pages/Goals';
 import Subscription from './pages/Subscription';
+import Achievements from './pages/Achievements';
 import SplashScreen from './components/SplashScreen';
 import './App.css';
 
@@ -33,6 +34,7 @@ const AppRoutes = () => {
             <Route path="/profile" element={<Profile />} />
             <Route path="/checkin" element={<Checkin />} />
             <Route path="/goals" element={<Goals />} />
+            <Route path="/achievements" element={<Achievements />} />
             <Route path="/subscription" element={<Subscription />} />
             <Route path="/subscription/success" element={<Subscription />} />
             <Route path="/subscription/cancel" element={<Subscription />} />

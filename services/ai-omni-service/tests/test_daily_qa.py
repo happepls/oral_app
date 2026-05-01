@@ -533,3 +533,203 @@ class TestDailyQaReAnswerHelpers:
             assert_pro({})
         with pytest.raises(HTTPException):
             assert_pro(None)
+
+
+# =========================================================================
+# 5. get_daily_question_pool — format and count
+# =========================================================================
+
+
+@skip_if_no_impl
+class TestGetDailyQuestionPool:
+
+    @pytest.mark.asyncio
+    async def test_cache_hit_returns_pool_without_llm(self, fake_redis, user_id, today_iso):
+        get_pool = getattr(_main_module, "get_daily_question_pool", None)
+        if get_pool is None:
+            pytest.skip("get_daily_question_pool() not yet exposed")
+
+        pool = [
+            {"question_text": "Q1", "lang": "en", "reference_answer": "A1"},
+            {"question_text": "Q2", "lang": "en", "reference_answer": "A2"},
+            {"question_text": "Q3", "lang": "en", "reference_answer": "A3"},
+        ]
+        cache_key = f"daily_qa_pool:{user_id}:{today_iso}"
+        await fake_redis.setex(cache_key, 48 * 3600,
+                               json.dumps({"pool": pool, "index": 0, "picked": pool[0]}))
+
+        call_spy = MagicMock(side_effect=AssertionError("LLM should not be called"))
+        with patch("dashscope.Generation.call", call_spy):
+            result = await _maybe_await(get_pool(
+                redis=fake_redis, user_id=user_id,
+                target_language="English", native_language="Chinese", count=3,
+            ))
+
+        call_spy.assert_not_called()
+        assert len(result) == 3
+        assert all("question_text" in q for q in result)
+        assert all("index" in q for q in result)
+
+    @pytest.mark.asyncio
+    async def test_result_format_has_required_fields(self, fake_redis, user_id, today_iso):
+        get_pool = getattr(_main_module, "get_daily_question_pool", None)
+        if get_pool is None:
+            pytest.skip("get_daily_question_pool() not yet exposed")
+
+        pool = [{"question_text": "Q1", "lang": "en", "reference_answer": "A1"}]
+        cache_key = f"daily_qa_pool:{user_id}:{today_iso}"
+        await fake_redis.setex(cache_key, 48 * 3600,
+                               json.dumps({"pool": pool, "index": 0, "picked": pool[0]}))
+
+        result = await _maybe_await(get_pool(
+            redis=fake_redis, user_id=user_id,
+            target_language="English", native_language="Chinese", count=1,
+        ))
+
+        item = result[0]
+        assert "question_text" in item
+        assert "reference_answer" in item
+        assert "lang" in item
+        assert "index" in item
+        assert item["index"] == 0
+
+    @pytest.mark.asyncio
+    async def test_count_truncates_result(self, fake_redis, user_id, today_iso):
+        get_pool = getattr(_main_module, "get_daily_question_pool", None)
+        if get_pool is None:
+            pytest.skip("get_daily_question_pool() not yet exposed")
+
+        pool = [
+            {"question_text": f"Q{i}", "lang": "en", "reference_answer": f"A{i}"}
+            for i in range(10)
+        ]
+        cache_key = f"daily_qa_pool:{user_id}:{today_iso}"
+        await fake_redis.setex(cache_key, 48 * 3600,
+                               json.dumps({"pool": pool, "index": 0, "picked": pool[0]}))
+
+        result = await _maybe_await(get_pool(
+            redis=fake_redis, user_id=user_id,
+            target_language="English", native_language="Chinese", count=3,
+        ))
+
+        assert len(result) == 3
+
+
+# =========================================================================
+# 6. POST /daily-question/select — endpoint contract
+# =========================================================================
+
+
+@pytest.mark.skipif(
+    not _IMPL_AVAILABLE,
+    reason="daily_question_select_endpoint impl pending",
+)
+class TestDailyQuestionSelectEndpoint:
+    """Test the /daily-question/select handler by invoking it directly with a
+    mocked Request. Avoids httpx.AsyncClient + FastAPI TestClient because
+    httpx is unavailable in some test environments (the existing test file
+    stubs dashscope/redis only). Direct invocation exercises the same logic.
+    """
+
+    PRO_USER = {"id": "u_pro_42", "subscription_status": "active"}
+
+    @staticmethod
+    def _mock_request(body: dict):
+        req = MagicMock()
+        req.cookies = {"accessToken": "fake.jwt.token"}
+        req.headers = {}
+
+        async def _json():
+            return body
+
+        req.json = _json
+        return req
+
+    def _patch_deps(self, fake_redis):
+        """Patch get_user_context + _assert_pro + _get_redis_client.
+
+        Returns a context-manager-like object (use `with`) so each test gets a
+        clean patch scope.
+        """
+        async def _get_ctx(_token):
+            return self.PRO_USER
+
+        return (
+            patch.object(_main_module, "get_user_context", side_effect=_get_ctx),
+            patch.object(_main_module, "_assert_pro", lambda u: None),
+            patch.object(_main_module, "_get_redis_client", return_value=fake_redis),
+        )
+
+    @pytest.mark.asyncio
+    async def test_valid_index_returns_200_and_picked(self, fake_redis, today_iso):
+        endpoint = getattr(_main_module, "daily_question_select_endpoint", None)
+        if endpoint is None:
+            pytest.skip("daily_question_select_endpoint not yet exposed")
+
+        user_id = self.PRO_USER["id"]
+        cache_key = f"daily_qa_pool:{user_id}:{today_iso}"
+        pool = [
+            {"question_text": f"Q{i}", "lang": "en", "reference_answer": f"A{i}"}
+            for i in range(3)
+        ]
+        await fake_redis.setex(
+            cache_key, 48 * 3600,
+            json.dumps({"pool": pool, "index": 0, "picked": pool[0]}),
+        )
+
+        p1, p2, p3 = self._patch_deps(fake_redis)
+        with p1, p2, p3:
+            resp = await endpoint(self._mock_request({"index": 2}))
+
+        assert "data" in resp
+        data = resp["data"]
+        assert data["question_text"] == "Q2"
+        assert data["reference_answer"] == "A2"
+        assert data["lang"] == "en"
+        assert data["passed"] is False
+        # Cache mutated to new index
+        stored = json.loads(fake_redis._store[cache_key])
+        assert stored["index"] == 2
+        assert stored["picked"]["question_text"] == "Q2"
+
+    @pytest.mark.asyncio
+    async def test_index_out_of_range_returns_400(self, fake_redis, today_iso):
+        endpoint = getattr(_main_module, "daily_question_select_endpoint", None)
+        if endpoint is None:
+            pytest.skip("daily_question_select_endpoint not yet exposed")
+
+        from fastapi import HTTPException
+
+        user_id = self.PRO_USER["id"]
+        cache_key = f"daily_qa_pool:{user_id}:{today_iso}"
+        pool = [{"question_text": "only", "lang": "en", "reference_answer": ""}]
+        await fake_redis.setex(
+            cache_key, 48 * 3600,
+            json.dumps({"pool": pool, "index": 0, "picked": pool[0]}),
+        )
+
+        p1, p2, p3 = self._patch_deps(fake_redis)
+        with p1, p2, p3:
+            # Above pool size
+            with pytest.raises(HTTPException) as ei:
+                await endpoint(self._mock_request({"index": 99}))
+            assert ei.value.status_code == 400
+            # Negative index
+            with pytest.raises(HTTPException) as ei:
+                await endpoint(self._mock_request({"index": -1}))
+            assert ei.value.status_code == 400
+
+    @pytest.mark.asyncio
+    async def test_no_cache_returns_404(self, fake_redis):
+        endpoint = getattr(_main_module, "daily_question_select_endpoint", None)
+        if endpoint is None:
+            pytest.skip("daily_question_select_endpoint not yet exposed")
+
+        from fastapi import HTTPException
+
+        # FakeRedis empty — no cached pool for this user
+        p1, p2, p3 = self._patch_deps(fake_redis)
+        with p1, p2, p3:
+            with pytest.raises(HTTPException) as ei:
+                await endpoint(self._mock_request({"index": 0}))
+        assert ei.value.status_code == 404

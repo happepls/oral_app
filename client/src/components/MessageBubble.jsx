@@ -8,6 +8,8 @@ export function MessageBubble({
   message,
   timestamp,
   avatar,
+  avatarLetter,
+  avatarColor,
   state = "default",
   translation,
   showTranslation = false,
@@ -28,10 +30,12 @@ export function MessageBubble({
       {!isUser && (
         <div
           className="w-12 h-12 rounded-full flex items-center justify-center flex-shrink-0"
-          style={{ backgroundColor: tokens.color.secondary.value }}
+          style={{ background: avatarColor || tokens.color.secondary.value }}
         >
           {avatar ? (
             <img src={avatar} alt="" className="w-full h-full rounded-full object-cover" />
+          ) : avatarLetter ? (
+            <span className="text-white font-bold text-lg">{avatarLetter}</span>
           ) : (
             <Bot className="w-6 h-6 text-white" />
           )}

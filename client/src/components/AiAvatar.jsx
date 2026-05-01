@@ -4,6 +4,8 @@ import designTokens from "../imports/design-tokens.json";
 
 export function AiAvatar({
   imageUrl,
+  avatarLetter,
+  avatarColor,
   name = "AI 导师",
   status = "idle",
   isPremium = false,
@@ -116,9 +118,16 @@ export function AiAvatar({
                   ))}
                   <div
                     className="w-20 h-20 rounded-full flex items-center justify-center relative z-10"
-                    style={{ backgroundColor: `${currentStatus.color}18`, border: `2px solid ${currentStatus.color}40` }}
+                    style={{
+                      background: avatarColor || `${currentStatus.color}18`,
+                      border: avatarColor ? 'none' : `2px solid ${currentStatus.color}40`,
+                    }}
                   >
-                    <Sparkles className="w-10 h-10" style={{ color: currentStatus.color }} />
+                    {avatarLetter ? (
+                      <span className="text-white font-bold text-3xl">{avatarLetter}</span>
+                    ) : (
+                      <Sparkles className="w-10 h-10" style={{ color: currentStatus.color }} />
+                    )}
                   </div>
                 </div>
                 <p className="text-gray-400 text-sm">{name}</p>

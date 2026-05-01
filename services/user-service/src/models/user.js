@@ -2,6 +2,24 @@ const db = require('./db');
 const bcrypt = require('bcryptjs');
 const fetch = require('node-fetch');
 
+const ACHIEVEMENTS = {
+  // Learning
+  first_steps:    { category: 'learning', icon: '🎯', name: 'First Steps',    description: 'Complete your first practice session' },
+  bookworm:       { category: 'learning', icon: '📖', name: 'Bookworm',       description: 'Complete 10 scenarios' },
+  scholar:        { category: 'learning', icon: '🎓', name: 'Scholar',        description: 'Complete 50 scenarios' },
+  master:         { category: 'learning', icon: '🏅', name: 'Master',         description: 'Complete all scenarios in a goal' },
+  // Streaks
+  getting_started:{ category: 'streaks',  icon: '🌟', name: 'Getting Started',description: 'Maintain a 3-day streak' },
+  dedicated:      { category: 'streaks',  icon: '💪', name: 'Dedicated',      description: 'Maintain a 7-day streak' },
+  unstoppable:    { category: 'streaks',  icon: '⚡', name: 'Unstoppable',    description: 'Maintain a 30-day streak' },
+  legend:         { category: 'streaks',  icon: '👑', name: 'Legend',         description: 'Maintain a 100-day streak' },
+  // Skills
+  conversation_starter: { category: 'skills', icon: '💬', name: 'Conversation Starter', description: 'Score 8+ on a practice session' },
+  perfect_score:  { category: 'skills',  icon: '⭐', name: 'Perfect Score',  description: 'Score 10 on a single task' },
+  polyglot:       { category: 'skills',  icon: '🌍', name: 'Polyglot',       description: 'Practice 3 or more languages' },
+  actor:          { category: 'skills',  icon: '🎭', name: 'Actor',          description: 'Complete a Scene Theater session' },
+};
+
 const User = {};
 
 User.create = async (username, email, password) => {
@@ -47,7 +65,8 @@ User.findById = async (id) => {
 User.update = async (id, updates) => {
   const allowedUpdates = [
       'username', 'avatar_url', 'native_language', 'learning_goal',
-      'nickname', 'gender', 'birth_year', 'target_language', 'interests', 'points'
+      'nickname', 'gender', 'birth_year', 'target_language', 'interests', 'points',
+      'daily_practice_goal'
   ];
   const updateFields = [];
   const values = [];
@@ -399,37 +418,45 @@ User.getUserGoals = async (userId) => {
         [userId]
     );
 
+    if (rows.length === 0) return rows;
+
+    const goalIds = rows.map(g => g.id);
+    const tasksByGoalId = new Map();
+    try {
+        const taskRes = await db.query(
+            `SELECT * FROM user_tasks WHERE goal_id = ANY($1::int[])`,
+            [goalIds]
+        );
+        for (const t of taskRes.rows) {
+            if (!tasksByGoalId.has(t.goal_id)) tasksByGoalId.set(t.goal_id, []);
+            tasksByGoalId.get(t.goal_id).push(t);
+        }
+    } catch (e) {
+        console.error('[User] Error batch-fetching tasks for goals:', e);
+    }
+
     for (const goal of rows) {
         if (!goal.scenarios || !Array.isArray(goal.scenarios)) continue;
-        try {
-            const taskRes = await db.query(
-                `SELECT * FROM user_tasks WHERE goal_id = $1`,
-                [goal.id]
-            );
-            const dbTasks = taskRes.rows;
-
-            goal.scenarios = goal.scenarios.map(scenario => {
-                const scenarioTasks = scenario.tasks.map(t => {
-                    const tText = typeof t === 'string' ? t : t.text;
-                    const dbTask = dbTasks.find(dbt =>
-                        dbt.scenario_title === scenario.title &&
-                        dbt.task_description === tText
-                    );
-                    const taskScore = dbTask ? dbTask.score : 0;
-                    const taskProgress = Math.min(100, Math.round((taskScore / 9) * 100));
-                    return {
-                        id: dbTask ? dbTask.id : null,
-                        text: tText,
-                        status: dbTask ? dbTask.status : 'pending',
-                        score: taskScore,
-                        progress: taskProgress,
-                    };
-                });
-                return { ...scenario, tasks: scenarioTasks };
+        const dbTasks = tasksByGoalId.get(goal.id) || [];
+        goal.scenarios = goal.scenarios.map(scenario => {
+            const scenarioTasks = scenario.tasks.map(t => {
+                const tText = typeof t === 'string' ? t : t.text;
+                const dbTask = dbTasks.find(dbt =>
+                    dbt.scenario_title === scenario.title &&
+                    dbt.task_description === tText
+                );
+                const taskScore = dbTask ? dbTask.score : 0;
+                const taskProgress = Math.min(100, Math.round((taskScore / 9) * 100));
+                return {
+                    id: dbTask ? dbTask.id : null,
+                    text: tText,
+                    status: dbTask ? dbTask.status : 'pending',
+                    score: taskScore,
+                    progress: taskProgress,
+                };
             });
-        } catch (e) {
-            console.error('[User] Error merging task statuses for goal', goal.id, e);
-        }
+            return { ...scenario, tasks: scenarioTasks };
+        });
     }
 
     return rows;
@@ -924,6 +951,121 @@ User._getFallbackKeywords = (taskDescription, scenarioTitle) => {
   starters.forEach(starter => keywords.add(starter));
 
   return Array.from(keywords).slice(0, 15);
+};
+
+// ===== Daily Practice Time =====
+
+User.recordPracticeTime = async (userId, minutes) => {
+  const { rows } = await db.query(
+    `INSERT INTO daily_practice_time (user_id, minutes)
+     VALUES ($1, $2)
+     ON CONFLICT (user_id, practice_date)
+     DO UPDATE SET minutes = daily_practice_time.minutes + $2
+     RETURNING *`,
+    [userId, minutes]
+  );
+  return rows[0];
+};
+
+User.getDailyPracticeTime = async (userId) => {
+  const { rows } = await db.query(
+    `SELECT minutes FROM daily_practice_time
+     WHERE user_id = $1 AND practice_date = CURRENT_DATE`,
+    [userId]
+  );
+  return rows[0]?.minutes || 0;
+};
+
+User.getDailyProgress = async (userId) => {
+  // 1. 复述完成状态 — 简化：暂用 false，后续通过前端 WebSocket 事件标记
+  const recallCompleted = false; // TODO: 需要追踪机制
+
+  // 2. 问答完成
+  const qaStatus = await User.getDailyQAPassStatus(userId);
+
+  // 3. 场景完成 — 简化：暂用 false
+  const scenarioCompleted = false; // TODO: 需要追踪机制
+
+  // 4. 练习时长
+  const practiceMinutes = await User.getDailyPracticeTime(userId);
+
+  // 5. 练习目标
+  const userRes = await db.query('SELECT daily_practice_goal FROM users WHERE id = $1', [userId]);
+  const practiceGoal = userRes.rows[0]?.daily_practice_goal || 15;
+
+  // 6. 打卡状态
+  const checkinStats = await User.getCheckinStats(userId);
+
+  // 7. 本月打卡天数
+  const monthlyRes = await db.query(
+    `SELECT COUNT(*) AS days FROM user_checkins
+     WHERE user_id = $1
+       AND checkin_date >= date_trunc('month', CURRENT_DATE)
+       AND checkin_date < date_trunc('month', CURRENT_DATE) + interval '1 month'`,
+    [userId]
+  );
+  const monthlyCheckinDays = parseInt(monthlyRes.rows[0]?.days) || 0;
+
+  // 8. 累计总练习时长
+  const totalRes = await db.query(
+    'SELECT COALESCE(SUM(minutes), 0) AS total FROM daily_practice_time WHERE user_id = $1',
+    [userId]
+  );
+  const totalPracticeMinutes = parseInt(totalRes.rows[0]?.total) || 0;
+
+  return {
+    recallCompleted,
+    qaCompleted: qaStatus.passed,
+    scenarioCompleted,
+    practiceMinutes,
+    practiceGoal,
+    totalPracticeMinutes,
+    monthlyCheckinDays,
+    checkedInToday: checkinStats.checkedInToday,
+    streak: checkinStats.currentStreak,
+  };
+};
+
+// ===== Feedback =====
+
+User.submitFeedback = async (userId, category, message) => {
+  const { rows } = await db.query(
+    'INSERT INTO user_feedback (user_id, category, message) VALUES ($1, $2, $3) RETURNING *',
+    [userId, category, message]
+  );
+  return rows[0];
+};
+
+// ===== Achievements =====
+
+User.getUserAchievements = async (userId) => {
+  const { rows } = await db.query(
+    'SELECT achievement_key, unlocked_at FROM user_achievements WHERE user_id = $1',
+    [userId]
+  );
+  const unlocked = {};
+  for (const r of rows) {
+    unlocked[r.achievement_key] = r.unlocked_at;
+  }
+  const result = Object.entries(ACHIEVEMENTS).map(([key, def]) => ({
+    key,
+    ...def,
+    unlocked: !!unlocked[key],
+    unlocked_at: unlocked[key] || null,
+  }));
+  return result;
+};
+
+User.unlockAchievement = async (userId, achievementKey) => {
+  if (!ACHIEVEMENTS[achievementKey]) return null;
+  const { rows } = await db.query(
+    `INSERT INTO user_achievements (user_id, achievement_key)
+     VALUES ($1, $2)
+     ON CONFLICT (user_id, achievement_key) DO NOTHING
+     RETURNING *`,
+    [userId, achievementKey]
+  );
+  return rows[0] || null;
 };
 
 module.exports = User;

@@ -1,6 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const userController = require('../controllers/userController');
+const User = require('../models/user');
 const { protect, internalAuthWithNetworkSkip } = require('../middleware/enhancedAuthMiddleware'); // Updated to enhanced auth
 const {
   authRateLimiter,
@@ -48,6 +49,24 @@ router.get('/api/users/checkin/stats', protect, userController.getCheckinStats);
 
 // Daily QA pass routes
 router.get('/api/users/daily-qa-pass', protect, userController.getDailyQAPassStatus);
+
+// Daily practice time / progress
+router.post('/api/users/practice-time', protect, userController.recordPracticeTime);
+router.get('/api/users/daily-progress', protect, userController.getDailyProgress);
+
+// Feedback
+router.post('/api/users/feedback', protect, userController.submitFeedback);
+
+// Achievements
+router.get('/api/users/achievements', protect, async (req, res) => {
+  try {
+    const achievements = await User.getUserAchievements(req.user.id);
+    const unlocked = achievements.filter(a => a.unlocked).length;
+    res.json({ achievements, unlocked, total: achievements.length });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
 router.post('/api/users/internal/users/:id/daily-qa-pass', internalAuthWithNetworkSkip, userController.recordDailyQAPassInternal);
 
 // Internal Routes (Protected with internalAuthWithNetworkSkip for service-to-service communication)

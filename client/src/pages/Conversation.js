@@ -4,6 +4,7 @@ import { conversationAPI, aiAPI, userAPI } from '../services/api';
 import { getAuthHeaders } from '../services/api';
 import RealTimeRecorder from '../components/RealTimeRecorder';
 import { AiAvatar } from '../components/AiAvatar';
+import { getPersona } from '../config/personaConfig';
 import { PracticeReport } from '../components/PracticeReport';
 import { MessageBubble } from '../components/MessageBubble';
 import { useAuth } from '../contexts/AuthContext';
@@ -241,6 +242,7 @@ function Conversation() {
   const location = useLocation();
   const { user, token, loading } = useAuth(); // Added loading state
   const scenarioEmoji = location.state?.emoji;
+  const persona = getPersona(localStorage.getItem('ai_voice') || 'Tina');
 
   // UI States
   const [messages, setMessages] = useState([]);
@@ -454,6 +456,19 @@ function Conversation() {
     return { emoji: '', text: '建议继续练习，多听多说以提高表达能力。', level: 'needsWork' };
   };
 
+  // Report practice time on unmount
+  useEffect(() => {
+    return () => {
+      if (practiceStartTimeRef.current) {
+        const minutes = Math.round((Date.now() - practiceStartTimeRef.current) / 60000);
+        practiceStartTimeRef.current = null;
+        if (minutes > 0 && minutes <= 120) {
+          userAPI.recordPracticeTime(minutes).catch(() => {});
+        }
+      }
+    };
+  }, []);
+
   // 查询每日场景数（mount 时，使用 localStorage）
   useEffect(() => {
     const today = new Date().toISOString().slice(0, 10); // '2026-03-30'
@@ -576,6 +591,7 @@ function Conversation() {
   const socketRef = useRef(null);
   const lastProficiencyUpdateRef = useRef(null); // Track last processed proficiency update to prevent duplicates
   const recorderRef = useRef(null); // Ref for RealTimeRecorder to control session ID
+  const practiceStartTimeRef = useRef(null); // Track practice start time for daily progress
 
   // Initialize audio context
   const initAudioContext = () => {
@@ -1558,6 +1574,16 @@ function Conversation() {
            console.log('🖼️ Scene Image:', imageUrl);
            break;
         }
+        case 'magic_sentence_update': {
+           const newSentence = data.payload?.sentence;
+           if (newSentence) {
+               const sc = new URLSearchParams(window.location.search).get('scenario') || '';
+               setCurrentMagicSentence(newSentence);
+               try { if (sc) localStorage.setItem(_lsScenarioKey('magic_sentence_', sc), newSentence); } catch {}
+               console.log('[Magic] Sentence updated from AI text:', newSentence);
+           }
+           break;
+        }
         case 'magic_pass_first': {
            setMagicCardCovered(true);
            setMagicCardState('reciting');
@@ -1741,7 +1767,8 @@ function Conversation() {
     const searchParams = new URLSearchParams(window.location.search);
     const scenario = searchParams.get('scenario');
     const topic = searchParams.get('topic');
-    const voice = localStorage.getItem('ai_voice') || 'Serena';
+    const voice = localStorage.getItem('ai_voice') || 'Tina';
+    const persona = getPersona(voice);
     
     // Determine the correct WebSocket host
     let wsHost;
@@ -1777,6 +1804,7 @@ function Conversation() {
     console.log('WS Open (Optimized)');
     setIsConnected(true);
     setWebSocketError(null);
+    practiceStartTimeRef.current = Date.now();
 
     // Note: Ping/heartbeat is handled by OptimizedWebSocket internally
     // No need for manual ping interval here
@@ -2080,9 +2108,13 @@ function Conversation() {
                               if (match) lastMagicSentence = match[1].trim();
                               // 剥离所有标记
                               content = content
-                                  .replace(/\[MAGIC_SENTENCE:[^\]]+\]\s*/g, '')
-                                  .replace(/\s*\[MAGIC_PASS[^\]]*\]/g, '')
-                                  .replace(/\[TASK_\d+_COMPLETE\]/g, '')
+                                  .replace(/[\[<]MAGIC_SENTENCE:[^\]>]*[\]>]?\s*/gi, '')
+                                  .replace(/\s*\[MAGIC_PASS[^\]]*\]/gi, '')
+                                  .replace(/\[TASK_\d+_COMPLETE[^\]]*\]/gi, '')
+                                  .replace(/\[TASK_COMPLET\w*[^\]]*\]/gi, '')
+                                  .replace(/\[TASK_SWITCH[^\]]*\]/gi, '')
+                                  .replace(/\[TASK_READY[^\]]*\]/gi, '')
+                                  .replace(/\[PHASE_START[^\]]*\]/gi, '')
                                   .replace(/\[DAILY_QA_PASSED\]/gi, '')
                                   .replace(/\[\s*NATIVE:\s*[^\]]*\]/gi, '')
                                   .trim();
@@ -2786,8 +2818,12 @@ function Conversation() {
           const displayContent = msg.content
             ? msg.content
                 .replace(/```json[\s\S]*?```/g, '')
-                .replace(/\[TASK_\d+_COMPLETE\]/gi, '')
-                .replace(/\[MAGIC_SENTENCE:[^\]]+\]/gi, '')
+                .replace(/\[TASK_\d+_COMPLETE[^\]]*\]/gi, '')
+                .replace(/\[TASK_COMPLET\w*[^\]]*\]/gi, '')
+                .replace(/\[TASK_SWITCH[^\]]*\]/gi, '')
+                .replace(/\[TASK_READY[^\]]*\]/gi, '')
+                .replace(/\[PHASE_START[^\]]*\]/gi, '')
+                .replace(/[\[<]MAGIC_SENTENCE:[^\]>]*[\]>]?/gi, '')
                 .replace(/\[MAGIC_PASS[^\]]*\]/gi, '')
                 .replace(/\[DAILY_QA_PASSED\]/gi, '')
                 .replace(/\[\s*NATIVE:\s*[^\]]*\]/gi, '')
@@ -2807,6 +2843,8 @@ function Conversation() {
               <MessageBubble
                 type={isAI ? 'ai' : 'user'}
                 message={displayContent}
+                avatarLetter={isAI ? persona.letter : undefined}
+                avatarColor={isAI ? persona.bgGradient : undefined}
                 state={isAI && (!msg.isFinal || (!msg.audioUrl && msg.audioPlayed !== true)) ? 'loading' : 'default'}
                 footer={msg.audioUrl ? (
                   <AudioBar

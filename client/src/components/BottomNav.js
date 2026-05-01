@@ -1,5 +1,6 @@
 import React from 'react';
 import { useNavigate } from 'react-router-dom';
+import { Trophy } from 'lucide-react';
 
 function BottomNav({ currentPage, showFab = false }) {
   const navigate = useNavigate();
@@ -8,32 +9,38 @@ function BottomNav({ currentPage, showFab = false }) {
   const defaultItems = [
     { id: 'home',    icon: 'home',    label: '首页', path: '/discovery' },
     { id: 'goals',   icon: 'target',  label: '目标', path: '/goals' },
+    { id: 'achievements', icon: 'trophy', label: '成就', path: '/achievements' },
     { id: 'profile', icon: 'person',  label: '我的', path: '/profile' },
   ];
 
   // 5-Tab 布局（showFab=true）
   const fabItems = [
     { id: 'home',    icon: 'home',    label: '首页', path: '/discovery' },
-    null, // FAB 占位
     { id: 'goals',   icon: 'target',  label: '目标', path: '/goals' },
+    null, // FAB 占位
+    { id: 'achievements', icon: 'trophy', label: '成就', path: '/achievements' },
     { id: 'profile', icon: 'person',  label: '我的', path: '/profile' },
   ];
 
   if (!showFab) {
     return (
       <div className="fixed bottom-0 left-0 right-0 border-t border-slate-200 dark:border-slate-800 bg-background-light/95 dark:bg-background-dark/95 backdrop-blur-sm">
-        <div className="grid h-20 grid-cols-3 items-center justify-items-center px-4 max-w-lg mx-auto">
+        <div className="grid h-20 grid-cols-4 items-center justify-items-center px-3 max-w-lg mx-auto">
           {defaultItems.map((item) => (
             <button
               key={item.id}
               onClick={() => navigate(item.path)}
-              className={`flex flex-col items-center gap-1 ${
+              className={`flex flex-col items-center gap-0.5 ${
                 currentPage === item.id
                   ? 'text-primary'
                   : 'text-slate-500 dark:text-slate-400'
               }`}
             >
-              <span className="material-symbols-outlined">{item.icon}</span>
+              {item.icon === 'trophy' ? (
+                <Trophy className={`w-5 h-5 ${currentPage === item.id ? 'text-primary' : 'text-slate-500 dark:text-slate-400'}`} />
+              ) : (
+                <span className="material-symbols-outlined text-xl">{item.icon}</span>
+              )}
               <p className={`text-xs ${currentPage === item.id ? 'font-bold' : 'font-medium'}`}>
                 {item.label}
               </p>
@@ -73,7 +80,11 @@ function BottomNav({ currentPage, showFab = false }) {
                   : 'text-slate-500 dark:text-slate-400'
               }`}
             >
-              <span className="material-symbols-outlined text-xl">{item.icon}</span>
+              {item.icon === 'trophy' ? (
+                <Trophy className={`w-5 h-5 ${currentPage === item.id ? 'text-primary' : 'text-slate-500 dark:text-slate-400'}`} />
+              ) : (
+                <span className="material-symbols-outlined text-xl">{item.icon}</span>
+              )}
               <p className={`text-xs ${currentPage === item.id ? 'font-bold' : 'font-medium'}`}>
                 {item.label}
               </p>

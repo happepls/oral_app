@@ -112,6 +112,15 @@ session_phases: _TTLDict = _TTLDict(ttl=_SESSION_PHASES_TTL, maxsize=_SESSION_PH
 
 app = FastAPI()
 
+# Rate limiting (slowapi) — IP-based, applied per-endpoint via @limiter.limit(...)
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.util import get_remote_address
+from slowapi.errors import RateLimitExceeded
+
+limiter = Limiter(key_func=get_remote_address)
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
 # Enable CORS
 app.add_middleware(
     CORSMiddleware,
@@ -582,16 +591,61 @@ _DAILY_QA_FALLBACK = {
         {"question_text": "你好！我第一次来这里，有什么推荐的地方吗？",
          "reference_answer": "I'd suggest checking out the riverside park in the late afternoon. The view is really nice, and there are plenty of small cafes nearby if you want to take a break."},
     ],
+    # ── Below: target-language questions for the remaining 7 Qwen3.5-Omni
+    # TTS-supported languages. reference_answer left empty because the helpful
+    # answer language depends on native_language (unknown at module load).
+    # The UI gracefully omits the reference panel when reference_answer is "".
+    "Korean": [
+        {"question_text": "안녕하세요, 근처에 맛있는 식당을 추천해 주실 수 있나요?", "reference_answer": ""},
+        {"question_text": "실례지만, 가장 가까운 지하철역이 어디인가요?", "reference_answer": ""},
+        {"question_text": "처음 와봤는데, 꼭 가봐야 할 곳이 있을까요?", "reference_answer": ""},
+    ],
+    "French": [
+        {"question_text": "Bonjour, pourriez-vous me recommander un bon restaurant dans le coin ?", "reference_answer": ""},
+        {"question_text": "Excusez-moi, où se trouve la station de métro la plus proche ?", "reference_answer": ""},
+        {"question_text": "C'est ma première fois ici. Quel endroit faut-il absolument visiter ?", "reference_answer": ""},
+    ],
+    "Spanish": [
+        {"question_text": "Hola, ¿podrías recomendarme un buen restaurante por aquí?", "reference_answer": ""},
+        {"question_text": "Disculpa, ¿dónde está la estación de metro más cercana?", "reference_answer": ""},
+        {"question_text": "Es mi primera vez aquí. ¿Qué lugar tengo que visitar sin falta?", "reference_answer": ""},
+    ],
+    "German": [
+        {"question_text": "Hallo, können Sie mir ein gutes Restaurant in der Nähe empfehlen?", "reference_answer": ""},
+        {"question_text": "Entschuldigung, wo ist die nächste U-Bahn-Station?", "reference_answer": ""},
+        {"question_text": "Ich bin zum ersten Mal hier. Welchen Ort muss ich unbedingt sehen?", "reference_answer": ""},
+    ],
+    "Italian": [
+        {"question_text": "Ciao, puoi consigliarmi un buon ristorante qui vicino?", "reference_answer": ""},
+        {"question_text": "Scusi, dov'è la stazione della metropolitana più vicina?", "reference_answer": ""},
+        {"question_text": "È la prima volta che vengo qui. Qual è un posto da non perdere?", "reference_answer": ""},
+    ],
+    "Portuguese": [
+        {"question_text": "Olá, você poderia recomendar um bom restaurante por aqui?", "reference_answer": ""},
+        {"question_text": "Com licença, onde fica a estação de metrô mais próxima?", "reference_answer": ""},
+        {"question_text": "É a minha primeira vez aqui. Qual é um lugar imperdível?", "reference_answer": ""},
+    ],
+    "Russian": [
+        {"question_text": "Здравствуйте, не подскажете хороший ресторан неподалёку?", "reference_answer": ""},
+        {"question_text": "Извините, где находится ближайшая станция метро?", "reference_answer": ""},
+        {"question_text": "Я здесь впервые. Какое место обязательно стоит посетить?", "reference_answer": ""},
+    ],
 }
 
-_DAILY_QA_LANG_CODE = {"English": "en", "Japanese": "ja", "Chinese": "zh"}
+_DAILY_QA_LANG_CODE = {
+    "English": "en", "Japanese": "ja", "Chinese": "zh",
+    "Korean": "ko", "French": "fr", "Spanish": "es",
+    "German": "de", "Italian": "it", "Portuguese": "pt", "Russian": "ru",
+}
 
 
 def _fallback_by_language(target_language: str) -> list:
     """Return a list of fallback question dicts keyed by target language.
 
-    Unknown languages fall back to English so behaviour is predictable for the
-    other 26 supported languages.
+    Covers the 10 Qwen3.5-Omni TTS-supported languages (English, Japanese,
+    Chinese, Korean, French, Spanish, German, Italian, Portuguese, Russian).
+    Languages outside this set (~19 of GoalSetting's 29 options) fall back to
+    English so behaviour is predictable.
     """
     key = target_language if target_language in _DAILY_QA_FALLBACK else "English"
     lang_code = _DAILY_QA_LANG_CODE.get(key, "en")
@@ -619,6 +673,42 @@ def _strip_daily_qa_marker(text: str) -> str:
     if not text:
         return text or ""
     return _DAILY_QA_PASSED_RE.sub("", text).strip()
+
+
+# Indicators that an AI reply is asking for retry / correction / clarification.
+# When ANY of these appears in the AI text, daily-QA auto-pass is suppressed.
+_DAILY_QA_NEGATIVE_INDICATORS = [
+    # Retry / correction
+    "try again", "もう一度", "再试", "再说", "重新",
+    "let's try", "could you", "can you try",
+    "もう少し", "やり直", "言い直",
+    "not quite", "not correct", "incorrect",
+    # Off-topic / wrong language
+    "off-topic", "off topic", "関係ない", "关系不大",
+    "话题", "質問に", "question", "about the question",
+    "答えてみ", "回答一下", "answer the",
+    "今日の質問", "今天的问题", "today's question",
+    # Wrong language
+    "日本語で", "in japanese", "in english", "用日语", "用英语",
+    "please use", "please answer",
+]
+
+
+def _check_auto_pass(ai_text: str, response_count: int) -> bool:
+    """Return True iff daily-QA should auto-pass on this AI turn.
+
+    Conditions:
+      1) `response_count >= 2` (1st = question, 2nd+ = evaluation), AND
+      2) AI reply contains NO entry from `_DAILY_QA_NEGATIVE_INDICATORS`.
+
+    Matching is case-insensitive on the lower-cased ai_text. Empty / falsy
+    text is treated as "no negative indicators" (so a quiet positive turn
+    can still pass), but only after the count gate is met.
+    """
+    if response_count < 2:
+        return False
+    lowered = (ai_text or "").lower()
+    return not any(ind in lowered for ind in _DAILY_QA_NEGATIVE_INDICATORS)
 
 
 def _parse_daily_qa_pool_text(text: str) -> list:
@@ -650,18 +740,23 @@ def _parse_daily_qa_pool_text(text: str) -> list:
 
 
 async def _generate_daily_question_pool(target_language: str, native_language: str, count: int = 10) -> list:
-    """Call qwen-turbo to generate a pool of daily practice questions.
+    """Call qwen-turbo to generate a pool of daily practice questions with reference answers.
 
-    Two-step generation: 1) questions in target_language, 2) reference answers in native_language.
-    On any error falls back to _DAILY_QA_FALLBACK_POOL.
+    Single-call generation: questions in target_language + reference answers in native_language
+    are produced together in one JSON payload. On any error falls back to _DAILY_QA_FALLBACK_POOL.
     """
     count = max(1, min(int(count or 10), _DAILY_QA_POOL_CAP))
     prompt = (
         f"Generate exactly {count} short, friendly daily speaking-practice questions "
         f"for a learner practising {target_language}. Each question must be answerable "
-        f"in 2-4 sentences and touch everyday life (food, hobbies, goals, feelings). "
-        f"Return ONLY valid JSON: [{{\"question_text\": \"...\", \"lang\": \"<ISO 639-1>\"}}]. "
-        f"Do NOT wrap in markdown. Questions must be in {target_language}."
+        f"in 2-4 sentences and touch everyday life (food, hobbies, goals, feelings).\n\n"
+        f"For EACH question, also provide a short sample answer (2-3 sentences) written "
+        f"ENTIRELY in {native_language}. The answer must be in {native_language} only — "
+        f"do not mix in {target_language}.\n\n"
+        f"Return ONLY valid JSON (no markdown, no code fences):\n"
+        f"[{{\"question_text\": \"<question in {target_language}>\", "
+        f"\"lang\": \"<ISO 639-1>\", "
+        f"\"reference_answer\": \"<sample answer in {native_language}>\"}}]"
     )
     loop = asyncio.get_running_loop()
 
@@ -695,49 +790,8 @@ async def _generate_daily_question_pool(target_language: str, native_language: s
         logger.warning(f"[DAILY_QA] malformed/empty LLM output — using {target_language} fallback. raw={str(text)[:200]}")
         return _fallback_by_language(target_language)
     pool = parsed[:_DAILY_QA_POOL_CAP]
-
-    # Step 2: Generate reference answers in native_language via a separate LLM call
-    questions_for_ref = [q["question_text"] for q in pool]
-    ref_prompt = (
-        f"I have these {target_language} questions:\n"
-        + "\n".join(f"{i+1}. {q}" for i, q in enumerate(questions_for_ref))
-        + f"\n\nFor each question, write a short sample answer (2-3 sentences) "
-        f"in {native_language} ONLY. The answers must be entirely in {native_language}. "
-        f"Return ONLY a JSON array of strings, one answer per question, in the same order. "
-        f"Example: [\"answer1 in {native_language}\", \"answer2 in {native_language}\"]"
-    )
-    try:
-        def _call_ref():
-            return dashscope.Generation.call(
-                model=os.getenv("DAILY_QA_MODEL", "qwen-turbo"),
-                messages=[{"role": "user", "content": ref_prompt}],
-                result_format="message",
-            )
-        ref_resp = await loop.run_in_executor(None, _call_ref)
-        ref_text = None
-        try:
-            ref_text = getattr(getattr(ref_resp, "output", None), "text", None)
-            if not ref_text:
-                choices = getattr(getattr(ref_resp, "output", None), "choices", None) or []
-                if choices:
-                    msg = getattr(choices[0], "message", None)
-                    ref_text = getattr(msg, "content", None) if msg is not None else None
-        except Exception:
-            pass
-        if ref_text:
-            ref_text = ref_text.strip()
-            fence = re.match(r"^```(?:json)?\s*(.*?)\s*```$", ref_text, flags=re.DOTALL | re.IGNORECASE)
-            if fence:
-                ref_text = fence.group(1).strip()
-            ref_answers = json.loads(ref_text)
-            if isinstance(ref_answers, list):
-                for i, ans in enumerate(ref_answers):
-                    if i < len(pool) and isinstance(ans, str):
-                        pool[i]["reference_answer"] = ans
-                logger.info(f"[DAILY_QA] reference answers generated in {native_language} for {len(ref_answers)} questions")
-    except Exception as e:
-        logger.warning(f"[DAILY_QA] reference answer generation failed: {e}")
-
+    with_ref = sum(1 for q in pool if q.get("reference_answer"))
+    logger.info(f"[DAILY_QA] generated {len(pool)} questions ({with_ref} with reference answers in {native_language}) in single LLM call")
     return pool
 
 
@@ -1677,40 +1731,20 @@ class WebSocketCallback(OmniRealtimeCallback):
                             # ── Daily Q&A: detect [DAILY_QA_PASSED] (Feature 2) ──
                             if self.is_daily_qa_mode and not self.daily_qa_completed:
                                 self.daily_qa_ai_response_count += 1
-                                _latest_ai_for_marker = ""
-                                for _m in reversed(self.messages):
-                                    if _m.get("role") == "assistant":
-                                        _latest_ai_for_marker = _m.get("content", "") or ""
-                                        break
-                                _marker_found = _DAILY_QA_PASSED_RE.search(_latest_ai_for_marker)
-                                # Auto-pass fallback: if AI responded >= 2 times (1st=question, 2nd=evaluation),
-                                # marker not found, but AI response is positive (no retry/correction indicators)
-                                _auto_pass = False
-                                if not _marker_found and self.daily_qa_ai_response_count >= 3:
-                                    _ai_lower = _latest_ai_for_marker.lower()
-                                    _negative_indicators = [
-                                        # Retry / correction
-                                        "try again", "もう一度", "再试", "再说", "重新",
-                                        "let's try", "could you", "can you try",
-                                        "もう少し", "やり直", "言い直",
-                                        "not quite", "not correct", "incorrect",
-                                        # Off-topic / wrong language
-                                        "off-topic", "off topic", "関係ない", "关系不大",
-                                        "话题", "質問に", "question", "about the question",
-                                        "答えてみ", "回答一下", "answer the",
-                                        "今日の質問", "今天的问题", "today's question",
-                                        # Wrong language
-                                        "日本語で", "in japanese", "in english", "用日语", "用英语",
-                                        "please use", "please answer",
-                                    ]
-                                    _has_negative = any(ind in _ai_lower for ind in _negative_indicators)
-                                    if not _has_negative:
-                                        _auto_pass = True
-                                        logger.info(f"[DAILY_QA] Auto-pass fallback: positive AI response (count={self.daily_qa_ai_response_count})")
-                                _should_pass = _marker_found or _auto_pass
+                                _latest_ai_for_marker = self.full_response_text or ""
+                                if not _latest_ai_for_marker:
+                                    for _m in reversed(self.messages):
+                                        if _m.get("role") == "assistant":
+                                            _latest_ai_for_marker = _m.get("content", "") or ""
+                                            break
+                                # Auto-pass: AI responded >= 2 times (1st=question, 2nd=evaluation),
+                                # and response is positive (no retry/correction indicators)
+                                _auto_pass = _check_auto_pass(_latest_ai_for_marker, self.daily_qa_ai_response_count)
+                                if _auto_pass:
+                                    logger.info(f"[DAILY_QA] Auto-pass fallback: positive AI response (count={self.daily_qa_ai_response_count})")
+                                _should_pass = _auto_pass
                                 if _should_pass:
-                                    if not _marker_found:
-                                        logger.info(f"[DAILY_QA] Auto-pass fallback triggered (ai_response_count={self.daily_qa_ai_response_count})")
+                                    logger.info(f"[DAILY_QA] Auto-pass triggered (ai_response_count={self.daily_qa_ai_response_count})")
                                     self.daily_qa_completed = True
                                     _is_bonus = self.daily_qa_suppress_modal
                                     try:
@@ -1727,46 +1761,29 @@ class WebSocketCallback(OmniRealtimeCallback):
                                     except Exception as _qae:
                                         logger.warning(f"[DAILY_QA] marker handler error: {_qae}")
 
-                            # ── Pre-upload: strip spoken markers, re-synthesize clean TTS if needed ──
-                            latest_ai_text = ""
-                            for _m in reversed(self.messages):
-                                if _m.get("role") == "assistant":
-                                    latest_ai_text = _m.get("content", "")
-                                    break
+                            # Compute latest_ai_text — used by magic_pass detection and BATCH_EVAL
+                            latest_ai_text = self.full_response_text or ""
+                            if not latest_ai_text:
+                                for _m in reversed(self.messages):
+                                    if _m.get("role") == "assistant":
+                                        latest_ai_text = _m.get("content", "")
+                                        break
 
-                            _MARKER_RE = re.compile(
-                                r'\[TASK_\d+_COMPLETE\]'
-                                r'|[\[<]MAGIC_SENTENCE:[^\]>]*[\]>]?'
-                                r'|\[MAGIC_PASS[^\]]*\]'
-                                r'|\[DAILY_QA_PASSED\]'
-                                r'|\[\s*NATIVE:\s*[^\]]*\]',
-                                re.IGNORECASE
-                            )
+                            # Extract magic sentence from AI text for card display
+                            _phase_info_for_card = session_phases.get(self.phase_key, {})
+                            if _phase_info_for_card.get("phase") == "magic_repetition" and latest_ai_text:
+                                _sentence_match = re.search(r'[「「]([^」」]+)[」」]', latest_ai_text)
+                                if not _sentence_match:
+                                    _sentence_match = re.search(r'"([^"]{10,})"', latest_ai_text)
+                                if _sentence_match:
+                                    _extracted = _sentence_match.group(1).strip()
+                                    await self._safe_send({
+                                        "type": "magic_sentence_update",
+                                        "payload": {"sentence": _extracted}
+                                    })
+                                    logger.info(f"[Phase] Extracted magic sentence from AI text: '{_extracted[:60]}'")
+
                             audio_data = d
-                            if latest_ai_text and _MARKER_RE.search(latest_ai_text):
-                                _clean = _MARKER_RE.sub('', latest_ai_text)
-                                _clean = re.sub(r'```json.*?```', '', _clean, flags=re.DOTALL | re.IGNORECASE).strip()
-                                if _clean:
-                                    try:
-                                        _voice = self.user_context.get('voice') or os.getenv("QWEN3_OMNI_VOICE", "Tina")
-                                        _key = os.getenv("QWEN3_OMNI_API_KEY") or os.getenv("DASHSCOPE_API_KEY")
-                                        def _synth_clean():
-                                            dashscope.api_key = _key
-                                            resp = dashscope.MultiModalConversation.call(
-                                                model="qwen3-tts-flash", text=_clean[:500], voice=_voice,
-                                            )
-                                            if not resp or resp.status_code != 200:
-                                                raise RuntimeError(f"TTS status {getattr(resp, 'status_code', '?')}")
-                                            _tts_url = resp.output.get("audio", {}).get("url")
-                                            if not _tts_url:
-                                                raise RuntimeError("No TTS audio URL")
-                                            return _validated_urlopen(_tts_url, timeout=15)
-                                        audio_data = await asyncio.get_event_loop().run_in_executor(None, _synth_clean)
-                                        audio_data = _wav_extract_pcm(audio_data)  # 剥掉 WAV header，避免 ffmpeg 将其误读为 PCM 产生 ping 声
-                                        logger.info(f"[TTS-clean] Re-synthesized {len(audio_data)} bytes without markers for response {r}")
-                                    except Exception as _e:
-                                        logger.warning(f"[TTS-clean] Re-synthesis failed: {_e}. Using original audio.")
-                                        audio_data = d
 
                             url = await self.upload_audio_to_cos(audio_data, 'ai_audio')
                             if url:
@@ -1808,7 +1825,7 @@ class WebSocketCallback(OmniRealtimeCallback):
                                 # Magic pass: multi-language positive keyword detection
                                 # Requires 2 consecutive AI replies containing positive keywords
                                 _MAGIC_PASS_KEYWORDS = [
-                                    "[MAGIC_PASS]", "PASS", "correct", "perfect", "excellent",
+                                    "correct", "perfect", "excellent",
                                     "that's right", "well done", "great job",
                                     "正确", "很好", "非常好", "太棒了", "完美",
                                     "よくできました", "正解", "素晴らしい",
@@ -1869,64 +1886,41 @@ class WebSocketCallback(OmniRealtimeCallback):
                                                 next_task_val = tasks_for_advance[next_index] if next_index < len(tasks_for_advance) else ""
                                                 logger.info(f"[Phase] Advancing to task[{next_index}], task_text='{next_task_val[:50]}'")
 
-                                                # ── Merged A+B detection ──────────────────────────────────
-                                                # Check if AI already included [MAGIC_SENTENCE: ...] in this
-                                                # magic_pass response. If so, no second response.create needed.
-                                                # Also match <MAGIC_SENTENCE: ...> (AI sometimes uses wrong brackets)
-                                                _ms_match = re.search(r'[\[<]MAGIC_SENTENCE:\s*([^\]>]+?)(?:[\]>]|$)', latest_ai_text)
-                                                if _ms_match:
-                                                    _embedded_sentence = _ms_match.group(1).strip()
-                                                    logger.info(f"[Phase] AI merged A+B — extracted sentence: '{_embedded_sentence[:60]}'")
-                                                    # Send phase_transition with embedded sentence and stop_audio=false
-                                                    await send_phase_event(self.websocket, "phase_transition", {
-                                                        "phase": "magic_repetition", "task_index": next_index,
-                                                        "task_text": next_task_val,
-                                                        "magic_sentence": _embedded_sentence,
-                                                        "stop_audio": False
-                                                    })
-                                                    self.messages = []
-                                                    self.task_history_cutoff = 0
-                                                    self._clear_dashscope_items(reason=f"MAGIC_SWITCH[A+B] → task[{next_index}]")
-                                                    self._update_session_prompt()
-                                                    logger.info(f"[Phase] Merged A+B — skipped response.create, updated session prompt for task[{next_index}]")
-                                                else:
-                                                    # Fallback: AI did not include [MAGIC_SENTENCE] — send response.create
-                                                    logger.info(f"[Phase] AI did NOT include [MAGIC_SENTENCE] — using fallback response.create for task[{next_index}]")
-                                                    await send_phase_event(self.websocket, "phase_transition", {
-                                                        "phase": "magic_repetition", "task_index": next_index,
-                                                        "task_text": next_task_val,
-                                                        "stop_audio": False
-                                                    })
-                                                    self.messages = []
-                                                    self.task_history_cutoff = 0
-                                                    self._clear_dashscope_items(reason=f"MAGIC_SWITCH[fallback] → task[{next_index}]")
-                                                    self._update_session_prompt()
-                                                    # 短暂延迟确保 DashScope session 更新生效
-                                                    await asyncio.sleep(0.5)
-                                                    self._skip_next_magic_pass = True
-                                                    try:
-                                                        logger.info(f"[Phase] Injecting trigger for task[{next_index}]: '{next_task_val[:50]}'")
-                                                        self.conversation.send_raw(json.dumps({
-                                                            "type": "conversation.item.create",
-                                                            "item": {"type": "message", "role": "user",
-                                                                     "content": [{"type": "input_text", "text": f"[TASK_SWITCH] New task: '{next_task_val}'. Sentence card is visible."}]}
-                                                        }))
-                                                        self.conversation.send_raw(json.dumps({
-                                                            "type": "response.create",
-                                                            "response": {
-                                                                "modalities": ["text", "audio"],
-                                                                "instructions": (
-                                                                    f"New task started: '{next_task_val}'. The sentence card is now VISIBLE and needs a NEW sentence. "
-                                                                    f"1. Generate ONE complex sentence (15-30 words) in the target language related to this topic. "
-                                                                    f"2. Your response MUST start with: [MAGIC_SENTENCE: YOUR_NEW_SENTENCE_HERE] "
-                                                                    f"   Use SQUARE BRACKETS [ ] ONLY — NOT angle brackets < > or parentheses. "
-                                                                    f"3. Then ask the student to read the sentence on the card aloud."
-                                                                )
-                                                            }
-                                                        }))
-                                                        logger.info(f"[Phase] Fallback: Task-switch trigger + response.create sent for task[{next_index}]")
-                                                    except Exception as _te:
-                                                        logger.error(f"[Phase] Task switch trigger failed: {_te}")
+                                                # Generate new sentence via response.create (no markers in AI text)
+                                                logger.info(f"[Phase] Generating new sentence via response.create for task[{next_index}]")
+                                                await send_phase_event(self.websocket, "phase_transition", {
+                                                    "phase": "magic_repetition", "task_index": next_index,
+                                                    "task_text": next_task_val,
+                                                    "stop_audio": False
+                                                })
+                                                self.messages = []
+                                                self.task_history_cutoff = 0
+                                                self._clear_dashscope_items(reason=f"MAGIC_SWITCH → task[{next_index}]")
+                                                self._update_session_prompt()
+                                                await asyncio.sleep(0.5)
+                                                self._skip_next_magic_pass = True
+                                                try:
+                                                    logger.info(f"[Phase] Injecting trigger for task[{next_index}]: '{next_task_val[:50]}'")
+                                                    self.conversation.send_raw(json.dumps({
+                                                        "type": "conversation.item.create",
+                                                        "item": {"type": "message", "role": "user",
+                                                                 "content": [{"type": "input_text", "text": f"New task topic: '{next_task_val}'. Sentence card is visible."}]}
+                                                    }))
+                                                    self.conversation.send_raw(json.dumps({
+                                                        "type": "response.create",
+                                                        "response": {
+                                                            "modalities": ["text", "audio"],
+                                                            "instructions": (
+                                                                f"New task started: '{next_task_val}'. The sentence card is now VISIBLE and needs a NEW sentence. "
+                                                                f"1. Generate ONE complex sentence (15-30 words) in the target language related to this topic. "
+                                                                f"2. Present the sentence clearly and ask the student to read it aloud. "
+                                                                f"3. Do NOT use any bracket markers or special formatting."
+                                                            )
+                                                        }
+                                                    }))
+                                                    logger.info(f"[Phase] Task-switch trigger + response.create sent for task[{next_index}]")
+                                                except Exception as _te:
+                                                    logger.error(f"[Phase] Task switch trigger failed: {_te}")
                                                 logger.info(f"[Phase] Advanced to task[{next_index}]")
                                             else:
                                                 # 全部通过 → 切换情景剧场（立即更新 phase，防止图片生成期间用户说话触发 magic_pass）
@@ -1985,10 +1979,7 @@ class WebSocketCallback(OmniRealtimeCallback):
                                                     logger.error(f"[Phase] scene_theater trigger failed: {_te}")
                                                 logger.info(f"[Phase] All magic passed → scene_theater")
 
-                                for _n in range(1, 4):
-                                    marker = f"[TASK_{_n}_COMPLETE]"
-                                    if marker in latest_ai_text:
-                                        await send_phase_event(self.websocket, "theater_task_complete", {"task_index": _n})
+                                # [TASK_N_COMPLETE] markers removed — task completion handled by proficiency_scoring workflow
 
                                 # 调用批量评估 Agent（F1）- 只在用户有输入后才调用
                                 # Skip if this is the welcome message (no user input yet)
@@ -3094,6 +3085,7 @@ async def daily_question_change_question(request: _FastAPIRequest):
 # selection from today's pool.
 # ---------------------------------------------------------------------------
 @app.get("/daily-question/pool")
+@limiter.limit("10/minute")
 async def daily_question_pool_endpoint(request: _FastAPIRequest):
     token = request.cookies.get("accessToken")
     if not token:
@@ -3136,6 +3128,7 @@ async def daily_question_pool_endpoint(request: _FastAPIRequest):
 # by index, update Redis picked/index, clear passed state.
 # ---------------------------------------------------------------------------
 @app.post("/daily-question/select")
+@limiter.limit("10/minute")
 async def daily_question_select_endpoint(request: _FastAPIRequest):
     token = request.cookies.get("accessToken")
     if not token:

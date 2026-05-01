@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useMemo } from 'react';
+import React, { useEffect, useState, useMemo, useRef } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import BottomNav from '../components/BottomNav';
 import { StreakRing } from '../components/StreakRing';
@@ -164,6 +164,8 @@ function Discovery() {
   const location = useLocation();
   const { user } = useAuth();
 
+  const qaPoolAbortControllerRef = useRef(null);
+
   const [activeGoal, setActiveGoal] = useState(null);
   const [activeSessions, setActiveSessions] = useState([]);
   const [stats, setStats] = useState(null);
@@ -189,6 +191,7 @@ function Discovery() {
   const [showQAPool, setShowQAPool] = useState(false);
   const [qaPool, setQaPool] = useState([]);
   const [qaPoolLoading, setQaPoolLoading] = useState(false);
+  const [dailyProgress, setDailyProgress] = useState(null);
 
   const isPro = user?.subscription_status === 'active';
 
@@ -221,11 +224,21 @@ function Discovery() {
     setShowQAPool(true);
     if (qaPool.length > 0) return;
     setQaPoolLoading(true);
+
+    if (qaPoolAbortControllerRef.current) {
+      qaPoolAbortControllerRef.current.abort();
+    }
+    const abortController = new AbortController();
+    qaPoolAbortControllerRef.current = abortController;
+
     try {
-      const res = await aiAPI.getDailyQuestionPool();
+      const res = await aiAPI.getDailyQuestionPool({ signal: abortController.signal });
       const questions = res?.questions || res?.data?.questions;
       if (questions) setQaPool(questions);
     } catch (err) {
+      if (err.name === 'AbortError') {
+        return;
+      }
       console.error('[DAILY_QA] pool fetch failed', err);
     } finally {
       setQaPoolLoading(false);
@@ -248,6 +261,14 @@ function Discovery() {
       console.error('[DAILY_QA] select failed', err);
     }
   };
+
+  useEffect(() => {
+    return () => {
+      if (qaPoolAbortControllerRef.current) {
+        qaPoolAbortControllerRef.current.abort();
+      }
+    };
+  }, []);
 
   useEffect(() => {
     const abortController = new AbortController();
@@ -306,6 +327,11 @@ function Discovery() {
         // Check daily QA pass status from database
         userAPI.getDailyQAPassStatus().then(res => {
           if (res?.data?.passed) setDailyQAPassedDB(true);
+        }).catch(() => {});
+
+        // Load daily progress
+        userAPI.getDailyProgress().then(res => {
+          setDailyProgress(res?.data || res);
         }).catch(() => {});
       } catch (e) {
         console.error('Dashboard fetch error:', e);
@@ -641,12 +667,126 @@ function Discovery() {
 
       <main className="flex-grow pb-28 space-y-5 px-4 pt-2">
 
+        {/* ── 每日任务环 ── */}
+        {dailyProgress && (
+          <section>
+            <div className="rounded-2xl p-5 bg-white dark:bg-slate-800 shadow-sm border border-slate-200 dark:border-slate-700">
+              <div className="flex items-center justify-between mb-4">
+                <h3 className="text-sm font-semibold text-slate-900 dark:text-white">今日任务</h3>
+                <span className="text-xs text-slate-500">
+                  {(dailyProgress.recallCompleted ? 1 : 0) + (dailyProgress.qaCompleted ? 1 : 0) + (dailyProgress.scenarioCompleted ? 1 : 0)}/3
+                </span>
+              </div>
+
+              {/* 3 个任务图标 */}
+              <div className="flex items-center justify-around mb-4">
+                {/* 复述任务 */}
+                <motion.button
+                  whileHover={{ scale: 1.1 }}
+                  onClick={() => {
+                    if (todayRecommended) {
+                      navigate(
+                        `/conversation?scenario=${encodeURIComponent(todayRecommended.scenarioKey || todayRecommended.title)}&mode=recall`,
+                        { state: { tasks: todayRecommended.tasks, emoji: todayRecommended.emoji } }
+                      );
+                    }
+                  }}
+                  className="flex flex-col items-center gap-2 relative"
+                  style={{ opacity: dailyProgress.recallCompleted ? 1 : 0.5 }}>
+                  <div
+                    className="w-16 h-16 rounded-full flex items-center justify-center text-2xl transition-all"
+                    style={{
+                      background: dailyProgress.recallCompleted
+                        ? 'linear-gradient(135deg, #10B981, #059669)'
+                        : 'rgba(148, 163, 184, 0.1)',
+                      border: dailyProgress.recallCompleted ? 'none' : '2px dashed #CBD5E1',
+                    }}>
+                    {dailyProgress.recallCompleted ? '✓' : '🔁'}
+                  </div>
+                  <span className="text-xs font-medium text-slate-700 dark:text-slate-300">复述</span>
+                </motion.button>
+
+                {/* 问答任务 */}
+                <motion.button
+                  whileHover={{ scale: 1.1 }}
+                  onClick={() => {
+                    if (!isPro) {
+                      setShowDailyQAPaywall(true);
+                    } else {
+                      navigate('/conversation?mode=daily_qa');
+                    }
+                  }}
+                  className="flex flex-col items-center gap-2 relative"
+                  style={{ opacity: dailyProgress.qaCompleted ? 1 : 0.5 }}>
+                  <div
+                    className="w-16 h-16 rounded-full flex items-center justify-center text-2xl transition-all"
+                    style={{
+                      background: dailyProgress.qaCompleted
+                        ? 'linear-gradient(135deg, #10B981, #059669)'
+                        : 'rgba(148, 163, 184, 0.1)',
+                      border: dailyProgress.qaCompleted ? 'none' : '2px dashed #CBD5E1',
+                    }}>
+                    {dailyProgress.qaCompleted ? '✓' : '❓'}
+                  </div>
+                  <span className="text-xs font-medium text-slate-700 dark:text-slate-300">问答</span>
+                </motion.button>
+
+                {/* 练习任务 */}
+                <motion.button
+                  whileHover={{ scale: 1.1 }}
+                  onClick={() => {
+                    if (todayRecommended) {
+                      navigate(
+                        `/conversation?scenario=${encodeURIComponent(todayRecommended.scenarioKey || todayRecommended.title)}`,
+                        { state: { tasks: todayRecommended.tasks, emoji: todayRecommended.emoji } }
+                      );
+                    }
+                  }}
+                  className="flex flex-col items-center gap-2 relative"
+                  style={{ opacity: dailyProgress.scenarioCompleted ? 1 : 0.5 }}>
+                  <div
+                    className="w-16 h-16 rounded-full flex items-center justify-center text-2xl transition-all"
+                    style={{
+                      background: dailyProgress.scenarioCompleted
+                        ? 'linear-gradient(135deg, #10B981, #059669)'
+                        : 'rgba(148, 163, 184, 0.1)',
+                      border: dailyProgress.scenarioCompleted ? 'none' : '2px dashed #CBD5E1',
+                    }}>
+                    {dailyProgress.scenarioCompleted ? '✓' : '🎯'}
+                  </div>
+                  <span className="text-xs font-medium text-slate-700 dark:text-slate-300">练习</span>
+                </motion.button>
+              </div>
+
+              {/* 今日练习时长进度条 */}
+              <div>
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-xs text-slate-500">今日练习</span>
+                  <span className="text-xs font-semibold text-slate-700 dark:text-slate-300">
+                    {dailyProgress.practiceMinutes || 0}/{dailyProgress.practiceGoal || 15} 分钟
+                  </span>
+                </div>
+                <div className="h-2 rounded-full bg-slate-200 dark:bg-slate-700 overflow-hidden">
+                  <div
+                    className="h-full rounded-full transition-all duration-500"
+                    style={{
+                      width: `${Math.min(((dailyProgress.practiceMinutes || 0) / (dailyProgress.practiceGoal || 15)) * 100, 100)}%`,
+                      background: 'linear-gradient(135deg, #637FF1, #a47af6)',
+                    }}
+                  />
+                </div>
+              </div>
+            </div>
+          </section>
+        )}
+
         {/* ── 连续学习进度环 ── */}
         <StreakRing
-          streak={checkinStats.currentStreak}
-          monthlyTarget={30}
-          checkedInToday={checkinStats.checkedInToday}
+          streak={dailyProgress?.streak || checkinStats.currentStreak}
+          monthlyCheckinDays={dailyProgress?.monthlyCheckinDays || 0}
+          checkedInToday={dailyProgress?.checkedInToday || checkinStats.checkedInToday}
           onCheckin={handleCheckin}
+          totalPracticeMinutes={dailyProgress?.totalPracticeMinutes || 0}
         />
 
         {/* ── 4格统计 ── */}

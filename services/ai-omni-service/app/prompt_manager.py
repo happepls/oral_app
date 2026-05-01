@@ -104,7 +104,7 @@ Example JSON (Only output this AFTER user says "Yes"):
         # 3. OralTutor Template (Enhanced - Topic Enforcement + Error Correction)
         self.oral_tutor_template = """
 # Role
-You are "Omni", an AI language tutor specializing in scenario-based oral practice.
+{persona_description}
 
 # CRITICAL: Language of Instruction
 - **Target Language**: {target_language}
@@ -277,9 +277,9 @@ JSON Format (Initial Tips - Optional):
         """Generate system prompt for Magic Repetition phase.
 
         memory_mode=False: reading phase — AI presents sentence, student reads and repeats.
-          On 1st correct repeat: [MAGIC_PASS] + praise + "now try from memory".
+          On 1st correct repeat: praise + "now try from memory".
         memory_mode=True: memory phase — card is hidden, student repeats from memory.
-          On 2nd correct repeat: [MAGIC_PASS] + praise + [MAGIC_SENTENCE: new_sentence] in the SAME message.
+          On 2nd correct repeat: praise (system handles task advancement automatically).
         """
         if memory_mode:
             # 背诵阶段：台词卡已遮挡，等待用户背诵
@@ -289,18 +289,12 @@ JSON Format (Initial Tips - Optional):
                     f"   ❌ DO NOT say 'try from memory', 'say it from memory', 'repeat from memory' — they ALREADY DID.\n"
                     f"   ❌ DO NOT reference or repeat the old sentence.\n"
                     f"   ❌ DO NOT ask them to do the memory task again.\n"
-                    f"   ✅ MANDATORY FORMAT — output ALL of the following in ONE single response:\n"
-                    f"      Line 1: `[MAGIC_PASS]`\n"
-                    f"      Line 2: 1-sentence praise in {target_language} (e.g. 'Perfect! You nailed it.')\n"
-                    f"      Line 3: `[MAGIC_SENTENCE: WRITE_A_NEW_COMPLEX_SENTENCE_FOR_TOPIC_{next_task_text[:25]}]`\n"
-                    f"         → Replace WRITE_A_NEW_COMPLEX_SENTENCE_FOR_TOPIC_... with an actual sentence.\n"
-                    f"         → Use SQUARE BRACKETS [ ] only. NOT < > or ( ).\n"
-                    f"      Line 4: 'Please read the new sentence on the card aloud.' (in {target_language})\n"
-                    f"   ⚠️ [MAGIC_PASS] and [MAGIC_SENTENCE: ...] MUST be in the SAME response — no exceptions.\n"
+                    f"   ✅ Give a short, enthusiastic praise in {target_language} (e.g. 'Perfect! You nailed it!').\n"
+                    f"   The system will automatically advance to the next task.\n"
                 )
             else:
                 on_success_rule = (
-                    f"3. **On success**, include `[MAGIC_PASS]` and congratulate — all magic repetition tasks complete!\n"
+                    f"3. **On success**, congratulate warmly — all magic repetition tasks complete!\n"
                     f"   ❌ DO NOT say 'try from memory' — the student already passed.\n"
                 )
             return (
@@ -322,13 +316,12 @@ JSON Format (Initial Tips - Optional):
                 f"# Response Rules\n"
                 f"- Conduct entirely in {target_language}.\n"
                 f"- Keep responses short (2-4 sentences total).\n"
-                f"- Do NOT output `[MAGIC_PASS]` until the student recites correctly.\n"
-                f"- When outputting [MAGIC_PASS], you MUST include [MAGIC_SENTENCE: ...] in the EXACT SAME message.\n"
+                f"- Only praise the student when they recite correctly.\n"
             )
         else:
             # 阅读阶段：展示句子，用户跟读
             on_success_rule = (
-                f"5. **On 1st correct repetition**, include `[MAGIC_PASS]` + 1-sentence praise,\n"
+                f"5. **On 1st correct repetition**, give 1-sentence praise,\n"
                 f"   then tell the student: **the card will now be hidden** — please try to repeat from memory.\n"
                 f"   Do NOT give a new sentence yet.\n"
             )
@@ -352,11 +345,7 @@ JSON Format (Initial Tips - Optional):
                 f"1. **Generate ONE complex sentence** in {target_language} related to the task topic above.\n"
                 f"   - Must contain at least ONE of: subordinate clause, passive voice, or advanced vocabulary.\n"
                 f"   - Keep it 15-30 words so it is challenging but memorisable.\n"
-                f"2. **Format**: Your FIRST line MUST be: `[MAGIC_SENTENCE: WRITE_SENTENCE_HERE]`\n"
-                f"   ⚠️ Use SQUARE BRACKETS [ ] only — NOT angle brackets < > or parentheses ( ).\n"
-                f"   ✅ CORRECT: `[MAGIC_SENTENCE: Could you tell me where the nearest exit is?]`\n"
-                f"   ❌ WRONG: `<MAGIC_SENTENCE: ...>` or `(MAGIC_SENTENCE: ...)` or just the sentence alone.\n"
-                f"   Then ask the student to repeat it aloud.\n"
+                f"2. **Present** the sentence clearly and ask the student to repeat it aloud.\n"
                 f"3. **Present** the sentence clearly and ask the student to repeat it.\n"
                 f"4. **Evaluate** the student's repetition:\n"
                 f"   - Core content and grammatical structure must be substantially correct.\n"
@@ -366,7 +355,7 @@ JSON Format (Initial Tips - Optional):
                 f"# Response Rules\n"
                 f"- Conduct entirely in {target_language}.\n"
                 f"- Keep responses short (2-4 sentences).\n"
-                f"- Do NOT output `[MAGIC_PASS]` until the student has actually repeated correctly.\n"
+                f"- Only praise the student when they have actually repeated correctly.\n"
                 f"- If the student says navigation words like 'Next', 'Skip', 'Continue', or 'Pass' WITHOUT repeating, redirect them to repeat the sentence.\n"
             )
 
@@ -383,9 +372,8 @@ JSON Format (Initial Tips - Optional):
         """Generate system prompt for Scene Theater phase (A.2: single-task visibility).
 
         The caller passes ONLY the current sub-task in ``tasks`` — the AI has no
-        way to see or reference future sub-tasks. After the marker
-        ``[TASK_{current_task_number}_COMPLETE]`` is appended, the backend reloads
-        the prompt with the next task.
+        way to see or reference future sub-tasks. The backend scores progress
+        behind the scenes and reloads the prompt with the next task when ready.
         """
         current_task = tasks[0] if tasks else "日常对话"
         return (
@@ -406,12 +394,10 @@ JSON Format (Initial Tips - Optional):
             f"3. **Keep guiding within sub-task #{current_task_number}**: You do NOT decide when this sub-task is complete — the system scores progress behind the scenes and will automatically switch to the next sub-task when appropriate.\n"
             f"   - NEVER say \"task complete\", \"let's move on\", \"we're done with this\", \"この課題は終了です\", or any similar closing phrase.\n"
             f"   - NEVER announce progress milestones (e.g. \"great, we've completed the first part\").\n"
-            f"   - Just keep the conversation flowing and push the student to say MORE within sub-task #{current_task_number}.\n"
-            f"   - Append `[TASK_{current_task_number}_COMPLETE]` ONLY as a silent system signal at the very END of your reply — NEVER read it aloud, verbalize it, or mention it in the spoken text.\n\n"
+            f"   - Just keep the conversation flowing and push the student to say MORE within sub-task #{current_task_number}.\n\n"
             f"# Response Rules\n"
             f"- Speak entirely in {target_language}.\n"
             f"- Keep each reply to 2-4 sentences.\n"
-            f"- **CRITICAL — DO NOT verbally announce task completion.** The `[TASK_{current_task_number}_COMPLETE]` marker is a silent backend signal only; the spoken/visible reply must never say or imply the task is finished.\n"
             f"- NEVER say phrases like \"この課題は終了です\", \"this task is done\", \"let's move on to the next one\", \"we've completed this\" — keep encouraging the student to go deeper within sub-task #{current_task_number}.\n"
             f"- NEVER ask the student to describe a scene, image, or picture — there is no image.\n"
             f"- **CRITICAL SCOPE LOCK**: All your questions, hints, follow-ups, and examples MUST be strictly about sub-task #{current_task_number} shown above. You do NOT know what the other sub-tasks are — do not invent, guess, preview, or reference them. Do not say things like \"next we'll talk about…\" or \"later you'll discuss…\" — you genuinely have no information about future sub-tasks.\n"
@@ -421,15 +407,14 @@ JSON Format (Initial Tips - Optional):
         """Generate system prompt for Daily Q&A mode (Feature 2).
 
         AI asks a pre-selected question in {target_language}, evaluates the student's
-        answer, and marks success with `[DAILY_QA_PASSED]`. Uses `[NATIVE: ...]`
-        for brief native-language hints only after a failed attempt.
+        answer. The system automatically detects passing answers.
         """
         return (
             f"# Role\n"
             f"You are the student's daily speaking coach. The student is answering **one** daily question.\n\n"
             f"# Languages\n"
             f"- Target language: **{target_language}** (the student MUST answer in this language).\n"
-            f"- Native language: **{native_language}** (you may use it briefly inside a `[NATIVE: ...]` block for hints only).\n"
+            f"- Native language: **{native_language}** (you may use it briefly for hints only).\n"
             f"- Student's target proficiency level: **{target_level}**\n\n"
             f"# Today's Question\n"
             f"\"{question}\"\n\n"
@@ -441,14 +426,9 @@ JSON Format (Initial Tips - Optional):
             f"   - Is on-topic (relates to the question).\n"
             f"   - Contains at least one meaningful sentence.\n"
             f"   - Grammar errors are completely fine.\n"
-            f"4. **If the answer qualifies (almost always)**: congratulate briefly in {target_language}, then you MUST append exactly `[DAILY_QA_PASSED]` as the last token of your reply. This is MANDATORY — do not skip it.\n"
-            f"5. **If the answer is off-topic or not in {target_language} at all**: give a brief hint and invite retry. Do NOT output `[DAILY_QA_PASSED]`.\n"
-            f"6. Stay focused on today's question.\n\n"
-            f"# CRITICAL OUTPUT RULE\n"
-            f"When the student gives ANY on-topic answer in {target_language}, your reply MUST end with `[DAILY_QA_PASSED]`.\n"
-            f"Example: \"Great answer! You described your morning well. [DAILY_QA_PASSED]\"\n"
-            f"Do NOT use [NATIVE: ...] when the answer qualifies — go straight to congratulation + marker.\n"
-            f"The marker `[DAILY_QA_PASSED]` is a silent system signal. Never explain it to the student.\n"
+            f"4. **If the answer qualifies (almost always)**: congratulate briefly in {target_language}.\n"
+            f"5. **If the answer is off-topic or not in {target_language} at all**: give a brief hint and invite retry.\n"
+            f"6. Stay focused on today's question.\n"
         )
 
     def generate_system_prompt(self, user_context: dict, role="OralTutor") -> str:
@@ -502,8 +482,19 @@ JSON Format (Initial Tips - Optional):
             scenario_title = current_task.get('scenario_title', 'General Practice')
             task_description = current_task.get('task_description', 'Practice conversation')
 
+            from .persona_config import get_persona_prompt, get_persona_name
+            voice = user_context.get('voice', 'Tina')
+            persona_name = get_persona_name(voice)
+            persona_style = get_persona_prompt(voice)
+            persona_description = (
+                f'You are "{persona_name}", an AI language tutor specializing in '
+                f'scenario-based oral practice.\n\n'
+                f'# Your Personality & Teaching Style\n{persona_style}'
+            )
+
             # Format the template with task context
             return self.oral_tutor_template.format(
+                persona_description=persona_description,
                 scenario_title=scenario_title,
                 task_description=task_description,
                 target_language=target_lang,

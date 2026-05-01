@@ -982,3 +982,52 @@ exports.generateTaskKeywordsInternal = async (req, res) => {
         res.status(500).json({ success: false, message: 'Server Error' });
     }
 };
+
+// ===== Daily Practice Time / Progress =====
+
+exports.recordPracticeTime = async (req, res) => {
+    try {
+        const { minutes } = req.body;
+        if (!minutes || minutes <= 0) return res.status(400).json({ error: 'Invalid minutes' });
+        const result = await User.recordPracticeTime(req.user.id, Math.round(minutes));
+
+        const db = require('../models/db');
+        const userRes = await db.query('SELECT daily_practice_goal FROM users WHERE id = $1', [req.user.id]);
+        const goal = userRes.rows[0]?.daily_practice_goal || 15;
+
+        const totalMinutes = result.minutes;
+        let autoCheckin = null;
+        if (totalMinutes >= goal) {
+            autoCheckin = await User.checkin(req.user.id);
+        }
+
+        res.json({ totalMinutes, goal, autoCheckin });
+    } catch (err) {
+        console.error('recordPracticeTime Error:', err);
+        res.status(500).json({ error: err.message });
+    }
+};
+
+exports.getDailyProgress = async (req, res) => {
+    try {
+        const progress = await User.getDailyProgress(req.user.id);
+        res.json(progress);
+    } catch (err) {
+        console.error('getDailyProgress Error:', err);
+        res.status(500).json({ error: err.message });
+    }
+};
+
+// ===== Feedback =====
+
+exports.submitFeedback = async (req, res) => {
+    try {
+        const { category, message } = req.body;
+        if (!message?.trim()) return res.status(400).json({ error: 'Message required' });
+        const result = await User.submitFeedback(req.user.id, category || 'other', message.trim());
+        res.json({ success: true, feedback: result });
+    } catch (err) {
+        console.error('submitFeedback Error:', err);
+        res.status(500).json({ error: err.message });
+    }
+};

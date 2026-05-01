@@ -1,17 +1,16 @@
 import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'motion/react';
-import { ChevronDown, ChevronUp, Plus, Target, Flame, CheckCircle } from 'lucide-react';
+import { ChevronDown, ChevronUp, Plus, Target, Flame, CheckCircle, Lock } from 'lucide-react';
 import BottomNav from '../components/BottomNav';
 import { useAuth } from '../contexts/AuthContext';
 import { userAPI } from '../services/api';
+import { PERSONA_MAP } from '../config/personaConfig';
 
-const VOICE_OPTIONS = [
-  { id: 'Tina',   name: 'Tina',   description: '清晰女声（默认）', emoji: '👩' },
-  { id: 'Serena', name: 'Serena', description: '温柔女声',         emoji: '🎙️' },
-  { id: 'Evan',   name: 'Evan',   description: '活力男声',         emoji: '👨' },
-  { id: 'Arda',   name: 'Arda',   description: '稳重男声',         emoji: '🎤' },
-];
+const VOICE_OPTIONS = Object.values(PERSONA_MAP).map(p => ({
+  id: p.name, name: p.name, description: p.desc, subtitle: p.subtitle,
+  emoji: p.emoji, letter: p.letter, bgGradient: p.bgGradient, isFree: p.isFree,
+}));
 
 function getGoalProgress(goal) {
   if (!goal?.scenarios?.length) return { completed: 0, total: 0, pct: 0 };
@@ -135,6 +134,7 @@ function Goals() {
     const saved = localStorage.getItem('ai_voice');
     return VOICE_OPTIONS.some(v => v.id === saved) ? saved : 'Tina';
   });
+  const [practiceGoal, setPracticeGoal] = useState(() => user?.daily_practice_goal || 15);
 
   useEffect(() => {
     const load = async () => {
@@ -146,6 +146,9 @@ function Goals() {
         if (goalsRes?.goals) setAllGoals(goalsRes.goals);
         else if (goalsRes?.goal) setAllGoals([goalsRes.goal]);
         if (checkinRes?.streak) setStreak(checkinRes.streak);
+        if (user?.daily_practice_goal) {
+          setPracticeGoal(user.daily_practice_goal);
+        }
       } catch (e) {
         console.error('Goals load error:', e);
       } finally {
@@ -153,11 +156,20 @@ function Goals() {
       }
     };
     load();
-  }, []);
+  }, [user?.daily_practice_goal]);
 
   const handleVoiceChange = (id) => {
     setSelectedVoice(id);
     localStorage.setItem('ai_voice', id);
+  };
+
+  const handlePracticeGoalChange = async (minutes) => {
+    setPracticeGoal(minutes);
+    try {
+      await userAPI.updateProfile({ daily_practice_goal: minutes });
+    } catch (e) {
+      console.error('Failed to update practice goal:', e);
+    }
   };
 
   const activeGoals = allGoals.filter(g => g.status === 'active' || g.status === 'paused');
@@ -268,23 +280,60 @@ function Goals() {
             className="bg-white dark:bg-slate-800 rounded-2xl shadow-brand border border-slate-100 dark:border-slate-700 p-4 mb-4"
           >
             <div className="grid grid-cols-2 gap-2">
-              {VOICE_OPTIONS.map(v => (
+              {VOICE_OPTIONS.map(v => {
+                const isPro = user?.subscription_status === 'active';
+                const locked = !v.isFree && !isPro;
+                return (
+                  <button
+                    key={v.id}
+                    onClick={() => !locked && handleVoiceChange(v.id)}
+                    className={`relative flex items-center gap-2.5 p-3 rounded-xl border transition-all text-left ${
+                      locked ? 'opacity-50 cursor-not-allowed' : ''
+                    } ${
+                      selectedVoice === v.id
+                        ? 'border-primary bg-primary/5 dark:bg-primary/10'
+                        : 'border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-700/50 hover:border-primary/30'
+                    }`}
+                  >
+                    <div className="w-9 h-9 rounded-full flex items-center justify-center flex-shrink-0"
+                      style={{ background: v.bgGradient }}>
+                      <span className="text-white font-bold text-sm">{v.letter}</span>
+                    </div>
+                    <div>
+                      <p className={`text-sm font-semibold ${selectedVoice === v.id ? 'text-primary' : 'text-slate-800 dark:text-slate-200'}`}>
+                        {v.name}
+                      </p>
+                      <p className="text-xs text-slate-400 dark:text-slate-500">{v.description}</p>
+                    </div>
+                    {locked && (
+                      <Lock className="absolute top-2 right-2 w-3.5 h-3.5 text-slate-400" />
+                    )}
+                  </button>
+                );
+              })}
+            </div>
+          </motion.div>
+
+          {/* Practice Goal Setting */}
+          <p className="text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wide mb-3 mt-2">每日练习目标</p>
+          <motion.div
+            initial={{ opacity: 0, y: 8 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.25 }}
+            className="bg-white dark:bg-slate-800 rounded-2xl shadow-brand border border-slate-100 dark:border-slate-700 p-4 mb-4"
+          >
+            <div className="grid grid-cols-4 gap-2">
+              {[15, 30, 45, 60].map(m => (
                 <button
-                  key={v.id}
-                  onClick={() => handleVoiceChange(v.id)}
-                  className={`flex items-center gap-2.5 p-3 rounded-xl border transition-all text-left ${
-                    selectedVoice === v.id
-                      ? 'border-primary bg-primary/5 dark:bg-primary/10'
-                      : 'border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-700/50 hover:border-primary/30'
+                  key={m}
+                  onClick={() => handlePracticeGoalChange(m)}
+                  className={`py-2.5 px-3 rounded-xl text-sm font-medium transition-all ${
+                    practiceGoal === m
+                      ? 'bg-primary text-white border-primary'
+                      : 'bg-slate-50 dark:bg-slate-700/50 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700 hover:border-primary/30'
                   }`}
                 >
-                  <span className="text-lg">{v.emoji}</span>
-                  <div>
-                    <p className={`text-sm font-semibold ${selectedVoice === v.id ? 'text-primary' : 'text-slate-800 dark:text-slate-200'}`}>
-                      {v.name}
-                    </p>
-                    <p className="text-xs text-slate-400 dark:text-slate-500">{v.description}</p>
-                  </div>
+                  {m}分钟
                 </button>
               ))}
             </div>
