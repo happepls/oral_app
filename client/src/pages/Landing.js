@@ -70,7 +70,7 @@ function Landing() {
       <nav className="fixed top-0 left-0 right-0 z-50 bg-white/80 dark:bg-slate-900/80 backdrop-blur-md border-b border-slate-200 dark:border-slate-800">
         <div className="max-w-6xl mx-auto px-4 py-4 flex items-center justify-between">
           <div className="flex items-center gap-2">
-            <img src="/guaji-icon.png" alt="GuaJi" className="w-8 h-8 rounded-lg" />
+            <img src="/guaji-logo.svg" alt="GuaJi" className="w-8 h-8" />
             <span className="text-xl font-bold text-slate-900 dark:text-white">GuaJi AI</span>
           </div>
           <div className="flex items-center gap-3">

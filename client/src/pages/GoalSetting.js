@@ -5,6 +5,7 @@ import { userAPI, aiAPI } from '../services/api';
 import { motion, AnimatePresence } from 'motion/react';
 import { Lock } from 'lucide-react';
 import { VOICE_OPTIONS, DEFAULT_VOICE } from '../config/personaConfig';
+import { GuajiMascot } from '../components/GuajiMascot';
 
 const TOTAL_STEPS = 5;  // Welcome + Language + Quiz + Goal/Voice + Scenarios
 
@@ -313,7 +314,7 @@ export default function GoalSetting() {
       {/* ── Top Bar ── */}
       <div className="px-5 pt-5 pb-0 flex items-center justify-between shrink-0">
         <div className="flex items-center gap-2">
-          <img src="/guaji-icon.png" alt="GuaJi" className="w-7 h-7 rounded-lg" />
+          <img src="/guaji-logo.svg" alt="GuaJi" className="w-7 h-7" />
           <span className="font-bold text-slate-900 text-base">GuaJi AI</span>
         </div>
         {step > 1 && (
@@ -348,7 +349,7 @@ export default function GoalSetting() {
             {/* ─── STEP 1: Welcome ─── */}
             {step === 1 && (
               <div className="bg-white rounded-3xl shadow-sm p-6 flex flex-col items-center gap-5">
-                <img src="/guaji-icon.png" alt="GuaJi" className="w-24 h-24 rounded-2xl mt-2" style={{ boxShadow: '0 8px 24px rgba(99,127,241,0.2)' }} />
+                <GuajiMascot mood="happy" size={100} className="mt-2" />
                 <div className="text-center">
                   <h1 className="text-3xl font-bold text-slate-900 mb-2">欢迎来到 GuaJi AI</h1>
                   <p className="text-slate-500 text-sm mb-1">你的私人 AI 口语练习伙伴</p>

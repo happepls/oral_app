@@ -1,46 +1,46 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 240">
-  <g transform="translate(100,95)">
-    
-    <path d="M -28 -62 Q -22 -80 -14 -60 Z" fill="#7B5EBF"></path>
-    <path d="M 28 -62 Q 22 -80 14 -60 Z" fill="#7B5EBF"></path>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200">
+  <g transform="translate(100, 98)">
+    <!-- Ear tufts (grow from body curve) -->
+    <path d="M -14 -52 C -16 -62, -20 -66, -18 -68 C -16 -66, -10 -60, -6 -52" fill="#3D3B6E" />
+    <path d="M 14 -52 C 16 -62, 20 -66, 18 -68 C 16 -66, 10 -60, 6 -52" fill="#3D3B6E" />
 
-    
-    <ellipse cx="0" cy="0" rx="52" ry="62" fill="#9B7FD4"></ellipse>
+    <!-- Wings (round-ended, extend from body sides) -->
+    <ellipse cx="-56" cy="10" rx="14" ry="22" fill="#3D3B6E" transform="rotate(-15 -56 10)" />
+    <ellipse cx="56" cy="10" rx="14" ry="22" fill="#3D3B6E" transform="rotate(15 56 10)" />
 
-    
-    <ellipse cx="0" cy="16" rx="34" ry="40" fill="#FFFFFF"></ellipse>
+    <!-- Body (near-circle, thick dark outline) -->
+    <ellipse cx="0" cy="0" rx="50" ry="52" fill="#8B87C0" stroke="#3D3B6E" stroke-width="4" />
 
-    
-    <path d="M -50 -6 Q -66 10 -58 38 Q -48 28 -44 12 Z" fill="#7B5EBF"></path>
-    <path d="M 50 -6 Q 66 10 58 38 Q 48 28 44 12 Z" fill="#7B5EBF"></path>
+    <!-- Belly (lighter purple, lower half) -->
+    <ellipse cx="0" cy="20" rx="28" ry="24" fill="#AAA7D0" />
 
-    
-    <ellipse cx="0" cy="-20" rx="44" ry="36" fill="#B8A0E0"></ellipse>
+    <!-- Eye rings (large peach) -->
+    <circle cx="-17" cy="-12" r="20" fill="#E8B892" />
+    <circle cx="17" cy="-12" r="20" fill="#E8B892" />
 
-    
-    <circle cx="-16" cy="-22" r="14" fill="#FFFFFF"></circle>
-    <circle cx="16" cy="-22" r="14" fill="#FFFFFF"></circle>
+    <!-- Eye whites -->
+    <circle cx="-17" cy="-12" r="15" fill="#FFFFFF" />
+    <circle cx="17" cy="-12" r="15" fill="#FFFFFF" />
 
-    
-    <circle cx="-14" cy="-20" r="8" fill="#2C1A0E"></circle>
-    <circle cx="18" cy="-20" r="8" fill="#2C1A0E"></circle>
+    <!-- Pupils (dark brown, offset inward+down) -->
+    <circle cx="-14" cy="-9" r="8.5" fill="#3A2510" />
+    <circle cx="20" cy="-9" r="8.5" fill="#3A2510" />
 
-    
-    <circle cx="-11" cy="-24" r="3" fill="#FFFFFF"></circle>
-    <circle cx="21" cy="-24" r="3" fill="#FFFFFF"></circle>
-    <circle cx="-16" cy="-18" r="1.5" fill="#FFFFFF"></circle>
-    <circle cx="16" cy="-18" r="1.5" fill="#FFFFFF"></circle>
+    <!-- Eye highlights (large + small) -->
+    <circle cx="-10" cy="-13" r="3.5" fill="#FFFFFF" />
+    <circle cx="24" cy="-13" r="3.5" fill="#FFFFFF" />
+    <circle cx="-16" cy="-6" r="1.5" fill="#FFFFFF" />
+    <circle cx="18" cy="-6" r="1.5" fill="#FFFFFF" />
 
-    
-    <path d="M -5 -6 L 5 -6 L 0 3 Z" fill="#F6A742"></path>
+    <!-- Beak (tiny, between eyes and belly) -->
+    <path d="M -3.5 4 L 3.5 4 L 0 10 Z" fill="#D4944A" />
 
-    
-    <g transform="translate(-16, 58)">
-      <path d="M -6 0 L -10 8 M -6 0 L -4 9 M -6 0 L 2 7" stroke="#F6A742" stroke-width="4" stroke-linecap="round" fill="none"></path>
+    <!-- Feet -->
+    <g transform="translate(-12, 50)">
+      <path d="M -3 0 L -6 5 M -3 0 L 0 6 M -3 0 L 3 4" stroke="#D4944A" stroke-width="2.8" stroke-linecap="round" fill="none" />
     </g>
-    <g transform="translate(16, 58)">
-      <path d="M 6 0 L 10 8 M 6 0 L 4 9 M 6 0 L -2 7" stroke="#F6A742" stroke-width="4" stroke-linecap="round" fill="none"></path>
+    <g transform="translate(12, 50)">
+      <path d="M 3 0 L 6 5 M 3 0 L 0 6 M 3 0 L -3 4" stroke="#D4944A" stroke-width="2.8" stroke-linecap="round" fill="none" />
     </g>
   </g>
-  <text x="100" y="215" font-family="Lexend, Arial, sans-serif" font-weight="800" font-size="30" fill="#7B5EBF" text-anchor="middle" letter-spacing="2">GuaJi</text>
 </svg>

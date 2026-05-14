@@ -5,6 +5,7 @@ import { useAuth } from '../contexts/AuthContext';
 import LanguageSwitcher from '../components/LanguageSwitcher';
 import { motion, AnimatePresence } from 'motion/react';
 import { Check, ChevronRight } from 'lucide-react';
+import { GuajiMascot } from '../components/GuajiMascot';
 
 // ── 母语选项 ──
 const NATIVE_LANGUAGES = [
@@ -82,7 +83,7 @@ export default function Onboarding() {
       {/* Top bar */}
       <div className="w-full max-w-lg flex items-center justify-between mb-6">
         <div className="flex items-center gap-2">
-          <img src="/guaji-icon.png" alt="GuaJi" className="w-8 h-8 rounded-xl" />
+          <img src="/guaji-logo.svg" alt="GuaJi" className="w-8 h-8" />
           <span className="font-bold text-slate-800 dark:text-white text-lg">GuaJi AI</span>
         </div>
         <LanguageSwitcher />
@@ -119,8 +120,7 @@ export default function Onboarding() {
               transition={{ duration: 0.3, ease: 'easeOut' }}>
 
               <div className="text-center mb-6">
-                <motion.div animate={{ y: [0, -8, 0] }} transition={{ duration: 2.5, repeat: Infinity, ease: 'easeInOut' }}
-                  className="mb-3"><img src="/guaji-icon.png" alt="GuaJi" className="w-16 h-16 rounded-2xl mx-auto" style={{ boxShadow: '0 8px 24px rgba(99,127,241,0.2)' }} /></motion.div>
+                <div className="mb-3 flex justify-center"><GuajiMascot mood="happy" size={80} /></div>
                 <h1 className="text-2xl font-bold text-slate-900 dark:text-white mb-1">{t('onboarding_title')}</h1>
                 <p className="text-slate-500 dark:text-slate-400 text-sm">{t('onboarding_subtitle')}</p>
               </div>
