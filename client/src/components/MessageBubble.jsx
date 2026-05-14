@@ -1,79 +1,75 @@
-import { User, Bot, Languages } from "lucide-react";
+import { Languages } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import { useState, useEffect } from "react";
-import designTokens from "../imports/design-tokens.json";
+import { GuajiAvatar } from "./GuajiAvatar";
+import { VoiceBubble } from "./VoiceBubble";
 
 export function MessageBubble({
   type,
   message,
   timestamp,
-  avatar,
-  avatarLetter,
-  avatarColor,
   state = "default",
   translation,
   showTranslation = false,
   footer,
+  audioUrl,
+  audioDuration,
+  onPlayAudio,
 }) {
   const isUser = type === "user";
-  const tokens = designTokens.global;
   const [isTranslationVisible, setIsTranslationVisible] = useState(showTranslation);
 
-  // 当翻译内容首次到达时自动展开
   useEffect(() => {
     if (translation) setIsTranslationVisible(true);
   }, [translation]);
 
   return (
     <div className={`flex gap-3 ${isUser ? "flex-row-reverse" : "flex-row"}`}>
-      {/* Avatar - only for AI */}
-      {!isUser && (
-        <div
-          className="w-12 h-12 rounded-full flex items-center justify-center flex-shrink-0"
-          style={{ background: avatarColor || tokens.color.secondary.value }}
-        >
-          {avatar ? (
-            <img src={avatar} alt="" className="w-full h-full rounded-full object-cover" />
-          ) : avatarLetter ? (
-            <span className="text-white font-bold text-lg">{avatarLetter}</span>
-          ) : (
-            <Bot className="w-6 h-6 text-white" />
-          )}
-        </div>
-      )}
+      {!isUser && <GuajiAvatar size={36} />}
 
-      {/* Message Content */}
       <div className={`flex flex-col ${isUser ? "items-end" : "items-start"} max-w-[70%]`}>
         <div
-          className={`px-6 py-4 ${state === "error" ? "border-2" : ""}`}
           style={{
-            backgroundColor: isUser ? tokens.color.primary.value : "#E1E2E6",
-            color: isUser ? "#FFFFFF" : "#1F2937",
-            borderRadius: isUser ? "24px 24px 8px 24px" : "8px 24px 24px 24px",
-            borderColor: state === "error" ? tokens.color.error.value : "transparent",
+            backgroundColor: isUser ? 'var(--primary)' : '#E1E2E6',
+            color: isUser ? '#FFFFFF' : '#1F2937',
+            borderRadius: isUser ? '18px 18px 6px 18px' : '6px 18px 18px 18px',
+            padding: '10px 14px',
+            boxShadow: 'var(--shadow-card)',
           }}
         >
           {state === "loading" ? (
-            <div className="flex items-center gap-1">
-              <div className="w-2 h-2 rounded-full bg-current opacity-40 animate-pulse" />
-              <div className="w-2 h-2 rounded-full bg-current opacity-40 animate-pulse" style={{ animationDelay: "0.2s" }} />
-              <div className="w-2 h-2 rounded-full bg-current opacity-40 animate-pulse" style={{ animationDelay: "0.4s" }} />
+            <div style={{ display: 'flex', gap: 4, alignItems: 'center', padding: '2px 0' }}>
+              {[0, 200, 400].map((d) => (
+                <div key={d} style={{
+                  width: 6, height: 6, borderRadius: '50%', background: '#9CA3AF',
+                  animation: 'pulse 1.2s infinite', animationDelay: `${d}ms`,
+                }} />
+              ))}
             </div>
           ) : (
             <>
-              <p className="text-[15px] leading-relaxed whitespace-pre-wrap">{message}</p>
+              <p style={{ fontSize: 13.5, lineHeight: 1.5, margin: 0, whiteSpace: 'pre-wrap' }}>{message}</p>
 
-              {footer && <div className="mt-2">{footer}</div>}
+              {(audioUrl || audioDuration) && !isUser && (
+                <div style={{ marginTop: 8 }}>
+                  <VoiceBubble duration={audioDuration} onPlay={onPlayAudio} />
+                </div>
+              )}
 
-              {/* Translation Toggle Button */}
+              {footer && <div style={{ marginTop: 8 }}>{footer}</div>}
+
               {translation && (
                 <motion.button
                   whileHover={{ scale: 1.05 }}
                   whileTap={{ scale: 0.95 }}
                   onClick={() => setIsTranslationVisible(!isTranslationVisible)}
-                  className="mt-2 flex items-center gap-1 text-xs opacity-60 hover:opacity-100 transition-opacity"
+                  style={{
+                    marginTop: 8, display: 'flex', alignItems: 'center', gap: 4,
+                    fontSize: 11, opacity: 0.6, background: 'none', border: 'none',
+                    cursor: 'pointer', color: 'inherit', padding: 0,
+                  }}
                 >
-                  <Languages className="w-3 h-3" />
+                  <Languages style={{ width: 12, height: 12 }} />
                   <span>{isTranslationVisible ? "隐藏翻译" : "显示翻译"}</span>
                 </motion.button>
               )}
@@ -81,7 +77,6 @@ export function MessageBubble({
           )}
         </div>
 
-        {/* Translation */}
         <AnimatePresence>
           {translation && isTranslationVisible && (
             <motion.div
@@ -89,20 +84,22 @@ export function MessageBubble({
               animate={{ opacity: 1, height: "auto", y: 0 }}
               exit={{ opacity: 0, height: 0, y: -10 }}
               transition={{ duration: 0.2 }}
-              className={`mt-2 px-4 py-3 rounded-2xl max-w-full ${
-                isUser ? "bg-blue-50" : "bg-gray-100"
-              }`}
+              style={{
+                marginTop: 6, padding: '8px 12px', borderRadius: 14,
+                maxWidth: '100%',
+                background: isUser ? 'rgba(99,127,241,0.1)' : '#F3F4F6',
+              }}
             >
-              <div className="flex items-start gap-2">
-                <Languages className="w-4 h-4 text-gray-500 flex-shrink-0 mt-0.5" />
-                <p className="text-sm text-gray-700 leading-relaxed">{translation}</p>
+              <div style={{ display: 'flex', alignItems: 'flex-start', gap: 6 }}>
+                <span style={{ fontSize: 12 }}>🌐</span>
+                <p style={{ fontSize: 12, color: 'var(--foreground-secondary)', lineHeight: 1.5, margin: 0 }}>{translation}</p>
               </div>
             </motion.div>
           )}
         </AnimatePresence>
 
         {timestamp && (
-          <span className="text-xs text-gray-500 mt-1 px-2">{timestamp}</span>
+          <span style={{ fontSize: 10, color: 'var(--foreground-subtle)', marginTop: 4, paddingLeft: 4 }}>{timestamp}</span>
         )}
       </div>
     </div>

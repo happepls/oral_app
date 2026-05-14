@@ -308,13 +308,13 @@ export default function GoalSetting() {
   const displayTotal = TOTAL_STEPS - 1;
 
   return (
-    <div className="flex flex-col min-h-screen bg-[#F5F5F7]">
+    <div className="flex flex-col min-h-screen" style={{ background: 'var(--background)' }}>
 
       {/* ── Top Bar ── */}
       <div className="px-5 pt-5 pb-0 flex items-center justify-between shrink-0">
         <div className="flex items-center gap-2">
-          <span className="text-2xl">🦜</span>
-          <span className="font-bold text-slate-900 text-base">Oral AI</span>
+          <img src="/guaji-icon.png" alt="GuaJi" className="w-7 h-7 rounded-lg" />
+          <span className="font-bold text-slate-900 text-base">GuaJi AI</span>
         </div>
         {step > 1 && (
           <span className="text-sm text-slate-400">步骤 {displayStep} / {displayTotal}</span>
@@ -348,9 +348,9 @@ export default function GoalSetting() {
             {/* ─── STEP 1: Welcome ─── */}
             {step === 1 && (
               <div className="bg-white rounded-3xl shadow-sm p-6 flex flex-col items-center gap-5">
-                <span className="text-7xl mt-2">🦜</span>
+                <img src="/guaji-icon.png" alt="GuaJi" className="w-24 h-24 rounded-2xl mt-2" style={{ boxShadow: '0 8px 24px rgba(99,127,241,0.2)' }} />
                 <div className="text-center">
-                  <h1 className="text-3xl font-bold text-slate-900 mb-2">欢迎来到 Oral AI</h1>
+                  <h1 className="text-3xl font-bold text-slate-900 mb-2">欢迎来到 GuaJi AI</h1>
                   <p className="text-slate-500 text-sm mb-1">你的私人 AI 口语练习伙伴</p>
                   <p className="text-slate-500 text-sm">随时随地，自信开口说外语</p>
                 </div>

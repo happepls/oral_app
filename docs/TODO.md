@@ -37,6 +37,19 @@
 - [ ] [Testing] proficiency_scoring CJK 评分阈值零测试覆盖（target_language=Japanese/Chinese 时 _min_len=4, _min_remaining=2 路径）
 - [ ] [Testing] GoalSetting.js 多步向导零测试覆盖（calcQuizScore/scoreToProficiency/自定义目标/音色 fallback）
 
+- [ ] [Security] Subscription.js 优惠码（WELCOME20/ANNUAL50）硬编码在前端 JS 中，应改为服务端校验
+- [ ] [Security] Conversation.js review 数据写入 window 全局对象（window.currentScenarioReview），应改用 React state
+- [ ] [Security] Subscription.js token 模式 Authorization header 与 httpOnly cookie 不兼容（header 发送 "Bearer null"）
+- [ ] [Performance] GuajiMascot.jsx 内联 style 对象每次 render 重建，应提升为模块级常量
+- [ ] [Performance] VoiceBubble.jsx Array.from + Math.sin 每次 render 计算 24 个柱高，应 useMemo
+- [ ] [Performance] Discovery.js greeting 计算每次 render 执行 new Date()，应 useMemo 空依赖
+- [ ] [Performance] AiAvatar.jsx boxShadow 动画数组每次 render 新建引用，应 useMemo 按 color 依赖
+- [ ] [Testing] GuajiMascot.jsx 状态→图片映射 + 覆盖层逻辑零测试
+- [ ] [Testing] DiffBadge.jsx fallback 路径零测试（未知 diff 值渲染原始字符串）
+- [ ] [Testing] ScenarioCard.jsx 锁定交互守卫零测试（locked 状态 onStart 不应触发）
+- [ ] [Testing] MessageBubble.jsx loading 状态 + audioUrl 分支零测试
+- [ ] [Testing] MicBar/ConvHeader/HintBanner/VoiceBubble/GuajiAvatar 新组件零测试
+
 ## Done
 
 - [x] [Feature] AI 导师角色(Persona)系统：4 音色 × 4 角色性格（Tina/Serena/Evan/Arda），字母头像，免费用户限 Tina，前后端 personaConfig + persona_config.py + prompt 注入
@@ -57,6 +70,13 @@
 - [x] [Security] SSRF 防护：TTS URL fetch 添加域名白名单校验 `_validated_urlopen()`（ai-omni-service）
 - [x] [Security] WebSocket URL 参数编码：scenario/voice/mode 添加 `encodeURIComponent` 防注入（Conversation.js）
 - [x] [Performance] Discovery.js 派生数据 useMemo 优化（enrichedScenarios/overallProgress/filteredScenarios/todayRecommended）
+- [x] [Feature] GuaJi 设计系统全量集成：CSS 变量 + 7 个新组件（GuajiMascot/GuajiAvatar/MicBar/ConvHeader/HintBanner/VoiceBubble/DiffBadge）+ 6 个组件替换（BottomNav/StatCard/StreakRing/ScenarioCard/MessageBubble/AiAvatar）+ 6 页面视觉更新 + 25 个吉祥物素材裁剪 + CC 沉浸模式
+- [x] [Branding] 全局品牌统一：Oral AI → GuaJi AI，鹦鹉 emoji → GuaJi 猫头鹰图标，所有页面 logo/标题替换
+- [x] [Branding] GuaJi 吉祥物 icon 提取：AI 去背景 + flood-fill + 左半对称镜像修复右翅截断
+- [x] [Bug] Discovery.js StreakRing 死 prop 清理（totalPracticeMinutes 已从 StreakRing 移除）
+- [x] [Bug] Achievements.js BottomNav currentPage="achievements" 不匹配 3-tab 布局修复
+- [x] [Performance] MicBar.jsx 内联 style keyframes 移至 guaji-design.css（消除重复 DOM 注入）
+- [x] [Performance] AiAvatar.jsx statusText/statusColor 提升为模块级常量（消除每次 render 重建）
 - [x] [Testing] proficiency_scoring 测试修复：更新 _is_repetitive_input 测试用例适配新阈值（MIN_SEGMENT=5, MIN_COUNT=3）+ anti-cheat 测试关键词去模糊匹配干扰
 
 - [x] [Feature] GoalSetting.js 学习语言扩展（6→29种，按 Qwen3.5-Omni 全支持列表），语言网格加 maxHeight:280px 滚动

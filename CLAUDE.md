@@ -350,3 +350,28 @@ Valid voices for `qwen3.5-omni-plus-realtime` (source: aliyun omni-voice-list):
 `tailwind.config.js` uses `darkMode: "class"` — dark mode only activates when `<html>` has `class="dark"`.
 
 **Gotcha**: `client/public/index.html` previously had `<html lang="zh-CN" class="dark">` hardcoded, forcing dark mode on all pages regardless of Tailwind classes. Removed `class="dark"` to restore light-mode default. If dark mode re-appears unexpectedly, check `index.html` first.
+
+### Secret Scanning
+
+Three-layer defense against credential leaks:
+
+1. **Git pre-commit hook** — runs `gitleaks` on staged files, blocks commit if secrets detected
+2. **Claude Code PreToolUse hook** — intercepts `git commit` commands in Claude Code, runs gitleaks scan
+3. **GitHub MCP Server** — queries remote secret scanning alerts (`list_secret_scanning_alerts`)
+
+**Setup for new developers:**
+```bash
+brew install gitleaks
+cp .githooks/pre-commit .git/hooks/pre-commit && chmod +x .git/hooks/pre-commit
+```
+
+**Manual scan:**
+```bash
+gitleaks git --verbose --config .gitleaks.toml           # full repo
+gitleaks git --staged --verbose --config .gitleaks.toml  # staged only
+```
+
+**False positive?** Add pattern to `.gitleaks.toml` allowlist section.
+
+**Remote monitoring** (requires `GITHUB_PERSONAL_ACCESS_TOKEN` in `.claude/settings.local.json`):
+- Ask Claude Code: "List secret scanning alerts for happepls/oral_app"

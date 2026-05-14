@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<link href="https://fonts.googleapis.com/css2?family=Lexend:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  @font-face {
+    font-family: 'Arial Unicode';
+    src: url('../fonts/Arial_Unicode.ttf') format('truetype');
+    font-weight: 400;
+    font-style: normal;
+    font-display: swap;
+  }
+  :root {
+    --font-stack: 'Lexend', 'Arial Unicode', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  }
+  body { margin: 0; font-family: var(--font-stack); background: #fff; padding: 20px 24px; }
+  .row { display: flex; align-items: baseline; gap: 16px; padding: 10px 0; border-bottom: 1px solid #F3F4F6; }
+  .row:last-child { border-bottom: none; }
+  .meta { width: 160px; flex-shrink: 0; }
+  .meta-name { font-size: 11px; font-weight: 600; color: #9CA3AF; text-transform: uppercase; letter-spacing: 0.05em; }
+  .meta-spec { font-size: 10px; color: #D1D5DB; margin-top: 2px; }
+  .sample-en { color: #1a1a1a; flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .sample-zh { color: #374151; font-size: 0.75em; opacity: 0.7; flex-shrink: 0; margin-left: 12px; }
+  .badge { font-size: 10px; font-weight: 600; color: #637FF1; background: #EEF2FF; padding: 2px 6px; border-radius: 4px; margin-left: 8px; vertical-align: middle; }
+</style>
+</head>
+<body>
+  <div class="row">
+    <div class="meta"><div class="meta-name">Display XL</div><div class="meta-spec">48px / 700</div></div>
+    <div class="sample-en" style="font-size:48px;font-weight:700;line-height:1.1;letter-spacing:-0.02em;">Guaji AI</div>
+    <div class="sample-zh" style="font-size:36px;font-weight:700;">瓜机</div>
+  </div>
+  <div class="row">
+    <div class="meta"><div class="meta-name">Heading 1</div><div class="meta-spec">36px / 600</div></div>
+    <div class="sample-en" style="font-size:36px;font-weight:600;line-height:1.2;">Speak with confidence</div>
+    <div class="sample-zh" style="font-size:27px;font-weight:600;">说话有信心</div>
+  </div>
+  <div class="row">
+    <div class="meta"><div class="meta-name">Heading 2</div><div class="meta-spec">30px / 600</div></div>
+    <div class="sample-en" style="font-size:30px;font-weight:600;line-height:1.25;">Practice Anytime</div>
+    <div class="sample-zh" style="font-size:22px;font-weight:600;">随时练习</div>
+  </div>
+  <div class="row">
+    <div class="meta"><div class="meta-name">Heading 3</div><div class="meta-spec">24px / 500</div></div>
+    <div class="sample-en" style="font-size:24px;font-weight:500;">Daily Conversation Goals</div>
+    <div class="sample-zh" style="font-size:18px;font-weight:500;">每日对话目标</div>
+  </div>
+  <div class="row">
+    <div class="meta"><div class="meta-name">Body Large</div><div class="meta-spec">18px / 400</div></div>
+    <div class="sample-en" style="font-size:18px;font-weight:400;color:#374151;">Your AI tutor listens and responds instantly</div>
+    <div class="sample-zh" style="font-size:14px;color:#374151;">AI 导师实时聆听并响应</div>
+  </div>
+  <div class="row">
+    <div class="meta"><div class="meta-name">Body</div><div class="meta-spec">16px / 400</div></div>
+    <div class="sample-en" style="font-size:16px;font-weight:400;color:#374151;">Start practicing scenarios tailored to your level</div>
+    <div class="sample-zh" style="font-size:12px;color:#374151;">开始练习适合你水平的场景</div>
+  </div>
+  <div class="row">
+    <div class="meta"><div class="meta-name">Body Small</div><div class="meta-spec">14px / 400</div></div>
+    <div class="sample-en" style="font-size:14px;font-weight:400;color:#6B7280;">说出来的速度不需要追求完美，意思准确是第一步。</div>
+  </div>
+  <div class="row">
+    <div class="meta"><div class="meta-name">Caption</div><div class="meta-spec">12px / 400</div></div>
+    <div class="sample-en" style="font-size:12px;font-weight:400;color:#9CA3AF;">初级 · 3 个场景 · 2026-04-26 &nbsp;|&nbsp; BEGINNER · 3 scenarios</div>
+  </div>
+  <div style="margin-top: 14px; padding-top: 12px; border-top: 1px solid #F3F4F6; display: flex; align-items: center; gap: 10px;">
+    <div style="font-size: 11px; font-weight: 600; color: #9CA3AF; text-transform: uppercase; letter-spacing: 0.06em;">Font stack</div>
+    <code style="font-size: 12px; color: #637FF1; background: #EEF2FF; padding: 3px 8px; border-radius: 4px;">'Lexend', 'Arial Unicode', -apple-system, sans-serif</code>
+    <span style="font-size: 11px; color: #9CA3AF;">Arial Unicode handles CJK · Lexend handles Latin</span>
+  </div>
+</body>
+</html>

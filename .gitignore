@@ -92,3 +92,23 @@ __pycache__/
 .vscode/
 .idea/.venv/
 .venv/
+
+# MCP server configuration
+.mcp.json
+
+# Playwright MCP snapshots (auto-generated)
+.playwright-mcp/
+
+# Verification screenshots (temporary)
+verify-*.png
+
+# Large font files (use CDN)
+figma_app_template/Guaji AI_Design_System/fonts/
+
+# Design system upload artifacts (raw source, not needed in repo)
+figma_app_template/Guaji AI_Design_System/uploads/
+figma_app_template/Guaji AI_Design_System/scraps/
+figma_app_template/Guaji AI_Design_System/screenshots/
+
+# Temporary image files
+img_*.png

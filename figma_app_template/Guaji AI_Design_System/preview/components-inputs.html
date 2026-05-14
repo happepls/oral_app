@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<link href="https://fonts.googleapis.com/css2?family=Lexend:wght@400;600&display=swap" rel="stylesheet">
+<style>
+  body { margin: 0; font-family: 'Lexend', sans-serif; background: #f6f7f8; padding: 20px; display: flex; gap: 20px; }
+  .col { flex: 1; display: flex; flex-direction: column; gap: 10px; }
+  .label { font-size: 11px; font-weight: 600; color: #374151; margin-bottom: 4px; }
+  .input { width: 100%; background: #f3f3f5; border: 1.5px solid #E5E7EB; border-radius: 13px; padding: 11px 14px; font-family: 'Lexend',sans-serif; font-size: 14px; color: #1a1a1a; outline: none; box-sizing: border-box; }
+  .input.focus { border-color: #637FF1; box-shadow: 0 0 0 3px rgba(99,127,241,0.15); }
+  .input.error { border-color: #e2412e; box-shadow: 0 0 0 3px rgba(226,65,46,0.12); }
+  .hint { font-size: 11px; color: #9CA3AF; margin-top: 3px; }
+  .hint.err { color: #e2412e; }
+  .select { width: 100%; background: #f3f3f5; border: 1.5px solid #E5E7EB; border-radius: 13px; padding: 11px 14px; font-family: 'Lexend',sans-serif; font-size: 14px; color: #374151; outline: none; box-sizing: border-box; appearance: none; }
+</style>
+</head>
+<body>
+  <div class="col">
+    <div>
+      <div class="label">Default</div>
+      <input class="input" type="text" placeholder="Enter your username" />
+    </div>
+    <div>
+      <div class="label">Focused</div>
+      <input class="input focus" type="text" value="learner_123" />
+    </div>
+    <div>
+      <div class="label">Error</div>
+      <input class="input error" type="password" value="abc" />
+      <div class="hint err">Password must contain uppercase letters and numbers</div>
+    </div>
+  </div>
+  <div class="col">
+    <div>
+      <div class="label">Select</div>
+      <select class="select">
+        <option>English 🇺🇸</option>
+        <option>中文（普通话）🇨🇳</option>
+        <option>日語 🇯🇵</option>
+      </select>
+    </div>
+    <div>
+      <div class="label">Disabled</div>
+      <input class="input" type="text" value="Read-only value" disabled style="opacity:0.5;cursor:not-allowed;" />
+    </div>
+    <div>
+      <div class="label">Hint</div>
+      <input class="input" type="text" placeholder="At least 8 chars, upper, lower & number" />
+      <div class="hint">Password must contain uppercase, lowercase letters and numbers</div>
+    </div>
+  </div>
+</body>
+</html>

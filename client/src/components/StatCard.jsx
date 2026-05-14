@@ -1,47 +1,16 @@
-import { motion } from "motion/react";
-import { TrendingUp, TrendingDown } from "lucide-react";
-import designTokens from "../imports/design-tokens.json";
-
-export function StatCard({ icon, value, label, trend, color }) {
-  const tokens = designTokens.global;
-
+export function StatCard({ emoji, value, label, unit }) {
   return (
-    <motion.div
-      whileHover={{ y: -4 }}
-      className="bg-white border border-gray-200 rounded-2xl p-5 relative"
-      style={{ borderRadius: tokens.radius.lg.value }}
-    >
-      {/* Trend Badge */}
-      {trend && (
-        <div
-          className="absolute top-4 right-4 px-2 py-1 rounded-full flex items-center gap-1 text-xs font-medium"
-          style={{
-            backgroundColor: trend.direction === "up" ? "#DCFCE7" : "#FEE2E2",
-            color: trend.direction === "up" ? tokens.color.success.value : tokens.color.error.value,
-          }}
-        >
-          {trend.direction === "up" ? (
-            <TrendingUp className="w-3 h-3" />
-          ) : (
-            <TrendingDown className="w-3 h-3" />
-          )}
-          <span>{trend.value}</span>
-        </div>
-      )}
-
-      {/* Icon */}
-      <div
-        className="w-12 h-12 rounded-xl flex items-center justify-center mb-4"
-        style={{ backgroundColor: color || tokens.color["primary-light"].value }}
-      >
-        <div style={{ color: color ? "#FFFFFF" : tokens.color.primary.value }}>{icon}</div>
-      </div>
-
-      {/* Value */}
-      <div className="text-3xl font-bold text-gray-900 mb-1">{value}</div>
-
-      {/* Label */}
-      <div className="text-sm text-gray-500">{label}</div>
-    </motion.div>
+    <div style={{
+      background: 'var(--card)', borderRadius: 'var(--radius-lg)', padding: '10px 6px',
+      boxShadow: 'var(--shadow-card)', display: 'flex', flexDirection: 'column',
+      alignItems: 'center', gap: 2, flex: 1,
+      border: '1px solid var(--border-solid)',
+    }}>
+      <span style={{ fontSize: 18 }}>{emoji}</span>
+      <span style={{ fontSize: 16, fontWeight: 700, color: 'var(--foreground)' }}>
+        {value}{unit && <span style={{ fontSize: 11, fontWeight: 400 }}>{unit}</span>}
+      </span>
+      <span style={{ fontSize: 10, color: 'var(--foreground-subtle)', textAlign: 'center', lineHeight: 1.2 }}>{label}</span>
+    </div>
   );
 }

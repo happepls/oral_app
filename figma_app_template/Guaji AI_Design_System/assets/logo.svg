@@ -1,0 +1,46 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 240">
+  <g transform="translate(100,95)">
+    
+    <path d="M -28 -62 Q -22 -80 -14 -60 Z" fill="#7B5EBF"></path>
+    <path d="M 28 -62 Q 22 -80 14 -60 Z" fill="#7B5EBF"></path>
+
+    
+    <ellipse cx="0" cy="0" rx="52" ry="62" fill="#9B7FD4"></ellipse>
+
+    
+    <ellipse cx="0" cy="16" rx="34" ry="40" fill="#FFFFFF"></ellipse>
+
+    
+    <path d="M -50 -6 Q -66 10 -58 38 Q -48 28 -44 12 Z" fill="#7B5EBF"></path>
+    <path d="M 50 -6 Q 66 10 58 38 Q 48 28 44 12 Z" fill="#7B5EBF"></path>
+
+    
+    <ellipse cx="0" cy="-20" rx="44" ry="36" fill="#B8A0E0"></ellipse>
+
+    
+    <circle cx="-16" cy="-22" r="14" fill="#FFFFFF"></circle>
+    <circle cx="16" cy="-22" r="14" fill="#FFFFFF"></circle>
+
+    
+    <circle cx="-14" cy="-20" r="8" fill="#2C1A0E"></circle>
+    <circle cx="18" cy="-20" r="8" fill="#2C1A0E"></circle>
+
+    
+    <circle cx="-11" cy="-24" r="3" fill="#FFFFFF"></circle>
+    <circle cx="21" cy="-24" r="3" fill="#FFFFFF"></circle>
+    <circle cx="-16" cy="-18" r="1.5" fill="#FFFFFF"></circle>
+    <circle cx="16" cy="-18" r="1.5" fill="#FFFFFF"></circle>
+
+    
+    <path d="M -5 -6 L 5 -6 L 0 3 Z" fill="#F6A742"></path>
+
+    
+    <g transform="translate(-16, 58)">
+      <path d="M -6 0 L -10 8 M -6 0 L -4 9 M -6 0 L 2 7" stroke="#F6A742" stroke-width="4" stroke-linecap="round" fill="none"></path>
+    </g>
+    <g transform="translate(16, 58)">
+      <path d="M 6 0 L 10 8 M 6 0 L 4 9 M 6 0 L -2 7" stroke="#F6A742" stroke-width="4" stroke-linecap="round" fill="none"></path>
+    </g>
+  </g>
+  <text x="100" y="215" font-family="Lexend, Arial, sans-serif" font-weight="800" font-size="30" fill="#7B5EBF" text-anchor="middle" letter-spacing="2">GuaJi</text>
+</svg>

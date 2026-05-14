@@ -4,6 +4,7 @@ import { conversationAPI, aiAPI, userAPI } from '../services/api';
 import { getAuthHeaders } from '../services/api';
 import RealTimeRecorder from '../components/RealTimeRecorder';
 import { AiAvatar } from '../components/AiAvatar';
+import { GuajiMascot } from '../components/GuajiMascot';
 import { getPersona } from '../config/personaConfig';
 import { PracticeReport } from '../components/PracticeReport';
 import { MessageBubble } from '../components/MessageBubble';
@@ -369,6 +370,9 @@ function Conversation() {
   // Track if tasks are loading to prevent showing "Loading tasks" when we know tasks exist
   const [tasksLoading, setTasksLoading] = useState(false);
   
+  // CC (immersive) mode — shows GuajiMascot overlay
+  const [ccMode, setCcMode] = useState(false);
+
   // Scenario Completion State
   const [showCompletionModal, setShowCompletionModal] = useState(false);
   const [scenarioScore, setScenarioScore] = useState(0);
@@ -2843,8 +2847,6 @@ function Conversation() {
               <MessageBubble
                 type={isAI ? 'ai' : 'user'}
                 message={displayContent}
-                avatarLetter={isAI ? persona.letter : undefined}
-                avatarColor={isAI ? persona.bgGradient : undefined}
                 state={isAI && (!msg.isFinal || (!msg.audioUrl && msg.audioPlayed !== true)) ? 'loading' : 'default'}
                 footer={msg.audioUrl ? (
                   <AudioBar
@@ -2890,6 +2892,35 @@ function Conversation() {
         <div ref={messagesEndRef} className="h-4" />
       </main>
 
+      {/* CC Immersive Overlay */}
+      {ccMode && (
+        <div style={{
+          position: 'absolute', inset: '56px 0 120px 0',
+          display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
+          background: 'radial-gradient(ellipse at top, rgba(99,127,241,0.18), transparent 60%) var(--background)',
+          zIndex: 10,
+        }}>
+          <button onClick={() => setCcMode(false)} style={{
+            position: 'absolute', top: 10, right: 14,
+            background: 'var(--card)', border: '1px solid var(--border-solid)',
+            borderRadius: 20, padding: '5px 12px', fontSize: 11, fontWeight: 600,
+            color: 'var(--foreground-muted)', cursor: 'pointer', fontFamily: 'inherit',
+          }}>退出 CC &times;</button>
+          <GuajiMascot state={avatarStatus} size={200} />
+          {messages.length > 0 && messages[messages.length - 1].role === 'ai' && (
+            <div style={{
+              marginTop: 16, padding: '10px 18px', borderRadius: 14,
+              background: 'rgba(0,0,0,0.72)', color: '#fff',
+              fontSize: 14, lineHeight: 1.5, maxWidth: '85%', textAlign: 'center', fontWeight: 500,
+              animation: 'subtitle-in 240ms ease-out',
+            }}>
+              {(messages[messages.length - 1].text || '').slice(0, 80)}
+              {(messages[messages.length - 1].text || '').length > 80 ? '...' : ''}
+            </div>
+          )}
+        </div>
+      )}
+
       {/* Footer / Controls */}
       <footer className="pb-4 pt-3 px-4 bg-white dark:bg-slate-900 border-t border-slate-100 dark:border-slate-800 shrink-0 shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.05)]">
         <div className="flex flex-col items-center gap-3">
@@ -2911,6 +2942,19 @@ function Conversation() {
                     />
                 </div>
                 
+                {/* CC Mode Toggle */}
+                <button
+                  onClick={() => setCcMode(v => !v)}
+                  className="flex-shrink-0 w-12 h-12 rounded-xl flex items-center justify-center transition"
+                  style={{
+                    border: ccMode ? '1.5px solid var(--primary)' : '1.5px solid var(--border-solid)',
+                    background: ccMode ? 'rgba(99,127,241,0.12)' : 'var(--card)',
+                    color: ccMode ? 'var(--primary)' : 'var(--foreground-muted)',
+                    fontSize: 13, fontWeight: 700,
+                  }}
+                  title="沉浸模式"
+                >CC</button>
+
                 {/* Restart Practice Button - Icon only */}
                 {(tasks.length > 0 || location.state?.scenario || new URLSearchParams(window.location.search).get('scenario')) && (
                     <button

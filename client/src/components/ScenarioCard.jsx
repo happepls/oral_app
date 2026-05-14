@@ -1,139 +1,85 @@
-import { Play, Clock, Star, Lock } from "lucide-react";
-import { motion } from "motion/react";
-import designTokens from "../imports/design-tokens.json";
-
-const difficultyColors = {
-  beginner: { bg: "#10B981", text: "#FFFFFF" },
-  intermediate: { bg: "#F6B443", text: "#FFFFFF" },
-  advanced: { bg: "#FB7250", text: "#FFFFFF" },
-};
-
-const difficultyLabels = {
-  beginner: "初级",
-  intermediate: "中级",
-  advanced: "高级",
-};
+import { DiffBadge } from './DiffBadge';
 
 export function ScenarioCard({
   title,
-  description,
-  image,
-  emoji = '',
-  duration,
-  difficulty = "intermediate",
-  rating,
+  emoji = '📚',
+  difficulty = 'intermediate',
   progress = 0,
-  state = "default",
+  state = 'default',
   onStart,
 }) {
-  const tokens = designTokens.global;
-
-  const isLocked = state === "locked";
-  const isSelected = state === "selected";
+  const isLocked = state === 'locked';
+  const isCompleted = progress === 100;
 
   return (
-    <motion.div
-      whileHover={!isLocked ? { y: -4 } : {}}
-      transition={{ duration: 0.25, ease: [0.4, 0, 0.2, 1] }}
-      className="relative bg-white rounded-2xl shadow-md overflow-hidden cursor-pointer transition-all"
+    <div
+      onClick={!isLocked ? onStart : undefined}
       style={{
-        borderWidth: isSelected ? "2px" : "1px",
-        borderColor: isSelected ? tokens.color.primary.value : "#E5E7EB",
-        borderStyle: "solid",
-        opacity: isLocked ? 0.6 : 1,
+        background: 'var(--card)', borderRadius: 'var(--radius-lg)', overflow: 'hidden',
+        border: '1.5px solid var(--border-solid)', boxShadow: 'var(--shadow-card)',
+        cursor: isLocked ? 'default' : 'pointer', opacity: isLocked ? 0.6 : 1,
+        position: 'relative',
       }}
     >
-      {/* Lock Overlay */}
-      {isLocked && (
-        <div className="absolute inset-0 z-10 flex items-center justify-center bg-black/20 backdrop-blur-sm">
-          <div className="w-16 h-16 rounded-full bg-white flex items-center justify-center">
-            <Lock className="w-8 h-8 text-gray-600" />
-          </div>
+      <div style={{
+        height: 80, background: 'var(--gradient-scenario)',
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+        position: 'relative',
+      }}>
+        <span style={{ fontSize: 30 }}>{emoji}</span>
+        <div style={{
+          position: 'absolute', top: 8, left: 8, width: 26, height: 26,
+          borderRadius: '50%', background: 'var(--primary)', display: 'flex',
+          alignItems: 'center', justifyContent: 'center', color: '#fff', fontSize: 10,
+        }}>▶</div>
+        <div style={{ position: 'absolute', top: 8, right: 8 }}>
+          <DiffBadge diff={difficulty} />
         </div>
-      )}
-
-      {/* Image / Emoji 区域 */}
-      <div className="relative h-36 overflow-hidden bg-gradient-to-br from-indigo-50 to-purple-100">
-        {image ? (
-          <img src={image} alt={title} className="w-full h-full object-cover" />
-        ) : (
-          <div className="w-full h-full flex items-center justify-center">
-            <span className="text-5xl">{emoji || '📚'}</span>
-          </div>
-        )}
-
-        {/* Icon Badge */}
-        <div
-          className="absolute top-4 left-4 w-12 h-12 rounded-full flex items-center justify-center shadow-lg"
-          style={{ backgroundColor: tokens.color.primary.value }}
-        >
-          <Play className="w-6 h-6 text-white ml-0.5" />
-        </div>
-
-        {/* Difficulty Badge */}
-        {difficulty && (
-          <div
-            className="absolute top-4 right-4 px-3 py-1 rounded-full text-xs font-medium shadow-md"
-            style={{
-              backgroundColor: difficultyColors[difficulty].bg,
-              color: difficultyColors[difficulty].text,
-            }}
-          >
-            {difficultyLabels[difficulty]}
-          </div>
-        )}
       </div>
 
-      {/* Content */}
-      <div className="p-5">
-        <h3 className="text-lg font-semibold text-gray-900 mb-2 line-clamp-1">{title}</h3>
-        <p className="text-sm text-gray-600 mb-4 line-clamp-2">{description}</p>
+      <div style={{ padding: '10px 10px 12px' }}>
+        <div style={{
+          fontSize: 12, fontWeight: 600, color: 'var(--foreground)', marginBottom: 6,
+          whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+        }}>{title}</div>
 
-        {/* Meta Information */}
-        <div className="flex items-center gap-3 mb-4 text-sm text-gray-500">
-          {duration && (
-            <div className="flex items-center gap-1">
-              <Clock className="w-4 h-4" />
-              <span>{duration}</span>
+        {progress > 0 && progress < 100 && (
+          <div style={{ marginBottom: 6 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 9, color: 'var(--foreground-subtle)', marginBottom: 3 }}>
+              <span>进度</span><span>{progress}%</span>
             </div>
-          )}
-          {rating && (
-            <div className="flex items-center gap-1">
-              <Star className="w-4 h-4 fill-yellow-400 text-yellow-400" />
-              <span>{rating.toFixed(1)}</span>
-            </div>
-          )}
-        </div>
-
-        {/* Progress Bar */}
-        {progress > 0 && (
-          <div className="mb-4">
-            <div className="flex items-center justify-between text-xs text-gray-500 mb-1">
-              <span>进度</span>
-              <span>{progress}%</span>
-            </div>
-            <div className="w-full h-1 bg-gray-100 rounded-full overflow-hidden">
-              <div
-                className="h-full transition-all duration-300 rounded-full"
-                style={{ width: `${progress}%`, backgroundColor: tokens.color.primary.value }}
-              />
+            <div style={{ height: 3, background: '#F3F4F6', borderRadius: 3, overflow: 'hidden' }}>
+              <div style={{ width: `${progress}%`, height: '100%', background: 'var(--primary)', borderRadius: 3 }} />
             </div>
           </div>
         )}
 
-        {/* Action Button */}
         <button
-          onClick={onStart}
           disabled={isLocked}
-          className="w-full py-2 rounded-lg text-sm font-medium transition-colors"
           style={{
-            backgroundColor: isLocked ? "#D1D5DB" : tokens.color.primary.value,
-            color: "#FFFFFF",
+            width: '100%', padding: '6px 0', borderRadius: 9, border: 'none',
+            background: isLocked ? '#D1D5DB' : isCompleted ? 'var(--success)' : 'var(--primary)',
+            color: '#fff', fontSize: 11, fontWeight: 600,
+            cursor: isLocked ? 'not-allowed' : 'pointer',
+            fontFamily: 'Lexend, sans-serif',
           }}
         >
-          {isLocked ? "已锁定" : "开始练习"}
+          {isLocked ? '已锁定' : isCompleted ? '已完成 ✅' : '开始练习'}
         </button>
       </div>
-    </motion.div>
+
+      {isLocked && (
+        <div style={{
+          position: 'absolute', inset: 0, background: 'rgba(0,0,0,0.18)',
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          borderRadius: 'var(--radius-lg)',
+        }}>
+          <div style={{
+            width: 32, height: 32, background: '#fff', borderRadius: '50%',
+            display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 16,
+          }}>🔒</div>
+        </div>
+      )}
+    </div>
   );
 }

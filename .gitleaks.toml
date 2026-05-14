@@ -1,0 +1,23 @@
+title = "oral_app gitleaks config"
+
+[allowlist]
+  description = "Global allowlist"
+  paths = [
+    '''\.env\.example$''',
+    '''package-lock\.json$''',
+    '''node_modules/''',
+    '''\.venv/''',
+    '''get-pip\.py$''',
+  ]
+
+[[rules]]
+  id = "dashscope-api-key"
+  description = "DashScope / Qwen API Key"
+  regex = '''(?i)(dashscope|qwen|QWEN3_OMNI)[\w_]*[=:]\s*['"]?(sk-[a-zA-Z0-9]{32,})['"]?'''
+  tags = ["key", "dashscope"]
+
+[[rules]]
+  id = "jwt-secret-json"
+  description = "JWT Secret in JSON file"
+  regex = '''(?i)(JWT_SECRET|JWT_REFRESH_SECRET|SESSION_SECRET|ENCRYPTION_KEY)[\s]*[":]+\s*['"]?([a-fA-F0-9]{32,})['"]?'''
+  tags = ["key", "jwt"]

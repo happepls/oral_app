@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<link href="https://fonts.googleapis.com/css2?family=Lexend:wght@400;600;700&display=swap" rel="stylesheet">
+<style>
+  body { margin: 0; font-family: 'Lexend', sans-serif; background: #f6f7f8; padding: 20px; }
+  .section { margin-bottom: 16px; }
+  .section-label { font-size: 10px; font-weight: 600; color: #9CA3AF; text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 10px; }
+  .row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+  .btn { display: inline-flex; align-items: center; justify-content: center; gap: 6px; font-family: 'Lexend', sans-serif; font-weight: 600; border: none; border-radius: 20px; cursor: pointer; padding: 10px 20px; font-size: 14px; }
+  .btn-sm { padding: 7px 14px; font-size: 12px; border-radius: 12px; }
+  .btn-lg { padding: 14px 28px; font-size: 16px; border-radius: 20px; }
+  .primary { background: linear-gradient(135deg, #637FF1, #a47af6); color: #fff; box-shadow: 0 10px 23px rgba(137,171,241,0.25); }
+  .secondary { background: #c3cef8; color: #2d44ca; }
+  .ghost { background: transparent; color: #374151; border: 1.5px solid #E5E7EB; }
+  .danger { background: #e2412e; color: #fff; }
+  .warm { background: linear-gradient(135deg, #F6B443, #F97316); color: #fff; }
+  .disabled { background: #E5E7EB; color: #9CA3AF; cursor: not-allowed; }
+  .icon { font-size: 16px; }
+</style>
+</head>
+<body>
+  <div class="section">
+    <div class="section-label">Sizes</div>
+    <div class="row">
+      <button class="btn btn-sm primary">小按钮</button>
+      <button class="btn primary">标准按钮</button>
+      <button class="btn btn-lg primary">大按钮</button>
+    </div>
+  </div>
+  <div class="section">
+    <div class="section-label">Variants</div>
+    <div class="row">
+      <button class="btn primary">开始练习</button>
+      <button class="btn secondary">Secondary</button>
+      <button class="btn ghost">Ghost</button>
+      <button class="btn danger">删除</button>
+      <button class="btn warm">立即升级 👑</button>
+      <button class="btn disabled" disabled>已锁定</button>
+    </div>
+  </div>
+  <div class="section">
+    <div class="section-label">Full-width CTA</div>
+    <div style="max-width: 320px;">
+      <button class="btn primary" style="width:100%;border-radius:16px;padding:14px;">开始回答 →</button>
+    </div>
+  </div>
+</body>
+</html>

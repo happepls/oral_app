@@ -1,0 +1,233 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Motion Guidelines — Guaji AI</title>
+<link href="https://fonts.googleapis.com/css2?family=Lexend:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: 'Lexend', sans-serif; background: #f6f7f8; color: #1a1a1a; padding: 40px 32px 80px; }
+  .container { max-width: 1100px; margin: 0 auto; }
+  h1 { font-size: 28px; font-weight: 700; letter-spacing: -0.02em; margin-bottom: 4px; }
+  .sub { color: #6B7280; font-size: 14px; margin-bottom: 32px; max-width: 600px; line-height: 1.55; }
+  h2 { font-size: 12px; font-weight: 700; color: #6B7280; text-transform: uppercase; letter-spacing: 0.1em; margin: 32px 0 14px; }
+  .grid { display: grid; gap: 14px; }
+  .grid-3 { grid-template-columns: repeat(3, 1fr); }
+  .grid-2 { grid-template-columns: repeat(2, 1fr); }
+  .card { background: #fff; border-radius: 16px; padding: 18px; border: 1px solid #E5E7EB; }
+  .card .title { font-size: 14px; font-weight: 700; margin-bottom: 4px; }
+  .card .desc { font-size: 12px; color: #6B7280; line-height: 1.5; margin-bottom: 14px; }
+  .card .meta { font-size: 11px; color: #9CA3AF; margin-top: 12px; font-family: 'JetBrains Mono', monospace; }
+  .stage { background: #f6f7f8; border-radius: 10px; height: 88px; position: relative; overflow: hidden; display: flex; align-items: center; justify-content: center; }
+  .dot { width: 28px; height: 28px; border-radius: 50%; background: #637FF1; }
+  .easing-curve { width: 100%; height: 88px; background: #f6f7f8; border-radius: 10px; padding: 8px; }
+
+  /* Duration ramp dots */
+  .ramp { display: flex; gap: 10px; align-items: center; }
+  .ramp .dot { animation-iteration-count: infinite; animation-timing-function: cubic-bezier(0.4, 0, 0.2, 1); }
+  .d-fast { animation: slide 1.2s infinite; animation-delay: 0s; }
+  .d-base { animation: slide 1.2s infinite; animation-delay: 0.1s; }
+  .d-slow { animation: slide 1.2s infinite; animation-delay: 0.2s; }
+  @keyframes slide { 0%, 100% { transform: translateX(0); } 50% { transform: translateX(40px); } }
+
+  /* Demos */
+  .demo-fade { animation: fade 2.4s ease-in-out infinite; }
+  @keyframes fade { 0%, 100% { opacity: 1; } 50% { opacity: 0.2; } }
+
+  .demo-rise { animation: rise 2.4s cubic-bezier(0.16, 1, 0.3, 1) infinite; }
+  @keyframes rise { 0% { transform: translateY(20px); opacity: 0; } 30%, 70% { transform: translateY(0); opacity: 1; } 100% { transform: translateY(-20px); opacity: 0; } }
+
+  .demo-spring { animation: spring 1.6s cubic-bezier(0.34, 1.56, 0.64, 1) infinite; }
+  @keyframes spring { 0%, 100% { transform: scale(0.7); } 50% { transform: scale(1.1); } }
+
+  .demo-pulse { animation: pulse 1.6s ease-in-out infinite; }
+  @keyframes pulse { 0%, 100% { transform: scale(1); box-shadow: 0 0 0 0 rgba(99,127,241,0.7); } 50% { transform: scale(1.05); box-shadow: 0 0 0 18px rgba(99,127,241,0); } }
+
+  .demo-thinking { display: flex; gap: 4px; }
+  .demo-thinking span { width: 10px; height: 10px; border-radius: 50%; background: #637FF1; animation: think 1.2s ease-in-out infinite; }
+  .demo-thinking span:nth-child(2) { animation-delay: 0.15s; }
+  .demo-thinking span:nth-child(3) { animation-delay: 0.3s; }
+  @keyframes think { 0%, 80%, 100% { opacity: 0.3; transform: translateY(0); } 40% { opacity: 1; transform: translateY(-6px); } }
+
+  .demo-recording {
+    width: 56px; height: 56px; border-radius: 50%;
+    background: linear-gradient(135deg, #e2412e, #f87171);
+    animation: rec 1.2s ease-in-out infinite;
+  }
+  @keyframes rec { 0%, 100% { transform: scale(1); box-shadow: 0 0 0 0 rgba(226,65,46,0.6); } 50% { transform: scale(1.04); box-shadow: 0 0 0 16px rgba(226,65,46,0); } }
+
+  .demo-checkmark svg { animation: check-pop 1.6s cubic-bezier(0.34, 1.56, 0.64, 1) infinite; }
+  @keyframes check-pop { 0%, 100% { transform: scale(0.6); opacity: 0; } 30%, 70% { transform: scale(1); opacity: 1; } }
+
+  /* Tokens table */
+  .tokens-grid { display: grid; grid-template-columns: 120px 80px 1fr; gap: 8px 16px; align-items: center; font-size: 13px; }
+  .tokens-grid .row { display: contents; }
+  .tokens-grid .name { font-weight: 600; }
+  .tokens-grid .value { font-family: 'JetBrains Mono', monospace; color: #637FF1; font-size: 12px; }
+  .tokens-grid .desc { color: #6B7280; font-size: 12px; }
+  .tokens-grid .header { font-size: 10px; font-weight: 700; color: #9CA3AF; text-transform: uppercase; letter-spacing: 0.08em; padding-bottom: 4px; border-bottom: 1px solid #E5E7EB; }
+
+  /* Don'ts */
+  .principles { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  .do, .dont { padding: 12px 14px; border-radius: 10px; font-size: 12px; line-height: 1.5; }
+  .do { background: rgba(16,185,129,0.08); border-left: 3px solid #10B981; }
+  .dont { background: rgba(226,65,46,0.06); border-left: 3px solid #e2412e; }
+  .do strong { color: #10B981; } .dont strong { color: #e2412e; }
+</style>
+</head>
+<body>
+<div class="container">
+  <h1>Motion Guidelines</h1>
+  <p class="sub">How Guaji moves. Motion exists to clarify state — never to decorate. Speaking, listening, thinking, and rewards each have a signature animation; everything else uses the standard ease-out at base duration.</p>
+
+  <h2>Principles</h2>
+  <div class="principles">
+    <div class="do"><strong>Do</strong> — animate <em>state changes</em>: AI started speaking, mic is hot, answer was correct.</div>
+    <div class="dont"><strong>Don't</strong> — animate things that don't change state: idle decoration, hover wobble, parallax for parallax's sake.</div>
+    <div class="do"><strong>Do</strong> — keep durations between 120ms and 400ms for UI; longer only for character (mascot) and rewards.</div>
+    <div class="dont"><strong>Don't</strong> — block input. If a transition lasts &gt;250ms, the user should be able to interrupt or skip it.</div>
+    <div class="do"><strong>Do</strong> — respect <code>prefers-reduced-motion</code>. Disable bob, pulse, and spring; keep fades.</div>
+    <div class="dont"><strong>Don't</strong> — use bouncy / spring easing on functional UI (modals, sheets, menus). Reserve it for character &amp; celebration.</div>
+  </div>
+
+  <h2>Duration tokens</h2>
+  <div class="card">
+    <div class="tokens-grid">
+      <div class="row"><div class="header">Token</div><div class="header">Value</div><div class="header">Use</div></div>
+      <div class="row"><div class="name">--motion-instant</div><div class="value">80ms</div><div class="desc">Hover, focus, button press feedback.</div></div>
+      <div class="row"><div class="name">--motion-fast</div><div class="value">160ms</div><div class="desc">Toggle, tab switch, small state flips.</div></div>
+      <div class="row"><div class="name">--motion-base</div><div class="value">240ms</div><div class="desc">Default — most transitions.</div></div>
+      <div class="row"><div class="name">--motion-slow</div><div class="value">400ms</div><div class="desc">Modals, sheets, scenario card open.</div></div>
+      <div class="row"><div class="name">--motion-character</div><div class="value">1200ms+</div><div class="desc">Mascot bob, idle loop, ambient.</div></div>
+    </div>
+  </div>
+
+  <h2>Easing tokens</h2>
+  <div class="grid grid-3">
+    <div class="card">
+      <div class="title">Standard</div>
+      <div class="desc">Default for UI. Decelerates into rest.</div>
+      <svg class="easing-curve" viewBox="0 0 100 80" preserveAspectRatio="none">
+        <path d="M 8 72 C 24 72, 36 8, 92 8" fill="none" stroke="#637FF1" stroke-width="2"/>
+        <line x1="8" y1="72" x2="92" y2="72" stroke="#E5E7EB" stroke-width="1"/>
+        <line x1="8" y1="8" x2="8" y2="72" stroke="#E5E7EB" stroke-width="1"/>
+      </svg>
+      <div class="meta">cubic-bezier(0.4, 0, 0.2, 1)</div>
+    </div>
+    <div class="card">
+      <div class="title">Emphasized</div>
+      <div class="desc">For sheets, scenario cards. Strong settle.</div>
+      <svg class="easing-curve" viewBox="0 0 100 80" preserveAspectRatio="none">
+        <path d="M 8 72 C 16 72, 28 8, 92 8" fill="none" stroke="#a47af6" stroke-width="2"/>
+        <line x1="8" y1="72" x2="92" y2="72" stroke="#E5E7EB" stroke-width="1"/>
+        <line x1="8" y1="8" x2="8" y2="72" stroke="#E5E7EB" stroke-width="1"/>
+      </svg>
+      <div class="meta">cubic-bezier(0.16, 1, 0.3, 1)</div>
+    </div>
+    <div class="card">
+      <div class="title">Spring (character)</div>
+      <div class="desc">Mascot &amp; celebration only. Slight overshoot.</div>
+      <svg class="easing-curve" viewBox="0 0 100 80" preserveAspectRatio="none">
+        <path d="M 8 72 C 30 72, 30 -10, 60 12 C 78 22, 80 8, 92 8" fill="none" stroke="#F6B443" stroke-width="2"/>
+        <line x1="8" y1="72" x2="92" y2="72" stroke="#E5E7EB" stroke-width="1"/>
+        <line x1="8" y1="8" x2="8" y2="72" stroke="#E5E7EB" stroke-width="1"/>
+      </svg>
+      <div class="meta">cubic-bezier(0.34, 1.56, 0.64, 1)</div>
+    </div>
+  </div>
+
+  <h2>Signature motions</h2>
+  <div class="grid grid-3">
+    <div class="card">
+      <div class="title">Idle bob</div>
+      <div class="desc">Mascot ambient breath. Always on.</div>
+      <div class="stage">
+        <div class="dot demo-spring" style="animation-duration: 3.2s;"></div>
+      </div>
+      <div class="meta">3200ms · ease-in-out · Y: ±5px</div>
+    </div>
+    <div class="card">
+      <div class="title">AI speaking</div>
+      <div class="desc">Beak opens; waveform pulses; mascot bob speeds up.</div>
+      <div class="stage">
+        <div class="dot demo-pulse"></div>
+      </div>
+      <div class="meta">1600ms loop · ease-in-out</div>
+    </div>
+    <div class="card">
+      <div class="title">Thinking</div>
+      <div class="desc">Three dots wave. Indicates processing.</div>
+      <div class="stage">
+        <div class="demo-thinking"><span></span><span></span><span></span></div>
+      </div>
+      <div class="meta">1200ms · 150ms stagger</div>
+    </div>
+    <div class="card">
+      <div class="title">Recording</div>
+      <div class="desc">Mic ring expands &amp; fades. Indicates hot mic.</div>
+      <div class="stage">
+        <div class="demo-recording"></div>
+      </div>
+      <div class="meta">1200ms · ease-in-out</div>
+    </div>
+    <div class="card">
+      <div class="title">Bubble enter</div>
+      <div class="desc">Message appears: rise + fade. No bounce.</div>
+      <div class="stage">
+        <div style="background:#637FF1; color:#fff; border-radius:14px; padding:8px 14px; font-size:12px;" class="demo-rise">Hello!</div>
+      </div>
+      <div class="meta">320ms · emphasized</div>
+    </div>
+    <div class="card">
+      <div class="title">Reward checkmark</div>
+      <div class="desc">Correct answer. Spring scale 0.6 → 1.</div>
+      <div class="stage demo-checkmark">
+        <svg width="40" height="40" viewBox="0 0 40 40">
+          <circle cx="20" cy="20" r="18" fill="#10B981"/>
+          <path d="M 12 20 L 18 26 L 28 14" stroke="#fff" stroke-width="3" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+      </div>
+      <div class="meta">600ms · spring</div>
+    </div>
+  </div>
+
+  <h2>Page &amp; sheet transitions</h2>
+  <div class="grid grid-2">
+    <div class="card">
+      <div class="title">Forward navigation (push)</div>
+      <div class="desc">Right-to-left slide. Outgoing screen darkens 8%.</div>
+      <div class="meta">slow · emphasized · 400ms</div>
+    </div>
+    <div class="card">
+      <div class="title">Modal / scenario card</div>
+      <div class="desc">Scale 0.96 → 1 with fade. Backdrop fades to 50% black.</div>
+      <div class="meta">slow · emphasized · 360ms</div>
+    </div>
+    <div class="card">
+      <div class="title">Bottom sheet</div>
+      <div class="desc">Slides up from below. Drag-to-dismiss is 1:1 with finger.</div>
+      <div class="meta">slow · emphasized · 320ms</div>
+    </div>
+    <div class="card">
+      <div class="title">Theme toggle</div>
+      <div class="desc">Color-only crossfade — no scale or motion. Avoid jarring flicker.</div>
+      <div class="meta">base · standard · 240ms</div>
+    </div>
+  </div>
+
+  <h2>Reduced motion</h2>
+  <div class="card">
+    <div style="font-size: 13px; line-height: 1.6; color: #374151;">
+      Honor the OS-level <code>prefers-reduced-motion</code> media query. When set:
+      <ul style="margin: 10px 0 0 20px;">
+        <li>Disable mascot bob, idle pulse, recording ring.</li>
+        <li>Replace slide transitions with crossfades (160ms).</li>
+        <li>Keep functional state animations (thinking dots, checkmark) but reduce duration by 30%.</li>
+      </ul>
+    </div>
+  </div>
+</div>
+</body>
+</html>
+</content>
+</invoke>

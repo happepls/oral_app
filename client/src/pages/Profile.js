@@ -221,7 +221,7 @@ function Profile() {
   }
 
   return (
-    <div className="relative flex flex-col min-h-screen w-full bg-background-light dark:bg-background-dark">
+    <div className="relative flex flex-col min-h-screen w-full" style={{ background: 'var(--background)' }}>
       {/* Top App Bar */}
       <div className="flex items-center bg-white dark:bg-slate-800 px-4 py-3 justify-between sticky top-0 z-10 border-b border-slate-100 dark:border-slate-700 shadow-sm">
         <button

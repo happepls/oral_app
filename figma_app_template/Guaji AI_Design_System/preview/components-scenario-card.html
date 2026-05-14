@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<link href="https://fonts.googleapis.com/css2?family=Lexend:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  body { margin: 0; font-family: 'Lexend', sans-serif; background: #f6f7f8; padding: 20px; }
+  .grid { display: flex; gap: 14px; }
+  .card { background: #fff; border-radius: 20px; overflow: hidden; border: 1.5px solid #E5E7EB; flex: 1; box-shadow: 0 1px 3px rgba(0,0,0,0.08); cursor: pointer; transition: transform 0.2s; }
+  .card:hover { transform: translateY(-4px); box-shadow: 0 10px 23px rgba(137,171,241,0.18); }
+  .card.selected { border-color: #637FF1; border-width: 2px; }
+  .card.locked { opacity: 0.6; }
+  .img-area { height: 100px; display: flex; align-items: center; justify-content: center; position: relative; }
+  .emoji { font-size: 36px; }
+  .play-btn { position: absolute; top: 10px; left: 10px; width: 32px; height: 32px; border-radius: 50%; background: #637FF1; display: flex; align-items: center; justify-content: center; color: #fff; font-size: 12px; box-shadow: 0 4px 8px rgba(99,127,241,0.35); }
+  .diff-badge { position: absolute; top: 10px; right: 10px; padding: 2px 8px; border-radius: 9999px; font-size: 10px; font-weight: 600; }
+  .body { padding: 12px; }
+  .title { font-size: 14px; font-weight: 600; color: #111827; margin-bottom: 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .desc { font-size: 12px; color: #6B7280; margin-bottom: 10px; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+  .progress-row { display: flex; justify-content: space-between; font-size: 10px; color: #9CA3AF; margin-bottom: 4px; }
+  .progress-bar { height: 3px; background: #F3F4F6; border-radius: 3px; overflow: hidden; margin-bottom: 10px; }
+  .progress-fill { height: 100%; background: #637FF1; border-radius: 3px; }
+  .cta { width: 100%; padding: 8px; border-radius: 10px; border: none; font-family: 'Lexend',sans-serif; font-size: 12px; font-weight: 600; color: #fff; background: #637FF1; cursor: pointer; }
+  .lock-overlay { position: absolute; inset: 0; background: rgba(0,0,0,0.2); display: flex; align-items: center; justify-content: center; border-radius: 20px; }
+</style>
+</head>
+<body>
+<div class="grid">
+  <!-- Default -->
+  <div class="card">
+    <div class="img-area" style="background:linear-gradient(135deg,#EEF2FF,#F5F3FF);">
+      <div class="emoji">💼</div>
+      <div class="play-btn">▶</div>
+      <div class="diff-badge" style="background:#10B981;color:#fff;">初级</div>
+    </div>
+    <div class="body">
+      <div class="title">商务自我介绍</div>
+      <div class="desc">介绍你的职位和公司，询问对方公司信息</div>
+      <button class="cta">开始练习</button>
+    </div>
+  </div>
+  <!-- In-progress -->
+  <div class="card selected">
+    <div class="img-area" style="background:linear-gradient(135deg,#EEF2FF,#F5F3FF);">
+      <div class="emoji">✈️</div>
+      <div class="play-btn">▶</div>
+      <div class="diff-badge" style="background:#F6B443;color:#fff;">中级</div>
+    </div>
+    <div class="body">
+      <div class="title">机场值机</div>
+      <div class="desc">要靠窗座位，托运行李，询问登机时间</div>
+      <div class="progress-row"><span>进度</span><span>60%</span></div>
+      <div class="progress-bar"><div class="progress-fill" style="width:60%;"></div></div>
+      <button class="cta">继续练习</button>
+    </div>
+  </div>
+  <!-- Locked -->
+  <div class="card locked" style="position:relative;">
+    <div class="img-area" style="background:linear-gradient(135deg,#EEF2FF,#F5F3FF);">
+      <div class="emoji">🏥</div>
+      <div class="diff-badge" style="background:#FB7250;color:#fff;">高级</div>
+    </div>
+    <div class="body">
+      <div class="title">看医生</div>
+      <div class="desc">描述症状，询问药物，询问恢复时间</div>
+      <button class="cta" style="background:#D1D5DB;cursor:not-allowed;">已锁定</button>
+    </div>
+    <div class="lock-overlay"><div style="width:36px;height:36px;background:#fff;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:18px;">🔒</div></div>
+  </div>
+</div>
+</body>
+</html>

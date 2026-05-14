@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<link href="https://fonts.googleapis.com/css2?family=Lexend:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  @font-face {
+    font-family: 'Arial Unicode';
+    src: url('../fonts/Arial_Unicode.ttf') format('truetype');
+    font-weight: 400;
+    font-style: normal;
+    font-display: swap;
+  }
+  body { margin: 0; font-family: 'Lexend', 'Arial Unicode', sans-serif; background: #fff; padding: 24px; display: flex; gap: 16px; flex-wrap: wrap; }
+  .block { flex: 1; min-width: 280px; background: #f6f7f8; border-radius: 14px; padding: 20px; }
+  .label { font-size: 10px; font-weight: 600; color: #9CA3AF; text-transform: uppercase; letter-spacing: 0.08em; margin-bottom: 12px; }
+  .weights { display: flex; flex-direction: column; gap: 6px; }
+  .wrow { display: flex; align-items: baseline; justify-content: space-between; }
+  .wsample-en { font-size: 20px; color: #1a1a1a; font-family: 'Lexend', sans-serif; }
+  .wspec { font-size: 10px; color: #9CA3AF; }
+  .mono-sample { font-family: 'Menlo', 'Monaco', monospace; font-size: 13px; color: #637FF1; background: #EEF2FF; padding: 8px 12px; border-radius: 8px; margin-top: 8px; }
+  .cjk-block { background: #fff; border-radius: 10px; padding: 14px; margin-top: 10px; border: 1px solid #E5E7EB; }
+  .cjk-label { font-size: 10px; font-weight: 600; color: #9CA3AF; text-transform: uppercase; letter-spacing: 0.08em; margin-bottom: 8px; }
+  .cjk-sample { font-family: 'Arial Unicode', sans-serif; font-size: 22px; color: #1a1a1a; line-height: 1.6; }
+  .cjk-sub { font-size: 11px; color: #9CA3AF; margin-top: 6px; }
+  .stack-pill { display: inline-block; background: #EEF2FF; color: #637FF1; font-size: 11px; padding: 3px 8px; border-radius: 4px; margin-top: 8px; font-family: monospace; }
+</style>
+</head>
+<body>
+  <!-- Lexend weights -->
+  <div class="block">
+    <div class="label">Display — Lexend (Latin, UI)</div>
+    <div class="weights">
+      <div class="wrow"><span class="wsample-en" style="font-weight:300;">Light 300</span><span class="wspec">300</span></div>
+      <div class="wrow"><span class="wsample-en" style="font-weight:400;">Regular 400</span><span class="wspec">400</span></div>
+      <div class="wrow"><span class="wsample-en" style="font-weight:500;">Medium 500</span><span class="wspec">500</span></div>
+      <div class="wrow"><span class="wsample-en" style="font-weight:600;">SemiBold 600</span><span class="wspec">600</span></div>
+      <div class="wrow"><span class="wsample-en" style="font-weight:700;">Bold 700</span><span class="wspec">700</span></div>
+    </div>
+    <div class="stack-pill">'Lexend', 'Arial Unicode', system-ui</div>
+  </div>
+
+  <!-- Arial Unicode CJK -->
+  <div class="block">
+    <div class="label">Arial Unicode (uploaded) — CJK fallback</div>
+    <div class="cjk-block">
+      <div class="cjk-label">Simplified Chinese</div>
+      <div class="cjk-sample">说出来的速度不需要追求完美</div>
+      <div class="cjk-sub">Body 16px · color #374151</div>
+    </div>
+    <div class="cjk-block">
+      <div class="cjk-label">Japanese</div>
+      <div class="cjk-sample">今日の朝ごはんは何を食べましたか？</div>
+      <div class="cjk-sub">Body 16px · Scenario prompt</div>
+    </div>
+    <div class="cjk-block">
+      <div class="cjk-label">Korean</div>
+      <div class="cjk-sample">오늘 아침에 무엇을 먹었나요？</div>
+      <div class="cjk-sub">Body 16px · Scenario prompt</div>
+    </div>
+    <div style="margin-top: 10px;">
+      <div class="label">Monospace (code blocks only)</div>
+      <div class="mono-sample">const greeting = "早上好";</div>
+    </div>
+  </div>
+
+  <!-- Usage note -->
+  <div style="width: 100%; background: #FAFAFA; border-radius: 12px; padding: 14px 18px; border: 1px solid #E5E7EB; font-size: 13px; color: #374151; line-height: 1.6;">
+    <strong>Font stack:</strong> <code style="background:#EEF2FF;color:#637FF1;padding:2px 6px;border-radius:4px;font-size:12px;">'Lexend', 'Arial Unicode', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif</code>
+    <br/>
+    Lexend renders all Latin UI text. Arial Unicode (local TTF, <code style="background:#EEF2FF;color:#637FF1;padding:2px 6px;border-radius:4px;font-size:12px;">fonts/Arial_Unicode.ttf</code>) provides on-brand CJK coverage for Chinese, Japanese, and Korean conversation content. System fonts are last-resort only.
+  </div>
+</body>
+</html>

@@ -70,11 +70,8 @@ function Landing() {
       <nav className="fixed top-0 left-0 right-0 z-50 bg-white/80 dark:bg-slate-900/80 backdrop-blur-md border-b border-slate-200 dark:border-slate-800">
         <div className="max-w-6xl mx-auto px-4 py-4 flex items-center justify-between">
           <div className="flex items-center gap-2">
-            <div
-              className="w-8 h-8 rounded-lg"
-              style={{ background: 'linear-gradient(135deg, #637FF1, #a47af6)' }}
-            />
-            <span className="text-xl font-bold text-slate-900 dark:text-white">Guaji AI</span>
+            <img src="/guaji-icon.png" alt="GuaJi" className="w-8 h-8 rounded-lg" />
+            <span className="text-xl font-bold text-slate-900 dark:text-white">GuaJi AI</span>
           </div>
           <div className="flex items-center gap-3">
             <LanguageSwitcher />
@@ -95,30 +92,35 @@ function Landing() {
         </div>
       </nav>
 
-      {/* ── Hero ── */}
-      <section className="pt-32 pb-20 px-4">
-        <div className="max-w-4xl mx-auto text-center">
+      {/* ── Hero (dark navy) ── */}
+      <section className="pt-24 pb-20 px-4 relative overflow-hidden" style={{ background: '#1F2D5C' }}>
+        <div style={{
+          position: 'absolute', right: 0, bottom: 0, width: '60%', height: '100%',
+          background: 'radial-gradient(ellipse at 80% 60%, rgba(164,122,246,0.2) 0%, transparent 65%)',
+          pointerEvents: 'none',
+        }} />
+        <div className="max-w-4xl mx-auto text-center relative z-10 pt-12">
           <motion.div
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.5 }}
           >
             <div
-              className="inline-block px-4 py-1.5 rounded-full text-sm font-medium mb-6 text-primary"
-              style={{ backgroundColor: '#637FF115' }}
+              className="inline-block px-4 py-1.5 rounded-full text-sm font-medium mb-6"
+              style={{ backgroundColor: 'rgba(255,255,255,0.15)', color: '#fff' }}
             >
               {t('landing_badge')}
             </div>
-            <h1 className="text-4xl md:text-6xl font-bold text-slate-900 dark:text-white leading-tight mb-6">
+            <h1 className="text-4xl md:text-6xl font-bold leading-tight mb-6" style={{ color: '#fff' }}>
               {t('landing_hero_title')}<br />
               <span
                 className="text-transparent bg-clip-text"
-                style={{ backgroundImage: 'linear-gradient(135deg, #637FF1, #a47af6)' }}
+                style={{ backgroundImage: 'linear-gradient(90deg, #c3cef8, #a47af6)' }}
               >
                 {t('landing_hero_highlight')}
               </span>
             </h1>
-            <p className="text-xl text-slate-600 dark:text-slate-400 mb-10 max-w-2xl mx-auto">
+            <p className="text-xl mb-10 max-w-2xl mx-auto" style={{ color: 'rgba(255,255,255,0.72)' }}>
               {t('landing_hero_desc')}
             </p>
             <div className="flex flex-col sm:flex-row gap-4 justify-center">

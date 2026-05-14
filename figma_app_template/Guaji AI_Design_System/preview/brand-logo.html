@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<link href="https://fonts.googleapis.com/css2?family=Lexend:wght@400;600;700;800&display=swap" rel="stylesheet">
+<style>
+  body { margin: 0; font-family: 'Lexend', sans-serif; background: #f6f7f8; padding: 24px; color: #1a1a1a; }
+  h2 { font-size: 11px; font-weight: 700; color: #6B7280; text-transform: uppercase; letter-spacing: 0.08em; margin: 0 0 14px; }
+  .row { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
+  .row-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  .panel { background: #fff; border-radius: 18px; padding: 24px; display: flex; flex-direction: column; align-items: center; gap: 14px; border: 1px solid #E5E7EB; min-height: 200px; justify-content: center; }
+  .label { font-size: 10px; font-weight: 600; color: #9CA3AF; text-transform: uppercase; letter-spacing: 0.08em; align-self: flex-start; }
+  .dark { background: #101922; color: #F8FAFC; border: none; }
+  .dark .label { color: #64748B; }
+  .brand-bg { background: #7B77CA; }
+  .brand-bg .label { color: rgba(255,255,255,0.7); }
+</style>
+</head>
+<body>
+
+<h2>App Icon · GuaJi 吉祥物</h2>
+<div class="row" style="margin-bottom: 24px;">
+  <div class="panel">
+    <div class="label">Default — light</div>
+    <img src="../assets/logo-app-icon.jpg" width="120" height="120" alt="GuaJi mascot" style="border-radius: 26px; box-shadow: 0 8px 24px rgba(99,127,241,0.2);"/>
+  </div>
+  <div class="panel brand-bg">
+    <div class="label">On brand</div>
+    <img src="../assets/logo-app-icon.jpg" width="96" height="96" alt="GuaJi mascot" style="border-radius: 22px; box-shadow: 0 12px 28px rgba(0,0,0,0.25);"/>
+  </div>
+  <div class="panel dark">
+    <div class="label">On dark</div>
+    <img src="../assets/logo-app-icon.jpg" width="96" height="96" alt="GuaJi mascot" style="border-radius: 22px; box-shadow: 0 12px 28px rgba(0,0,0,0.5);"/>
+  </div>
+</div>
+
+<h2>Logo Lockup System</h2>
+<div class="row-2" style="margin-bottom: 24px;">
+  <div class="panel" style="min-height: 260px;">
+    <div class="label">Complete lockup reference</div>
+    <img src="../assets/logo-lockup.jpg" alt="GuaJi Logo Lockup System" style="width: 100%; max-width: 440px; border-radius: 10px;"/>
+  </div>
+  <div style="display: flex; flex-direction: column; gap: 12px;">
+    <!-- Vertical stack with original icon -->
+    <div class="panel brand-bg" style="min-height: 120px; flex: 1;">
+      <div class="label">Vertical stack</div>
+      <div style="display: flex; flex-direction: column; align-items: center; gap: 6px;">
+        <img src="../assets/logo-app-icon.jpg" width="64" height="64" alt="GuaJi mascot" style="border-radius: 12px;"/>
+        <div style="color: rgba(248,208,181,0.85); font-size: 10px; font-weight: 500; font-family: Lexend, sans-serif; letter-spacing: 0.04em;">AI口语练习伙伴</div>
+      </div>
+    </div>
+    <!-- Horizontal lockup -->
+    <div class="panel dark" style="min-height: 80px; flex: 1;">
+      <div class="label">Horizontal — dark</div>
+      <div style="display: flex; align-items: center; gap: 10px;">
+        <img src="../assets/logo-app-icon.jpg" width="44" height="44" alt="GuaJi mascot" style="border-radius: 10px;"/>
+        <div>
+          <div style="color: #F8D0B5; font-size: 18px; font-weight: 700; font-family: Lexend, sans-serif; letter-spacing: -0.01em; line-height: 1.1;">GuaJi</div>
+          <div style="color: rgba(255,255,255,0.55); font-size: 10px; font-family: Lexend, sans-serif;">AI口语练习伙伴</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<h2>Mascot character — 1:1</h2>
+<div class="row">
+  <!-- Main mascot -->
+  <div class="panel" style="background: #f0eeff; border: 1.5px solid #d4c8f8; min-height: 280px;">
+    <div class="label">Mascot — default</div>
+    <img src="../assets/logo-app-icon.jpg" width="140" height="140" alt="GuaJi mascot" style="border-radius: 20px; box-shadow: 0 8px 24px rgba(99,127,241,0.18);"/>
+  </div>
+
+  <!-- App icon version -->
+  <div class="panel brand-bg" style="min-height: 280px;">
+    <div class="label">App icon form</div>
+    <div style="width: 160px; height: 160px; background: #7B77CA; border-radius: 36px; display: flex; align-items: center; justify-content: center; box-shadow: 0 16px 40px rgba(80,60,180,0.4); overflow: hidden;">
+      <img src="../assets/logo-app-icon.jpg" width="140" height="140" alt="GuaJi mascot" style="border-radius: 28px;"/>
+    </div>
+  </div>
+
+  <!-- Reference comparison -->
+  <div class="panel dark" style="min-height: 280px;">
+    <div class="label">Reference (original)</div>
+    <img src="../assets/logo-app-icon.jpg" width="160" height="160" alt="GuaJi mascot" style="border-radius: 36px; box-shadow: 0 16px 40px rgba(0,0,0,0.4);"/>
+  </div>
+</div>
+
+</body>
+</html>

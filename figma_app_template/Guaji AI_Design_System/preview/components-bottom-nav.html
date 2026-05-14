@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<link href="https://fonts.googleapis.com/css2?family=Lexend:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@24,400,0,0" />
+<style>
+  body { margin: 0; font-family: 'Lexend', sans-serif; background: #f6f7f8; padding: 20px; display: flex; flex-direction: column; gap: 16px; }
+  .label { font-size: 10px; font-weight: 600; color: #9CA3AF; text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 6px; }
+  .nav { background: rgba(246,247,248,0.95); border-top: 1px solid #E5E7EB; border-radius: 16px; padding: 10px 16px; display: flex; align-items: center; justify-content: space-around; max-width: 460px; backdrop-filter: blur(8px); }
+  .nav-item { display: flex; flex-direction: column; align-items: center; gap: 3px; padding: 6px 14px; cursor: pointer; }
+  .nav-item .icon { font-size: 22px; }
+  .nav-item .nav-label { font-size: 11px; font-weight: 500; }
+  .nav-item.active .icon { color: #637FF1; }
+  .nav-item.active .nav-label { font-weight: 700; color: #637FF1; }
+  .nav-item.inactive { color: #9CA3AF; }
+  .material-symbols-outlined { font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24; }
+</style>
+</head>
+<body>
+  <div>
+    <div class="label">3-Tab Layout</div>
+    <div class="nav">
+      <div class="nav-item active">
+        <span class="material-symbols-outlined icon">home</span>
+        <span class="nav-label">首页</span>
+      </div>
+      <div class="nav-item inactive">
+        <span class="material-symbols-outlined icon">flag</span>
+        <span class="nav-label">目标</span>
+      </div>
+      <div class="nav-item inactive">
+        <span class="material-symbols-outlined icon">person</span>
+        <span class="nav-label">我的</span>
+      </div>
+    </div>
+  </div>
+  <div>
+    <div class="label">5-Tab Layout</div>
+    <div class="nav">
+      <div class="nav-item active">
+        <span class="material-symbols-outlined icon">home</span>
+        <span class="nav-label">首页</span>
+      </div>
+      <div class="nav-item inactive">
+        <span class="material-symbols-outlined icon">explore</span>
+        <span class="nav-label">发现</span>
+      </div>
+      <div class="nav-item inactive">
+        <span class="material-symbols-outlined icon">flag</span>
+        <span class="nav-label">目标</span>
+      </div>
+      <div class="nav-item inactive">
+        <span class="material-symbols-outlined icon">history</span>
+        <span class="nav-label">历史</span>
+      </div>
+      <div class="nav-item inactive">
+        <span class="material-symbols-outlined icon">person</span>
+        <span class="nav-label">我的</span>
+      </div>
+    </div>
+  </div>
+</body>
+</html>

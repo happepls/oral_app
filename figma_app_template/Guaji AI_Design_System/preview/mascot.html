@@ -1,0 +1,206 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<title>Mascot — Guaji AI</title>
+<link href="https://fonts.googleapis.com/css2?family=Lexend:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  * { box-sizing: border-box; }
+  body { margin: 0; padding: 56px 32px 96px; background: #f6f7f8; font-family: 'Lexend', sans-serif; color: #1a1a1a; }
+  h1 { font-size: 32px; font-weight: 700; margin: 0 0 4px; letter-spacing: -0.025em; }
+  .sub { color: #6B7280; font-size: 14px; margin: 0 0 32px; max-width: 600px; line-height: 1.55; }
+  h2 { font-size: 12px; font-weight: 700; color: #6B7280; text-transform: uppercase; letter-spacing: 0.1em; margin: 40px 0 16px; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 14px; }
+  .card { background: #fff; border-radius: 18px; padding: 22px 16px 18px; display: flex; flex-direction: column; align-items: center; gap: 10px; box-shadow: 0 1px 3px rgba(0,0,0,0.06); }
+  .card-label { font-size: 12px; font-weight: 600; color: #1a1a1a; }
+  .card-sub { font-size: 11px; color: #9CA3AF; margin-top: -6px; }
+  .hero {
+    border-radius: 28px; padding: 40px 24px 28px; margin-bottom: 8px;
+    display: flex; align-items: center; justify-content: center; flex-direction: column;
+    transition: background 400ms ease;
+    position: relative; overflow: hidden; min-height: 380px;
+  }
+  .hero-caption { font-size: 13px; font-weight: 500; color: rgba(255,255,255,0.92); margin-top: 18px; letter-spacing: 0.02em; }
+  .legend { font-size: 13px; color: #6B7280; line-height: 1.65; max-width: 640px; }
+  code { background: #ececf0; padding: 2px 6px; border-radius: 4px; font-size: 12px; font-family: 'JetBrains Mono', monospace; }
+  .container { max-width: 1100px; margin: 0 auto; }
+</style>
+</head>
+<body>
+<div class="container">
+<h1>Mascot — Guji the Owl</h1>
+<p class="sub">Guaji's AI tutor mascot — a cute purple owl. One character, four moods, four states. Used in immersive conversation, daily Q&A, onboarding, and reward moments. Tap the <strong>Tweaks</strong> toggle to remix vibe, energy, and palette.</p>
+
+<div id="hero-mount"></div>
+
+<h2>Mood reference</h2>
+<div class="grid" id="moods"></div>
+
+<h2>State reference</h2>
+<div class="grid" id="states"></div>
+
+<h2>Accessory variants</h2>
+<div class="grid" id="accessories"></div>
+
+<h2>Avatar (chat thumbnail)</h2>
+<div class="grid" id="avatars"></div>
+
+<h2>Usage</h2>
+<p class="legend">
+  Default vibe is <code>sweet</code> at moderate liveliness on the Lavender palette. Switch to <code>confident</code> for praise moments, <code>mischievous</code> for playful corrections, and <code>grumpy</code> sparingly for streak-break warnings. Use the <code>tie</code> accessory in scenario contexts where the AI is playing a "professional"; <code>glasses</code> when tutoring grammar; <code>none</code> for casual daily chat.
+</p>
+</div>
+
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+<script type="text/babel" src="../ui_kits/mobile_app/mascot.jsx"></script>
+<script type="text/babel" src="tweaks-panel.jsx"></script>
+<script type="text/babel">
+
+
+const VIBES = {
+  sweet: { label: 'Sweet', mood: 'happy', subtitle: '"You did great today!"', bg: 'radial-gradient(ellipse at 30% 20%, #f0e4ff 0%, #d8c4f5 50%, #b89bf5 100%)' },
+  confident: { label: 'Confident', mood: 'calm', subtitle: '"Let\'s tackle the next phrase."', bg: 'radial-gradient(ellipse at 70% 30%, #c4d6ff 0%, #9B7FD4 60%, #7B5EBF 100%)' },
+  mischievous: { label: 'Mischievous', mood: 'smirk', subtitle: '"Hmm, are you sure about that?"', bg: 'radial-gradient(ellipse at 50% 0%, #f5c8e6 0%, #b89bf5 55%, #7B5EBF 100%)' },
+  grumpy: { label: 'Grumpy', mood: 'angry', subtitle: '"You haven\'t practiced in 3 days…"', bg: 'radial-gradient(ellipse at 50% 50%, #ffb29b 0%, #d56d8a 55%, #7B5EBF 100%)' }
+};
+
+const PALETTES = {
+  guaji:    { label: 'GuaJi (品牌色)', bodyColor: '#7070C4', bodyShade: '#4E4E9A', accentColor: '#9292D2', beakColor: '#F0A030' },
+  twilight: { label: 'Twilight',      bodyColor: '#6868BC', bodyShade: '#4040A0', accentColor: '#8888C8', beakColor: '#F0A030' },
+  midnight: { label: 'Midnight',      bodyColor: '#4E3A90', bodyShade: '#322470', accentColor: '#7060B8', beakColor: '#F0A030' },
+  sunset:   { label: 'Sunset',        bodyColor: '#F97316', bodyShade: '#C2410C', accentColor: '#FCD34D', beakColor: '#7C2D12' },
+  forest:   { label: 'Forest',        bodyColor: '#10B981', bodyShade: '#047857', accentColor: '#86EFAC', beakColor: '#F59E0B' }
+};
+
+const ACCESSORIES = [
+{ value: 'none', label: 'None' },
+{ value: 'tie', label: '👔 Necktie' },
+{ value: 'glasses', label: '👓 Glasses' }];
+
+
+const STATE_BY_LIVELINESS = (n) => n < 25 ? 'idle' : n < 60 ? 'idle' : n < 85 ? 'thinking' : 'speaking';
+const livelinessToProps = (n) => {
+  const t = n / 100;
+  return { eyeScale: 0.85 + t * 0.55, size: 200 + t * 60, tilt: (t - 0.5) * 4 };
+};
+
+const TWEAK_DEFAULTS = /*EDITMODE-BEGIN*/{
+  "vibe": "grumpy",
+  "liveliness": 55,
+  "palette": "guaji",
+  "accessory": "none"
+}/*EDITMODE-END*/;
+
+function MascotShowcase() {
+  const [tweaks, setTweak] = useTweaks(TWEAK_DEFAULTS);
+  const vibe = VIBES[tweaks.vibe] || VIBES.sweet;
+  const palette = PALETTES[tweaks.palette] || PALETTES.lavender;
+  const live = livelinessToProps(tweaks.liveliness);
+  const state = STATE_BY_LIVELINESS(tweaks.liveliness);
+
+  return (
+    <>
+      <div className="hero" style={{ background: vibe.bg }}>
+        <div style={{
+          transform: `translateY(0) rotate(${live.tilt}deg)`,
+          transition: 'transform 400ms cubic-bezier(0.34, 1.56, 0.64, 1)'
+        }}>
+          <Mascot
+            mood={vibe.mood}
+            state={state}
+            size={live.size}
+            eyeScale={live.eyeScale}
+            accessory={tweaks.accessory}
+            bodyColor={palette.bodyColor}
+            bodyShade={palette.bodyShade}
+            accentColor={palette.accentColor}
+            beakColor={palette.beakColor} />
+          
+        </div>
+        <div className="hero-caption">{vibe.subtitle}</div>
+      </div>
+
+      <TweaksPanel title="Tweaks">
+        <TweakSection title="Vibe" subtitle="Personality preset — drives mood, expression, and atmosphere">
+          <TweakRadio
+            value={tweaks.vibe}
+            onChange={(v) => setTweak('vibe', v)}
+            options={Object.entries(VIBES).map(([id, v]) => ({ value: id, label: v.label }))} />
+          
+        </TweakSection>
+        <TweakSection title="Liveliness" subtitle="Sleepy → excited. Reshapes eye size and animation state.">
+          <TweakSlider
+            value={tweaks.liveliness}
+            onChange={(v) => setTweak('liveliness', v)}
+            min={0} max={100} step={1}
+            format={(v) => v < 25 ? 'Sleepy' : v < 60 ? 'Calm' : v < 85 ? 'Thinking' : 'Excited'} />
+          
+        </TweakSection>
+        <TweakSection title="Palette" subtitle="Color mood — re-skin per surface or seasonal moment">
+          <TweakSelect
+            value={tweaks.palette}
+            onChange={(v) => setTweak('palette', v)}
+            options={Object.entries(PALETTES).map(([id, p]) => ({ value: id, label: p.label }))} />
+          
+        </TweakSection>
+        <TweakSection title="Accessory">
+          <TweakRadio
+            value={tweaks.accessory}
+            onChange={(v) => setTweak('accessory', v)}
+            options={ACCESSORIES} />
+          
+        </TweakSection>
+      </TweaksPanel>
+    </>);
+
+}
+
+ReactDOM.createRoot(document.getElementById('hero-mount')).render(<MascotShowcase />);
+
+const Tile = ({ label, sub, children }) =>
+<div className="card">
+    {children}
+    <div className="card-label">{label}</div>
+    {sub && <div className="card-sub">{sub}</div>}
+  </div>;
+
+
+ReactDOM.createRoot(document.getElementById('moods')).render(
+  <>
+    <Tile label="Calm"><Mascot mood="calm" state="idle" size={140} /></Tile>
+    <Tile label="Happy"><Mascot mood="happy" state="idle" size={140} /></Tile>
+    <Tile label="Smirk"><Mascot mood="smirk" state="idle" size={140} /></Tile>
+    <Tile label="Angry"><Mascot mood="angry" state="idle" size={140} /></Tile>
+  </>
+);
+
+ReactDOM.createRoot(document.getElementById('states')).render(
+  <>
+    <Tile label="Idle"><Mascot mood="calm" state="idle" size={140} /></Tile>
+    <Tile label="Speaking"><Mascot mood="happy" state="speaking" size={140} /></Tile>
+    <Tile label="Thinking"><Mascot mood="calm" state="thinking" size={140} /></Tile>
+    <Tile label="Listening"><Mascot mood="calm" state="listening" size={140} /></Tile>
+  </>
+);
+
+ReactDOM.createRoot(document.getElementById('accessories')).render(
+  <>
+    <Tile label="None"><Mascot mood="calm" state="idle" size={140} accessory="none" /></Tile>
+    <Tile label="Necktie" sub="for scenario / professional"><Mascot mood="calm" state="idle" size={140} accessory="tie" /></Tile>
+    <Tile label="Glasses" sub="for grammar / tutor"><Mascot mood="calm" state="idle" size={140} accessory="glasses" /></Tile>
+  </>
+);
+
+ReactDOM.createRoot(document.getElementById('avatars')).render(
+  <>
+    <Tile label="32 px" sub="chat bubble"><MascotAvatar size={32} /></Tile>
+    <Tile label="40 px" sub="default"><MascotAvatar size={40} /></Tile>
+    <Tile label="56 px" sub="profile / large"><MascotAvatar size={56} /></Tile>
+    <Tile label="40 px · Glasses"><MascotAvatar size={40} accessory="glasses" /></Tile>
+  </>
+);
+</script>
+</body>
+</html>

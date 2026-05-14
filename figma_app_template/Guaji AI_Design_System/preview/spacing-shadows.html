@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<link href="https://fonts.googleapis.com/css2?family=Lexend:wght@400;600&display=swap" rel="stylesheet">
+<style>
+  body { margin: 0; font-family: 'Lexend', sans-serif; background: #f6f7f8; padding: 24px; }
+  .row { display: flex; gap: 16px; }
+  .item { flex: 1; background: #fff; border-radius: 14px; padding: 20px 16px; display: flex; flex-direction: column; align-items: center; gap: 12px; }
+  .dot { width: 64px; height: 64px; border-radius: 14px; background: #637FF1; }
+  .name { font-size: 12px; font-weight: 600; color: #374151; }
+  .val { font-size: 10px; color: #9CA3AF; text-align: center; }
+</style>
+</head>
+<body>
+<div class="row">
+  <div class="item" style="box-shadow:0 1px 2px rgba(0,0,0,0.05);">
+    <div class="dot" style="box-shadow:0 1px 2px rgba(0,0,0,0.05);"></div>
+    <div class="name">SM</div>
+    <div class="val">0 1px 2px<br>rgba(0,0,0,0.05)</div>
+  </div>
+  <div class="item" style="box-shadow:0 4px 6px -1px rgba(0,0,0,0.1);">
+    <div class="dot" style="box-shadow:0 4px 6px -1px rgba(0,0,0,0.1);"></div>
+    <div class="name">MD</div>
+    <div class="val">0 4px 6px -1px<br>rgba(0,0,0,0.1)</div>
+  </div>
+  <div class="item" style="box-shadow:0 1px 3px rgba(0,0,0,0.1),0 1px 2px -1px rgba(0,0,0,0.1);">
+    <div class="dot" style="box-shadow:0 1px 3px rgba(0,0,0,0.1),0 1px 2px -1px rgba(0,0,0,0.1);"></div>
+    <div class="name">Card</div>
+    <div class="val">0 1px 3px + 0 1px 2px<br>rgba(0,0,0,0.1)</div>
+  </div>
+  <div class="item" style="box-shadow:0 10px 23px rgba(137,171,241,0.18);">
+    <div class="dot" style="box-shadow:0 10px 23px rgba(137,171,241,0.18);"></div>
+    <div class="name">Brand</div>
+    <div class="val">0 10px 23px<br>rgba(137,171,241,0.18)</div>
+  </div>
+  <div class="item" style="box-shadow:0 16px 32px rgba(137,171,241,0.24);">
+    <div class="dot" style="box-shadow:0 16px 32px rgba(137,171,241,0.24);"></div>
+    <div class="name">Brand LG</div>
+    <div class="val">0 16px 32px<br>rgba(137,171,241,0.24)</div>
+  </div>
+</div>
+</body>
+</html>

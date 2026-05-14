@@ -82,8 +82,8 @@ export default function Onboarding() {
       {/* Top bar */}
       <div className="w-full max-w-lg flex items-center justify-between mb-6">
         <div className="flex items-center gap-2">
-          <div className="w-8 h-8 rounded-xl" style={{ background: 'linear-gradient(135deg, #637FF1, #a47af6)' }} />
-          <span className="font-bold text-slate-800 dark:text-white text-lg">Oral AI</span>
+          <img src="/guaji-icon.png" alt="GuaJi" className="w-8 h-8 rounded-xl" />
+          <span className="font-bold text-slate-800 dark:text-white text-lg">GuaJi AI</span>
         </div>
         <LanguageSwitcher />
       </div>
@@ -120,7 +120,7 @@ export default function Onboarding() {
 
               <div className="text-center mb-6">
                 <motion.div animate={{ y: [0, -8, 0] }} transition={{ duration: 2.5, repeat: Infinity, ease: 'easeInOut' }}
-                  className="text-5xl mb-3">🦜</motion.div>
+                  className="mb-3"><img src="/guaji-icon.png" alt="GuaJi" className="w-16 h-16 rounded-2xl mx-auto" style={{ boxShadow: '0 8px 24px rgba(99,127,241,0.2)' }} /></motion.div>
                 <h1 className="text-2xl font-bold text-slate-900 dark:text-white mb-1">{t('onboarding_title')}</h1>
                 <p className="text-slate-500 dark:text-slate-400 text-sm">{t('onboarding_subtitle')}</p>
               </div>

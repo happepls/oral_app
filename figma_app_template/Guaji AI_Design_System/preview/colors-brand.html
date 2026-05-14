@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<link href="https://fonts.googleapis.com/css2?family=Lexend:wght@400;600&display=swap" rel="stylesheet">
+<style>
+  body { margin: 0; font-family: 'Lexend', sans-serif; background: #f6f7f8; padding: 20px; }
+  .row { display: flex; gap: 12px; align-items: stretch; }
+  .swatch { border-radius: 14px; padding: 16px 20px; flex: 1; min-height: 100px; display: flex; flex-direction: column; justify-content: flex-end; }
+  .swatch-label { font-size: 11px; font-weight: 600; opacity: 0.85; margin-bottom: 2px; }
+  .swatch-hex { font-size: 13px; font-weight: 400; opacity: 0.75; }
+  .gradient-swatch { background: linear-gradient(135deg, #637FF1, #a47af6); }
+</style>
+</head>
+<body>
+<div class="row">
+  <div class="swatch" style="background:#637FF1; color:#fff;">
+    <div class="swatch-label">Primary</div>
+    <div class="swatch-hex">#637FF1</div>
+  </div>
+  <div class="swatch" style="background:#c3cef8; color:#2d44ca;">
+    <div class="swatch-label">Primary Light</div>
+    <div class="swatch-hex">#c3cef8</div>
+  </div>
+  <div class="swatch" style="background:#2d44ca; color:#fff;">
+    <div class="swatch-label">Primary Dark</div>
+    <div class="swatch-hex">#2d44ca</div>
+  </div>
+  <div class="swatch" style="background:#a47af6; color:#fff;">
+    <div class="swatch-label">Secondary</div>
+    <div class="swatch-hex">#a47af6</div>
+  </div>
+  <div class="swatch gradient-swatch" style="color:#fff;">
+    <div class="swatch-label">Brand Gradient</div>
+    <div class="swatch-hex">135deg → Primary→Secondary</div>
+  </div>
+</div>
+</body>
+</html>

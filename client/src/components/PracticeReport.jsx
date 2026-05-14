@@ -221,7 +221,7 @@ function ConversationTimeline({ messages }) {
               className="w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0 text-base"
               style={{ backgroundColor: '#F1F5F9' }}
             >
-              {isUser ? '👤' : '🦜'}
+              {isUser ? '👤' : <img src="/guaji-icon.png" alt="GuaJi" className="w-7 h-7 rounded-lg" />}
             </div>
 
             {/* Bubble */}

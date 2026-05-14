@@ -154,7 +154,7 @@ function Subscription() {
   }
 
   return (
-    <div className="min-h-screen bg-background-light dark:bg-background-dark pb-24">
+    <div className="min-h-screen pb-24" style={{ background: 'var(--background)' }}>
       <div className="px-4 pt-6 pb-4">
         <button 
           onClick={() => navigate(-1)}

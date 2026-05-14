@@ -6,8 +6,9 @@ import { ScenarioCard } from '../components/ScenarioCard';
 import { useAuth } from '../contexts/AuthContext';
 import { userAPI, historyAPI, aiAPI } from '../services/api';
 import { StatCard } from '../components/StatCard';
+import { GuajiAvatar } from '../components/GuajiAvatar';
 import { motion } from 'motion/react';
-import { MessageSquare, Calendar, Trophy, Crown } from 'lucide-react';
+import { Trophy } from 'lucide-react';
 
 // --- Scenario emoji 映射（按关键词） ---
 const SCENARIO_EMOJIS = [
@@ -487,7 +488,7 @@ function Discovery() {
   }
 
   return (
-    <div className="relative flex flex-col min-h-screen w-full bg-background-light dark:bg-background-dark">
+    <div className="relative flex flex-col min-h-screen w-full" style={{ background: 'var(--background)' }}>
 
       {/* ── 成就 Modal ── */}
       {showAchievement && (
@@ -672,7 +673,10 @@ function Discovery() {
           <section>
             <div className="rounded-2xl p-5 bg-white dark:bg-slate-800 shadow-sm border border-slate-200 dark:border-slate-700">
               <div className="flex items-center justify-between mb-4">
-                <h3 className="text-sm font-semibold text-slate-900 dark:text-white">今日任务</h3>
+                <div className="flex items-center gap-2">
+                  <GuajiAvatar size={28} />
+                  <h3 className="text-sm font-semibold text-slate-900 dark:text-white">今日任务</h3>
+                </div>
                 <span className="text-xs text-slate-500">
                   {(dailyProgress.recallCompleted ? 1 : 0) + (dailyProgress.qaCompleted ? 1 : 0) + (dailyProgress.scenarioCompleted ? 1 : 0)}/3
                 </span>
@@ -786,34 +790,15 @@ function Discovery() {
           monthlyCheckinDays={dailyProgress?.monthlyCheckinDays || 0}
           checkedInToday={dailyProgress?.checkedInToday || checkinStats.checkedInToday}
           onCheckin={handleCheckin}
-          totalPracticeMinutes={dailyProgress?.totalPracticeMinutes || 0}
         />
 
         {/* ── 4格统计 ── */}
         {stats && (
-          <div className="grid grid-cols-4 gap-2">
-            <div className="flex flex-col items-center gap-1 bg-white dark:bg-slate-800 rounded-2xl p-3 shadow-sm">
-              <span className="text-xl">📚</span>
-              <span className="text-base font-bold text-slate-900 dark:text-white">{stats.totalSessions || 0}</span>
-              <span className="text-xs text-slate-400 text-center leading-tight">总对话</span>
-            </div>
-            <div className="flex flex-col items-center gap-1 bg-white dark:bg-slate-800 rounded-2xl p-3 shadow-sm">
-              <span className="text-xl">📅</span>
-              <span className="text-base font-bold text-slate-900 dark:text-white">{stats.learningDays || 0}</span>
-              <span className="text-xs text-slate-400 text-center leading-tight">学习天</span>
-            </div>
-            <div className="flex flex-col items-center gap-1 bg-white dark:bg-slate-800 rounded-2xl p-3 shadow-sm">
-              <span className="text-xl">✅</span>
-              <span className="text-base font-bold text-slate-900 dark:text-white">
-                {enrichedScenarios.filter(s => s.pct === 100).length}/{scenarios.length}
-              </span>
-              <span className="text-xs text-slate-400 text-center leading-tight">场景完成</span>
-            </div>
-            <div className="flex flex-col items-center gap-1 bg-white dark:bg-slate-800 rounded-2xl p-3 shadow-sm">
-              <span className="text-xl">🎯</span>
-              <span className="text-base font-bold text-slate-900 dark:text-white">{overallProgress}%</span>
-              <span className="text-xs text-slate-400 text-center leading-tight">总进度</span>
-            </div>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <StatCard emoji="📚" value={stats.totalSessions || 0} label="总对话" />
+            <StatCard emoji="📅" value={stats.learningDays || 0} label="学习天" />
+            <StatCard emoji="✅" value={`${enrichedScenarios.filter(s => s.pct === 100).length}/${scenarios.length}`} label="场景完成" />
+            <StatCard emoji="🎯" value={`${overallProgress}%`} label="总进度" />
           </div>
         )}
 

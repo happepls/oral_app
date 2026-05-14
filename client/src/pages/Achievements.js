@@ -231,7 +231,7 @@ function Achievements() {
         ))}
       </main>
 
-      <BottomNav currentPage="achievements" />
+      <BottomNav currentPage="" />
     </div>
   );
 }

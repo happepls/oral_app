@@ -1,0 +1,204 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Guaji AI — Mobile App UI Kit</title>
+<link href="https://fonts.googleapis.com/css2?family=Lexend:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@24,400,0,0&display=block" rel="stylesheet">
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: 'Lexend', sans-serif; background: #1a1a2e; min-height: 100vh; display: flex; align-items: center; justify-content: center; }
+  .material-symbols-outlined { font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24; }
+  @keyframes pulse { 0%,80%,100%{opacity:0.3} 40%{opacity:1} }
+  /* Scrollbar */
+  ::-webkit-scrollbar { width: 0; }
+</style>
+</head>
+<body>
+<script type="text/babel" src="components.jsx"></script>
+<script type="text/babel" src="mascot.jsx"></script>
+<script type="text/babel" src="screens.jsx"></script>
+<script type="text/babel" src="screens-extra.jsx"></script>
+<script type="text/babel">
+
+function PhoneShell({ children, dark }) {
+  return (
+    <div style={{
+      width: 390, height: 780, background: dark ? '#101922' : '#fff', borderRadius: 44,
+      overflow: 'hidden', position: 'relative',
+      boxShadow: '0 40px 80px rgba(0,0,0,0.5), 0 0 0 1px rgba(255,255,255,0.15)',
+      transition: 'background 0.3s',
+    }}>
+      {/* Status bar */}
+      <div style={{
+        height: 44, background: dark ? '#101922' : '#f6f7f8', display: 'flex',
+        alignItems: 'center', justifyContent: 'space-between',
+        padding: '0 24px', flexShrink: 0,
+      }}>
+        <span style={{ fontSize: 14, fontWeight: 600, color: dark ? '#F8FAFC' : '#1a1a1a' }}>9:41</span>
+        <div style={{ display: 'flex', gap: 6, alignItems: 'center', color: dark ? '#F8FAFC' : '#1a1a1a' }}>
+          <span style={{ fontSize: 12 }}>●●●●</span>
+          <span className="material-symbols-outlined" style={{ fontSize: 16 }}>wifi</span>
+          <span className="material-symbols-outlined" style={{ fontSize: 16 }}>battery_full</span>
+        </div>
+      </div>
+      {/* Screen */}
+      <div style={{ height: 'calc(100% - 44px)', position: 'relative', overflow: 'hidden' }}>
+        {children}
+      </div>
+    </div>
+  );
+}
+
+function ScreenLabel({ text }) {
+  return (
+    <div style={{ color: 'rgba(255,255,255,0.5)', fontSize: 11, fontWeight: 600, textAlign: 'center', marginBottom: 8, letterSpacing: '0.06em', textTransform: 'uppercase' }}>{text}</div>
+  );
+}
+
+function App() {
+  const [screen, setScreen] = React.useState('landing');
+  const [prevScreen, setPrevScreen] = React.useState(null);
+  const [dark, setDark] = React.useState(false);
+  const [navOpen, setNavOpen] = React.useState(false);
+
+  window._guaji_dark = dark;
+
+  const navigate = (to) => {
+    setPrevScreen(screen);
+    setScreen(to);
+  };
+
+  const goBack = () => setScreen(prevScreen || 'discovery');
+
+  // Screen registry
+  const screens = {
+    landing: { label: '01 — Landing', component: (
+      <LandingScreen onGetStarted={() => navigate('goal-setting')} onSignIn={() => navigate('discovery')}/>
+    )},
+    discovery: { label: '02 — Home / Discovery', component: (
+      <div style={{ height: '100%', position: 'relative' }}>
+        <DiscoveryScreen onNav={navigate} onOpenConversation={() => navigate('conversation')} />
+        <BottomNav current="home" onNav={(id) => {
+          if (id === 'home') navigate('discovery');
+          else if (id === 'goals') navigate('goal-setting');
+          else if (id === 'profile') navigate('profile');
+        }} />
+      </div>
+    )},
+    conversation: { label: '03a — Scenario Conversation', component: (
+      <ConversationScreen onBack={goBack} mode="scenario" />
+    )},
+    'daily-qa': { label: '03b — Daily Q&A', component: (
+      <ConversationScreen onBack={goBack} mode="daily_qa" />
+    )},
+    recall: { label: '03c — Recall (跟读)', component: (
+      <ConversationScreen onBack={goBack} mode="recall" />
+    )},
+    'goal-setting': { label: '04 — Goal Setting', component: (
+      <GoalSettingScreen onBack={goBack} onDone={() => navigate('discovery')} />
+    )},
+    paywall: { label: '05 — Paywall', component: (
+      <PaywallScreen onBack={goBack} onSubscribe={() => navigate('discovery')}/>
+    )},
+    profile: { label: '06 — Profile', component: (
+      <div style={{ height: '100%', position: 'relative' }}>
+        <ProfileScreen onNav={navigate} />
+        <BottomNav current="profile" onNav={(id) => {
+          if (id === 'home') navigate('discovery');
+          else if (id === 'goals') navigate('goal-setting');
+          else if (id === 'profile') navigate('profile');
+        }} />
+      </div>
+    )},
+  };
+
+  const screenKeys = Object.keys(screens);
+  const currentIdx = screenKeys.indexOf(screen);
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', padding: '24px 16px', gap: 0 }}>
+      {/* Title */}
+      <div style={{ marginBottom: 24, textAlign: 'center' }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 10, marginBottom: 6 }}>
+          <img src="../../assets/logo-app-icon.jpg" width="36" height="36" alt="GuaJi" style={{borderRadius:'10px', objectFit:'cover'}}/>
+          <span style={{ color: '#fff', fontSize: 20, fontWeight: 700, letterSpacing: '-0.01em' }}>Guaji AI</span>
+          <span style={{ background: '#FEF3C7', color: '#92400E', fontSize: 10, fontWeight: 700, padding: '2px 8px', borderRadius: 9999 }}>UI Kit</span>
+        </div>
+        <p style={{ color: 'rgba(255,255,255,0.45)', fontSize: 12 }}>Mobile App · 6 screens · Tap to navigate</p>
+      </div>
+
+      {/* Theme toggle */}
+      <div style={{ marginBottom: 16, display: 'flex', alignItems: 'center', gap: 10, padding: '6px 6px 6px 14px', background: 'rgba(255,255,255,0.08)', borderRadius: 9999 }}>
+        <span style={{ color: 'rgba(255,255,255,0.7)', fontSize: 12, fontWeight: 600 }}>Theme</span>
+        <button onClick={() => setDark(false)} style={{
+          padding: '6px 14px', borderRadius: 9999, border: 'none', cursor: 'pointer',
+          background: !dark ? '#637FF1' : 'transparent', color: !dark ? '#fff' : 'rgba(255,255,255,0.6)',
+          fontSize: 12, fontWeight: 600, fontFamily: 'Lexend, sans-serif',
+        }}>☀️ Light</button>
+        <button onClick={() => setDark(true)} style={{
+          padding: '6px 14px', borderRadius: 9999, border: 'none', cursor: 'pointer',
+          background: dark ? '#637FF1' : 'transparent', color: dark ? '#fff' : 'rgba(255,255,255,0.6)',
+          fontSize: 12, fontWeight: 600, fontFamily: 'Lexend, sans-serif',
+        }}>🌙 Dark</button>
+      </div>
+
+      {/* Screen navigator — collapsible */}
+      {navOpen && (
+        <div style={{ display: 'flex', gap: 8, marginBottom: 10, flexWrap: 'wrap', justifyContent: 'center' }}>
+          {screenKeys.map(key => (
+            <button key={key} onClick={() => { navigate(key); setNavOpen(false); }} style={{
+              padding: '6px 14px', borderRadius: 9999, border: 'none', cursor: 'pointer',
+              background: screen === key ? '#637FF1' : 'rgba(255,255,255,0.12)',
+              color: screen === key ? '#fff' : 'rgba(255,255,255,0.6)',
+              fontSize: 12, fontWeight: 600, fontFamily: 'Lexend, sans-serif',
+              transition: 'all 0.2s',
+            }}>{screens[key].label.split(' — ')[1]}</button>
+          ))}
+        </div>
+      )}
+      <button onClick={() => setNavOpen(v => !v)} style={{
+        marginBottom: 12, padding: '5px 16px', borderRadius: 9999,
+        border: '1px solid rgba(255,255,255,0.2)', background: 'transparent',
+        color: 'rgba(255,255,255,0.5)', fontSize: 11, fontWeight: 600,
+        cursor: 'pointer', fontFamily: 'Lexend, sans-serif',
+      }}>{navOpen ? '▲ 隐藏菜单' : '▼ 切换页面'}</button>
+
+      <ScreenLabel text={screens[screen].label} />
+
+      {/* Phone */}
+      <PhoneShell dark={dark}>
+        <React.Fragment key={`${screen}-${dark}`}>
+          {screens[screen].component}
+        </React.Fragment>
+      </PhoneShell>
+
+      {/* Nav arrows */}
+      <div style={{ display: 'flex', gap: 12, marginTop: 20 }}>
+        <button onClick={() => navigate(screenKeys[Math.max(currentIdx - 1, 0)])} disabled={currentIdx === 0} style={{
+          padding: '8px 20px', borderRadius: 9999, border: '1px solid rgba(255,255,255,0.2)',
+          background: 'transparent', color: currentIdx === 0 ? 'rgba(255,255,255,0.2)' : 'rgba(255,255,255,0.7)',
+          fontSize: 13, fontWeight: 600, cursor: currentIdx === 0 ? 'default' : 'pointer',
+          fontFamily: 'Lexend, sans-serif',
+        }}>← Prev</button>
+        <button onClick={() => navigate(screenKeys[Math.min(currentIdx + 1, screenKeys.length - 1)])} disabled={currentIdx === screenKeys.length - 1} style={{
+          padding: '8px 20px', borderRadius: 9999, border: '1px solid rgba(255,255,255,0.2)',
+          background: 'transparent', color: currentIdx === screenKeys.length - 1 ? 'rgba(255,255,255,0.2)' : 'rgba(255,255,255,0.7)',
+          fontSize: 13, fontWeight: 600, cursor: currentIdx === screenKeys.length - 1 ? 'default' : 'pointer',
+          fontFamily: 'Lexend, sans-serif',
+        }}>Next →</button>
+      </div>
+    </div>
+  );
+}
+
+const root = ReactDOM.createRoot(document.getElementById('root'));
+root.render(<App />);
+</script>
+<div id="root"></div>
+</body>
+</html>
