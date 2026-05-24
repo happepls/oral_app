@@ -13,6 +13,7 @@ Scenarios:
   - daily   : GET /api/ai/daily-question lifecycle (1st call + cache hit) +
               WS mode=daily_qa with [DAILY_QA_PASSED] marker -> daily_qa_completed
   - cheat   : 4 turns repeating same keyword -> delta==0
+  - free_user: non-Pro user hitting /api/ai/daily-qa/{pool,select} -> 403
   - all     : run everything
 
 CLI:
@@ -29,7 +30,7 @@ import sys
 import time
 import uuid
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 # ---------------------------------------------------------------------------
 # Color output — matches auto_test.py style
@@ -225,10 +226,11 @@ class FakeWSClient:
 class FakeHTTP:
     """In-process mock of the REST surface relevant to these scenarios."""
 
-    def __init__(self):
+    def __init__(self, user_tier: str = "pro"):
         self._cache: Dict[str, Dict[str, Any]] = {}
         self._passed_flags: Dict[str, bool] = {}
         self.generate_calls = 0
+        self.user_tier = user_tier
 
     def get_daily_question(self, user_id: str) -> Dict[str, Any]:
         today = time.strftime("%Y-%m-%d")
@@ -246,6 +248,30 @@ class FakeHTTP:
     def mark_passed(self, user_id: str) -> None:
         today = time.strftime("%Y-%m-%d")
         self._passed_flags[f"{user_id}:{today}"] = True
+
+    # --- subscription-gated endpoints (Pro-only) -----------------------------
+    # Mirrors the auth middleware that fronts /api/ai/daily-qa/*: returns 403
+    # when the JWT's subscription tier is not "pro".
+
+    def get_daily_qa_pool(self) -> Tuple[int, Dict[str, Any]]:
+        if self.user_tier != "pro":
+            return (403, {
+                "error": "subscription_required",
+                "message": "Pro subscription required for daily QA pool",
+            })
+        today = time.strftime("%Y-%m-%d")
+        return (200, {"qa_date": today, "pool": [
+            {"id": "q1", "question_text": "What was the best part of your morning?"},
+            {"id": "q2", "question_text": "Describe one thing you learned today."},
+        ]})
+
+    def select_daily_qa(self, question_id: str) -> Tuple[int, Dict[str, Any]]:
+        if self.user_tier != "pro":
+            return (403, {
+                "error": "subscription_required",
+                "message": "Pro subscription required to select daily QA",
+            })
+        return (200, {"selected_question_id": question_id})
 
 
 # ---------------------------------------------------------------------------
@@ -287,6 +313,31 @@ class RealHTTP:
         resp.raise_for_status()
         body = resp.json()
         return body.get("data", body)
+
+    def _headers(self) -> Dict[str, str]:
+        h = {}
+        if self.token:
+            h["Authorization"] = f"Bearer {self.token}"
+        return h
+
+    def get_daily_qa_pool(self) -> Tuple[int, Dict[str, Any]]:
+        resp = self._r.get(f"{self.api_base}/api/ai/daily-qa/pool",
+                           headers=self._headers(), timeout=5)
+        try:
+            body = resp.json()
+        except Exception:
+            body = {"raw": resp.text}
+        return (resp.status_code, body)
+
+    def select_daily_qa(self, question_id: str) -> Tuple[int, Dict[str, Any]]:
+        resp = self._r.post(f"{self.api_base}/api/ai/daily-qa/select",
+                            headers=self._headers(),
+                            json={"question_id": question_id}, timeout=5)
+        try:
+            body = resp.json()
+        except Exception:
+            body = {"raw": resp.text}
+        return (resp.status_code, body)
 
 
 class RealWS:
@@ -596,6 +647,72 @@ def run_cheat(results: Results, mock: bool, ws_url: str, token: Optional[str]) -
 
 
 # ---------------------------------------------------------------------------
+# Scenario: free-user negative (subscription-gated endpoints -> 403)
+# ---------------------------------------------------------------------------
+
+
+def run_free_user(results: Results, mock: bool,
+                  api_base: str, token: Optional[str]) -> None:
+    section("Free User Negative - daily-qa endpoints reject non-Pro with 403")
+
+    if mock:
+        http: Any = FakeHTTP(user_tier="free")
+    else:
+        http = RealHTTP(api_base, token=token)
+        if not http.available():
+            results.mark_skip(
+                "free_user: 'requests' not installed; rerun with --mock"
+            )
+            return
+        if not token:
+            results.mark_skip(
+                "free_user: real mode needs --token=<free-user JWT> to assert "
+                "subscription gating — pass one or use --mock"
+            )
+            return
+
+    # ---- GET /api/ai/daily-qa/pool ----------------------------------------
+    try:
+        status, body = http.get_daily_qa_pool()
+    except Exception as e:
+        results.mark_skip(
+            f"free_user: GET /daily-qa/pool failed ({e}) — "
+            f"backend endpoint not deployed?"
+        )
+        return
+
+    results.expect(
+        status == 403,
+        f"GET /api/ai/daily-qa/pool -> 403 for free user (got {status})",
+    )
+    err_str = json.dumps(body).lower() if isinstance(body, dict) else str(body).lower()
+    results.expect(
+        "subscription" in err_str or "pro" in err_str or "forbidden" in err_str,
+        f"403 body mentions subscription/pro/forbidden (body: {str(body)[:140]!r})",
+    )
+
+    # ---- POST /api/ai/daily-qa/select -------------------------------------
+    try:
+        status2, body2 = http.select_daily_qa("q1")
+    except Exception as e:
+        results.mark_skip(
+            f"free_user: POST /daily-qa/select failed ({e}) — "
+            f"backend endpoint not deployed?"
+        )
+        return
+
+    results.expect(
+        status2 == 403,
+        f"POST /api/ai/daily-qa/select -> 403 for free user (got {status2})",
+    )
+    err_str2 = json.dumps(body2).lower() if isinstance(body2, dict) else str(body2).lower()
+    results.expect(
+        "subscription" in err_str2 or "pro" in err_str2 or "forbidden" in err_str2,
+        f"403 body mentions subscription/pro/forbidden (body: {str(body2)[:140]!r})",
+    )
+
+
+# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 
@@ -605,7 +722,7 @@ def parse_args(argv: List[str]) -> argparse.Namespace:
         description="E2E scenarios for batch evaluation + daily QA"
     )
     p.add_argument("--scenario",
-                   choices=["batch", "daily", "cheat", "all"],
+                   choices=["batch", "daily", "cheat", "free_user", "all"],
                    default="all")
     p.add_argument("--mock", action="store_true",
                    help="Use in-process fake WS/HTTP "
@@ -637,6 +754,8 @@ def main(argv: List[str]) -> int:
             run_daily(results, args.mock, args.api_base, args.ws_url, args.token)
         if args.scenario in ("cheat", "all"):
             run_cheat(results, args.mock, args.ws_url, args.token)
+        if args.scenario in ("free_user", "all"):
+            run_free_user(results, args.mock, args.api_base, args.token)
     except KeyboardInterrupt:
         print("\nInterrupted")
         return 130

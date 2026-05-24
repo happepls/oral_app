@@ -5,12 +5,10 @@
 ## Backlog
 
 
-- [ ] [Testing] E2E test_scenario_batch_and_daily_qa.py 缺少 free-user 负面用例（非 Pro 用户访问 /pool /select 应返回 403）
-- [ ] [Security] Subscription.js 开放重定向：Stripe API 返回的 URL 未验证域名，直接 window.location.href 跳转
-- [ ] [Security] ai-omni-service CORS allow_origins=["*"] 过于宽松，应限制为已知来源
-- [ ] [Security] ai-omni-service /generate-scenarios, /tts, /translate 端点缺速率限制（DDoS/资源消耗风险）
-- [ ] [Performance] user.js User.create / User.createGoal 缺事务保护（中间失败导致孤立数据）
-- [ ] [Performance] user.js User.findById N+1 查询（users + user_identities 两次 SELECT，应 JOIN）
+- [ ] [Testing] handleAuthResponse 单元测试覆盖（401 不跳转、错误消息透传 vs handleResponse 的 token 过期跳转）
+- [ ] [Testing] userController.js 登录 null-password 路径 + 注册 duplicate key 错误处理集成测试
+- [ ] [Testing] user.js 事务 rollback 路径测试（User.create identity 插入失败回滚、createGoal task 插入失败回滚）
+- [ ] [Performance] user_identities 表添加 (user_id, provider) 索引以优化 LEFT JOIN 查询
 - [ ] [Performance] Conversation.js DEFAULT_SCENARIOS 大对象在组件内重复创建，应移至模块顶层
 - [ ] [Performance] Profile.js useEffect 4 个并发请求缺 AbortController
 - [ ] [Testing] Achievements.js 新页面零测试覆盖（数据获取/分类网格/解锁状态渲染）
@@ -294,3 +292,14 @@
 - [x] [Testing] Conversation.js stripAIMarkers/DailyQAPassModal：新建 stripAIMarkers.test.js（13 tests，正则变体/null/bonus UI 区分）
 - [x] [Testing] Discovery.js 付费门控逻辑：新建 discovery-paywall.test.js（13 tests，free/pro 切换/passed 组合/场景解锁）
 - [x] [Security] Daily QA 端点速率限制：slowapi 10/minute（/pool + /select），requirements.txt 已添加 slowapi
+- [x] [Branding] 品牌名 "GuaJi AI" → "GuaJi"：5个组件/页面文件 + 9个 i18n 翻译文件统一去除 "AI" 后缀
+- [x] [Bug] 登录500错误修复：bcrypt.compare 前添加 null-password 检查（Google-only 用户无 local 密码时返回 401 而非 crash）
+- [x] [Bug] 登录"登录已过期"误报修复：新增 handleAuthResponse 专用于 login/register，401 不触发 token 清除和页面跳转
+- [x] [Bug] 注册 duplicate key 错误修复：捕获 PostgreSQL 23505 错误码，返回友好中文提示（用户名已被使用/邮箱已注册）
+- [x] [Bug] 注册 username 验证过严修复：正则从 ASCII-only 改为 Unicode（`/^[\p{L}\p{N}_-]+$/u`），最小长度 3→1，支持中文等非拉丁字符
+- [x] [Bug] 注册 validation 错误提示改进：handleValidationErrors 返回第一条具体错误信息而非笼统 "Validation failed"
+- [x] [Bug] Google 注册用户名冲突修复：findOrCreateFromGoogle 自动添加随机4位后缀重试（最多3次）
+- [x] [Performance] user.js User.create / User.createGoal 事务保护（BEGIN/COMMIT/ROLLBACK + client.release）
+- [x] [Performance] user.js findOrCreateFromGoogle 事务保护（与 User.create 一致的事务包裹）
+- [x] [Performance] user.js User.findById / User.findByEmail N+1 查询优化（两次 SELECT 合并为单条 LEFT JOIN user_identities）
+- [x] [Testing] E2E free-user 403 负面测试：test_scenario_batch_and_daily_qa.py 新增 free_user scenario（/pool + /select 返回 403，mock 模式 4/4 pass）

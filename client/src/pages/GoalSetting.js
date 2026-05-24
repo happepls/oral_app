@@ -315,7 +315,7 @@ export default function GoalSetting() {
       <div className="px-5 pt-5 pb-0 flex items-center justify-between shrink-0">
         <div className="flex items-center gap-2">
           <img src="/guaji-logo.svg" alt="GuaJi" className="w-7 h-7" />
-          <span className="font-bold text-slate-900 text-base">GuaJi AI</span>
+          <span className="font-bold text-slate-900 text-base">GuaJi</span>
         </div>
         {step > 1 && (
           <span className="text-sm text-slate-400">步骤 {displayStep} / {displayTotal}</span>
@@ -351,7 +351,7 @@ export default function GoalSetting() {
               <div className="bg-white rounded-3xl shadow-sm p-6 flex flex-col items-center gap-5">
                 <GuajiMascot mood="happy" size={100} className="mt-2" />
                 <div className="text-center">
-                  <h1 className="text-3xl font-bold text-slate-900 mb-2">欢迎来到 GuaJi AI</h1>
+                  <h1 className="text-3xl font-bold text-slate-900 mb-2">欢迎来到 GuaJi</h1>
                   <p className="text-slate-500 text-sm mb-1">你的私人 AI 口语练习伙伴</p>
                   <p className="text-slate-500 text-sm">随时随地，自信开口说外语</p>
                 </div>

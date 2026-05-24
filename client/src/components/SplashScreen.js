@@ -80,7 +80,7 @@ const SplashScreen = ({ onComplete }) => {
              <blockquote className="text-xl font-medium text-slate-700 dark:text-slate-200 italic leading-relaxed font-serif">
                 {quote}
              </blockquote>
-             <p className="mt-8 text-sm text-slate-400 font-sans tracking-widest uppercase">Guaji AI</p>
+             <p className="mt-8 text-sm text-slate-400 font-sans tracking-widest uppercase">GuaJi</p>
         </div>
     </div>
   );

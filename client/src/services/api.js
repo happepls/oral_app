@@ -53,6 +53,19 @@ const getAuthHeaders = () => {
   };
 };
 
+const handleAuthResponse = async (response) => {
+  let data;
+  try {
+    data = await response.json();
+  } catch {
+    throw new Error(`无法解析服务器响应 (状态码: ${response.status})`);
+  }
+  if (!response.ok) {
+    throw new Error(data.message || `请求失败 (状态码: ${response.status})`);
+  }
+  return data.data || data;
+};
+
 export const authAPI = {
   async register(userData) {
     const response = await fetch(`${API_BASE_URL}/users/register`, {
@@ -63,7 +76,7 @@ export const authAPI = {
       credentials: 'include',
       body: JSON.stringify(userData)
     });
-    return handleResponse(response);
+    return handleAuthResponse(response);
   },
 
   async login(credentials) {
@@ -75,7 +88,7 @@ export const authAPI = {
       credentials: 'include',
       body: JSON.stringify(credentials)
     });
-    return handleResponse(response);
+    return handleAuthResponse(response);
   },
 
   async googleSignIn(token) {
@@ -85,7 +98,7 @@ export const authAPI = {
       credentials: 'include',
       body: JSON.stringify({ token })
     });
-    return handleResponse(response);
+    return handleAuthResponse(response);
   }
 };
 

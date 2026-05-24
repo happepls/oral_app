@@ -83,9 +83,28 @@ exports.register = async (req, res) => {
     });
   } catch (error) {
     console.error('Registration Error:', error);
-    res.status(500).json({ 
+    if (error.code === '23505') {
+      const detail = error.detail || '';
+      if (detail.includes('username')) {
+        return res.status(400).json({
+          success: false,
+          message: '该用户名已被使用，请换一个'
+        });
+      }
+      if (detail.includes('email')) {
+        return res.status(400).json({
+          success: false,
+          message: '该邮箱已被注册'
+        });
+      }
+      return res.status(400).json({
+        success: false,
+        message: '用户信息重复，请检查后重试'
+      });
+    }
+    res.status(500).json({
       success: false,
-      message: 'Server error during registration.' 
+      message: 'Server error during registration.'
     });
   }
 };
@@ -104,6 +123,12 @@ exports.login = async (req, res) => {
     }
 
     // 2. Compare password
+    if (!user.password) {
+      return res.status(401).json({
+        success: false,
+        message: 'Invalid credentials.'
+      });
+    }
     const isMatch = await bcrypt.compare(password, user.password);
     if (!isMatch) {
       return res.status(401).json({ 

@@ -25,40 +25,47 @@ const User = {};
 User.create = async (username, email, password) => {
     const salt = await bcrypt.genSalt(10);
     const hashedPassword = await bcrypt.hash(password, salt);
-    
-    // This is a simplified example. In a real application, you would use transactions
-    // to ensure that both the user and the identity are created successfully.
-    const userResult = await db.query(
-        'INSERT INTO users (username, email) VALUES ($1, $2) RETURNING id',
-        [username, email]
-    );
-    const userId = userResult.rows[0].id;
 
-    await db.query(
-        'INSERT INTO user_identities (provider, provider_uid, user_id) VALUES ($1, $2, $3)',
-        ['local', hashedPassword, userId]
-    );
+    const client = await db.pool.connect();
+    try {
+        await client.query('BEGIN');
 
-    return { id: userId, username, email };
+        const userResult = await client.query(
+            'INSERT INTO users (username, email) VALUES ($1, $2) RETURNING id',
+            [username, email]
+        );
+        const userId = userResult.rows[0].id;
+
+        await client.query(
+            'INSERT INTO user_identities (provider, provider_uid, user_id) VALUES ($1, $2, $3)',
+            ['local', hashedPassword, userId]
+        );
+
+        await client.query('COMMIT');
+        return { id: userId, username, email };
+    } catch (err) {
+        await client.query('ROLLBACK');
+        throw err;
+    } finally {
+        client.release();
+    }
 }
 
 User.findById = async (id) => {
-    const { rows } = await db.query('SELECT * FROM users WHERE id = $1', [id]);
+    const { rows } = await db.query(
+        `SELECT u.*, ui.provider_uid AS password
+         FROM users u
+         LEFT JOIN user_identities ui ON ui.user_id = u.id AND ui.provider = 'local'
+         WHERE u.id = $1`,
+        [id]
+    );
     if (rows.length === 0) {
         return null;
     }
     const user = rows[0];
-
-    // Get password hash from user_identities
-    const identityResult = await db.query(
-        'SELECT provider_uid FROM user_identities WHERE user_id = $1 AND provider = $2',
-        [user.id, 'local']
-    );
-
-    if (identityResult.rows.length > 0) {
-        user.password = identityResult.rows[0].provider_uid;
+    if (user.password === null) {
+        delete user.password;
     }
-
     return user;
 };
 
@@ -98,36 +105,40 @@ User.update = async (id, updates) => {
 
 User.createGoal = async (userId, goalData) => {
     const { type, description, target_language, target_level, current_proficiency, completion_time_days, interests, scenarios } = goalData;
-    
-    // Deactivate previous active goals for this user
-    await db.query(
-        "UPDATE user_goals SET status = 'abandoned', completed_at = NOW() WHERE user_id = $1 AND status = 'active'",
-        [userId]
-    );
 
-    const query = `
-        INSERT INTO user_goals (user_id, type, description, target_language, target_level, current_proficiency, completion_time_days, interests, scenarios)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-        RETURNING *
-    `;
-    const values = [
-        userId, 
-        type || null, 
-        description || null, 
-        target_language, 
-        target_level, 
-        current_proficiency || 0, 
-        completion_time_days, 
-        interests,
-        scenarios ? JSON.stringify(scenarios) : null
-    ];
-    
-    const { rows } = await db.query(query, values);
-    const newGoal = rows[0];
-    
-    // --- 2. Normalized Task Insertion ---
-    if (scenarios && Array.isArray(scenarios) && newGoal) {
-        try {
+    const client = await db.pool.connect();
+    let newGoal;
+    try {
+        await client.query('BEGIN');
+
+        // Deactivate previous active goals for this user
+        await client.query(
+            "UPDATE user_goals SET status = 'abandoned', completed_at = NOW() WHERE user_id = $1 AND status = 'active'",
+            [userId]
+        );
+
+        const query = `
+            INSERT INTO user_goals (user_id, type, description, target_language, target_level, current_proficiency, completion_time_days, interests, scenarios)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+            RETURNING *
+        `;
+        const values = [
+            userId,
+            type || null,
+            description || null,
+            target_language,
+            target_level,
+            current_proficiency || 0,
+            completion_time_days,
+            interests,
+            scenarios ? JSON.stringify(scenarios) : null
+        ];
+
+        const { rows } = await client.query(query, values);
+        newGoal = rows[0];
+
+        // --- 2. Normalized Task Insertion ---
+        if (scenarios && Array.isArray(scenarios) && newGoal) {
             const taskValues = [];
             let placeholderIndex = 1;
             const placeholders = [];
@@ -137,7 +148,7 @@ User.createGoal = async (userId, goalData) => {
                     for (const task of scenario.tasks) {
                         // Handle both string tasks and object tasks
                         const taskText = typeof task === 'string' ? task : task.text;
-                        
+
                         taskValues.push(userId, newGoal.id, scenario.title, taskText);
                         placeholders.push(`($${placeholderIndex}, $${placeholderIndex+1}, $${placeholderIndex+2}, $${placeholderIndex+3})`);
                         placeholderIndex += 4;
@@ -150,14 +161,18 @@ User.createGoal = async (userId, goalData) => {
                     INSERT INTO user_tasks (user_id, goal_id, scenario_title, task_description)
                     VALUES ${placeholders.join(', ')}
                 `;
-                await db.query(taskQuery, taskValues);
+                await client.query(taskQuery, taskValues);
             }
-        } catch (taskErr) {
-            console.error('[User] Failed to insert normalized tasks:', taskErr);
-            // Don't fail the whole goal creation, but log it critical
         }
+
+        await client.query('COMMIT');
+    } catch (err) {
+        await client.query('ROLLBACK');
+        throw err;
+    } finally {
+        client.release();
     }
-    
+
     // Also update the user's current target_language and interests for convenience
     await User.update(userId, { target_language, interests });
 
@@ -604,22 +619,20 @@ User.updateTaskScore = async (userId, scenarioTitle, taskText, scoreDelta, feedb
 
 
 User.findByEmail = async (email) => {
-    const { rows } = await db.query('SELECT * FROM users WHERE email = $1', [email]);
+    const { rows } = await db.query(
+        `SELECT u.*, ui.provider_uid AS password
+         FROM users u
+         LEFT JOIN user_identities ui ON ui.user_id = u.id AND ui.provider = 'local'
+         WHERE u.email = $1`,
+        [email]
+    );
     if (rows.length === 0) {
         return null;
     }
     const user = rows[0];
-
-    // Get password hash from user_identities
-    const identityResult = await db.query(
-        'SELECT provider_uid FROM user_identities WHERE user_id = $1 AND provider = $2',
-        [user.id, 'local']
-    );
-
-    if (identityResult.rows.length > 0) {
-        user.password = identityResult.rows[0].provider_uid;
+    if (user.password === null) {
+        delete user.password;
     }
-
     return user;
 };
 
@@ -760,23 +773,42 @@ User.findOrCreateFromGoogle = async ({ googleId, email, name }) => {
       const userResult = await db.query('SELECT * FROM users WHERE id = $1', [res.rows[0].user_id]);
       return userResult.rows[0];
     } else {
-      // User does not exist, create them.
-      // Note: In a production app, you'd wrap this in a transaction.
+      const client = await db.pool.connect();
+      try {
+        await client.query('BEGIN');
 
-      // 1. Create user in users table, using 'name' for the 'username' column
-      const newUserRes = await db.query(
-        'INSERT INTO users (username, email) VALUES ($1, $2) RETURNING id, username, email',
-        [name, email]
-      );
-      const newUser = newUserRes.rows[0];
+        let newUserRes;
+        let usernameToTry = name;
+        for (let attempt = 0; attempt < 3; attempt++) {
+          try {
+            newUserRes = await client.query(
+              'INSERT INTO users (username, email) VALUES ($1, $2) RETURNING id, username, email',
+              [usernameToTry, email]
+            );
+            break;
+          } catch (insertErr) {
+            if (insertErr.code === '23505' && insertErr.detail?.includes('username') && attempt < 2) {
+              usernameToTry = `${name}_${Math.floor(Math.random() * 9000 + 1000)}`;
+              continue;
+            }
+            throw insertErr;
+          }
+        }
+        const newUser = newUserRes.rows[0];
 
-      // 2. Create identity in user_identities table
-      await db.query(
-        'INSERT INTO user_identities (user_id, provider, provider_uid) VALUES ($1, $2, $3)',
-        [newUser.id, 'google', googleId]
-      );
+        await client.query(
+          'INSERT INTO user_identities (user_id, provider, provider_uid) VALUES ($1, $2, $3)',
+          [newUser.id, 'google', googleId]
+        );
 
-      return newUser;
+        await client.query('COMMIT');
+        return newUser;
+      } catch (txErr) {
+        await client.query('ROLLBACK');
+        throw txErr;
+      } finally {
+        client.release();
+      }
     }
   } catch (error) {
     console.error('Error in findOrCreateFromGoogle:', error);

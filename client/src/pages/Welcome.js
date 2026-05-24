@@ -42,7 +42,7 @@ function Welcome() {
             <div className="w-full bg-center bg-no-repeat bg-cover aspect-auto rounded-none flex-1"
                  style={{backgroundImage: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)'}}></div>
           </div>
-          <h1 className="text-slate-900 dark:text-white tracking-light text-[32px] font-bold leading-tight pt-4">Guaji AI</h1>
+          <h1 className="text-slate-900 dark:text-white tracking-light text-[32px] font-bold leading-tight pt-4">GuaJi</h1>
           <p className="text-slate-600 dark:text-slate-400 text-base mt-2">{t('welcome_subtitle')}</p>
 
           <div className="mt-8 px-6 py-4 bg-slate-50 dark:bg-slate-800/50 rounded-xl border border-slate-100 dark:border-slate-800">

@@ -84,7 +84,7 @@ export default function Onboarding() {
       <div className="w-full max-w-lg flex items-center justify-between mb-6">
         <div className="flex items-center gap-2">
           <img src="/guaji-logo.svg" alt="GuaJi" className="w-8 h-8" />
-          <span className="font-bold text-slate-800 dark:text-white text-lg">GuaJi AI</span>
+          <span className="font-bold text-slate-800 dark:text-white text-lg">GuaJi</span>
         </div>
         <LanguageSwitcher />
       </div>

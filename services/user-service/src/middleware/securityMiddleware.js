@@ -84,9 +84,9 @@ const securityHeaders = helmet({
 const validateRegistration = [
   body('username')
     .trim()
-    .isLength({ min: 3, max: 30 })
-    .withMessage('Username must be between 3 and 30 characters')
-    .matches(/^[a-zA-Z0-9_-]+$/)
+    .isLength({ min: 1, max: 30 })
+    .withMessage('Username must be between 1 and 30 characters')
+    .matches(/^[\p{L}\p{N}_-]+$/u)
     .withMessage('Username can only contain letters, numbers, underscores, and hyphens')
     .escape(),
   
@@ -154,9 +154,10 @@ const validatePasswordUpdate = [
 const handleValidationErrors = (req, res, next) => {
   const errors = validationResult(req);
   if (!errors.isEmpty()) {
+    const errorMessages = errors.array().map(e => e.msg);
     return res.status(400).json({
-      code: 400,
-      message: 'Validation failed',
+      success: false,
+      message: errorMessages[0],
       data: {
         errors: errors.array().map(error => ({
           field: error.param,

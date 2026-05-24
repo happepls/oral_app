@@ -71,7 +71,7 @@ function Landing() {
         <div className="max-w-6xl mx-auto px-4 py-4 flex items-center justify-between">
           <div className="flex items-center gap-2">
             <img src="/guaji-logo.svg" alt="GuaJi" className="w-8 h-8" />
-            <span className="text-xl font-bold text-slate-900 dark:text-white">GuaJi AI</span>
+            <span className="text-xl font-bold text-slate-900 dark:text-white">GuaJi</span>
           </div>
           <div className="flex items-center gap-3">
             <LanguageSwitcher />
@@ -296,7 +296,7 @@ function Landing() {
               className="w-6 h-6 rounded-lg"
               style={{ background: 'linear-gradient(135deg, #637FF1, #a47af6)' }}
             />
-            <span className="font-bold text-slate-900 dark:text-white">Guaji AI</span>
+            <span className="font-bold text-slate-900 dark:text-white">GuaJi</span>
           </div>
           <p className="text-slate-500 text-sm">{t('landing_footer')}</p>
         </div>
