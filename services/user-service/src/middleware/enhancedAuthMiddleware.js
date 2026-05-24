@@ -348,8 +348,8 @@ const internalAuthWithNetworkSkip = (req, res, next) => {
                    req.connection?.remoteAddress ||
                    req.socket?.remoteAddress;
   
-  // Skip auth for Docker internal network (172.x.x.x)
-  if (clientIp && clientIp.startsWith('172.')) {
+  // Skip auth for Docker/Kubernetes internal networks (172.x.x.x, 10.x.x.x)
+  if (clientIp && (clientIp.startsWith('172.') || clientIp.startsWith('10.'))) {
     console.log(`Internal auth skipped for Docker internal network: ${clientIp}`);
     return next();
   }

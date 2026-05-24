@@ -38,7 +38,7 @@ function getInitialLanguage() {
   const browserLang = navigator.language?.split('-')[0]?.toLowerCase();
   if (SUPPORTED_LANGS.includes(browserLang)) return browserLang;
 
-  return 'zh';
+  return 'en';
 }
 
 // ──────────────────────────────────────────────

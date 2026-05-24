@@ -112,19 +112,16 @@ session_phases: _TTLDict = _TTLDict(ttl=_SESSION_PHASES_TTL, maxsize=_SESSION_PH
 
 app = FastAPI()
 
-# Rate limiting (slowapi) — IP-based, applied per-endpoint via @limiter.limit(...)
-from slowapi import Limiter, _rate_limit_exceeded_handler
-from slowapi.util import get_remote_address
-from slowapi.errors import RateLimitExceeded
-
-limiter = Limiter(key_func=get_remote_address)
-app.state.limiter = limiter
-app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
-
-# Enable CORS
+# Enable CORS — origins from env CORS_ALLOWED_ORIGINS (CSV), default matches Nginx api-gateway allowlist
+_cors_origins = [
+    o.strip() for o in os.getenv(
+        "CORS_ALLOWED_ORIGINS",
+        "http://localhost:3000,http://localhost:5001",
+    ).split(",") if o.strip()
+]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=_cors_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -3085,7 +3082,6 @@ async def daily_question_change_question(request: _FastAPIRequest):
 # selection from today's pool.
 # ---------------------------------------------------------------------------
 @app.get("/daily-question/pool")
-@limiter.limit("10/minute")
 async def daily_question_pool_endpoint(request: _FastAPIRequest):
     token = request.cookies.get("accessToken")
     if not token:
@@ -3128,7 +3124,6 @@ async def daily_question_pool_endpoint(request: _FastAPIRequest):
 # by index, update Redis picked/index, clear passed state.
 # ---------------------------------------------------------------------------
 @app.post("/daily-question/select")
-@limiter.limit("10/minute")
 async def daily_question_select_endpoint(request: _FastAPIRequest):
     token = request.cookies.get("accessToken")
     if not token:

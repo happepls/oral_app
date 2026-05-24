@@ -375,3 +375,165 @@ gitleaks git --staged --verbose --config .gitleaks.toml  # staged only
 
 **Remote monitoring** (requires `GITHUB_PERSONAL_ACCESS_TOKEN` in `.claude/settings.local.json`):
 - Ask Claude Code: "List secret scanning alerts for happepls/oral_app"
+
+## 可用工具整合
+
+### 已安装插件 (Plugins)
+
+| 插件 | 作用域 | 说明 |
+|------|--------|------|
+| superpowers v5.0.7 | user | 开发全流程技能包（brainstorming/TDD/debugging/plans/code-review 等） |
+| skill-creator | user | 创建、测试、优化自定义 Skill |
+| code-review | user | PR 代码审查 |
+| commit-commands | user | Git commit/push/PR 快捷操作 |
+| frontend-design | project | 高质量前端界面生成 |
+| context7 | user | 第三方库文档实时查询 |
+| playwright | user | Playwright 浏览器自动化测试 |
+| minimalist-entrepreneur | user | 精益创业方法论（MVP/定价/获客等 10 个技能） |
+| kotlin-lsp / pyright-lsp / swift-lsp | user | 语言 LSP 支持 |
+| security-guidance | user | 安全指导 |
+
+### Skills 清单
+
+#### 核心工作流 (superpowers)
+| Skill | 触发场景 |
+|-------|----------|
+| `superpowers:brainstorming` | 任何创造性工作（新功能/组件/行为修改）前必用 |
+| `superpowers:writing-plans` | 多步任务实施前，制定实施方案 |
+| `superpowers:executing-plans` | 按计划执行实施，含审查检查点 |
+| `superpowers:test-driven-development` | 实现功能/修复 bug 前，先写测试 |
+| `superpowers:systematic-debugging` | 遇到 bug/测试失败/意外行为时 |
+| `superpowers:verification-before-completion` | 宣布完成前，运行验证命令确认 |
+| `superpowers:requesting-code-review` | 完成任务后请求代码审查 |
+| `superpowers:receiving-code-review` | 收到 code review 反馈后 |
+| `superpowers:dispatching-parallel-agents` | 2+ 独立任务可并行时 |
+| `superpowers:subagent-driven-development` | 当前会话内按计划并行执行 |
+| `superpowers:using-git-worktrees` | 需要隔离的 feature 开发 |
+| `superpowers:finishing-a-development-branch` | 实现完成后决定 merge/PR/cleanup |
+| `superpowers:writing-skills` | 创建或编辑 Skill |
+
+#### Skill 创建器
+| Skill | 触发场景 |
+|-------|----------|
+| `skill-creator:skill-creator` | 创建新 Skill / 编辑优化现有 Skill / 跑评估测试 |
+
+#### Git & 代码审查
+| Skill | 触发场景 |
+|-------|----------|
+| `code-review:code-review` | PR 代码审查 |
+| `commit-commands:commit` | 创建 git commit |
+| `commit-commands:commit-push-pr` | 一键 commit → push → 开 PR |
+| `commit-commands:clean_gone` | 清理已删除远程分支的本地残留 |
+
+#### 前端设计
+| Skill | 触发场景 |
+|-------|----------|
+| `frontend-design:frontend-design` | 构建 Web 组件/页面/应用，高设计质量 |
+
+#### 精益创业 (minimalist-entrepreneur)
+| Skill | 触发场景 |
+|-------|----------|
+| `minimalist-entrepreneur:validate-idea` | 验证商业想法 |
+| `minimalist-entrepreneur:find-community` | 发现目标社区 |
+| `minimalist-entrepreneur:processize` | 手动优先流程化 |
+| `minimalist-entrepreneur:mvp` | 构建 MVP |
+| `minimalist-entrepreneur:first-customers` | 获取前 100 个客户 |
+| `minimalist-entrepreneur:pricing` | 定价策略 |
+| `minimalist-entrepreneur:marketing-plan` | 内容营销计划 |
+| `minimalist-entrepreneur:grow-sustainably` | 可持续增长决策 |
+| `minimalist-entrepreneur:company-values` | 定义公司价值观 |
+| `minimalist-entrepreneur:minimalist-review` | 商业决策审查 |
+
+#### 通用 Skills
+| Skill | 触发场景 |
+|-------|----------|
+| `claude-api` | 构建/调试 Claude API / Anthropic SDK 应用 |
+| `update-config` | 修改 settings.json（hooks/权限/env） |
+| `simplify` | 审查变更代码，优化质量 |
+| `init` | 初始化 CLAUDE.md |
+| `review` | 审查 PR |
+| `security-review` | 安全审查当前分支变更 |
+| `loop` | 定时循环执行 prompt |
+| `schedule` | 创建 cron 定时远程 agent |
+
+#### 项目专用 Skills
+| Skill | 触发场景 |
+|-------|----------|
+| `create_oral_app_team` | 启动/重建 Oral App Agent Team |
+| `finish_today` | 提交前收尾检查 |
+
+### MCP 服务器 & 工具
+
+#### chrome 浏览器自动化 (`mcp__claude-in-chrome__*`)
+页面导航、DOM 读取、表单填写、JS 执行、截图、GIF 录制、控制台/网络日志、多标签管理
+
+#### 桌面控制 (`mcp__computer-use__*`)
+截图、鼠标点击/拖拽/滚动、键盘输入、应用启动、剪贴板读写
+
+#### Figma 设计 (`mcp__figma__*`)
+文档/页面/节点 CRUD、样式设置（填充/描边/渐变/效果/圆角/自动布局）、文本排版、图片/SVG 操作、组件/变量管理、导出
+
+#### Firecrawl 爬虫 (`mcp__firecrawl__*`)
+网页抓取、站点爬取、搜索、数据提取、浏览器实例管理、监控
+
+#### Playwright 测试 (`mcp__plugin_playwright_playwright__*`)
+浏览器导航、快照/截图、点击/填表/拖拽、JS 执行、网络请求监听、对话框处理
+
+#### 数据库 (`mcp__postgres__*`)
+PostgreSQL 直接查询
+
+#### 文档查询 (`mcp__plugin_context7_context7__*`)
+`resolve-library-id` → `query-docs`：查询任意库/框架的最新文档
+
+#### 搜索 (`mcp__WebSearch__*`)
+百炼 Web 搜索
+
+#### Google 服务 (OAuth)
+Gmail、Google Calendar、Google Drive（需 OAuth 认证）
+
+### 内置工具 (Built-in)
+
+| 工具 | 说明 |
+|------|------|
+| `Read` / `Edit` / `Write` | 文件读写编辑 |
+| `Bash` | Shell 命令执行 |
+| `Agent` | 派生子 Agent（类型：claude/Explore/general-purpose/Plan/code-reviewer） |
+| `WebFetch` / `WebSearch` | 网页抓取 / 搜索 |
+| `Skill` / `ToolSearch` | 调用 Skill / 搜索延迟加载工具 |
+| `Task*` | 任务创建/跟踪/管理 |
+| `EnterPlanMode` / `ExitPlanMode` | 计划模式 |
+| `EnterWorktree` / `ExitWorktree` | Git worktree 隔离 |
+| `Monitor` | 监听后台进程事件 |
+| `NotebookEdit` | Jupyter notebook 编辑 |
+| `LSP` | 语言服务器协议操作 |
+| `SendMessage` | 向子 Agent 发消息 |
+| `PushNotification` | 推送通知 |
+| `Cron*` | 定时任务管理 |
+| `Team*` | Agent 团队管理 |
+| `ScheduleWakeup` | 动态 loop 调度 |
+| `RemoteTrigger` | 远程触发 |
+
+### 权限配置
+
+#### 全局自动允许 (`~/.claude/settings.json`)
+```
+WebFetch, Bash(cat/file/find/gem list/ls/open/plutil)
+```
+
+#### 全局禁止（破坏性操作）
+```
+rm -rf/r/f/R, git push --force/-f, git reset --hard, git branch -D,
+git clean -f, sudo, shutdown, reboot, dd, mkfs, diskutil erase,
+chmod 777, truncate
+```
+
+#### 项目自动允许 (`.claude/settings.local.json`)
+```
+mcp__WebSearch__bailian_web_search
+Bash(gh api/docker compose/docker exec/docker ps/npm run/npx react-app-rewired/git/curl/grep/python3 -m py_compile)
+mcp__figma__(get_document_info/join_channel)
+mcp__github__(list_secret_scanning_alerts/get_secret_scanning_alert/list_code_scanning_alerts)
+```
+
+#### 默认权限模式
+`acceptEdits` — 文件编辑自动批准，其他操作需确认

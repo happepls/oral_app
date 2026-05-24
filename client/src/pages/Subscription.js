@@ -4,6 +4,23 @@ import { useAuth } from '../contexts/AuthContext';
 
 const API_BASE = process.env.REACT_APP_API_URL || '';
 
+const ALLOWED_REDIRECT_HOSTS = [
+  'checkout.stripe.com',
+  'billing.stripe.com',
+];
+
+function isAllowedRedirect(url) {
+  try {
+    const { protocol, hostname } = new URL(url);
+    if (protocol !== 'https:') return false;
+    return ALLOWED_REDIRECT_HOSTS.some(
+      (h) => hostname === h || hostname.endsWith('.' + h)
+    );
+  } catch {
+    return false;
+  }
+}
+
 function Subscription() {
   const navigate = useNavigate();
   const { user, token, refreshProfile } = useAuth();
@@ -100,7 +117,11 @@ function Subscription() {
       });
       const data = await res.json();
       if (data.url) {
-        window.location.href = data.url;
+        if (isAllowedRedirect(data.url)) {
+          window.location.href = data.url;
+        } else {
+          console.error('Refused checkout redirect to disallowed URL:', data.url);
+        }
       }
     } catch (error) {
       console.error('Error creating checkout:', error);
@@ -120,7 +141,11 @@ function Subscription() {
       });
       const data = await res.json();
       if (data.url) {
-        window.location.href = data.url;
+        if (isAllowedRedirect(data.url)) {
+          window.location.href = data.url;
+        } else {
+          console.error('Refused portal redirect to disallowed URL:', data.url);
+        }
       }
     } catch (error) {
       console.error('Error opening portal:', error);

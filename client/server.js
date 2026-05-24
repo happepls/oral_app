@@ -8,7 +8,7 @@ const app = express();
 app.use(express.static(path.join(__dirname, 'build')));
 
 // Proxy API requests to the API Gateway
-const apiGatewayUrl = process.env.API_GATEWAY || 'http://oral_app_api_gateway:80';
+const apiGatewayUrl = process.env.API_GATEWAY || 'http://api-gateway:80';
 console.log('API Gateway URL:', apiGatewayUrl);
 
 // WebSocket proxy for real-time communication

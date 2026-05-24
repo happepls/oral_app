@@ -12,8 +12,8 @@ WORKDIR /app
 
 COPY package*.json ./
 
-# Copy node_modules from host instead of running npm install to save time and avoid network issues
-COPY node_modules ./node_modules
+# Install dependencies (cloud CI builds don't have host node_modules)
+RUN npm ci --omit=dev
 
 COPY . .
 
