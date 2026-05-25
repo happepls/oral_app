@@ -7,23 +7,42 @@ import { motion, AnimatePresence } from 'motion/react';
 import { Check, ChevronRight } from 'lucide-react';
 import { GuajiMascot } from '../components/GuajiMascot';
 
-// ── 母语选项 ──
+// ── 母语选项（与 GoalSetting LANGUAGES 保持一致）──
 const NATIVE_LANGUAGES = [
-  { value: 'Chinese',    label: '中文',     flag: '🇨🇳' },
-  { value: 'English',    label: 'English',   flag: '🇺🇸' },
-  { value: 'Japanese',   label: '日本語',    flag: '🇯🇵' },
-  { value: 'Korean',     label: '한국어',    flag: '🇰🇷' },
-  { value: 'French',     label: 'Français',  flag: '🇫🇷' },
-  { value: 'Spanish',    label: 'Español',   flag: '🇪🇸' },
-  { value: 'German',     label: 'Deutsch',   flag: '🇩🇪' },
-  { value: 'Portuguese', label: 'Português', flag: '🇧🇷' },
-  { value: 'Russian',    label: 'Русский',   flag: '🇷🇺' },
+  { value: 'Chinese',      label: '中文',           flag: '🇨🇳' },
+  { value: 'English',      label: 'English',        flag: '🇺🇸' },
+  { value: 'Japanese',     label: '日本語',          flag: '🇯🇵' },
+  { value: 'Korean',       label: '한국어',          flag: '🇰🇷' },
+  { value: 'French',       label: 'Français',       flag: '🇫🇷' },
+  { value: 'Spanish',      label: 'Español',        flag: '🇪🇸' },
+  { value: 'German',       label: 'Deutsch',        flag: '🇩🇪' },
+  { value: 'Portuguese',   label: 'Português',      flag: '🇧🇷' },
+  { value: 'Russian',      label: 'Русский',        flag: '🇷🇺' },
+  { value: 'Italian',      label: 'Italiano',       flag: '🇮🇹' },
+  { value: 'Thai',         label: 'ภาษาไทย',        flag: '🇹🇭' },
+  { value: 'Indonesian',   label: 'Bahasa Indonesia', flag: '🇮🇩' },
+  { value: 'Arabic',       label: 'العربية',         flag: '🇸🇦' },
+  { value: 'Vietnamese',   label: 'Tiếng Việt',     flag: '🇻🇳' },
+  { value: 'Turkish',      label: 'Türkçe',         flag: '🇹🇷' },
+  { value: 'Finnish',      label: 'Suomi',          flag: '🇫🇮' },
+  { value: 'Polish',       label: 'Polski',         flag: '🇵🇱' },
+  { value: 'Hindi',        label: 'हिन्दी',           flag: '🇮🇳' },
+  { value: 'Dutch',        label: 'Nederlands',     flag: '🇳🇱' },
+  { value: 'Czech',        label: 'Čeština',        flag: '🇨🇿' },
+  { value: 'Urdu',         label: 'اردو',            flag: '🇵🇰' },
+  { value: 'Filipino',     label: 'Tagalog',        flag: '🇵🇭' },
+  { value: 'Swedish',      label: 'Svenska',        flag: '🇸🇪' },
+  { value: 'Danish',       label: 'Dansk',          flag: '🇩🇰' },
+  { value: 'Hebrew',       label: 'עברית',           flag: '🇮🇱' },
+  { value: 'Icelandic',    label: 'Íslenska',       flag: '🇮🇸' },
+  { value: 'Malay',        label: 'Bahasa Melayu',  flag: '🇲🇾' },
+  { value: 'Norwegian',    label: 'Norsk',          flag: '🇳🇴' },
+  { value: 'Persian',      label: 'فارسی',           flag: '🇮🇷' },
 ];
 
 const GENDER_OPTIONS = [
   { value: 'male',   label: '男 ♂' },
   { value: 'female', label: '女 ♀' },
-  { value: 'other',  label: '其他' },
 ];
 
 // ── 步骤配置 ──
@@ -146,11 +165,6 @@ export default function Onboarding() {
                     {t('gender_label')}
                   </label>
                   <div className="flex gap-2">
-                    <button type="button" onClick={() => setGender('')}
-                      className={`flex-1 py-2.5 rounded-xl text-sm font-medium border-2 transition ${
-                        gender === '' ? 'border-primary text-primary bg-primary/5' : 'border-slate-200 text-slate-500'}`}>
-                      {t('gender_placeholder')}
-                    </button>
                     {GENDER_OPTIONS.map(({ value, label }) => (
                       <button key={value} type="button" onClick={() => setGender(value)}
                         className={`flex-1 py-2.5 rounded-xl text-sm font-medium border-2 transition ${
@@ -167,7 +181,7 @@ export default function Onboarding() {
                   <label className="block text-sm font-semibold text-slate-700 dark:text-slate-300 mb-3">
                     {t('native_language_label')}
                   </label>
-                  <div className="grid grid-cols-3 gap-2">
+                  <div className="grid grid-cols-3 gap-2" style={{ maxHeight: '280px', overflowY: 'auto' }}>
                     {NATIVE_LANGUAGES.map(({ value, label, flag }) => {
                       const sel = nativeLanguage === value;
                       return (

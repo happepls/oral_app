@@ -13,9 +13,9 @@ ARG REACT_APP_API_URL=/api
 ARG REACT_APP_API_GATEWAY
 ARG REACT_APP_GOOGLE_CLIENT_ID
 
-# --- Layer 1: deps (only invalidated when package*.json changes) ---
+# --- Layer 1: deps (copy from host to avoid npm alpine bug) ---
 COPY package*.json ./
-RUN npm ci --legacy-peer-deps && npm cache clean --force
+COPY node_modules ./node_modules
 
 # --- Layer 2: source (invalidated only when source changes) ---
 COPY config-overrides.js ./
@@ -28,6 +28,7 @@ RUN echo "REACT_APP_API_URL=${REACT_APP_API_URL}" > .env && \
     echo "REACT_APP_GOOGLE_CLIENT_ID=${REACT_APP_GOOGLE_CLIENT_ID}" >> .env
 
 RUN npm run build
+RUN npm prune --production --legacy-peer-deps 2>/dev/null; true
 
 # ============================================================
 # Stage 2: Runner — only production deps + compiled assets
@@ -36,12 +37,9 @@ FROM node:18-alpine AS runner
 
 WORKDIR /app
 
-# Faster Alpine mirrors
-RUN sed -i 's/dl-cdn.alpinelinux.org/mirrors.aliyun.com/g' /etc/apk/repositories
-
-# Install ONLY runtime deps (express, http-proxy-middleware)
-COPY package*.json ./
-RUN npm ci --omit=dev --legacy-peer-deps && npm cache clean --force
+# Copy production-only node_modules from builder (already pruned)
+COPY --from=builder /app/package*.json ./
+COPY --from=builder /app/node_modules ./node_modules
 
 # Copy compiled React build from builder stage
 COPY --from=builder /app/build ./build

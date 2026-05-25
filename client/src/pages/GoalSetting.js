@@ -327,7 +327,7 @@ export default function GoalSetting() {
         <div
           className="h-full transition-all duration-500 ease-out"
           style={{
-            width: `${(displayStep / displayTotal) * 100}%`,
+            width: `${(step / TOTAL_STEPS) * 100}%`,
             background: 'linear-gradient(90deg, #637FF1, #a47af6)',
           }}
         />
