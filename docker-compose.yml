@@ -127,12 +127,16 @@ services:
       - HTTPS_PROXY=http://host.docker.internal:7890
       - HTTP_PROXY=http://host.docker.internal:7890
       - NO_PROXY=localhost,127.0.0.1,postgres,redis,mongo
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
     env_file:
       - ./.env
       - ./services/user-service/.env
     depends_on:
       postgres:
         condition: service_healthy
+      redis:
+        condition: service_started
     extra_hosts:
       - "host.docker.internal:host-gateway"
     networks:

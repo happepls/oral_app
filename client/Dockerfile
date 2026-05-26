@@ -21,20 +21,15 @@ RUN echo "REACT_APP_API_URL=${REACT_APP_API_URL}" > .env && \
 RUN npm run build
 
 # ============================================================
-# Stage 2: Runner — Express server for SPA routing
+# Stage 2: Production — Nginx serves static assets only
 # ============================================================
-FROM node:18-alpine AS runner
+FROM nginx:1.27-alpine AS production
 
-WORKDIR /app
+RUN rm -rf /var/cache/apk/*
 
-COPY package*.json ./
-RUN npm ci --omit=dev --legacy-peer-deps && npm cache clean --force
-
-COPY --from=builder /app/build ./build
-COPY server.js ./
+COPY client.nginx.conf /etc/nginx/nginx.conf
+COPY --from=builder /app/build /usr/share/nginx/html
 
 EXPOSE 5001
 
-USER node
-
-CMD ["node", "server.js"]
+CMD ["nginx", "-g", "daemon off;"]

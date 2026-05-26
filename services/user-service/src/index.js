@@ -149,9 +149,14 @@ app.use((err, req, res, next) => {
 });
 
 const userRoutes = require('./routes/userRoutes');
+const sseRoutes = require('./routes/sseRoutes');
 const stripeRoutes = require('./stripe/stripeRoutes');
+const redisClient = require('./utils/redisClient');
+
+redisClient.connect().catch(err => console.warn('[user-service] Redis connect failed (SSE will be unavailable):', err.message));
 
 app.use('/', userRoutes);
+app.use('/', sseRoutes);
 app.use('/api/stripe', stripeRoutes);
 
 app.get('/api/health', (req, res) => {

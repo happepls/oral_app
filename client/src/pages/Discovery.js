@@ -4,6 +4,7 @@ import BottomNav from '../components/BottomNav';
 import { StreakRing } from '../components/StreakRing';
 import { ScenarioCard } from '../components/ScenarioCard';
 import { useAuth } from '../contexts/AuthContext';
+import { useNotifications } from '../contexts/NotificationContext';
 import { userAPI, historyAPI, aiAPI } from '../services/api';
 import { StatCard } from '../components/StatCard';
 import { GuajiAvatar } from '../components/GuajiAvatar';
@@ -347,6 +348,38 @@ function Discovery() {
 
     return () => abortController.abort();
   }, [user, navigate, location.key]);
+
+  const { subscribe } = useNotifications();
+
+  useEffect(() => {
+    const unsubs = [
+      subscribe('task_completed', async () => {
+        try {
+          const goalRes = await userAPI.getActiveGoal();
+          if (goalRes?.goal) {
+            setActiveGoal(goalRes.goal);
+            if (goalRes.goal.scenarios?.length > 0) setScenarios(goalRes.goal.scenarios);
+            checkAchievement(goalRes.goal);
+          }
+        } catch (_) {}
+      }),
+      subscribe('proficiency_update', async (data) => {
+        if (data?.payload?.delta > 0) {
+          try {
+            const goalRes = await userAPI.getActiveGoal();
+            if (goalRes?.goal) setActiveGoal(goalRes.goal);
+          } catch (_) {}
+        }
+      }),
+      subscribe('daily_qa_completed', () => {
+        setDailyQAPassedDB(true);
+        userAPI.getDailyProgress().then(res => {
+          setDailyProgress(res?.data || res);
+        }).catch(() => {});
+      })
+    ];
+    return () => unsubs.forEach(fn => fn());
+  }, [subscribe]);
 
   const checkAchievement = (goal) => {
     if (!goal?.scenarios?.length) return;

@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { BrowserRouter as Router, Route, Routes, Navigate } from 'react-router-dom';
 import { GoogleOAuthProvider } from '@react-oauth/google';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
+import { NotificationProvider } from './contexts/NotificationContext';
 import Welcome from './pages/Welcome';
 import Landing from './pages/Landing';
 import Login from './pages/Login';
@@ -61,15 +62,17 @@ function App() {
   return (
     <GoogleOAuthProvider clientId={process.env.REACT_APP_GOOGLE_CLIENT_ID || ''}>
       <AuthProvider>
-        <Router>
-          {showSplash ? (
-            <SplashScreen onComplete={() => setShowSplash(false)} />
-          ) : (
-            <div className="min-h-screen bg-gray-50 dark:bg-gray-900 transition-colors duration-300">
-              <AppRoutes />
-            </div>
-          )}
-        </Router>
+        <NotificationProvider>
+          <Router>
+            {showSplash ? (
+              <SplashScreen onComplete={() => setShowSplash(false)} />
+            ) : (
+              <div className="min-h-screen bg-gray-50 dark:bg-gray-900 transition-colors duration-300">
+                <AppRoutes />
+              </div>
+            )}
+          </Router>
+        </NotificationProvider>
       </AuthProvider>
     </GoogleOAuthProvider>
   );

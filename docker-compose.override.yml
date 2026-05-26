@@ -5,5 +5,4 @@ services:
   client-app:
     image: oral_app-client-app:latest
     volumes:
-      - ./client/build:/app/build:ro
-    command: ["node", "server.js"]
+      - ./client/build:/usr/share/nginx/html:ro

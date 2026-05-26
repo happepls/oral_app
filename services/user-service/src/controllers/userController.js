@@ -2,6 +2,7 @@ const jwt = require('jsonwebtoken');
 const User = require('../models/user');
 const { OAuth2Client } = require('google-auth-library');
 const bcrypt = require('bcryptjs');
+const { publishNotification } = require('../utils/notificationPublisher');
 
 
 const client = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
@@ -624,7 +625,7 @@ exports.updateProficiencyInternal = async (req, res) => {
 
         }
 
-        
+        publishNotification(userId, 'proficiency_update', { delta, current_proficiency: updatedGoal.current_proficiency });
 
         res.json({ success: true, data: { goal: updatedGoal } });
 
@@ -695,8 +696,10 @@ exports.completeTaskInternal = async (req, res) => {
 
         if (!updatedGoal) {
             console.log('[User] Task completion skipped (not found or no active goal)');
-            return res.json({ success: true, message: 'No update' }); 
+            return res.json({ success: true, message: 'No update' });
         }
+
+        publishNotification(userId, 'task_completed', { scenario, task });
 
         res.json({ success: true, data: { goal: updatedGoal } });
 
@@ -721,11 +724,15 @@ exports.updateTaskScoreInternal = async (req, res) => {
 
         if (!result) {
             console.log('[User] Task score update skipped (not found or no active goal)');
-            return res.json({ success: true, message: 'No update', taskCompleted: false }); 
+            return res.json({ success: true, message: 'No update', taskCompleted: false });
         }
 
-        res.json({ 
-            success: true, 
+        publishNotification(userId, 'task_score_updated', {
+            scenario, task, newScore: result.newScore, taskCompleted: result.taskCompleted
+        });
+
+        res.json({
+            success: true,
             data: { goal: result.goal },
             taskCompleted: result.taskCompleted,
             newScore: result.newScore,
@@ -940,6 +947,7 @@ exports.recordDailyQAPassInternal = async (req, res) => {
         const rawText = req.body.question_text || '';
         const question_text = typeof rawText === 'string' ? rawText.slice(0, 2000) : '';
         const result = await User.recordDailyQAPass(id, question_text);
+        publishNotification(id, 'daily_qa_completed', { passed: true });
         res.json({ success: true, data: result });
     } catch (error) {
         console.error('recordDailyQAPassInternal error:', error);
