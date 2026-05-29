@@ -421,14 +421,15 @@ JSON Format (Initial Tips - Optional):
             f"# Interaction Protocol\n"
             f"1. **Open** by asking the question above in {target_language}, warmly and concisely (1-2 sentences).\n"
             f"2. Wait for the student to answer.\n"
-            f"3. **Evaluate** the student's answer. The bar is LOW — accept any answer that:\n"
-            f"   - Is mostly in {target_language}.\n"
-            f"   - Is on-topic (relates to the question).\n"
-            f"   - Contains at least one meaningful sentence.\n"
-            f"   - Grammar errors are completely fine.\n"
-            f"4. **If the answer qualifies (almost always)**: congratulate briefly in {target_language}.\n"
-            f"5. **If the answer is off-topic or not in {target_language} at all**: give a brief hint and invite retry.\n"
-            f"6. Stay focused on today's question.\n"
+            f"3. **Evaluate** the student's answer strictly:\n"
+            f"   - The answer MUST be on-topic (directly relates to the question asked).\n"
+            f"   - The answer MUST be in {target_language} (not in {native_language} or other languages).\n"
+            f"   - The answer MUST contain at least one meaningful sentence that actually answers the question.\n"
+            f"   - Grammar errors are completely fine — focus on content relevance.\n"
+            f"   - Vague, evasive, or unrelated answers do NOT qualify.\n"
+            f"4. **If the answer qualifies**: start your reply with \"Great answer!\" or \"Well done!\" then give brief positive feedback in {target_language}.\n"
+            f"5. **If the answer is off-topic, too vague, or not in {target_language}**: do NOT praise. Instead, gently redirect: explain what was wrong and ask the student to try again with a specific answer to the question.\n"
+            f"6. Stay focused on today's question. Keep guiding until the student gives a proper on-topic answer.\n"
         )
 
     def generate_system_prompt(self, user_context: dict, role="OralTutor") -> str:

@@ -315,14 +315,25 @@ export function PracticeReport({
     { icon: '📝', name: '词汇完整度', score: Math.max(40, vocabularyScore), delay: 300 },
   ];
 
-  const strengths = analysis.strengths || [];
-  const weaknesses = analysis.weaknesses || [];
-  const recommendations = reviewData?.recommendations || [];
+  const strengths = Array.isArray(analysis.strengths) ? analysis.strengths : [];
+  const weaknesses = Array.isArray(analysis.weaknesses) ? analysis.weaknesses : [];
+  // recommendations may arrive as an array (production workflow), an object with
+  // `specific`/`overall` keys (debug magic-passcode path), or be missing entirely.
+  // Normalize to a flat string[] before filtering so the render never crashes.
+  const rawRecs = reviewData?.recommendations;
+  const recommendations = Array.isArray(rawRecs)
+    ? rawRecs
+    : rawRecs && typeof rawRecs === 'object'
+      ? [
+          ...(Array.isArray(rawRecs.specific) ? rawRecs.specific : []),
+          ...(typeof rawRecs.overall === 'string' ? [rawRecs.overall] : []),
+        ]
+      : [];
 
   // Merge weaknesses + recommendations for improve card
   const improveItems = [
     ...weaknesses,
-    ...recommendations.filter(r => !weaknesses.includes(r)),
+    ...recommendations.filter(r => typeof r === 'string' && !weaknesses.includes(r)),
   ].slice(0, 4);
 
   // Extract vocab from messages (words in AI corrections)

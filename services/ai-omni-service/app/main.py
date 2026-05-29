@@ -674,38 +674,123 @@ def _strip_daily_qa_marker(text: str) -> str:
 
 # Indicators that an AI reply is asking for retry / correction / clarification.
 # When ANY of these appears in the AI text, daily-QA auto-pass is suppressed.
-_DAILY_QA_NEGATIVE_INDICATORS = [
-    # Retry / correction
-    "try again", "もう一度", "再试", "再说", "重新",
-    "let's try", "could you", "can you try",
-    "もう少し", "やり直", "言い直",
-    "not quite", "not correct", "incorrect",
-    # Off-topic / wrong language
-    "off-topic", "off topic", "関係ない", "关系不大",
-    "话题", "質問に", "question", "about the question",
-    "答えてみ", "回答一下", "answer the",
-    "今日の質問", "今天的问题", "today's question",
-    # Wrong language
-    "日本語で", "in japanese", "in english", "用日语", "用英语",
-    "please use", "please answer",
+_DAILY_QA_POSITIVE_INDICATORS = [
+    "great answer", "well done", "good answer", "nice answer", "good job",
+    "excellent", "perfect", "wonderful", "fantastic", "impressive",
+    "素晴らしい", "よくできました", "いい答え", "すごい",
+    "回答得很好", "答得不错", "说得好", "非常好", "太棒了",
+    "좋은 대답", "잘했어", "훌륭",
+    "très bien", "bonne réponse", "magnifique",
+    "muy bien", "buena respuesta", "excelente",
+    "sehr gut", "tolle antwort", "ausgezeichnet",
 ]
+
+
+# Map target_language name → expected dominant Unicode script. Used to reject
+# daily-QA auto-pass when the user answered in the wrong language (e.g. user
+# replies in Chinese to an English question — the auto-pass heuristic only
+# looks at AI tone and would mistakenly let it through).
+_SCRIPT_BY_LANG = {
+    "english":    "latin",
+    "french":     "latin",
+    "spanish":    "latin",
+    "german":     "latin",
+    "italian":    "latin",
+    "portuguese": "latin",
+    "indonesian": "latin",
+    "vietnamese": "latin",
+    "chinese":    "cjk",
+    "japanese":   "jp",   # CJK + kana
+    "korean":     "ko",
+    "russian":    "cyrillic",
+    "arabic":     "arabic",
+    "thai":       "thai",
+    "hindi":      "devanagari",
+}
+
+
+def _classify_script_share(text: str) -> dict:
+    """Return per-script character share for `text`, ignoring whitespace + punct."""
+    cjk = kana = hangul = latin = cyr = arab = thai = devanagari = total = 0
+    for ch in text or "":
+        cp = ord(ch)
+        if ch.isspace() or not ch.isalnum():
+            continue
+        total += 1
+        # CJK Unified Ideographs + Ext A
+        if 0x4E00 <= cp <= 0x9FFF or 0x3400 <= cp <= 0x4DBF:
+            cjk += 1
+        elif 0x3040 <= cp <= 0x309F or 0x30A0 <= cp <= 0x30FF:  # Hiragana / Katakana
+            kana += 1
+        elif 0xAC00 <= cp <= 0xD7AF:  # Hangul Syllables
+            hangul += 1
+        elif (0x0041 <= cp <= 0x005A) or (0x0061 <= cp <= 0x007A) or (0x00C0 <= cp <= 0x024F):
+            latin += 1
+        elif 0x0400 <= cp <= 0x04FF:
+            cyr += 1
+        elif 0x0600 <= cp <= 0x06FF:
+            arab += 1
+        elif 0x0E00 <= cp <= 0x0E7F:
+            thai += 1
+        elif 0x0900 <= cp <= 0x097F:
+            devanagari += 1
+    if total == 0:
+        return {"total": 0}
+    return {
+        "total": total,
+        "cjk": cjk / total, "kana": kana / total, "hangul": hangul / total,
+        "latin": latin / total, "cyrillic": cyr / total, "arabic": arab / total,
+        "thai": thai / total, "devanagari": devanagari / total,
+    }
+
+
+def _user_answer_matches_target(text: str, target_language: str) -> bool:
+    """True iff `text` looks like it's mostly written in `target_language`.
+
+    Threshold = 0.6 dominant-script share, computed over alphanumerics only.
+    For CJK targets we accept either pure Han (Chinese) or Han+kana (Japanese)
+    or Hangul (Korean). Returns True when the text is too short to judge so we
+    don't false-reject quick one-word answers.
+    """
+    if not text:
+        return True  # nothing to judge — let other gates decide
+    share = _classify_script_share(text)
+    if share.get("total", 0) < 4:
+        return True
+    expected = _SCRIPT_BY_LANG.get((target_language or "").strip().lower(), "latin")
+    if expected == "latin":
+        return share["latin"] >= 0.6 and share["cjk"] < 0.2 and share["hangul"] < 0.2
+    if expected == "cjk":
+        return share["cjk"] >= 0.5 and share["latin"] < 0.3
+    if expected == "jp":
+        return (share["cjk"] + share["kana"]) >= 0.5 and share["hangul"] < 0.2
+    if expected == "ko":
+        return share["hangul"] >= 0.4
+    if expected == "cyrillic":
+        return share["cyrillic"] >= 0.5
+    if expected == "arabic":
+        return share["arabic"] >= 0.5
+    if expected == "thai":
+        return share["thai"] >= 0.5
+    if expected == "devanagari":
+        return share["devanagari"] >= 0.5
+    return True
 
 
 def _check_auto_pass(ai_text: str, response_count: int) -> bool:
     """Return True iff daily-QA should auto-pass on this AI turn.
 
-    Conditions:
-      1) `response_count >= 2` (1st = question, 2nd+ = evaluation), AND
-      2) AI reply contains NO entry from `_DAILY_QA_NEGATIVE_INDICATORS`.
-
-    Matching is case-insensitive on the lower-cased ai_text. Empty / falsy
-    text is treated as "no negative indicators" (so a quiet positive turn
-    can still pass), but only after the count gate is met.
+    Whitelist approach: the AI must include an explicit positive evaluation
+    keyword (e.g. "Great answer!", "Well done!") which the prompt only
+    instructs the AI to use when the answer truly qualifies (on-topic,
+    in target language, contains meaningful content).
     """
-    if response_count < 2:
+    if response_count < 3:
         return False
-    lowered = (ai_text or "").lower()
-    return not any(ind in lowered for ind in _DAILY_QA_NEGATIVE_INDICATORS)
+    lowered = (ai_text or "").strip().lower()
+    if len(lowered) < 10:
+        return False
+    return any(ind in lowered for ind in _DAILY_QA_POSITIVE_INDICATORS)
 
 
 def _parse_daily_qa_pool_text(text: str) -> list:
@@ -792,19 +877,31 @@ async def _generate_daily_question_pool(target_language: str, native_language: s
     return pool
 
 
+def _lang_cache_slug(target_language: str) -> str:
+    """Normalize the user's target language for use in Redis cache keys.
+    Two goals are considered the "same" pool iff this slug matches, so when
+    a user switches active goal (e.g. French → English) they get a fresh
+    English pool instead of yesterday's French questions.
+    """
+    return (target_language or "english").strip().lower().replace(" ", "_") or "english"
+
+
 async def handle_daily_question(redis, user_id: str, target_language: str = "English",
                                 native_language: str = "Chinese") -> dict:
     """Return today's daily question for the user, hitting Redis cache first.
 
     Redis keys:
-      daily_qa_pool:{user_id}:{YYYY-MM-DD}  — today's chosen question (48h TTL)
+      daily_qa_pool:{user_id}:{lang_slug}:{YYYY-MM-DD}  — today's chosen question (48h TTL)
       daily_qa_passed:{user_id}:{YYYY-MM-DD} — set when student passes
+    The lang slug isolates pools per target language so switching the active
+    goal does not surface yesterday's questions in the wrong language.
     Returns: {"question_text": ..., "qa_date": ..., "passed": bool, "lang": ...}
     """
     if not user_id:
         raise ValueError("user_id required")
     date_str = _today_utc_str()
-    cache_key = f"daily_qa_pool:{user_id}:{date_str}"
+    lang_slug = _lang_cache_slug(target_language)
+    cache_key = f"daily_qa_pool:{user_id}:{lang_slug}:{date_str}"
     passed_key = f"daily_qa_passed:{user_id}:{date_str}"
 
     cached_raw = await redis.get(cache_key)
@@ -871,7 +968,7 @@ async def get_daily_question_pool(redis, user_id: str, target_language: str = "E
     if not user_id:
         raise ValueError("user_id required")
     date_str = _today_utc_str()
-    cache_key = f"daily_qa_pool:{user_id}:{date_str}"
+    cache_key = f"daily_qa_pool:{user_id}:{_lang_cache_slug(target_language)}:{date_str}"
 
     cached_raw = await redis.get(cache_key)
     pool = None
@@ -916,21 +1013,14 @@ async def get_daily_question_pool(redis, user_id: str, target_language: str = "E
     return result
 
 
-async def _handle_daily_qa_marker(redis, user_id: str, websocket, ai_text: str) -> bool:
-    """Detect [DAILY_QA_PASSED] in AI text → write Redis passed key + push WS frame.
+async def _persist_daily_qa_pass(user_id: str, ai_text: str) -> None:
+    """Persist the daily-QA pass to user-service DB. Fire-and-forget; never raises.
 
-    Returns True iff the marker was detected. No-op when marker absent.
+    The DB write drives Discovery's `qaCompleted` flag and also publishes the
+    SSE `daily_qa_completed` event consumed by the dashboard. Must run
+    independently of the Redis cache so a Redis outage does not break the
+    Conversation → Discovery sync path.
     """
-    if not ai_text or not _DAILY_QA_PASSED_RE.search(ai_text):
-        return False
-    date_str = _today_utc_str()
-    passed_key = f"daily_qa_passed:{user_id}:{date_str}"
-    try:
-        await redis.setex(passed_key, _DAILY_QA_TTL_SECONDS, "1")
-    except Exception as e:
-        logger.warning(f"[DAILY_QA] failed to write passed key: {e}")
-
-    # Persist pass to DB (fire-and-forget)
     try:
         _user_svc = os.getenv("USER_SERVICE_URL", "http://user-service:3000")
         async with httpx.AsyncClient() as _cli:
@@ -942,14 +1032,54 @@ async def _handle_daily_qa_marker(redis, user_id: str, websocket, ai_text: str) 
     except Exception as _e:
         logger.warning(f"[DAILY_QA] failed to persist pass to DB: {_e}")
 
+
+async def _send_daily_qa_completed_ws(websocket, date_str: str, is_bonus: bool = False) -> None:
+    """Push the `daily_qa_completed` frame to the active WebSocket. Never raises."""
     try:
         await websocket.send_json({
             "type": "daily_qa_completed",
-            "payload": {"qa_date": date_str, "passed": True},
+            "payload": {"qa_date": date_str, "passed": True, "is_bonus": is_bonus},
         })
     except Exception as e:
         logger.warning(f"[DAILY_QA] failed to push daily_qa_completed: {e}")
-    logger.info(f"[DAILY_QA] marker detected → {passed_key} set + WS push")
+
+
+async def _finalize_daily_qa_pass(redis, user_id: str, websocket, ai_text: str,
+                                   *, is_bonus: bool = False) -> None:
+    """Commit a daily-QA pass: write Redis (if available), persist to DB, push WS.
+
+    Each step is independent — Redis failure does NOT block DB write or WS push.
+    DB write is the source of truth for Discovery's `qaCompleted` indicator and
+    also fans out the SSE `daily_qa_completed` event from user-service.
+    """
+    date_str = _today_utc_str()
+    if redis is not None:
+        passed_key = f"daily_qa_passed:{user_id}:{date_str}"
+        try:
+            await redis.setex(passed_key, _DAILY_QA_TTL_SECONDS, "1")
+        except Exception as e:
+            logger.warning(f"[DAILY_QA] failed to write passed key: {e}")
+
+    if not is_bonus:
+        await _persist_daily_qa_pass(user_id, ai_text)
+
+    await _send_daily_qa_completed_ws(websocket, date_str, is_bonus=is_bonus)
+    logger.info(
+        f"[DAILY_QA] finalize: user={user_id} bonus={is_bonus} "
+        f"redis={'ok' if redis is not None else 'unavailable'}"
+    )
+
+
+async def _handle_daily_qa_marker(redis, user_id: str, websocket, ai_text: str) -> bool:
+    """Marker-driven entry: detect [DAILY_QA_PASSED] in AI text → finalize pass.
+
+    Returns True iff the marker was detected. No-op when marker absent.
+    Kept as a thin wrapper for backward compatibility with marker-emitting
+    prompt variants and existing tests.
+    """
+    if not ai_text or not _DAILY_QA_PASSED_RE.search(ai_text):
+        return False
+    await _finalize_daily_qa_pass(redis, user_id, websocket, ai_text, is_bonus=False)
     return True
 
 
@@ -961,7 +1091,7 @@ async def _advance_daily_qa_pool(redis, user_id: str, date_str: str, *,
     If the pool has only one item, regenerates a fresh pool before advancing.
     Returns the new picked dict `{"question_text": ..., "lang": ...}`.
     """
-    cache_key = f"daily_qa_pool:{user_id}:{date_str}"
+    cache_key = f"daily_qa_pool:{user_id}:{_lang_cache_slug(target_language)}:{date_str}"
 
     # Read + parse existing cache
     data = None
@@ -1178,6 +1308,23 @@ async def call_proficiency_workflow(user_id: str, goal_id: int, task_id: int, co
                 # 如果任务完成，获取下一个待完成任务并更新 user_context
                 if result_data.get('task_completed'):
                     logger.info(f"Task {task_id} completed, fetching next pending task...")
+
+                    # 刷新 active_goal.scenarios 以同步任务状态
+                    # 否则 _update_session_prompt 看到的 task.status 仍为旧值，无法切换到下一个子任务
+                    try:
+                        goal_resp = await client.get(
+                            f"{user_service_url}/api/users/goals/active",
+                            headers={"Authorization": f"Bearer {token}"},
+                            timeout=5.0,
+                        )
+                        if goal_resp.status_code == 200:
+                            goal_data = goal_resp.json().get('data', {})
+                            refreshed_goal = goal_data.get('goal', goal_data)
+                            if refreshed_goal and refreshed_goal.get('scenarios'):
+                                user_context.setdefault('active_goal', {})['scenarios'] = refreshed_goal.get('scenarios', [])
+                                logger.info(f"Refreshed active_goal.scenarios after task {task_id} completed")
+                    except Exception as _refresh_err:
+                        logger.warning(f"Failed to refresh active_goal.scenarios: {_refresh_err}")
 
                     # 获取下一个待完成任务
                     next_task_resp = await client.get(
@@ -1739,24 +1886,57 @@ class WebSocketCallback(OmniRealtimeCallback):
                                 _auto_pass = _check_auto_pass(_latest_ai_for_marker, self.daily_qa_ai_response_count)
                                 if _auto_pass:
                                     logger.info(f"[DAILY_QA] Auto-pass fallback: positive AI response (count={self.daily_qa_ai_response_count})")
+
+                                # Language gate: even if the AI sounded positive, refuse to pass
+                                # when the user's latest answer was written in the wrong script
+                                # (e.g. Chinese reply to an English question). Without this, the
+                                # AI's polite "That's awesome!" reflex would auto-pass the user.
+                                if _auto_pass:
+                                    _target_lang_qa = (self.user_context.get("active_goal") or {}).get("target_language") \
+                                        or self.user_context.get("target_language") or "English"
+                                    _latest_user_text = ""
+                                    for _m in reversed(self.messages):
+                                        if _m.get("role") == "user":
+                                            _latest_user_text = (_m.get("content") or "").strip()
+                                            if _latest_user_text:
+                                                break
+                                    if _latest_user_text and not _user_answer_matches_target(_latest_user_text, _target_lang_qa):
+                                        logger.info(
+                                            f"[DAILY_QA] Language gate REJECT — user replied in wrong script "
+                                            f"target={_target_lang_qa!r} text={_latest_user_text[:80]!r}"
+                                        )
+                                        _auto_pass = False
+                                        # Send a dedicated UI event the frontend can render as a
+                                        # toast/banner (not a chat bubble — those get overwritten by
+                                        # the next AI streaming chunk and the user misses the hint).
+                                        try:
+                                            await self._safe_send({
+                                                "type": "language_gate_warning",
+                                                "payload": {
+                                                    "target_language": _target_lang_qa,
+                                                    "message": (
+                                                        f"请用 {_target_lang_qa} 回答这道题才能算作完成。"
+                                                        f"试着把上一句换成 {_target_lang_qa} 再说一遍。"
+                                                    ),
+                                                },
+                                            })
+                                        except Exception:
+                                            pass
                                 _should_pass = _auto_pass
                                 if _should_pass:
                                     logger.info(f"[DAILY_QA] Auto-pass triggered (ai_response_count={self.daily_qa_ai_response_count})")
                                     self.daily_qa_completed = True
                                     _is_bonus = self.daily_qa_suppress_modal
                                     try:
-                                        _rc = _get_redis_client()
-                                        if _rc is not None and not _is_bonus:
-                                            await _handle_daily_qa_marker(
-                                                _rc, self.user_id, self.websocket, _latest_ai_for_marker
-                                            )
-                                        else:
-                                            await self._safe_send({
-                                                "type": "daily_qa_completed",
-                                                "payload": {"qa_date": _today_utc_str(), "passed": True, "is_bonus": _is_bonus},
-                                            })
+                                        await _finalize_daily_qa_pass(
+                                            _get_redis_client(),
+                                            self.user_id,
+                                            self.websocket,
+                                            _latest_ai_for_marker,
+                                            is_bonus=_is_bonus,
+                                        )
                                     except Exception as _qae:
-                                        logger.warning(f"[DAILY_QA] marker handler error: {_qae}")
+                                        logger.warning(f"[DAILY_QA] finalize error: {_qae}")
 
                             # Compute latest_ai_text — used by magic_pass detection and BATCH_EVAL
                             latest_ai_text = self.full_response_text or ""
@@ -2118,14 +2298,12 @@ class WebSocketCallback(OmniRealtimeCallback):
                                 "workflow": "scenario_review",
                                 "scenario_title": self.scenario or "Test Scenario",
                                 "review_report": "# Test Review\n\n## 表现\n- 流利度：优秀\n- 词汇量：良好\n- 语法：准确\n\n## 建议\n- 继续练习复杂句型\n- 增加连接词使用",
-                                "recommendations": {
-                                    "overall": "🎉 表现出色！你的口语表达流畅自然，词汇使用准确。建议继续练习更复杂的句型结构。",
-                                    "specific": [
-                                        "📚 **词汇扩展**: 尝试学习更多场景相关的高级词汇",
-                                        "💬 **表达扩展**: 尝试给出更长、更详细的回答，使用'because'、'for example'等连接词",
-                                        "🗣️ **流利度**: 继续保持当前的流利度，尝试使用更多连接词如'however'、'therefore'"
-                                    ]
-                                },
+                                "recommendations": [
+                                    "🎉 表现出色！你的口语表达流畅自然，词汇使用准确。建议继续练习更复杂的句型结构。",
+                                    "📚 **词汇扩展**: 尝试学习更多场景相关的高级词汇",
+                                    "💬 **表达扩展**: 尝试给出更长、更详细的回答，使用'because'、'for example'等连接词",
+                                    "🗣️ **流利度**: 继续保持当前的流利度，尝试使用更多连接词如'however'、'therefore'",
+                                ],
                                 "analysis": {
                                     "summary": "🎉 表现出色！你的口语表达流畅自然，词汇使用准确。",
                                     "total_messages": 15,
@@ -2502,10 +2680,14 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query(None), ses
         if not is_recall_mode and session_phases[phase_key].get("phase") == "magic_repetition":
             session_phases[phase_key]["phase"] = "scene_theater"
         # recall 模式下无论之前 phase 是什么，都强制重置到 magic_repetition
+        # 同时清空对话历史，避免场景对话污染复述上下文
         elif is_recall_mode:
             session_phases[phase_key]["phase"] = "magic_repetition"
             session_phases[phase_key]["task_index"] = 0
             session_phases[phase_key]["magic_positive_streak"] = 0
+            session_phases[phase_key]["memory_mode"] = False
+            callback.messages = []
+            callback.task_history_cutoff = 0
     _init_phase_info = session_phases[phase_key]
     _init_task_text = _init_phase_info.get("_current_task_text", "")
     await send_phase_event(websocket, "phase_transition", {
@@ -3148,8 +3330,9 @@ async def daily_question_select_endpoint(request: _FastAPIRequest):
         raise HTTPException(status_code=400, detail="index must be an integer")
 
     user_id = str(user_ctx["id"])
+    target_language = (user_ctx.get("active_goal") or {}).get("target_language") or user_ctx.get("target_language") or "English"
     date_str = _today_utc_str()
-    cache_key = f"daily_qa_pool:{user_id}:{date_str}"
+    cache_key = f"daily_qa_pool:{user_id}:{_lang_cache_slug(target_language)}:{date_str}"
     passed_key = f"daily_qa_passed:{user_id}:{date_str}"
 
     redis_client = _get_redis_client()

@@ -31,7 +31,7 @@ export function StreakRing({ streak = 0, checkedInToday = false, onCheckin, mont
           连续学习 {streak} 天 🔥
         </div>
         <div style={{ fontSize: 12, color: 'var(--foreground-muted)', marginBottom: 10 }}>
-          目标：30天学习计划 · {Math.round(pct * 100)}% 完成
+          目标：30天学习计划
         </div>
         {!checkedInToday && onCheckin ? (
           <button onClick={onCheckin} style={{

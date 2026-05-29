@@ -32,6 +32,61 @@ function stripAIMarkers(text) {
     .trim();
 }
 
+// Split text into sentence-sized chunks for the rolling CC caption.
+// Handles CJK punctuation (。！？) and Latin (.!?). Preserves the closing
+// punctuation. No length-based merging — AI may produce any number of
+// sentences per turn (2, 3, 4, dozens) and every sentence should appear on
+// screen. Only drops fragments that have no readable content.
+function splitIntoSentences(text) {
+  if (!text) return [];
+  const raw = text.match(/[^。！？!?.]+[。！？!?.]?/g) || [text];
+  return raw
+    .map(s => s.trim())
+    .filter(s => /[\p{L}\p{N}]/u.test(s)); // keep only fragments containing a letter or digit
+}
+
+// Rolling caption that advances through `text`'s sentences in sync with TTS
+// playback progress. `getProgressRatio()` is read from a rAF loop so the UI
+// stays smooth without re-rendering on every audio chunk.
+function CCRollingCaption({ isAISpeaking, text, getProgressRatio }) {
+  const [sentenceIdx, setSentenceIdx] = React.useState(0);
+  const sentences = React.useMemo(() => splitIntoSentences(text), [text]);
+
+  React.useEffect(() => {
+    if (!isAISpeaking || sentences.length <= 1) {
+      setSentenceIdx(0);
+      return;
+    }
+    let raf;
+    const tick = () => {
+      const ratio = getProgressRatio();
+      const idx = Math.min(sentences.length - 1, Math.floor(ratio * sentences.length));
+      // Monotonic: never roll backwards. New TTS chunks arriving mid-turn
+      // grow `total`, which can briefly shrink ratio — clamp so the caption
+      // only advances. Resets to 0 on next turn via the early-return above.
+      setSentenceIdx(prev => (idx > prev ? idx : prev));
+      raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [isAISpeaking, sentences, getProgressRatio]);
+
+  if (!isAISpeaking || sentences.length === 0) return null;
+  const current = sentences[Math.min(sentenceIdx, sentences.length - 1)];
+  return (
+    <div style={{
+      marginTop: 16, padding: '10px 18px', borderRadius: 14,
+      background: 'rgba(0,0,0,0.72)', color: '#fff',
+      fontSize: 14, lineHeight: 1.5, maxWidth: '85%', textAlign: 'center', fontWeight: 500,
+      animation: 'subtitle-in 240ms ease-out',
+      minHeight: '44px', display: 'flex', alignItems: 'center', justifyContent: 'center',
+    }}
+    key={sentenceIdx}>
+      <span>{current}</span>
+    </div>
+  );
+}
+
 function DailyQAPassModal({ onClose, onReturn, isBonus }) {
   return (
     <div style={{
@@ -251,6 +306,10 @@ function Conversation() {
   const [currentRole, setCurrentRole] = useState('OralTutor'); // Default role
   const [isAISpeaking, setIsAISpeaking] = useState(false);
   const [isUserRecording, setIsUserRecording] = useState(false);
+  // Flips true when user releases the recorder; flips false the moment the
+  // first audio frame from this AI turn starts playing. Drives the mascot
+  // `thinking` expression during the request→response gap (test case 6.x).
+  const [isWaitingForAIResponse, setIsWaitingForAIResponse] = useState(false);
   const [webSocketError, setWebSocketError] = useState(null);
   const [sessionId, setSessionId] = useState(null);
   const [selection, setSelection] = useState({ text: '', x: 0, y: 0, visible: false });
@@ -416,6 +475,10 @@ function Conversation() {
   const [dailyQAQuestion, setDailyQAQuestion] = useState(null);
   const [dailyQAError, setDailyQAError] = useState(false);
   const [showDailyQAPassModal, setShowDailyQAPassModal] = useState(false);
+  // Language gate warning surfaces a visible toast when the backend detects
+  // the user answered in the wrong script (e.g. Chinese reply to an English
+  // daily QA). Auto-dismisses after 6s.
+  const [languageGateWarning, setLanguageGateWarning] = useState(null);
   const [dailyQAIsBonus, setDailyQAIsBonus] = useState(false);
   const [dailyQAReferenceAnswer, setDailyQAReferenceAnswer] = useState('');
   const [showReferenceAnswer, setShowReferenceAnswer] = useState(false);
@@ -587,6 +650,12 @@ function Conversation() {
   // Audio context and refs
   const audioContextRef = useRef(null);
   const nextStartTimeRef = useRef(0);
+  // CC caption rolling: track when current AI speech started + total duration
+  // at that moment, so we can compute "played ratio" and pick which sentence
+  // should be on screen. Reset on each new turn (when isAISpeaking flips
+  // false→true).
+  const speechStartTimeRef = useRef(0);
+  const speechTotalDurationRef = useRef(0);
   const audioQueueRef = useRef([]);
   const isInterruptedRef = useRef(false);
   const currentUserMessageIdRef = useRef(null);
@@ -595,7 +664,7 @@ function Conversation() {
   const socketRef = useRef(null);
   const lastProficiencyUpdateRef = useRef(null); // Track last processed proficiency update to prevent duplicates
   const recorderRef = useRef(null); // Ref for RealTimeRecorder to control session ID
-  const practiceStartTimeRef = useRef(null); // Track practice start time for daily progress
+  const practiceStartTimeRef = useRef(null); // Set on first user recording, not on WS open
 
   // Initialize audio context
   const initAudioContext = () => {
@@ -671,17 +740,26 @@ function Conversation() {
             nextStartTimeRef.current = ctx.currentTime;
           }
 
+          const isFirstChunkOfTurn = audioQueueRef.current.length === 1; // already pushed above
           const start = autoQueue ? Math.max(ctx.currentTime, nextStartTimeRef.current) : ctx.currentTime;
           source.start(start);
           if (autoQueue) nextStartTimeRef.current = start + audioBuffer.duration;
+          if (isFirstChunkOfTurn) speechStartTimeRef.current = start;
+          speechTotalDurationRef.current = (autoQueue ? nextStartTimeRef.current : start + audioBuffer.duration) - speechStartTimeRef.current;
 
           setIsAISpeaking(true);
+          setIsWaitingForAIResponse(false);
           setPlayingAudioUrl(audioUrl);
           source.onended = () => {
-            setIsAISpeaking(false);
-            setPlayingAudioUrl(null);
-            // Remove from queue when done
+            // Remove this source from the queue, then only clear speaking
+            // state when no other source is still scheduled. Mirrors the
+            // streaming-PCM path so CC caption visibility stays consistent.
             audioQueueRef.current = audioQueueRef.current.filter(s => s !== source);
+            setPlayingAudioUrl(prev => prev === audioUrl ? null : prev);
+            const ctxNow = audioContextRef.current?.currentTime ?? 0;
+            if (audioQueueRef.current.length === 0 && nextStartTimeRef.current <= ctxNow + 0.05) {
+              setIsAISpeaking(false);
+            }
             console.log('Audio playback ended');
           };
         })
@@ -719,17 +797,22 @@ function Conversation() {
         nextStartTimeRef.current = ctx.currentTime;
       }
 
+      const isFirstChunkOfTurn = audioQueueRef.current.length === 1; // already pushed above
       const start = autoQueue ? Math.max(ctx.currentTime, nextStartTimeRef.current) : ctx.currentTime;
       source.start(start);
       if (autoQueue) nextStartTimeRef.current = start + audioBuffer.duration;
+      if (isFirstChunkOfTurn) speechStartTimeRef.current = start;
+      speechTotalDurationRef.current = (autoQueue ? nextStartTimeRef.current : start + audioBuffer.duration) - speechStartTimeRef.current;
 
       setIsAISpeaking(true);
       setPlayingAudioUrl(audioUrl);
       source.onended = () => {
-        setIsAISpeaking(false);
-        setPlayingAudioUrl(null);
-        // Remove from queue when done
         audioQueueRef.current = audioQueueRef.current.filter(s => s !== source);
+        setPlayingAudioUrl(prev => prev === audioUrl ? null : prev);
+        const ctxNow = audioContextRef.current?.currentTime ?? 0;
+        if (audioQueueRef.current.length === 0 && nextStartTimeRef.current <= ctxNow + 0.05) {
+          setIsAISpeaking(false);
+        }
       };
     } catch (err) {
       // Silently ignore proxy errors - audio playback is optional
@@ -925,8 +1008,7 @@ function Conversation() {
     // Clear localStorage for this scenario to prevent old progress restoration
     if (resetProgress && scenarioTitle) {
       localStorage.removeItem(_lsScenarioKey('task_progress_', scenarioTitle));
-      // Mark that welcome message should not be played after refresh
-      localStorage.setItem(_lsScenarioKey('welcome_muted_', scenarioTitle), 'true');
+      localStorage.removeItem(_lsScenarioKey('welcome_muted_', scenarioTitle));
       console.log('Cleared localStorage progress for scenario:', scenarioTitle);
     }
 
@@ -1163,17 +1245,29 @@ function Conversation() {
                setMessages(prev => {
                    const newMessages = [...prev];
 
+                   // Helper: determine whether to suppress auto-play for a given message.
+                   // Default: COS URL triggers auto-play (audioPlayed=false) to guarantee playback
+                   // even when streaming PCM chunks failed to play (autoplay policy, decode error,
+                   // network drop, etc). The auto-play handler will stop in-flight streaming audio
+                   // before playing the COS URL, preventing double playback.
+                   // Only suppress for the muted welcome message after a refresh/retry.
+                   const shouldSuppressAutoPlay = (msg, idx) => {
+                       if (welcomeMuted) {
+                           const isFirst = idx === 0 || (idx === 1 && newMessages[0]?.type === 'system');
+                           if (isFirst) return true;
+                       }
+                       return false;
+                   };
+
                    // 1. Try Strict Match by Response ID
                    if (targetResponseId) {
                        const index = newMessages.findIndex(m => m.type === 'ai' && m.responseId === targetResponseId);
                        if (index !== -1) {
-                           console.log(`[AudioURL] Attached to message ${index} via ID ${targetResponseId}`);
-                           // If welcome is muted and this is the first AI message, don't auto-play
-                           const isFirstAIMessage = index === 0 || (index === 1 && newMessages[0]?.type === 'system');
+                           console.log(`[AudioURL] Attached to message ${index} via ID ${targetResponseId}, isFinal=${newMessages[index].isFinal}`);
                            newMessages[index] = {
                                ...newMessages[index],
                                audioUrl: url,
-                               audioPlayed: (welcomeMuted && isFirstAIMessage) ? true : false
+                               audioPlayed: shouldSuppressAutoPlay(newMessages[index], index)
                            };
                            return newMessages;
                        }
@@ -1182,12 +1276,11 @@ function Conversation() {
                    // 2. Fallback: Attach to the LAST AI message that doesn't have a URL
                    for (let i = newMessages.length - 1; i >= 0; i--) {
                        if (newMessages[i].type === 'ai' && !newMessages[i].audioUrl) {
-                           console.log(`[AudioURL] Fallback attachment to message ${i}`);
-                           const isFirstAIMessage = i === 0 || (i === 1 && newMessages[0]?.type === 'system');
+                           console.log(`[AudioURL] Fallback attachment to message ${i}, isFinal=${newMessages[i].isFinal}`);
                            newMessages[i] = {
                                ...newMessages[i],
                                audioUrl: url,
-                               audioPlayed: (welcomeMuted && isFirstAIMessage) ? true : false
+                               audioPlayed: shouldSuppressAutoPlay(newMessages[i], i)
                            };
                            break;
                        }
@@ -1452,6 +1545,13 @@ function Conversation() {
                    setMessages(prev => prev.filter(m => m.type !== 'system' || !m.content.includes('熟练度')));
                }, 3000);
            }
+
+           // Show ScorePopup when a sub-task is completed with scores
+           if (profPayload.task_completed && profPayload.scores) {
+               setBatchScores(profPayload.scores);
+               setLatestDelta(delta);
+               setShowScorePopup(true);
+           }
            break;
         case 'task_completed':
            // Handle task completion notification
@@ -1541,6 +1641,8 @@ function Conversation() {
            const phase = data.payload?.phase || data.phase;
            // recall 模式：魔法重复全部完成后跳回 Dashboard
            if (isRecallMode && phase === 'scene_theater') {
+               const today = new Date().toISOString().slice(0, 10);
+               localStorage.setItem(`recall_completed_${today}`, 'true');
                navigate('/discovery');
                return;
            }
@@ -1663,6 +1765,13 @@ function Conversation() {
                console.log('🧪 测试数据已存储，场景完成时将显示个性化 AI 点评');
            }
            break;
+        case 'language_gate_warning': {
+           const payload = data.payload || {};
+           const msg = payload.message || `请用 ${payload.target_language || '目标语言'} 回答。`;
+           console.warn('[DAILY_QA] language gate warning:', payload);
+           setLanguageGateWarning({ message: msg, target: payload.target_language || '' });
+           break;
+        }
         case 'daily_qa_completed':
            console.log('✅ Daily QA Completed', data.payload?.is_bonus ? '(bonus)' : '');
            setDailyQAIsBonus(!!data.payload?.is_bonus);
@@ -1672,6 +1781,23 @@ function Conversation() {
            console.log('🏁 Task Ready to Complete:', data.payload);
            if (data.payload) {
                setTaskReadyToComplete(data.payload);
+           }
+           break;
+        case 'response.audio.done':
+           // Backend signals the current AI turn's TTS is fully delivered.
+           // Schedule the speaking flag to flip off shortly after the last
+           // queued chunk finishes — this drives CC subtitle auto-clear.
+           {
+             const ctx = audioContextRef.current;
+             const tailMs = ctx
+               ? Math.max(0, (nextStartTimeRef.current - ctx.currentTime) * 1000)
+               : 0;
+             setTimeout(() => {
+               const ctxNow = audioContextRef.current?.currentTime ?? 0;
+               if (audioQueueRef.current.length === 0 && nextStartTimeRef.current <= ctxNow + 0.05) {
+                 setIsAISpeaking(false);
+               }
+             }, tailMs + 100);
            }
            break;
         case 'dashscope_response':
@@ -1715,11 +1841,23 @@ function Conversation() {
     source.buffer = audioBuffer;
     source.connect(ctx.destination);
     source.onended = () => {
-         // Cleanup if needed
+         // Drop this source from the queue; when the queue drains AND no later
+         // chunk is scheduled in the future, the AI has stopped speaking.
+         // Drives CC subtitle visibility — without this signal the caption
+         // would never auto-clear after TTS finishes.
+         audioQueueRef.current = audioQueueRef.current.filter(s => s !== source);
+         const ctxNow = audioContextRef.current?.currentTime ?? 0;
+         if (audioQueueRef.current.length === 0 && nextStartTimeRef.current <= ctxNow + 0.05) {
+           setIsAISpeaking(false);
+         }
     };
 
     const currentTime = ctx.currentTime;
     const start = Math.max(currentTime, nextStartTimeRef.current);
+
+    // If this is the first chunk of a new AI turn (queue is empty before
+    // pushing), record the start time so CC caption can compute progress.
+    const isFirstChunkOfTurn = audioQueueRef.current.length === 0;
 
     source.start(start);
     nextStartTimeRef.current = start + audioBuffer.duration;
@@ -1727,7 +1865,13 @@ function Conversation() {
     // Track source for cancellation
     audioQueueRef.current.push(source);
 
+    if (isFirstChunkOfTurn) {
+      speechStartTimeRef.current = start;
+    }
+    speechTotalDurationRef.current = nextStartTimeRef.current - speechStartTimeRef.current;
+
     setIsAISpeaking(true);
+    setIsWaitingForAIResponse(false);
     console.log('Audio playback started, isAISpeaking:', true);
 
   }, [handleJsonMessage]);
@@ -1808,7 +1952,6 @@ function Conversation() {
     console.log('WS Open (Optimized)');
     setIsConnected(true);
     setWebSocketError(null);
-    practiceStartTimeRef.current = Date.now();
 
     // Note: Ping/heartbeat is handled by OptimizedWebSocket internally
     // No need for manual ping interval here
@@ -2216,6 +2359,13 @@ function Conversation() {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
 
+  // Auto-dismiss the language gate warning after 6s.
+  useEffect(() => {
+    if (!languageGateWarning) return;
+    const t = setTimeout(() => setLanguageGateWarning(null), 6000);
+    return () => clearTimeout(t);
+  }, [languageGateWarning]);
+
   // Auto-play AI audio when messages get audio URLs
   useEffect(() => {
     messages.forEach((message, index) => {
@@ -2229,8 +2379,12 @@ function Conversation() {
           return newMessages;
         });
 
-        // Play the audio — autoQueue=true: schedule after current audio, no interruption
+        // Stop any streaming PCM that may already be playing for this turn,
+        // then play the high-quality COS URL. This prevents double playback
+        // when streaming chunks did succeed.
         console.log(`[AutoPlay] Playing AI audio for message ${index}:`, message.audioUrl);
+        stopAudioPlayback();
+        isInterruptedRef.current = false;
         playFullAudio(message.audioUrl, true);
       }
     });
@@ -2253,6 +2407,9 @@ function Conversation() {
         return;
     }
     setIsUserRecording(true);
+    // Starting a new turn cancels any pending `thinking` from the previous one.
+    setIsWaitingForAIResponse(false);
+    if (!practiceStartTimeRef.current) practiceStartTimeRef.current = Date.now();
 
     isInterruptedRef.current = false; // Reset flag for new turn
     const newId = Date.now().toString();
@@ -2295,6 +2452,8 @@ function Conversation() {
 
   const handleRecordingStop = (audioBuffers) => {
     setIsUserRecording(false);
+    // User finished speaking — show `thinking` until AI audio starts playing.
+    setIsWaitingForAIResponse(true);
     const wsReadyState = socketRef.current?.getReadyState?.() || socketRef.current?.readyState;
     console.log('🎤 handleRecordingStop called, WebSocket state:', wsReadyState, 'audio buffers:', audioBuffers?.length);
 
@@ -2372,6 +2531,7 @@ function Conversation() {
 
   const handleRecordingCancel = () => {
     setIsUserRecording(false);
+    setIsWaitingForAIResponse(false);
     console.log('🚫 Recording cancelled, clearing session ID:', currentRecordingSessionIdRef.current);
     currentRecordingSessionIdRef.current = null; // Clear session ID to ignore any pending audio data
 
@@ -2468,9 +2628,19 @@ function Conversation() {
     );
   };
 
-  // AiAvatar status derived from recording / AI speaking states
+  // AiAvatar status derived from recording / AI speaking states.
+  // `thinking` covers two windows where the user is waiting on the model:
+  //   1. After the user releases the recorder until the first AI audio frame
+  //      starts playing (driven by `isWaitingForAIResponse`).
+  //   2. AI text arrived but its audio hasn't started yet (fallback).
+  // Without (1) the mascot would flash thinking only briefly when the AI
+  // text frame landed, then jump straight to speaking — the user wouldn't
+  // perceive any "the bird is thinking" pause.
+  const isAIThinking = messages.length > 0 && messages[messages.length - 1].type === 'ai'
+    && !messages[messages.length - 1].audioUrl && !isAISpeaking;
   const avatarStatus = isAISpeaking ? 'speaking'
     : isUserRecording ? 'listening'
+    : (isWaitingForAIResponse || isAIThinking) ? 'thinking'
     : 'idle';
 
   return (
@@ -2907,17 +3077,21 @@ function Conversation() {
             color: 'var(--foreground-muted)', cursor: 'pointer', fontFamily: 'inherit',
           }}>退出 CC &times;</button>
           <GuajiMascot state={avatarStatus} size={200} />
-          {messages.length > 0 && messages[messages.length - 1].role === 'ai' && (
-            <div style={{
-              marginTop: 16, padding: '10px 18px', borderRadius: 14,
-              background: 'rgba(0,0,0,0.72)', color: '#fff',
-              fontSize: 14, lineHeight: 1.5, maxWidth: '85%', textAlign: 'center', fontWeight: 500,
-              animation: 'subtitle-in 240ms ease-out',
-            }}>
-              {(messages[messages.length - 1].text || '').slice(0, 80)}
-              {(messages[messages.length - 1].text || '').length > 80 ? '...' : ''}
-            </div>
-          )}
+          <CCRollingCaption
+            isAISpeaking={isAISpeaking}
+            text={(() => {
+              const lastAI = [...messages].reverse().find(m => m.type === 'ai' && m.content);
+              return (lastAI?.content || '').trim();
+            })()}
+            getProgressRatio={() => {
+              const ctx = audioContextRef.current;
+              if (!ctx) return 0;
+              const total = speechTotalDurationRef.current;
+              if (total <= 0) return 0;
+              const elapsed = ctx.currentTime - speechStartTimeRef.current;
+              return Math.max(0, Math.min(1, elapsed / total));
+            }}
+          />
         </div>
       )}
 
@@ -2942,18 +3116,22 @@ function Conversation() {
                     />
                 </div>
                 
-                {/* CC Mode Toggle */}
-                <button
-                  onClick={() => setCcMode(v => !v)}
-                  className="flex-shrink-0 w-12 h-12 rounded-xl flex items-center justify-center transition"
-                  style={{
-                    border: ccMode ? '1.5px solid var(--primary)' : '1.5px solid var(--border-solid)',
-                    background: ccMode ? 'rgba(99,127,241,0.12)' : 'var(--card)',
-                    color: ccMode ? 'var(--primary)' : 'var(--foreground-muted)',
-                    fontSize: 13, fontWeight: 700,
-                  }}
-                  title="沉浸模式"
-                >CC</button>
+                {/* CC Mode Toggle — hidden while in CC mode; the overlay
+                    provides its own `退出 CC` button so there's no duplicate
+                    control in the footer. */}
+                {!ccMode && (
+                  <button
+                    onClick={() => setCcMode(true)}
+                    className="flex-shrink-0 w-12 h-12 rounded-xl flex items-center justify-center transition"
+                    style={{
+                      border: '1.5px solid var(--border-solid)',
+                      background: 'var(--card)',
+                      color: 'var(--foreground-muted)',
+                      fontSize: 13, fontWeight: 700,
+                    }}
+                    title="沉浸模式"
+                  >CC</button>
+                )}
 
                 {/* Restart Practice Button - Icon only */}
                 {(tasks.length > 0 || location.state?.scenario || new URLSearchParams(window.location.search).get('scenario')) && (
@@ -3022,6 +3200,42 @@ function Conversation() {
           isBonus={dailyQAIsBonus}
         />
       )}
+      {/* Language gate warning — visible amber banner anchored to the top.
+          Without this, the only signal that the daily QA was rejected for
+          wrong language was a server log; users mistakenly thought their
+          Chinese answer to an English question had passed. */}
+      <AnimatePresence>
+        {languageGateWarning && (
+          <motion.div
+            initial={{ y: -40, opacity: 0 }}
+            animate={{ y: 0, opacity: 1 }}
+            exit={{ y: -40, opacity: 0 }}
+            transition={{ type: 'spring', stiffness: 380, damping: 28 }}
+            style={{
+              position: 'fixed', top: 12, left: '50%', transform: 'translateX(-50%)',
+              maxWidth: '92%', zIndex: 400,
+              background: 'linear-gradient(135deg, #F59E0B, #D97706)', color: '#fff',
+              padding: '12px 18px', borderRadius: 14,
+              boxShadow: '0 10px 30px rgba(217,119,6,0.35)',
+              fontSize: 14, fontWeight: 600,
+              display: 'flex', alignItems: 'flex-start', gap: 10,
+            }}
+            role="alert"
+          >
+            <span style={{ fontSize: 20, lineHeight: 1 }}>⚠️</span>
+            <span style={{ flex: 1, lineHeight: 1.45 }}>{languageGateWarning.message}</span>
+            <button
+              onClick={() => setLanguageGateWarning(null)}
+              aria-label="关闭提示"
+              style={{
+                background: 'rgba(255,255,255,0.2)', border: 'none', color: '#fff',
+                width: 22, height: 22, borderRadius: 11, cursor: 'pointer',
+                fontWeight: 700, lineHeight: 1, fontSize: 13,
+              }}
+            >×</button>
+          </motion.div>
+        )}
+      </AnimatePresence>
       <AnimatePresence>
         {taskReadyToComplete && (
           <TaskCompletionSheet

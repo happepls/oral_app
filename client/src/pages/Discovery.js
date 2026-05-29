@@ -8,7 +8,7 @@ import { useNotifications } from '../contexts/NotificationContext';
 import { userAPI, historyAPI, aiAPI } from '../services/api';
 import { StatCard } from '../components/StatCard';
 import { GuajiAvatar } from '../components/GuajiAvatar';
-import { motion } from 'motion/react';
+import { motion, AnimatePresence } from 'motion/react';
 import { Trophy } from 'lucide-react';
 
 // --- Scenario emoji 映射（按关键词） ---
@@ -93,10 +93,24 @@ function getDifficulty(index) {
   return 'advanced';
 }
 
-function isScenarioUnlocked(index, scenarios, isPro) {
+// 免费用户初始解锁的场景数；完成解锁区间后会自动扩展。
+const FREE_INITIAL_UNLOCK = 3;
+
+// 计算免费用户的累计解锁数：初始 3 个，已解锁场景全部完成（pct===100）后扩展 +1。
+// scenarios 数组顺序即解锁顺序。
+function calcUnlockedCount(scenarios) {
+  let unlocked = Math.min(FREE_INITIAL_UNLOCK, scenarios.length);
+  while (unlocked < scenarios.length) {
+    const allPrevDone = scenarios.slice(0, unlocked).every(s => calcProgress(s) === 100);
+    if (!allPrevDone) break;
+    unlocked += 1;
+  }
+  return unlocked;
+}
+
+function isScenarioUnlocked(index, unlockedCount, isPro) {
   if (isPro) return true;
-  if (index < 3) return true;
-  return false;
+  return index < unlockedCount;
 }
 
 function getScenarioCardState(scenario, unlocked, pct) {
@@ -193,6 +207,8 @@ function Discovery() {
   const [showQAPool, setShowQAPool] = useState(false);
   const [qaPool, setQaPool] = useState([]);
   const [qaPoolLoading, setQaPoolLoading] = useState(false);
+  const [unlockToast, setUnlockToast] = useState(null);
+  const prevUnlockedCountRef = useRef(null);
   const [dailyProgress, setDailyProgress] = useState(null);
 
   const isPro = user?.subscription_status === 'active';
@@ -304,11 +320,13 @@ function Discovery() {
           aiAPI.getDailyQuestion({ signal: abortController.signal }),
         ]);
 
-        if (statsRes.status === 'fulfilled' && statsRes.value?.data) {
-          setStats(statsRes.value.data);
+        if (statsRes.status === 'fulfilled' && statsRes.value) {
+          const s = statsRes.value.data || statsRes.value;
+          setStats(s);
         }
-        if (histRes.status === 'fulfilled' && histRes.value?.data) {
-          setActiveSessions(histRes.value.data);
+        if (histRes.status === 'fulfilled' && histRes.value) {
+          const h = histRes.value.data || histRes.value;
+          if (Array.isArray(h)) setActiveSessions(h);
         }
         if (checkinRes.status === 'fulfilled' && checkinRes.value?.data) {
           const d = checkinRes.value.data;
@@ -331,9 +349,14 @@ function Discovery() {
           if (res?.data?.passed) setDailyQAPassedDB(true);
         }).catch(() => {});
 
-        // Load daily progress
+        // Load daily progress and merge frontend-tracked state
         userAPI.getDailyProgress().then(res => {
-          setDailyProgress(res?.data || res);
+          const dp = res?.data || res || {};
+          // Recall completion tracked in localStorage (backend has no recall-specific record)
+          const today = new Date().toISOString().slice(0, 10);
+          const recallDone = localStorage.getItem(`recall_completed_${today}`) === 'true';
+          if (recallDone) dp.recallCompleted = true;
+          setDailyProgress(dp);
         }).catch(() => {});
       } catch (e) {
         console.error('Dashboard fetch error:', e);
@@ -473,12 +496,31 @@ function Discovery() {
   };
 
   // ── 派生数据（useMemo 避免每次 render 重算） ──
+  const unlockedCount = useMemo(() => calcUnlockedCount(scenarios), [scenarios]);
+
+  // 自动解锁提示：unlockedCount 从 N 增长到 N+1 时，显示 toast。
+  // 首次加载只记录基线，不弹（避免页面打开就 toast）。Pro 用户全解锁，无需提示。
+  useEffect(() => {
+    if (user?.subscription_status === 'active' || scenarios.length === 0) return;
+    const prev = prevUnlockedCountRef.current;
+    if (prev !== null && unlockedCount > prev) {
+      const newScenario = scenarios[unlockedCount - 1];
+      if (newScenario) {
+        setUnlockToast({ title: newScenario.title, emoji: getEmoji(newScenario.title) });
+        const timer = setTimeout(() => setUnlockToast(null), 3500);
+        prevUnlockedCountRef.current = unlockedCount;
+        return () => clearTimeout(timer);
+      }
+    }
+    prevUnlockedCountRef.current = unlockedCount;
+  }, [unlockedCount, scenarios, user]);
+
   const enrichedScenarios = useMemo(() => scenarios.map((s, i) => {
     const pct = calcProgress(s);
-    const unlocked = isScenarioUnlocked(i, scenarios, isPro);
+    const unlocked = isScenarioUnlocked(i, unlockedCount, isPro);
     const cardState = getScenarioCardState(s, unlocked, pct);
     return { ...s, pct, unlocked, cardState, difficulty: getDifficulty(i), emoji: getEmoji(s.title), index: i };
-  }), [scenarios, isPro]);
+  }), [scenarios, unlockedCount, isPro]);
 
   const todayRecommended = useMemo(() => enrichedScenarios.find(s => s.unlocked && s.pct < 100), [enrichedScenarios]);
 
@@ -551,11 +593,15 @@ function Discovery() {
       )}
 
       {/* ── 目标切换 Modal ── */}
+      {/* z-index above BottomNav (which is z-50) so it isn't visually clipped.
+          Bottom padding reserves space for the 72px nav plus iOS safe-area
+          inset so the last item never sits behind the nav bar. */}
       {showGoalSwitch && (
-        <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/60"
+        <div className="fixed inset-0 z-[60] flex items-end justify-center bg-black/60"
           onClick={() => setShowGoalSwitch(false)}>
           <motion.div initial={{ y: 40, opacity: 0 }} animate={{ y: 0, opacity: 1 }}
-            className="bg-white dark:bg-slate-800 rounded-t-3xl w-full max-w-lg p-5 pb-8 max-h-[70vh] overflow-y-auto"
+            className="bg-white dark:bg-slate-800 rounded-t-3xl w-full max-w-lg p-5 max-h-[70vh] overflow-y-auto"
+            style={{ paddingBottom: 'calc(96px + env(safe-area-inset-bottom, 0px))' }}
             onClick={e => e.stopPropagation()}>
             <h3 className="text-base font-bold text-slate-900 dark:text-white mb-4">切换学习目标</h3>
             {allGoals.filter(g => g.status !== 'active').map(goal => (
@@ -584,6 +630,27 @@ function Discovery() {
           onUpgrade={() => { setShowDailyQAPaywall(false); navigate('/subscription'); }}
         />
       )}
+
+      {/* ── 自动解锁 Toast ── */}
+      <AnimatePresence>
+        {unlockToast && (
+          <motion.div
+            initial={{ y: -60, opacity: 0 }}
+            animate={{ y: 0, opacity: 1 }}
+            exit={{ y: -60, opacity: 0 }}
+            transition={{ type: 'spring', stiffness: 380, damping: 28 }}
+            style={{
+              position: 'fixed', top: 16, left: '50%', transform: 'translateX(-50%)',
+              background: 'linear-gradient(135deg, #10B981, #059669)', color: '#fff',
+              padding: '12px 20px', borderRadius: 14, boxShadow: '0 10px 30px rgba(16,185,129,0.35)',
+              zIndex: 400, fontSize: 14, fontWeight: 600, display: 'flex', alignItems: 'center', gap: 10,
+              maxWidth: '90%',
+            }}>
+            <span style={{ fontSize: 22 }}>{unlockToast.emoji || '🎉'}</span>
+            <span>解锁新场景：{unlockToast.title}</span>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       {showQAPool && (
         <div style={{
@@ -701,11 +768,12 @@ function Discovery() {
 
       <main className="flex-grow pb-28 space-y-5 px-4 pt-2">
 
-        {/* ── 每日任务环 ── */}
+        {/* ── 今日任务（合并卡片） ── */}
         {dailyProgress && (
           <section>
             <div className="rounded-2xl p-5 bg-white dark:bg-slate-800 shadow-sm border border-slate-200 dark:border-slate-700">
-              <div className="flex items-center justify-between mb-4">
+              {/* 标题栏 */}
+              <div className="flex items-center justify-between mb-4 pb-4 border-b border-slate-200 dark:border-slate-700">
                 <div className="flex items-center gap-2">
                   <GuajiAvatar size={28} />
                   <h3 className="text-sm font-semibold text-slate-900 dark:text-white">今日任务</h3>
@@ -715,23 +783,20 @@ function Discovery() {
                 </span>
               </div>
 
-              {/* 3 个任务图标 */}
-              <div className="flex items-center justify-around mb-4">
+              {/* 3 个任务按钮 */}
+              <div className="flex items-center justify-around gap-2 mb-5">
                 {/* 复述任务 */}
                 <motion.button
-                  whileHover={{ scale: 1.1 }}
+                  whileHover={{ scale: 1.05 }}
                   onClick={() => {
-                    if (todayRecommended) {
-                      navigate(
-                        `/conversation?scenario=${encodeURIComponent(todayRecommended.scenarioKey || todayRecommended.title)}&mode=recall`,
-                        { state: { tasks: todayRecommended.tasks, emoji: todayRecommended.emoji } }
-                      );
-                    }
+                    // Dedicated recall route — no longer overloads /conversation.
+                    // Recall page loads today's scenario itself via getActiveGoal.
+                    navigate('/recall');
                   }}
-                  className="flex flex-col items-center gap-2 relative"
-                  style={{ opacity: dailyProgress.recallCompleted ? 1 : 0.5 }}>
+                  className="flex flex-col items-center gap-2 flex-1"
+                  style={{ opacity: dailyProgress.recallCompleted ? 1 : 0.6 }}>
                   <div
-                    className="w-16 h-16 rounded-full flex items-center justify-center text-2xl transition-all"
+                    className="w-14 h-14 rounded-full flex items-center justify-center text-xl transition-all"
                     style={{
                       background: dailyProgress.recallCompleted
                         ? 'linear-gradient(135deg, #10B981, #059669)'
@@ -745,18 +810,19 @@ function Discovery() {
 
                 {/* 问答任务 */}
                 <motion.button
-                  whileHover={{ scale: 1.1 }}
+                  whileHover={{ scale: 1.05 }}
                   onClick={() => {
-                    if (!isPro) {
-                      setShowDailyQAPaywall(true);
+                    if (dailyQA?.passed || dailyQAPassedDB) {
+                      if (!isPro) { setShowDailyQAPaywall(true); return; }
+                      handleOpenQAPool();
                     } else {
                       navigate('/conversation?mode=daily_qa');
                     }
                   }}
-                  className="flex flex-col items-center gap-2 relative"
-                  style={{ opacity: dailyProgress.qaCompleted ? 1 : 0.5 }}>
+                  className="flex flex-col items-center gap-2 flex-1"
+                  style={{ opacity: dailyProgress.qaCompleted ? 1 : 0.6 }}>
                   <div
-                    className="w-16 h-16 rounded-full flex items-center justify-center text-2xl transition-all"
+                    className="w-14 h-14 rounded-full flex items-center justify-center text-xl transition-all"
                     style={{
                       background: dailyProgress.qaCompleted
                         ? 'linear-gradient(135deg, #10B981, #059669)'
@@ -770,7 +836,7 @@ function Discovery() {
 
                 {/* 练习任务 */}
                 <motion.button
-                  whileHover={{ scale: 1.1 }}
+                  whileHover={{ scale: 1.05 }}
                   onClick={() => {
                     if (todayRecommended) {
                       navigate(
@@ -779,10 +845,10 @@ function Discovery() {
                       );
                     }
                   }}
-                  className="flex flex-col items-center gap-2 relative"
-                  style={{ opacity: dailyProgress.scenarioCompleted ? 1 : 0.5 }}>
+                  className="flex flex-col items-center gap-2 flex-1"
+                  style={{ opacity: dailyProgress.scenarioCompleted ? 1 : 0.6 }}>
                   <div
-                    className="w-16 h-16 rounded-full flex items-center justify-center text-2xl transition-all"
+                    className="w-14 h-14 rounded-full flex items-center justify-center text-xl transition-all"
                     style={{
                       background: dailyProgress.scenarioCompleted
                         ? 'linear-gradient(135deg, #10B981, #059669)'
@@ -826,117 +892,14 @@ function Discovery() {
         />
 
         {/* ── 4格统计 ── */}
-        {stats && (
+        <section>
           <div style={{ display: 'flex', gap: 8 }}>
-            <StatCard emoji="📚" value={stats.totalSessions || 0} label="总对话" />
-            <StatCard emoji="📅" value={stats.learningDays || 0} label="学习天" />
+            <StatCard emoji="📚" value={stats?.totalSessions || activeSessions?.length || 0} label="总对话" />
+            <StatCard emoji="📅" value={stats?.learningDays || checkinStats.totalCheckins || 0} label="学习天" />
             <StatCard emoji="✅" value={`${enrichedScenarios.filter(s => s.pct === 100).length}/${scenarios.length}`} label="场景完成" />
             <StatCard emoji="🎯" value={`${overallProgress}%`} label="总进度" />
           </div>
-        )}
-
-        {/* ── 今日复述 ── */}
-        {todayRecommended && recallSentence && (
-          <section>
-            <h2 className="text-sm font-semibold text-slate-500 dark:text-slate-400 mb-2 uppercase tracking-wide">今日复述</h2>
-            <div className="rounded-2xl p-4 relative overflow-hidden"
-              style={{ background: 'rgba(99,127,241,0.07)', border: '1.5px solid rgba(99,127,241,0.18)' }}>
-              <div className="flex items-center justify-between gap-3">
-                <div className="flex-1 min-w-0">
-                  <h3 className="font-bold text-slate-900 text-sm mb-1">今日复述练习</h3>
-                  <p className="text-xs text-slate-500 mb-3 leading-snug line-clamp-2">
-                    {recallSentence}
-                  </p>
-                  <button
-                    onClick={() => navigate(
-                      `/conversation?scenario=${encodeURIComponent(todayRecommended.scenarioKey || todayRecommended.title)}&mode=recall`,
-                      { state: { tasks: todayRecommended.tasks, emoji: todayRecommended.emoji } }
-                    )}
-                    className="flex items-center gap-1.5 px-4 py-1.5 rounded-xl text-xs font-bold text-white transition-all active:scale-95"
-                    style={{ background: '#637FF1' }}>
-                    ▶ 开始练习
-                  </button>
-                </div>
-                <span className="text-4xl flex-shrink-0">🎯</span>
-              </div>
-            </div>
-          </section>
-        )}
-
-        {/* ── 今日问答 ── */}
-        {!dailyQAError && (
-          <section>
-            <h2 className="text-sm font-semibold text-slate-500 dark:text-slate-400 mb-2 uppercase tracking-wide">今日问答</h2>
-            {dailyQALoading ? (
-              <div className="rounded-2xl p-4 h-20 bg-white dark:bg-slate-800 shadow-brand animate-pulse"
-                style={{ background: '#F3F4F6' }}></div>
-            ) : dailyQA ? (
-              <div className="rounded-2xl p-4 relative overflow-hidden shadow-brand"
-                style={{ background: '#FFFFFF', border: '1px solid #E5E7EB' }}>
-                <div className="flex items-start justify-between gap-3">
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2 mb-3">
-                      <button
-                        onClick={handleQAPlay}
-                        disabled={isQAPlaying}
-                        className="w-10 h-10 rounded-full flex items-center justify-center text-white font-bold transition-all active:scale-90 flex-shrink-0"
-                        style={{
-                          background: isQAPlaying ? '#A78BFA' : '#6366F1',
-                          opacity: isQAPlaying ? 0.7 : 1,
-                        }}>
-                        {isQAPlaying ? '⏸' : '▶'}
-                      </button>
-                      <span className="text-xs text-slate-500">
-                        {!showQATranscript && !qaAudioBlobUrl ? '🔊 听一段外国人提出的问题' : ''}
-                      </span>
-                    </div>
-
-                    {showQATranscript && (
-                      <p className="text-xs text-slate-700 mb-3 leading-relaxed line-clamp-3">
-                        {dailyQA.question_text}
-                      </p>
-                    )}
-
-                    <div className="flex items-center gap-2">
-                      <button
-                        onClick={() => setShowQATranscript(!showQATranscript)}
-                        className="text-xs text-indigo-600 hover:text-indigo-700 font-medium transition">
-                        {showQATranscript ? '隐藏文字' : '查看文字'}
-                      </button>
-                      {(dailyQA?.passed || dailyQAPassedDB) && (
-                        <span className="text-xs text-green-600 font-bold">✅ 今日问答已完成</span>
-                      )}
-                    </div>
-
-                    {/* 主操作按钮 */}
-                    {!(dailyQA?.passed || dailyQAPassedDB) ? (
-                      <button
-                        onClick={() => navigate('/conversation?mode=daily_qa')}
-                        className="mt-3 px-4 py-1.5 rounded-xl text-xs font-bold text-white transition-all active:scale-95"
-                        style={{ background: '#6366F1' }}>
-                        开始回答 →
-                      </button>
-                    ) : !isPro ? (
-                      <button
-                        onClick={() => setShowDailyQAPaywall(true)}
-                        className="mt-3 px-4 py-1.5 rounded-xl text-xs font-bold text-white transition-all active:scale-95"
-                        style={{ background: '#6366F1' }}>
-                        再次回答 🔒
-                      </button>
-                    ) : (
-                      <button
-                        onClick={handleOpenQAPool}
-                        className="mt-3 px-4 py-1.5 rounded-xl text-xs font-bold text-white transition-all active:scale-95"
-                        style={{ background: '#6366F1' }}>
-                        选择题目并回答 →
-                      </button>
-                    )}
-                  </div>
-                </div>
-              </div>
-            ) : null}
-          </section>
-        )}
+        </section>
 
         {/* ── 场景完成 Banner ── */}
         {overallProgress === 100 && (

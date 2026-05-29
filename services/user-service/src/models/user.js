@@ -992,7 +992,7 @@ User.recordPracticeTime = async (userId, minutes) => {
     `INSERT INTO daily_practice_time (user_id, minutes)
      VALUES ($1, $2)
      ON CONFLICT (user_id, practice_date)
-     DO UPDATE SET minutes = daily_practice_time.minutes + $2
+     DO UPDATE SET minutes = GREATEST(daily_practice_time.minutes, $2)
      RETURNING *`,
     [userId, minutes]
   );
@@ -1009,14 +1009,22 @@ User.getDailyPracticeTime = async (userId) => {
 };
 
 User.getDailyProgress = async (userId) => {
-  // 1. 复述完成状态 — 简化：暂用 false，后续通过前端 WebSocket 事件标记
-  const recallCompleted = false; // TODO: 需要追踪机制
+  // 1. 复述完成状态 — 前端通过 localStorage 跟踪，后端暂返回 false
+  //    后续可通过 conversation-service 添加 mode 字段来追踪
+  let recallCompleted = false;
 
   // 2. 问答完成
   const qaStatus = await User.getDailyQAPassStatus(userId);
 
-  // 3. 场景完成 — 简化：暂用 false
-  const scenarioCompleted = false; // TODO: 需要追踪机制
+  // 3. 场景完成 — 检查今日是否有任务被完成
+  const scenarioRes = await db.query(
+    `SELECT EXISTS(
+       SELECT 1 FROM user_tasks
+       WHERE user_id = $1 AND completed_at >= CURRENT_DATE AND status = 'completed'
+     ) AS completed`,
+    [userId]
+  ).catch(() => ({ rows: [{ completed: false }] }));
+  const scenarioCompleted = scenarioRes.rows[0]?.completed || false;
 
   // 4. 练习时长
   const practiceMinutes = await User.getDailyPracticeTime(userId);

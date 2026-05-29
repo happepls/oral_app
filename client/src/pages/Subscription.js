@@ -2,7 +2,10 @@ import React, { useState, useEffect } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 
-const API_BASE = process.env.REACT_APP_API_URL || '';
+// Aligns with services/api.js: env var (or default) already includes the `/api`
+// prefix. Append only the resource path here — never re-prepend `/api/`, that
+// produces `/api/api/...` which 404s and trips upstream-header bugs at nginx.
+const API_BASE = process.env.REACT_APP_API_URL || '/api';
 
 const ALLOWED_REDIRECT_HOSTS = [
   'checkout.stripe.com',
@@ -53,7 +56,7 @@ function Subscription() {
 
   const fetchProducts = async () => {
     try {
-      const res = await fetch(`${API_BASE}/api/stripe/products-with-prices`);
+      const res = await fetch(`${API_BASE}/stripe/products-with-prices`);
       const data = await res.json();
       setProducts(data.data || []);
     } catch (error) {
@@ -65,7 +68,7 @@ function Subscription() {
 
   const fetchSubscription = async () => {
     try {
-      const res = await fetch(`${API_BASE}/api/stripe/subscription`, {
+      const res = await fetch(`${API_BASE}/stripe/subscription`, {
         headers: { 'Authorization': `Bearer ${token}` }
       });
       const data = await res.json();
@@ -107,7 +110,7 @@ function Subscription() {
         body.promotionCode = promoApplied.code;
       }
 
-      const res = await fetch(`${API_BASE}/api/stripe/checkout`, {
+      const res = await fetch(`${API_BASE}/stripe/checkout`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -132,7 +135,7 @@ function Subscription() {
 
   const handleManageSubscription = async () => {
     try {
-      const res = await fetch(`${API_BASE}/api/stripe/portal`, {
+      const res = await fetch(`${API_BASE}/stripe/portal`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

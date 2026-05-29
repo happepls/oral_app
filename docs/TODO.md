@@ -6,7 +6,7 @@
 
 
 - [x] [Testing] handleAuthResponse 单元测试覆盖（401 不跳转、错误消息透传 vs handleResponse 的 token 过期跳转）
-- [ ] [Testing] userController.js 登录 null-password 路径 + 注册 duplicate key 错误处理集成测试
+- [x] [Testing] userController.js 登录 null-password 路径 + 注册 duplicate key 错误处理集成测试
 - [ ] [Testing] user.js 事务 rollback 路径测试（User.create identity 插入失败回滚、createGoal task 插入失败回滚）
 - [ ] [Performance] user_identities 表添加 (user_id, provider) 索引以优化 LEFT JOIN 查询
 - [ ] [Performance] Conversation.js DEFAULT_SCENARIOS 大对象在组件内重复创建，应移至模块顶层

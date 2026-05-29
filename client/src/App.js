@@ -8,6 +8,7 @@ import Landing from './pages/Landing';
 import Login from './pages/Login';
 import Register from './pages/Register';
 import Conversation from './pages/Conversation';
+import Recall from './pages/Recall';
 import Discovery from './pages/Discovery';
 import Profile from './pages/Profile';
 import Onboarding from './pages/Onboarding';
@@ -31,6 +32,7 @@ const AppRoutes = () => {
             <Route path="/onboarding" element={<Onboarding />} />
             <Route path="/goal-setting" element={<GoalSetting />} />
             <Route path="/conversation" element={<Conversation />} />
+            <Route path="/recall" element={<Recall />} />
             <Route path="/discovery" element={<Discovery />} />
             <Route path="/profile" element={<Profile />} />
             <Route path="/checkin" element={<Checkin />} />
