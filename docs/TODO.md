@@ -2,15 +2,17 @@
 
 ## In Progress
 
+- [ ] [Testing] user.js 事务 rollback 路径测试（User.create identity 插入失败回滚、createGoal task 插入失败回滚）
+- [ ] [Performance] user_identities 表添加 (user_id, provider) 索引以优化 LEFT JOIN 查询
+- [ ] [Performance] Conversation.js DEFAULT_SCENARIOS 大对象在组件内重复创建，应移至模块顶层
+- [ ] [Performance] Profile.js useEffect 4 个并发请求缺 AbortController
+
 ## Backlog
 
 
 - [x] [Testing] handleAuthResponse 单元测试覆盖（401 不跳转、错误消息透传 vs handleResponse 的 token 过期跳转）
 - [x] [Testing] userController.js 登录 null-password 路径 + 注册 duplicate key 错误处理集成测试
-- [ ] [Testing] user.js 事务 rollback 路径测试（User.create identity 插入失败回滚、createGoal task 插入失败回滚）
-- [ ] [Performance] user_identities 表添加 (user_id, provider) 索引以优化 LEFT JOIN 查询
-- [ ] [Performance] Conversation.js DEFAULT_SCENARIOS 大对象在组件内重复创建，应移至模块顶层
-- [ ] [Performance] Profile.js useEffect 4 个并发请求缺 AbortController
+
 - [ ] [Testing] Achievements.js 新页面零测试覆盖（数据获取/分类网格/解锁状态渲染）
 - [ ] [Testing] user.js submitFeedback/getDailyProgress/recordPracticeTime 零测试覆盖
 - [ ] [Testing] ai-omni-service magic_sentence 提取正则零测试覆盖（「」引号匹配/""fallback）
@@ -47,6 +49,16 @@
 - [ ] [Testing] ScenarioCard.jsx 锁定交互守卫零测试（locked 状态 onStart 不应触发）
 - [ ] [Testing] MessageBubble.jsx loading 状态 + audioUrl 分支零测试
 - [ ] [Testing] MicBar/ConvHeader/HintBanner/VoiceBubble/GuajiAvatar 新组件零测试
+- [ ] [Testing] Recall.js similarity()/pickRecallScenario()/normalise() 纯函数零测试（边界：空数组、skipIndex>=length、CJK 标点）
+- [ ] [Testing] _check_auto_pass() 白名单零测试（正面指示符变体、response_count 阈值、空文本拒绝）
+- [ ] [Testing] splitIntoSentences() CJK+Latin 混合句子分割零测试
+- [ ] [Testing] CCRollingCaption 组件零测试（NaN ratio 安全、句子索引单调递增、rAF 清理）
+- [ ] [Testing] calcUnlockedCount() 渐进解锁逻辑零测试（初始3个、完成后+1、Pro 全解锁）
+- [ ] [Performance] Recall.js loadScenario Promise.all 翻译请求无并发限制（50+ 句子触发 50 并发请求）
+- [ ] [Performance] Recall.js ensureRecognition useCallback 缺 targetLang 依赖（语言切换后 stale closure）
+- [ ] [Performance] Conversation.js shouldSuppressAutoPlay 函数在每次消息附加时重建（应提取为稳定函数）
+- [ ] [Performance] ai-omni-service _classify_script_share() 每次 daily-QA 检查都全字符遍历（可缓存结果）
+- [ ] [Feature] 6.31 完成今日复述后再次进入时切换新句子（当前已实现基础切换，需要后端持久化切换记录）
 
 ## Done
 

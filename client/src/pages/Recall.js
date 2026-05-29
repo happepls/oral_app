@@ -143,7 +143,8 @@ function Recall() {
       setTargetLang(lang);
 
       const raw = extractSentences(picked?.tasks || []);
-      const cacheKey = `recall_translated_${goal?.id || 'x'}_${picked?.title || ''}_${lang.code}`;
+      const titleSlug = (picked?.title || '').replace(/[^a-zA-Z0-9一-鿿-]/g, '_').slice(0, 40);
+      const cacheKey = `recall_translated_${goal?.id || 'x'}_${titleSlug}_${lang.code}`;
       let translated = null;
       try {
         const cached = localStorage.getItem(cacheKey);
