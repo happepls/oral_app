@@ -39,6 +39,9 @@ function Profile() {
   // Goal state
   const [activeGoal, setActiveGoal] = useState(null);
 
+  // Subscription state
+  const [subscription, setSubscription] = useState(null);
+
   // Native language edit state
   const [editingLang, setEditingLang] = useState(false);
   const [savingLang, setSavingLang] = useState(false);
@@ -85,7 +88,8 @@ function Profile() {
         }),
         userAPI.getCheckinStats().then(d => setCheckinStats(d)).catch(() => {}),
         userAPI.getCheckinHistory(30).then(d => setCheckinHistory(Array.isArray(d) ? d : [])).catch(() => {}),
-        userAPI.getActiveGoal().then(d => setActiveGoal(d?.goal || d)).catch(() => {})
+        userAPI.getActiveGoal().then(d => setActiveGoal(d?.goal || d)).catch(() => {}),
+        userAPI.getSubscription().then(d => setSubscription(d)).catch(() => {})
       ]);
       setLoading(false);
     };
@@ -171,31 +175,39 @@ function Profile() {
     }
   };
 
+  const toLocalDateStr = (d) => {
+    const dt = (d instanceof Date) ? d : new Date(d);
+    if (isNaN(dt.getTime())) return '';
+    const y = dt.getFullYear();
+    const m = String(dt.getMonth() + 1).padStart(2, '0');
+    const day = String(dt.getDate()).padStart(2, '0');
+    return `${y}-${m}-${day}`;
+  };
+
+  const parseLocalDate = (dateStr) => new Date(`${dateStr}T00:00:00`);
+
   const getLast7Days = () => {
     const days = [];
     for (let i = 6; i >= 0; i--) {
       const date = new Date();
       date.setDate(date.getDate() - i);
-      days.push(date.toISOString().split('T')[0]);
+      days.push(toLocalDateStr(date));
     }
     return days;
   };
 
   const isDateCheckedIn = (dateStr) => {
-    return checkinHistory.some(h => {
-      const d = new Date(h.checkin_date).toISOString().split('T')[0];
-      return d === dateStr;
-    });
+    return checkinHistory.some(h => toLocalDateStr(h.checkin_date) === dateStr);
   };
 
   const getDayLabel = (dateStr) => {
-    const date = new Date(dateStr);
-    const today = new Date().toISOString().split('T')[0];
+    const date = parseLocalDate(dateStr);
+    const today = toLocalDateStr(new Date());
     if (dateStr === today) return '今';
     return ['日', '一', '二', '三', '四', '五', '六'][date.getDay()];
   };
 
-  const getDateNum = (dateStr) => new Date(dateStr).getDate();
+  const getDateNum = (dateStr) => parseLocalDate(dateStr).getDate();
 
   // Goal progress
   const goalTotalTasks = activeGoal?.scenarios
@@ -303,6 +315,52 @@ function Profile() {
           ))}
         </div>
 
+        {/* My Subscription */}
+        <div className="px-4 pt-4 pb-4">
+          <h2 className="text-base font-bold text-slate-900 dark:text-white pb-3">💎 我的订阅</h2>
+          <div className="bg-white dark:bg-slate-800 rounded-2xl p-4 shadow-brand border border-slate-100 dark:border-slate-700">
+            {(subscription?.status === 'active' && subscription?.subscription) ? (
+              <div className="flex items-center justify-between">
+                <div>
+                  <div className="flex items-center gap-2">
+                    <Crown className="w-4 h-4 text-amber-500" />
+                    <p className="text-base font-semibold text-slate-900 dark:text-white">
+                      {subscription.subscription?.items?.data?.[0]?.price?.nickname
+                        || subscription.subscription?.plan?.nickname
+                        || 'Pro 会员'}
+                    </p>
+                  </div>
+                  {subscription.subscription?.current_period_end && (
+                    <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
+                      到期日：{new Date(subscription.subscription.current_period_end * 1000).toLocaleDateString('zh-CN')}
+                    </p>
+                  )}
+                </div>
+                <button
+                  onClick={() => navigate('/subscription')}
+                  className="text-xs text-primary hover:underline"
+                >
+                  管理订阅
+                </button>
+              </div>
+            ) : (
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-base font-semibold text-slate-900 dark:text-white">免费版</p>
+                  <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">解锁全部高级功能</p>
+                </div>
+                <button
+                  onClick={() => navigate('/subscription')}
+                  className="px-3 py-1.5 text-xs font-medium text-white rounded-lg"
+                  style={{ background: 'linear-gradient(135deg, #637FF1, #a47af6)' }}
+                >
+                  升级会员
+                </button>
+              </div>
+            )}
+          </div>
+        </div>
+
         {/* Native Language Setting */}
         <div className="px-4 pb-4">
           <h2 className="text-base font-bold text-slate-900 dark:text-white pb-3">🌐 语言设置</h2>
@@ -397,7 +455,7 @@ function Profile() {
             <div className="grid grid-cols-7 gap-2">
               {getLast7Days().map(date => {
                 const checked = isDateCheckedIn(date);
-                const isToday = date === new Date().toISOString().split('T')[0];
+                const isToday = date === toLocalDateStr(new Date());
                 return (
                   <div key={date} className="flex flex-col items-center">
                     <span className="text-xs text-slate-500 mb-1">{getDayLabel(date)}</span>

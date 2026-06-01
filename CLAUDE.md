@@ -30,6 +30,58 @@ docker compose up -d --build <service-name>
 > The `--legacy-peer-deps` flag is required due to peer dependency conflicts introduced by
 > `react-i18next` / `i18next` vs `react-scripts@5`. Do NOT remove it.
 
+### client-app: Host Bind-Mount Overrides Image Build (重要)
+
+`docker-compose.override.yml` 把宿主 `./client/build` 以 bind mount 形式挂到容器
+`/usr/share/nginx/html:ro`。这是开发期为"改完前端代码后跳过 image rebuild"设计的，
+但**会让镜像里 multi-stage build 出的新 bundle 被宿主旧 build 完全覆盖**——容器
+始终服务宿主目录的内容，与镜像内容无关。
+
+```yaml
+# docker-compose.override.yml
+services:
+  client-app:
+    image: oral_app-client-app:latest
+    volumes:
+      - ./client/build:/usr/share/nginx/html:ro
+```
+
+**症状**：改了 `client/src/`，跑 `docker compose up -d --build client-app`
+甚至 `--no-cache` 重建，浏览器看到的还是旧版；`docker exec ... ls /usr/share/nginx/html/static/js`
+显示的是几天前的 hash 和时间戳；但 `docker run --rm oral_app-client-app:latest sh -c 'ls /usr/share/nginx/html/static/js'`
+能看到新 build。
+
+**前端修改后正确的发布顺序**（必须先 host build，再容器拉新文件）：
+```bash
+cd client && npm run build          # 1. 重新生成 ./client/build/（webpack 写新 hash 进 index.html）
+# nginx 容器立即生效，无需 docker rebuild —— volume 是 ro 但是宿主写入是允许的
+```
+
+需要重建 image（如改了 nginx.conf 或 Dockerfile）时，**两步都做**：
+```bash
+cd client && npm run build
+docker compose up -d --build client-app
+```
+
+**绝对不要 `rm -rf client/build`** 之后忘了 `npm run build` —— 那会让 nginx 容器
+返回 404 直到下一次构建。覆盖式 `npm run build` 安全：webpack 会按 content hash
+写新文件，老 hash 的 main.*.js 残留但 index.html 引用更新，nginx 直接服务新版。
+
+**调试入口**：怀疑前端"代码没生效"时，先验证三层：
+```bash
+ls -la client/build/static/js/main.*.js                       # 1. host build 是否新鲜
+docker exec oral_app_client_app ls /usr/share/nginx/html/static/js/  # 2. 容器内（=host build）是否同步
+curl -s http://localhost:5001/ | grep -oE 'main\.[a-z0-9]+\.js' # 3. nginx 实际服务的 hash
+```
+三处 hash 应一致；任何一处脱节都说明 host build 没跑或被覆盖。
+
+**配套陷阱**：`stripeRoutes` 的 `protect` 中间件早期只读 `Authorization: Bearer`，
+不读 cookie。Cookie 模式下任何走 stripeRoutes 的接口都会 401。前端
+`handleResponse` 见 401 直接 `window.location.href = '/login'`，造成
+"点 Profile 自动跳登录"。已在 `services/user-service/src/middleware/authMiddleware.js`
+修复为同时支持 Bearer + Cookie；`userAPI.getSubscription()` 也做了 soft-fail 不触发
+全局重定向。新增受保护的 stripe 路由前，确认 `protect` 仍兼容 cookie。
+
 ## Commands
 
 ### Start All Services

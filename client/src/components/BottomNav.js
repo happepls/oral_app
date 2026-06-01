@@ -13,7 +13,7 @@ function BottomNav({ currentPage }) {
   return (
     <div style={{
       position: 'fixed', bottom: 0, left: 0, right: 0, zIndex: 50,
-      background: 'rgba(246,247,248,0.96)', backdropFilter: 'blur(12px)',
+      background: 'var(--background-translucent)', backdropFilter: 'blur(12px)',
       borderTop: '1px solid var(--border-solid)',
       display: 'flex', justifyContent: 'space-around', alignItems: 'center',
       height: 72, paddingBottom: 8,

@@ -24,6 +24,35 @@ function isAllowedRedirect(url) {
   }
 }
 
+// Static fallback used when Stripe is not yet configured (empty products from API).
+// Prices mirror Landing.js Pricing section: $2.90/wk, $89.90/yr.
+const FALLBACK_PRODUCTS = [
+  {
+    id: 'weekly-fallback',
+    name: '周付会员',
+    description: '解锁全部高级功能',
+    metadata: { tier: 'weekly' },
+    prices: [{
+      id: null,
+      unit_amount: 290,
+      currency: 'usd',
+      recurring: { interval: 'week' }
+    }]
+  },
+  {
+    id: 'annual-fallback',
+    name: '年付会员',
+    description: '最划算选项，节省60%',
+    metadata: { tier: 'annual' },
+    prices: [{
+      id: null,
+      unit_amount: 8990,
+      currency: 'usd',
+      recurring: { interval: 'year' }
+    }]
+  }
+];
+
 function Subscription() {
   const navigate = useNavigate();
   const { user, token, refreshProfile } = useAuth();
@@ -58,9 +87,13 @@ function Subscription() {
     try {
       const res = await fetch(`${API_BASE}/stripe/products-with-prices`);
       const data = await res.json();
-      setProducts(data.data || []);
+      const list = Array.isArray(data?.data) && data.data.length > 0
+        ? data.data
+        : FALLBACK_PRODUCTS;
+      setProducts(list);
     } catch (error) {
       console.error('Error fetching products:', error);
+      setProducts(FALLBACK_PRODUCTS);
     } finally {
       setLoading(false);
     }
@@ -301,21 +334,25 @@ function Subscription() {
                 ))}
               </ul>
               
-              {price && (
-                <button
-                  onClick={() => handleCheckout(price.id)}
-                  disabled={checkoutLoading === price.id || isSubscribed}
-                  className={`w-full py-3 rounded-xl font-medium transition-all ${
-                    isSubscribed
-                      ? 'bg-slate-300 dark:bg-slate-600 text-slate-500 dark:text-slate-400 cursor-not-allowed'
-                      : isAnnual
-                        ? 'bg-gradient-to-r from-indigo-500 to-purple-500 text-white hover:opacity-90'
-                        : 'bg-slate-900 dark:bg-white text-white dark:text-slate-900 hover:opacity-90'
-                  } ${checkoutLoading === price.id ? 'opacity-50' : ''}`}
-                >
-                  {isSubscribed ? '已订阅' : checkoutLoading === price.id ? '处理中...' : '立即订阅'}
-                </button>
-              )}
+              <button
+                onClick={() => {
+                  if (!price?.id) {
+                    alert('支付功能即将上线，敬请期待');
+                    return;
+                  }
+                  handleCheckout(price.id);
+                }}
+                disabled={checkoutLoading === price?.id || isSubscribed}
+                className={`w-full py-3 rounded-xl font-medium transition-all ${
+                  isSubscribed
+                    ? 'bg-slate-300 dark:bg-slate-600 text-slate-500 dark:text-slate-400 cursor-not-allowed'
+                    : isAnnual
+                      ? 'bg-gradient-to-r from-indigo-500 to-purple-500 text-white hover:opacity-90'
+                      : 'bg-slate-900 dark:bg-white text-white dark:text-slate-900 hover:opacity-90'
+                } ${checkoutLoading === price?.id ? 'opacity-50' : ''}`}
+              >
+                {isSubscribed ? '已订阅' : checkoutLoading === price?.id ? '处理中...' : '立即订阅'}
+              </button>
             </div>
           );
         })}

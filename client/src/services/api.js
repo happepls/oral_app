@@ -1,3 +1,4 @@
+export const __BUILD_MARKER__ = '2026-06-01-subscription-cookie-fix';
 const API_BASE_URL = process.env.REACT_APP_API_URL || '/api';
 
 const handleResponse = async (response) => {
@@ -225,6 +226,23 @@ export const userAPI = {
       credentials: 'include'
     });
     return handleResponse(response);
+  },
+
+  async getSubscription() {
+    // Soft-fail: stripe routes use legacy Bearer-token middleware that doesn't
+    // recognize the cookie-based session. Returning null on auth failure keeps
+    // Profile page renderable for free users without triggering a logout redirect.
+    try {
+      const response = await fetch(`${API_BASE_URL}/stripe/subscription`, {
+        headers: getAuthHeaders(),
+        credentials: 'include'
+      });
+      if (!response.ok) return null;
+      const data = await response.json();
+      return data?.data || data;
+    } catch (err) {
+      return null;
+    }
   },
 
   async getUserGoals() {
