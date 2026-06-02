@@ -112,3 +112,14 @@ figma_app_template/Guaji AI_Design_System/screenshots/
 
 # Temporary image files
 img_*.png
+
+# AI coding assistant local files
+.agents/
+.claude/scheduled_tasks.lock
+.claude/skills/
+.codegraph/
+.qwen/skills/
+skills-lock.json
+
+# Local editor / terminal artifacts
+iTerm2
