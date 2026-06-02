@@ -156,25 +156,29 @@
 
 ## 9. 品牌一致性检查（全局）
 
-| # | 测试项 | 检查方法 | 预期结果 | 通过 |
-|---|-------|---------|---------|------|
-| 9.1 | 品牌名 | 全局搜索 "Oral AI" | 前端代码中无残留 "Oral AI"，统一为 "GuaJi AI" | [ ] |
-| 9.2 | 鹦鹉 emoji | 全局搜索 🦜 | 无残留鹦鹉 emoji，已替换为猫头鹰图标 | [ ] |
-| 9.3 | 吉祥物素材 | 访问 `/mascot/happy.png` 等 | 25个素材全部可访问 | [ ] |
-| 9.4 | Logo SVG | 访问 `/guaji-logo.svg` | SVG logo 正常渲染 | [ ] |
-| 9.5 | 图标 PNG | 访问 `/guaji-icon.png` | 透明背景猫头鹰，双翅对称 | [ ] |
-| 9.6 | 主题色 | 检查各页面 CTA 按钮 | 统一使用 `#637FF1 → #a47af6` 渐变 | [ ] |
-| 9.7 | 字体 | 检查页面文字 | 统一使用 Lexend 字体 | [ ] |
-| 9.8 | Console | 打开 DevTools Console | 无前端 JS 错误（后端 502 除外） | [ ] |
+| # | 测试项 | 检查方法 | 预期结果 | 通过 | 修改点                     |
+|---|-------|---------|---------|------|-------------------------|
+| 9.1 | 品牌名 | 全局搜索 "Oral AI" | 前端代码中无残留 "Oral AI"，统一为 "GuaJi AI" | [☑] |
+| 9.2 | 鹦鹉 emoji | 全局搜索 🦜 | 无残留鹦鹉 emoji，已替换为猫头鹰图标 | [☑] |
+| 9.3 | 吉祥物素材 | 访问 `/mascot/happy.png` 等 | 25个素材全部可访问 | [☑] |
+| 9.4 | Logo SVG | 访问 `/guaji-logo.svg` | SVG logo 正常渲染 | [☑] |
+| 9.5 | 图标 SVG | 访问 `/guaji-logo.svg` | 透明背景猫头鹰，双翅对称 | [☑] | 项目用 SVG 矢量图标，无 PNG；guaji-logo.svg 已为透明背景、双翅(±56)/耳簇(±14)/脚(±12)对称猫头鹰，符合规格 |
+| 9.6 | 主题色 | 检查各页面 CTA 按钮 | 统一使用 `#637FF1 → #a47af6` 渐变 | [☑] |
+| 9.7 | 字体 | 检查页面文字 | 统一使用 Lexend 字体 | [☑] |
+| 9.8 | Console | 打开 DevTools Console | 无前端 JS 错误（后端 502 除外） | [☑] |
 
 ---
 
 ## 10. 响应式 & 移动端
 
-| # | 测试项 | 操作步骤 | 预期结果 | 通过 |
-|---|-------|---------|---------|------|
-| 10.1 | 移动端首页 | Chrome DevTools → iPhone 14 (390px) | Discovery 页面布局正常，2列场景网格不溢出 | [ ] |
-| 10.2 | 移动端对话 | 移动端进入对话页 | ConvHeader/MicBar 适配屏幕宽度 | [ ] |
-| 10.3 | 移动端CC模式 | 移动端切换CC模式 | 猫头鹰居中，字幕不溢出 | [ ] |
-| 10.4 | BottomNav | 移动端查看底部 | 3-tab均匀分布，不被遮挡 | [ ] |
-| 10.5 | Landing | 移动端访问 `/` | hero文字换行合理，CTA按钮竖排 | [ ] |
+| # | 测试项 | 操作步骤 | 预期结果 | 通过 | 测试发现 |
+|---|-------|---------|---------|------|---------|
+| 10.1 | 移动端首页 | iPhone 14 (390×844, CDP 设备仿真 dpr=3) | Discovery 页面布局正常，2列场景网格不溢出 | [☑] | scrollW=390 无横向滚动，0 溢出元素；场景网格 `grid grid-cols-2 gap-3`，每列 165.5px×2+12gap=343<390；BottomNav/streak ring/4 stat grid 全部正常 |
+| 10.2 | 移动端对话 | 移动端进入对话页 (`/conversation?scenario=在超市购物`) | ConvHeader/MicBar 适配屏幕宽度 | [☑] | scrollW=390 无溢出；ConvHeader(✕关闭+标题+3相位点+在线徽章) 不截断；MicBar(点击说话渐变按钮+CC+重播) 三控件适配宽度 |
+| 10.3 | 移动端CC模式 | 移动端点击 CC 按钮进入沉浸字幕模式 | 猫头鹰居中，字幕不溢出 | [☑] | 猫头鹰 `bird-logo.svg` cx=195=视口正中心(390/2)，scrollW=390 无横向滚动；字幕组件宽度受容器约束（空闲态 AI 未说话，字幕未渲染）。注：探测到 1 处 left=-2px 是猫头鹰内部白边环的取整伪报，332<390 非真实溢出 |
+| 10.4 | BottomNav | 移动端查看底部 | 3-tab均匀分布，不被遮挡 | [☑] | `position:fixed` 底部锚定(bottom=844=viewportH)，高 72px；3 tab(首页/目标/我的) 中心 63/188/313，间距均匀 125px，不被内容遮挡 |
+| 10.5 | Landing | 移动端访问 `/` (登出态) | hero文字换行合理，CTA按钮竖排 | [☑] | scrollW=390 无溢出；hero 标题 4 行合理换行无截断；两个 CTA 竖排(cx=195 居中，全宽 358px，纵向 cy 528→604)；header logo/语言切换/登录/注册全部适配 |
+
+> **测试方法说明（§10）**：iPhone 14 真实 390px 视口通过 **CDP `Emulation.setDeviceMetricsOverride`**（width=390 height=844 deviceScaleFactor=3 mobile=true）实现，而非窗口缩放——Chrome 强制最小窗口宽 ~592px，`resize_window` 无法降到 390。测试对 dev-server (`localhost:3000`，与 `:5001` prod 同源，仅 `bundle.js` vs `main.*.js` 之别) 应用仿真 + `Page.captureScreenshot` 截图取证。每条用例用 JS 遍历 `getBoundingClientRect()` 探测溢出元素（`right>clientW` 或 `left<-1`）并核对 `documentElement.scrollWidth`。截图证据见 `docs/mobile-test-screenshots/`。
+>
+> Playwright MCP 当前不可用：其 `.mcp.json` 固定 `--cdp-endpoint http://localhost:9222`，attach 到 Chrome 148 时 `/json/version` 握手返回 `Unexpected status 400`（版本兼容问题），故改用 CDP 直连 + claude-in-chrome 辅助。

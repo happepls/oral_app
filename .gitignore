@@ -102,6 +102,9 @@ __pycache__/
 # Verification screenshots (temporary)
 verify-*.png
 
+# Mobile responsive test screenshots (one-off evidence; findings recorded in docs/test-cases-design-integration.md §10)
+docs/mobile-test-screenshots/
+
 # Large font files (use CDN)
 figma_app_template/Guaji AI_Design_System/fonts/
 

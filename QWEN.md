@@ -286,3 +286,19 @@ curl -s http://localhost:5001/ | head -20
 - **测试**：`services/ai-omni-service/tests/test_daily_qa.py` 扩展 7 个用例（advance/wrap/legacy-migrate/assert_pro 变体），并修补了 stub（补齐 `dashscope.audio.qwen_omni` 子模块 + 预设 `QWEN3_OMNI_API_KEY`），让历史 9 个测试从 skip 变成能真跑——现在全部 16 个测试全绿。
 - **Docker 热加载**：Python 源改动无 requirements 变动，用 `docker cp app/main.py oral_app_ai_omni_service:/app/app/main.py && docker compose restart ai-omni-service` 即可，无需 rebuild。
 ```
+
+## 设计集成测试 §9.5 + §10 响应式（Jun 2026）
+
+测试文档 `docs/test-cases-design-integration.md`。
+
+- **§9.5 品牌图标修复**：原用例期望 `/guaji-icon.png`（透明背景对称猫头鹰），但该 PNG 从不存在、代码也无引用。项目实际用 SVG 矢量图标。改为验证 `/guaji-logo.svg`——已确认透明背景（无 `<rect>`/background 填充）、双翅(ellipse cx±56)/耳簇(path±14)/脚(±12)对称猫头鹰，符合规格，标 ☑。
+- **§10 响应式 5 条全部 ✅**（真实 iPhone 14 = 390×844 dpr=3）：
+  - 10.1 Discovery：场景网格 `grid grid-cols-2 gap-3`，每列 165.5px×2+12gap=343<390，scrollW=390 无溢出
+  - 10.2 Conversation：ConvHeader(✕/标题/3 相位点/在线) + MicBar(点击说话/CC/重播) 适配，0 溢出
+  - 10.3 CC 模式：猫头鹰 `bird-logo.svg` cx=195=视口正中心居中，无横向滚动
+  - 10.4 BottomNav：`position:fixed` 底锚定(bottom=844)，3 tab(首页/目标/我的) 中心 63/188/313 间距均匀 125px
+  - 10.5 Landing(登出态)：hero 标题 4 行合理换行，两个 CTA 竖排(cx=195 居中全宽 358px)
+- **测试方法（关键工具坑）**：
+  - Chrome 强制最小窗口宽 ~592px，`resize_window`/窗口缩放**无法**降到 390。真实 390px 视口须用 **CDP `Emulation.setDeviceMetricsOverride`**（width=390 height=844 deviceScaleFactor=3 mobile=true）。
+  - **Playwright MCP 当前不可用**：`.mcp.json` 固定 `--cdp-endpoint http://localhost:9222`，attach Chrome 148 时 `/json/version` 握手返回 `Unexpected status 400`（版本兼容问题）。改用 CDP 直连 `:3000` dev-server（与 `:5001` prod 同源）+ JS 遍历 `getBoundingClientRect` 探溢出 + `Page.captureScreenshot` 截图。
+  - 截图证据：`docs/mobile-test-screenshots/`（5 张 PNG）。
