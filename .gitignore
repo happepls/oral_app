@@ -120,6 +120,7 @@ img_*.png
 .agents/
 .claude/scheduled_tasks.lock
 .claude/skills/
+.claude/wf-*.js
 .codegraph/
 .qwen/skills/
 skills-lock.json
