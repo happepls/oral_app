@@ -55,6 +55,10 @@ router.get('/api/users/recall/daily-state', protect, userController.getRecallDai
 router.post('/api/users/recall/switch', protect, userController.incrementRecallSwitch);
 router.post('/api/users/recall/complete', protect, userController.markRecallCompleted);
 
+// Onboarding Tour state routes (first-login guided tour completion flag)
+router.get('/api/users/onboarding-tour', protect, userController.getOnboardingTour);
+router.post('/api/users/onboarding-tour/complete', protect, userController.markOnboardingTourComplete);
+
 // Daily practice time / progress
 router.post('/api/users/practice-time', protect, userController.recordPracticeTime);
 router.get('/api/users/daily-progress', protect, userController.getDailyProgress);

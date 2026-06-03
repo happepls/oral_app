@@ -5,6 +5,8 @@ ALTER TABLE users ADD COLUMN IF NOT EXISTS birth_year INT;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS target_language VARCHAR(50);
 ALTER TABLE users ADD COLUMN IF NOT EXISTS interests TEXT;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS points INT DEFAULT 0;
+-- First-login Onboarding Tour completion flag (backend-authoritative; localStorage mirrors it)
+ALTER TABLE users ADD COLUMN IF NOT EXISTS onboarding_tour_completed BOOLEAN NOT NULL DEFAULT FALSE;
 
 -- Create user_goals table
 CREATE TABLE IF NOT EXISTS user_goals (

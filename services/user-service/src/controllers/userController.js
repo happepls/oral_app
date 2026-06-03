@@ -1041,6 +1041,45 @@ exports.markRecallCompleted = async (req, res) => {
     }
 };
 
+// ===== Onboarding Tour State APIs =====
+// Backend-authoritative first-login guided tour completion flag. localStorage
+// mirrors this value for optimistic flicker-free reads; the backend is the
+// source of truth so the tour cannot re-appear after clearing the browser.
+
+exports.getOnboardingTour = async (req, res) => {
+    try {
+        const db = require('../models/db');
+        const result = await db.query(
+            `SELECT onboarding_tour_completed FROM users WHERE id = $1 LIMIT 1`,
+            [req.user.id]
+        );
+        const row = result.rows[0];
+        res.json({
+            success: true,
+            data: { completed: row ? !!row.onboarding_tour_completed : false },
+        });
+    } catch (error) {
+        console.error('getOnboardingTour error:', error);
+        res.status(500).json({ success: false, error: 'Internal server error' });
+    }
+};
+
+exports.markOnboardingTourComplete = async (req, res) => {
+    try {
+        const db = require('../models/db');
+        // Idempotent: flipping an already-TRUE flag is a no-op.
+        await db.query(
+            `UPDATE users SET onboarding_tour_completed = TRUE, updated_at = NOW()
+             WHERE id = $1`,
+            [req.user.id]
+        );
+        res.json({ success: true, data: { completed: true } });
+    } catch (error) {
+        console.error('markOnboardingTourComplete error:', error);
+        res.status(500).json({ success: false, error: 'Internal server error' });
+    }
+};
+
 // ===== Daily Scenario Count =====
 exports.getDailyScenarioCount = async (req, res) => {
     try {

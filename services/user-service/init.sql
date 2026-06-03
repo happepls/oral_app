@@ -11,6 +11,7 @@ CREATE TABLE IF NOT EXISTS users (
     target_language VARCHAR(50), -- Current primary target language
     interests TEXT, -- Comma separated or JSON
     points INT DEFAULT 0,
+    onboarding_tour_completed BOOLEAN NOT NULL DEFAULT FALSE,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
