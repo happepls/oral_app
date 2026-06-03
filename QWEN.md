@@ -302,3 +302,16 @@ curl -s http://localhost:5001/ | head -20
   - Chrome 强制最小窗口宽 ~592px，`resize_window`/窗口缩放**无法**降到 390。真实 390px 视口须用 **CDP `Emulation.setDeviceMetricsOverride`**（width=390 height=844 deviceScaleFactor=3 mobile=true）。
   - **Playwright MCP 当前不可用**：`.mcp.json` 固定 `--cdp-endpoint http://localhost:9222`，attach Chrome 148 时 `/json/version` 握手返回 `Unexpected status 400`（版本兼容问题）。改用 CDP 直连 `:3000` dev-server（与 `:5001` prod 同源）+ JS 遍历 `getBoundingClientRect` 探溢出 + `Page.captureScreenshot` 截图。
   - 截图证据：`docs/mobile-test-screenshots/`（5 张 PNG）。
+
+## 首次登录引导 Onboarding Tour（Jun 2026）
+
+新用户首次完成 GoalSetting 落地 Discovery 时自动启动一次跨页 spotlight 引导，3 步、可跳过、完成后持久化永不重复。设计/计划见 `docs/superpowers/specs|plans/2026-06-03-onboarding-tour-*`。
+
+- **步骤序列**（`TourContext.TOUR_STEPS`）：① Discovery 场景卡 `data-tour="scenario-card"`（grid 容器）② Discovery 进度环 `data-tour="recall-streak"`（StreakRing 包裹 div）③ Conversation 麦克风 `data-tour="mic"`（RealTimeRecorder 父容器，**非 MicBar**——MicBar.jsx 未被 Conversation 引用）。
+- **触发**：`GoalSetting.handleSubmit` → `navigate('/discovery', { state:{ startTour:true } })`（保留 1200ms setTimeout）。Discovery mount effect 读 `location.state.startTour && !tour.completed` → `tour.start()`，随后 `navigate(replace,{state:{}})` 清信号防重入（`tourStartedRef` 兜底）。
+- **持久化双层**：localStorage `onboarding_tour_completed` 乐观值（防闪现）+ 后端权威 `GET /api/users/onboarding-tour`（mount 校正）。完成/跳过 → `POST /api/users/onboarding-tour/complete`（幂等 UPDATE）+ 写 localStorage。users 表加 `onboarding_tour_completed BOOLEAN`。
+- **跨页编排**：step3 route=`/conversation?mode=tour`；`TourHost`/`start`/`next` 路由比对均 `route.split('?')[0]` 取 path（query 不参与 pathname 比对）。
+- **Conversation demo 态**：`isTourMode = ?mode=tour`，init useEffect 早返回——**不建 WS、不 fetch tasks、不触发 AI**，仅渲染静态麦克风 UI 供高亮。
+- **核心组件**（零新依赖，复用 motion@12）：`contexts/TourContext.js`、`components/Spotlight.jsx`（Portal+SVG mask 挖洞+气泡卡+超时降级 onNext）、`hooks/useAnchorRect.js`（getBoundingClientRect + MutationObserver 等元素 + resize/scroll 重测 + 3s 超时 timedOut）。
+- **测试**：后端 `onboardingTour.test.js`（7 例，复刻 recall db-mock 模式）；前端 `tour-logic.test.js`（14 例纯逻辑，getNextStep/shouldStartTour/computePlacement/shouldSkipStep verbatim）。
+- **i18n**：`tour_step1/2/3_title/body` + `tour_next/done/skip`，zh/en 全译，其余语言 fallbackLng=en。翻译在 `i18n/locales/*.json`（**非内联**，CLAUDE.md 旧描述已过时）。
