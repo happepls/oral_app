@@ -24,12 +24,93 @@ const MAGIC_TIPS = [
   '说出来的速度不需要追求完美，意思准确是第一步。',
 ];
 
+// Default scenario templates — hoisted to module scope so the (large) object
+// is allocated once at module load instead of being recreated on every render.
+const DEFAULT_SCENARIOS = {
+  daily_conversation: [
+    { title: "Casual Greetings", tasks: ["Greet someone you just met", "Ask how someone is doing", "Make small talk about the weather"] },
+    { title: "Coffee Shop Order", tasks: ["Order your favorite drink", "Ask about menu items", "Request modifications"] },
+    { title: "Grocery Shopping", tasks: ["Ask for item locations", "Request quantity and price", "Handle checkout conversation"] },
+    { title: "Directions", tasks: ["Ask for directions to a location", "Clarify route details", "Thank for help"] },
+    { title: "Phone Call Basics", tasks: ["Answer a phone call properly", "Ask who is calling", "End a call politely"] },
+    { title: "Restaurant Dining", tasks: ["Make a reservation", "Order food from menu", "Ask for the bill"] },
+    { title: "Public Transport", tasks: ["Ask about schedules", "Buy a ticket", "Confirm your stop"] },
+    { title: "Weekend Plans", tasks: ["Discuss weekend activities", "Make suggestions", "Accept or decline invitations"] },
+    { title: "Hobbies Discussion", tasks: ["Share your hobbies", "Ask about others' interests", "Make related plans"] },
+    { title: "Small Talk (Culture)", tasks: ["Discuss local customs", "Share interesting facts", "Express opinions politely"] }
+  ],
+  business_meeting: [
+    { title: "Self Introduction", tasks: ["Introduce yourself professionally", "Share your role and company", "Exchange contact information"] },
+    { title: "Meeting Scheduling", tasks: ["Propose meeting times", "Confirm availability", "Send meeting invites"] },
+    { title: "Project Status Update", tasks: ["Summarize current progress", "Discuss blockers", "Plan next steps"] },
+    { title: "Client Presentation", tasks: ["Open a presentation", "Explain key points", "Handle Q&A"] },
+    { title: "Negotiation Basics", tasks: ["State your position", "Listen to counteroffers", "Reach a compromise"] },
+    { title: "Email Discussion", tasks: ["Reference an important email", "Clarify email contents", "Agree on follow-up actions"] },
+    { title: "Team Collaboration", tasks: ["Assign tasks to team members", "Check on task progress", "Provide feedback"] },
+    { title: "Conference Call", tasks: ["Join a video call", "Share your screen", "Wrap up the call"] },
+    { title: "Deadline Management", tasks: ["Discuss timeline constraints", "Request deadline extension", "Commit to new dates"] },
+    { title: "Professional Small Talk", tasks: ["Chat about industry news", "Discuss career journeys", "Build rapport"] }
+  ],
+  travel_survival: [
+    { title: "Airport Check-in", tasks: ["Check in for your flight", "Ask about seat preferences", "Handle baggage check"] },
+    { title: "Immigration Control", tasks: ["Answer officer questions", "Explain your trip purpose", "Provide required documents"] },
+    { title: "Hotel Reservation", tasks: ["Book a room", "Ask about amenities", "Request early check-in"] },
+    { title: "Taxi & Rideshare", tasks: ["Request a ride", "Give your destination", "Handle payment"] },
+    { title: "Asking Directions", tasks: ["Ask how to get somewhere", "Understand landmark references", "Confirm the route"] },
+    { title: "Restaurant Ordering", tasks: ["Ask for recommendations", "Order local cuisine", "Handle dietary requirements"] },
+    { title: "Shopping Abroad", tasks: ["Ask prices", "Negotiate or bargain", "Request tax refund info"] },
+    { title: "Emergency Situations", tasks: ["Ask for help", "Explain your situation", "Contact emergency services"] },
+    { title: "Sightseeing Tours", tasks: ["Book a tour", "Ask tour guide questions", "Express interest or concerns"] },
+    { title: "Cultural Small Talk", tasks: ["Discuss local culture", "Share your impressions", "Learn local expressions"] }
+  ],
+  exam_prep: [
+    { title: "Self Introduction (Exam)", tasks: ["Introduce yourself clearly", "Mention your background", "State your goals"] },
+    { title: "Describing Pictures", tasks: ["Describe a photo in detail", "Compare two images", "Express your opinion"] },
+    { title: "Opinion Questions", tasks: ["State your opinion clearly", "Give supporting reasons", "Conclude your answer"] },
+    { title: "Problem Solving", tasks: ["Identify the problem", "Suggest solutions", "Evaluate options"] },
+    { title: "Role-play Scenarios", tasks: ["Understand the situation", "Respond appropriately", "Handle follow-ups"] },
+    { title: "Discussion & Debate", tasks: ["Express agreement/disagreement", "Build on others' points", "Summarize the discussion"] },
+    { title: "Long Turn Speaking", tasks: ["Speak for 1-2 minutes fluently", "Structure your answer", "Manage your time"] },
+    { title: "Pronunciation Practice", tasks: ["Practice difficult sounds", "Work on intonation", "Reduce accent interference"] },
+    { title: "Vocabulary Expansion", tasks: ["Use academic vocabulary", "Explain complex terms", "Paraphrase effectively"] },
+    { title: "Mock Exam Practice", tasks: ["Complete a timed practice", "Self-evaluate performance", "Identify improvement areas"] }
+  ],
+  presentation: [
+    { title: "Opening Strong", tasks: ["Grab audience attention", "Introduce your topic", "Preview main points"] },
+    { title: "Explaining Data", tasks: ["Present statistics clearly", "Interpret chart information", "Draw conclusions"] },
+    { title: "Storytelling", tasks: ["Share a relevant story", "Connect to your message", "Engage emotionally"] },
+    { title: "Handling Q&A", tasks: ["Listen carefully to questions", "Provide clear answers", "Handle difficult questions"] },
+    { title: "Visual Aid Description", tasks: ["Reference your slides", "Explain diagrams", "Guide audience attention"] },
+    { title: "Transitions", tasks: ["Move between topics smoothly", "Recap previous points", "Preview next sections"] },
+    { title: "Persuasion Techniques", tasks: ["Present your argument", "Address counter-arguments", "Call to action"] },
+    { title: "Closing Impact", tasks: ["Summarize key takeaways", "End with a memorable statement", "Thank your audience"] },
+    { title: "Team Presentation", tasks: ["Coordinate with co-presenters", "Handle handoffs", "Support each other"] },
+    { title: "Impromptu Speaking", tasks: ["Speak on unexpected topics", "Organize thoughts quickly", "Deliver confidently"] }
+  ]
+};
+
 function stripAIMarkers(text) {
   if (!text) return text;
   return text
     .replace(/\[DAILY_QA_PASSED\]/gi, '')
     .replace(/\[\s*NATIVE:\s*[^\]]*\]/gi, '')
     .trim();
+}
+
+// Determine whether to suppress auto-play for a given AI message at index `idx`.
+// Default: COS URL triggers auto-play (audioPlayed=false) to guarantee playback
+// even when streaming PCM chunks failed to play (autoplay policy, decode error,
+// network drop, etc). The auto-play handler stops in-flight streaming audio
+// before playing the COS URL, preventing double playback.
+// Only suppress for the muted welcome message after a refresh/retry.
+// Hoisted to module scope (takes welcomeMuted + messages as explicit args) so it
+// is allocated once instead of being rebuilt on every message append/setMessages.
+function shouldSuppressAutoPlay(welcomeMuted, messages, idx) {
+  if (welcomeMuted) {
+    const isFirst = idx === 0 || (idx === 1 && messages[0]?.type === 'system');
+    if (isFirst) return true;
+  }
+  return false;
 }
 
 // Split text into sentence-sized chunks for the rolling CC caption.
@@ -325,69 +406,7 @@ function Conversation() {
   const [reconnectAttempts, setReconnectAttempts] = useState(0); // Track reconnection attempts
   const MAX_RECONNECT_ATTEMPTS = 3; // Maximum automatic reconnect attempts before requiring manual intervention
 
-  // Default scenario templates
-  const DEFAULT_SCENARIOS = {
-    daily_conversation: [
-      { title: "Casual Greetings", tasks: ["Greet someone you just met", "Ask how someone is doing", "Make small talk about the weather"] },
-      { title: "Coffee Shop Order", tasks: ["Order your favorite drink", "Ask about menu items", "Request modifications"] },
-      { title: "Grocery Shopping", tasks: ["Ask for item locations", "Request quantity and price", "Handle checkout conversation"] },
-      { title: "Directions", tasks: ["Ask for directions to a location", "Clarify route details", "Thank for help"] },
-      { title: "Phone Call Basics", tasks: ["Answer a phone call properly", "Ask who is calling", "End a call politely"] },
-      { title: "Restaurant Dining", tasks: ["Make a reservation", "Order food from menu", "Ask for the bill"] },
-      { title: "Public Transport", tasks: ["Ask about schedules", "Buy a ticket", "Confirm your stop"] },
-      { title: "Weekend Plans", tasks: ["Discuss weekend activities", "Make suggestions", "Accept or decline invitations"] },
-      { title: "Hobbies Discussion", tasks: ["Share your hobbies", "Ask about others' interests", "Make related plans"] },
-      { title: "Small Talk (Culture)", tasks: ["Discuss local customs", "Share interesting facts", "Express opinions politely"] }
-    ],
-    business_meeting: [
-      { title: "Self Introduction", tasks: ["Introduce yourself professionally", "Share your role and company", "Exchange contact information"] },
-      { title: "Meeting Scheduling", tasks: ["Propose meeting times", "Confirm availability", "Send meeting invites"] },
-      { title: "Project Status Update", tasks: ["Summarize current progress", "Discuss blockers", "Plan next steps"] },
-      { title: "Client Presentation", tasks: ["Open a presentation", "Explain key points", "Handle Q&A"] },
-      { title: "Negotiation Basics", tasks: ["State your position", "Listen to counteroffers", "Reach a compromise"] },
-      { title: "Email Discussion", tasks: ["Reference an important email", "Clarify email contents", "Agree on follow-up actions"] },
-      { title: "Team Collaboration", tasks: ["Assign tasks to team members", "Check on task progress", "Provide feedback"] },
-      { title: "Conference Call", tasks: ["Join a video call", "Share your screen", "Wrap up the call"] },
-      { title: "Deadline Management", tasks: ["Discuss timeline constraints", "Request deadline extension", "Commit to new dates"] },
-      { title: "Professional Small Talk", tasks: ["Chat about industry news", "Discuss career journeys", "Build rapport"] }
-    ],
-    travel_survival: [
-      { title: "Airport Check-in", tasks: ["Check in for your flight", "Ask about seat preferences", "Handle baggage check"] },
-      { title: "Immigration Control", tasks: ["Answer officer questions", "Explain your trip purpose", "Provide required documents"] },
-      { title: "Hotel Reservation", tasks: ["Book a room", "Ask about amenities", "Request early check-in"] },
-      { title: "Taxi & Rideshare", tasks: ["Request a ride", "Give your destination", "Handle payment"] },
-      { title: "Asking Directions", tasks: ["Ask how to get somewhere", "Understand landmark references", "Confirm the route"] },
-      { title: "Restaurant Ordering", tasks: ["Ask for recommendations", "Order local cuisine", "Handle dietary requirements"] },
-      { title: "Shopping Abroad", tasks: ["Ask prices", "Negotiate or bargain", "Request tax refund info"] },
-      { title: "Emergency Situations", tasks: ["Ask for help", "Explain your situation", "Contact emergency services"] },
-      { title: "Sightseeing Tours", tasks: ["Book a tour", "Ask tour guide questions", "Express interest or concerns"] },
-      { title: "Cultural Small Talk", tasks: ["Discuss local culture", "Share your impressions", "Learn local expressions"] }
-    ],
-    exam_prep: [
-      { title: "Self Introduction (Exam)", tasks: ["Introduce yourself clearly", "Mention your background", "State your goals"] },
-      { title: "Describing Pictures", tasks: ["Describe a photo in detail", "Compare two images", "Express your opinion"] },
-      { title: "Opinion Questions", tasks: ["State your opinion clearly", "Give supporting reasons", "Conclude your answer"] },
-      { title: "Problem Solving", tasks: ["Identify the problem", "Suggest solutions", "Evaluate options"] },
-      { title: "Role-play Scenarios", tasks: ["Understand the situation", "Respond appropriately", "Handle follow-ups"] },
-      { title: "Discussion & Debate", tasks: ["Express agreement/disagreement", "Build on others' points", "Summarize the discussion"] },
-      { title: "Long Turn Speaking", tasks: ["Speak for 1-2 minutes fluently", "Structure your answer", "Manage your time"] },
-      { title: "Pronunciation Practice", tasks: ["Practice difficult sounds", "Work on intonation", "Reduce accent interference"] },
-      { title: "Vocabulary Expansion", tasks: ["Use academic vocabulary", "Explain complex terms", "Paraphrase effectively"] },
-      { title: "Mock Exam Practice", tasks: ["Complete a timed practice", "Self-evaluate performance", "Identify improvement areas"] }
-    ],
-    presentation: [
-      { title: "Opening Strong", tasks: ["Grab audience attention", "Introduce your topic", "Preview main points"] },
-      { title: "Explaining Data", tasks: ["Present statistics clearly", "Interpret chart information", "Draw conclusions"] },
-      { title: "Storytelling", tasks: ["Share a relevant story", "Connect to your message", "Engage emotionally"] },
-      { title: "Handling Q&A", tasks: ["Listen carefully to questions", "Provide clear answers", "Handle difficult questions"] },
-      { title: "Visual Aid Description", tasks: ["Reference your slides", "Explain diagrams", "Guide audience attention"] },
-      { title: "Transitions", tasks: ["Move between topics smoothly", "Recap previous points", "Preview next sections"] },
-      { title: "Persuasion Techniques", tasks: ["Present your argument", "Address counter-arguments", "Call to action"] },
-      { title: "Closing Impact", tasks: ["Summarize key takeaways", "End with a memorable statement", "Thank your audience"] },
-      { title: "Team Presentation", tasks: ["Coordinate with co-presenters", "Handle handoffs", "Support each other"] },
-      { title: "Impromptu Speaking", tasks: ["Speak on unexpected topics", "Organize thoughts quickly", "Deliver confidently"] }
-    ]
-  };
+  // Default scenario templates are hoisted to module scope (see DEFAULT_SCENARIOS above).
 
   // localStorage key helper — encodes scenario name to prevent key injection via crafted URLs
   const _lsScenarioKey = (prefix, raw) => `${prefix}${encodeURIComponent(raw || '')}`;
@@ -1245,20 +1264,6 @@ function Conversation() {
                setMessages(prev => {
                    const newMessages = [...prev];
 
-                   // Helper: determine whether to suppress auto-play for a given message.
-                   // Default: COS URL triggers auto-play (audioPlayed=false) to guarantee playback
-                   // even when streaming PCM chunks failed to play (autoplay policy, decode error,
-                   // network drop, etc). The auto-play handler will stop in-flight streaming audio
-                   // before playing the COS URL, preventing double playback.
-                   // Only suppress for the muted welcome message after a refresh/retry.
-                   const shouldSuppressAutoPlay = (msg, idx) => {
-                       if (welcomeMuted) {
-                           const isFirst = idx === 0 || (idx === 1 && newMessages[0]?.type === 'system');
-                           if (isFirst) return true;
-                       }
-                       return false;
-                   };
-
                    // 1. Try Strict Match by Response ID
                    if (targetResponseId) {
                        const index = newMessages.findIndex(m => m.type === 'ai' && m.responseId === targetResponseId);
@@ -1267,7 +1272,7 @@ function Conversation() {
                            newMessages[index] = {
                                ...newMessages[index],
                                audioUrl: url,
-                               audioPlayed: shouldSuppressAutoPlay(newMessages[index], index)
+                               audioPlayed: shouldSuppressAutoPlay(welcomeMuted, newMessages, index)
                            };
                            return newMessages;
                        }
@@ -1280,7 +1285,7 @@ function Conversation() {
                            newMessages[i] = {
                                ...newMessages[i],
                                audioUrl: url,
-                               audioPlayed: shouldSuppressAutoPlay(newMessages[i], i)
+                               audioPlayed: shouldSuppressAutoPlay(welcomeMuted, newMessages, i)
                            };
                            break;
                        }
@@ -1743,7 +1748,6 @@ function Conversation() {
            if (data.payload) {
                // Store review data for personalized AI feedback in completion modal
                setScenarioReviewData(data.payload);
-               window.currentScenarioReview = data.payload;
                console.log('📚 AI 点评数据已存储，场景完成时将显示个性化点评');
 
                // Trigger ScorePopup with consolidated scenario scores (not batch_eval)
@@ -1761,7 +1765,6 @@ function Conversation() {
            if (data.payload) {
                // Store review data for personalized AI feedback in completion modal
                setScenarioReviewData(data.payload);
-               window.currentScenarioReview = data.payload;
                console.log('🧪 测试数据已存储，场景完成时将显示个性化 AI 点评');
            }
            break;

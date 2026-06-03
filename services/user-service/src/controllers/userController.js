@@ -28,6 +28,23 @@ const COOKIE_OPTIONS = {
   maxAge: 7 * 24 * 60 * 60 * 1000 // 7 days
 };
 
+// ===== Promo codes (server-side source of truth) =====
+// Moved off the frontend so the discount table can't be read/tampered from JS.
+// Keyed by uppercase code; `discount` is a percentage off.
+const PROMO_CODES = {
+  WELCOME20: { code: 'WELCOME20', discount: 20, description: '新用户8折优惠' },
+  ANNUAL50: { code: 'ANNUAL50', discount: 50, description: '年度订阅5折特惠' },
+};
+
+// Pure validator — no I/O, easy to unit test. Returns the promo object on a
+// valid code, or null when the code is missing/unknown.
+const validatePromo = (rawCode) => {
+  if (typeof rawCode !== 'string') return null;
+  const code = rawCode.trim().toUpperCase();
+  if (!code) return null;
+  return PROMO_CODES[code] || null;
+};
+
 // Helper to generate JWT with proper configuration
 const generateToken = (id) => {
   return jwt.sign(
@@ -1133,3 +1150,31 @@ exports.submitFeedback = async (req, res) => {
         res.status(500).json({ error: err.message });
     }
 };
+
+// ===== Promo code validation =====
+
+// POST /api/users/promo/validate — validates a promo code server-side and
+// returns the discount. The discount table lives only here (not in frontend JS),
+// so codes can't be enumerated or tampered from the client.
+exports.validatePromoCode = async (req, res) => {
+    try {
+        const { code } = req.body || {};
+        const promo = validatePromo(code);
+        if (!promo) {
+            return res.status(404).json({ valid: false, error: '优惠码无效或已过期' });
+        }
+        res.json({
+            valid: true,
+            code: promo.code,
+            discount: promo.discount,
+            description: promo.description
+        });
+    } catch (err) {
+        console.error('validatePromoCode Error:', err);
+        res.status(500).json({ valid: false, error: err.message });
+    }
+};
+
+// Exported for unit tests (pure, no I/O)
+exports._validatePromo = validatePromo;
+exports._PROMO_CODES = PROMO_CODES;

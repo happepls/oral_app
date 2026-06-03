@@ -155,14 +155,32 @@ function Recall() {
       } catch {}
 
       if (!translated) {
-        translated = await Promise.all(raw.map(async (s) => {
-          try {
-            const r = await aiAPI.translate(s, lang.code);
-            return (r?.translation || s).trim();
-          } catch {
-            return s;
+        // Bounded-concurrency translation pool: a naive Promise.all over 50+
+        // sentences fires 50 concurrent translate requests at once, hammering
+        // the AI gateway. Run at most TRANSLATE_CONCURRENCY workers, each
+        // pulling the next index off a shared cursor, writing results back in
+        // place to preserve order. Per-item try/catch falls back to original.
+        const TRANSLATE_CONCURRENCY = 5;
+        const results = new Array(raw.length);
+        let cursor = 0;
+        const worker = async () => {
+          while (cursor < raw.length) {
+            const i = cursor++;
+            const s = raw[i];
+            try {
+              const r = await aiAPI.translate(s, lang.code);
+              results[i] = (r?.translation || s).trim();
+            } catch {
+              results[i] = s;
+            }
           }
-        }));
+        };
+        const pool = Array.from(
+          { length: Math.min(TRANSLATE_CONCURRENCY, raw.length) },
+          () => worker()
+        );
+        await Promise.all(pool);
+        translated = results;
         try { localStorage.setItem(cacheKey, JSON.stringify(translated)); } catch {}
       }
 

@@ -50,6 +50,10 @@ CREATE TABLE IF NOT EXISTS user_checkins (
 CREATE INDEX IF NOT EXISTS idx_user_checkins_user_id ON user_checkins(user_id);
 CREATE INDEX IF NOT EXISTS idx_user_checkins_date ON user_checkins(checkin_date);
 
+-- Composite index to optimize the LEFT JOIN in User.findById / User.findByEmail
+-- (user_identities ON ui.user_id = u.id AND ui.provider = 'local')
+CREATE INDEX IF NOT EXISTS idx_user_identities_user_provider ON user_identities (user_id, provider);
+
 -- Daily Recall state table (added for backend-persisted Recall switch count + completion)
 CREATE TABLE IF NOT EXISTS recall_daily_state (
     id SERIAL PRIMARY KEY,
@@ -59,3 +63,5 @@ CREATE TABLE IF NOT EXISTS recall_daily_state (
     completed BOOLEAN NOT NULL DEFAULT FALSE,
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     UNIQUE(user_id, state_date)
+);
+CREATE INDEX IF NOT EXISTS idx_recall_daily_state_user_date ON recall_daily_state(user_id, state_date);

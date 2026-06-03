@@ -55,7 +55,8 @@ const FALLBACK_PRODUCTS = [
 
 function Subscription() {
   const navigate = useNavigate();
-  const { user, token, refreshProfile } = useAuth();
+  // Cookie mode: `token` is always null — gate auth on `user` instead.
+  const { user, refreshProfile } = useAuth();
   const [searchParams] = useSearchParams();
   const [products, setProducts] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -78,10 +79,10 @@ function Subscription() {
 
   useEffect(() => {
     fetchProducts();
-    if (token) {
+    if (user) {
       fetchSubscription();
     }
-  }, [token]);
+  }, [user]);
 
   const fetchProducts = async () => {
     try {
@@ -101,8 +102,11 @@ function Subscription() {
 
   const fetchSubscription = async () => {
     try {
+      // Cookie-based auth: httpOnly cookie is auto-sent via credentials.
+      // Do NOT send `Authorization: Bearer null` in cookie mode (token is null).
       const res = await fetch(`${API_BASE}/stripe/subscription`, {
-        headers: { 'Authorization': `Bearer ${token}` }
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include'
       });
       const data = await res.json();
       setCurrentSubscription(data);
@@ -111,27 +115,45 @@ function Subscription() {
     }
   };
 
-  const handleApplyPromo = () => {
+  const handleApplyPromo = async () => {
     setPromoError('');
     const code = promoCode.trim().toUpperCase();
-    
+
     if (!code) {
       setPromoError('请输入优惠码');
       return;
     }
 
-    if (code === 'WELCOME20') {
-      setPromoApplied({ code, discount: 20, description: '新用户8折优惠' });
-    } else if (code === 'ANNUAL50') {
-      setPromoApplied({ code, discount: 50, description: '年度订阅5折特惠' });
-    } else {
-      setPromoError('优惠码无效或已过期');
+    try {
+      // Validate server-side so the discount table is never exposed in JS.
+      const res = await fetch(`${API_BASE}/users/promo/validate`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ code })
+      });
+      const data = await res.json();
+      if (res.ok && data?.valid) {
+        setPromoApplied({
+          code: data.code,
+          discount: data.discount,
+          description: data.description
+        });
+      } else {
+        setPromoError(data?.error || '优惠码无效或已过期');
+        setPromoApplied(null);
+      }
+    } catch (error) {
+      console.error('Error validating promo code:', error);
+      // Graceful fallback: the server is the source of truth, but if it's
+      // unreachable surface a friendly retry message instead of crashing.
+      setPromoError('优惠码校验失败，请稍后再试');
       setPromoApplied(null);
     }
   };
 
   const handleCheckout = async (priceId) => {
-    if (!token) {
+    if (!user) {
       navigate('/login');
       return;
     }
@@ -145,10 +167,8 @@ function Subscription() {
 
       const res = await fetch(`${API_BASE}/stripe/checkout`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
-        },
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
         body: JSON.stringify(body)
       });
       const data = await res.json();
@@ -170,10 +190,8 @@ function Subscription() {
     try {
       const res = await fetch(`${API_BASE}/stripe/portal`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
-        }
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include'
       });
       const data = await res.json();
       if (data.url) {
@@ -385,7 +403,7 @@ function Subscription() {
             </div>
           )}
           <p className="text-xs text-slate-500 mt-2">
-            试试：WELCOME20 (8折) 或 ANNUAL50 (年订阅5折)
+            输入优惠码即可享受专属折扣
           </p>
         </div>
       </div>

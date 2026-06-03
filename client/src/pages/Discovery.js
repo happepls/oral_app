@@ -297,15 +297,17 @@ function Discovery() {
         if (!user.native_language) { navigate('/onboarding'); return; }
 
         const goalRes = await userAPI.getActiveGoal();
+        if (abortController.signal.aborted) return;
         if (!goalRes || !goalRes.goal) { navigate('/goal-setting'); return; }
         setActiveGoal(goalRes.goal);
         checkAchievement(goalRes.goal);
 
         try {
           const goalsRes = await userAPI.getUserGoals();
+          if (abortController.signal.aborted) return;
           const other = (goalsRes.goals || []).filter(g => g.status !== 'active');
           setHasOtherGoals(other.length > 0);
-        } catch (_) { setHasOtherGoals(false); }
+        } catch (_) { if (!abortController.signal.aborted) setHasOtherGoals(false); }
 
         if (goalRes.goal.scenarios?.length > 0) {
           setScenarios(goalRes.goal.scenarios);
@@ -319,6 +321,7 @@ function Discovery() {
           userAPI.getCheckinStats(),
           aiAPI.getDailyQuestion({ signal: abortController.signal }),
         ]);
+        if (abortController.signal.aborted) return;
 
         if (statsRes.status === 'fulfilled' && statsRes.value) {
           const s = statsRes.value.data || statsRes.value;
@@ -346,11 +349,13 @@ function Discovery() {
 
         // Check daily QA pass status from database
         userAPI.getDailyQAPassStatus().then(res => {
+          if (abortController.signal.aborted) return;
           if (res?.data?.passed) setDailyQAPassedDB(true);
         }).catch(() => {});
 
         // Load daily progress and merge frontend-tracked state
         userAPI.getDailyProgress().then(res => {
+          if (abortController.signal.aborted) return;
           const dp = res?.data || res || {};
           // Recall completion tracked in localStorage (backend has no recall-specific record)
           const today = new Date().toISOString().slice(0, 10);
@@ -359,11 +364,12 @@ function Discovery() {
           setDailyProgress(dp);
         }).catch(() => {});
       } catch (e) {
+        if (abortController.signal.aborted) return;
         console.error('Dashboard fetch error:', e);
         setDailyQAError(true);
         setDailyQALoading(false);
       } finally {
-        setLoading(false);
+        if (!abortController.signal.aborted) setLoading(false);
       }
     };
 
@@ -543,12 +549,12 @@ function Discovery() {
   }), [enrichedScenarios, filterTab]);
 
   const userName = user?.username || user?.name || '学习者';
-  const greeting = (() => {
+  const greeting = useMemo(() => {
     const h = new Date().getHours();
     if (h < 12) return '早上好';
     if (h < 18) return '下午好';
     return '晚上好';
-  })();
+  }, []);
 
   if (loading) {
     return (

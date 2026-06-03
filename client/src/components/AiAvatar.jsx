@@ -1,3 +1,4 @@
+import { useMemo } from "react";
 import { motion } from "motion/react";
 import { GuajiMascot } from "./GuajiMascot";
 
@@ -22,6 +23,15 @@ export function AiAvatar({
   const color = STATUS_COLOR[status] || STATUS_COLOR.idle;
   const text = STATUS_TEXT[status] || STATUS_TEXT.idle;
 
+  const boxShadowAnim = useMemo(
+    () => [
+      `0 0 20px ${color}40`,
+      `0 0 40px ${color}60`,
+      `0 0 20px ${color}40`,
+    ],
+    [color]
+  );
+
   return (
     <div className="relative h-full">
       <div
@@ -37,11 +47,7 @@ export function AiAvatar({
           className="absolute bottom-8 left-1/2"
           style={{ transform: 'translateX(-50%)', width: '90%' }}
           animate={{
-            boxShadow: [
-              `0 0 20px ${color}40`,
-              `0 0 40px ${color}60`,
-              `0 0 20px ${color}40`,
-            ],
+            boxShadow: boxShadowAnim,
           }}
           transition={{ duration: 2, repeat: Infinity }}
         >

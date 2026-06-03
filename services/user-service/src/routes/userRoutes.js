@@ -62,6 +62,9 @@ router.get('/api/users/daily-progress', protect, userController.getDailyProgress
 // Feedback
 router.post('/api/users/feedback', protect, userController.submitFeedback);
 
+// Promo code validation (server-side discount table; replaces hardcoded frontend codes)
+router.post('/api/users/promo/validate', protect, userController.validatePromoCode);
+
 // Achievements
 router.get('/api/users/achievements', protect, async (req, res) => {
   try {

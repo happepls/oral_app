@@ -74,10 +74,13 @@ function Profile() {
   }, []);
 
   useEffect(() => {
+    const controller = new AbortController();
+    const { signal } = controller;
     const fetchAll = async () => {
       if (!user?.id) { setLoading(false); return; }
       await Promise.allSettled([
         historyAPI.getStats(user.id).then(d => {
+          if (signal.aborted) return;
           const total = d?.totalSessions || 0;
           const hours = (total * 15 / 60).toFixed(1);
           setStats({
@@ -86,14 +89,15 @@ function Profile() {
             totalSessions: total
           });
         }),
-        userAPI.getCheckinStats().then(d => setCheckinStats(d)).catch(() => {}),
-        userAPI.getCheckinHistory(30).then(d => setCheckinHistory(Array.isArray(d) ? d : [])).catch(() => {}),
-        userAPI.getActiveGoal().then(d => setActiveGoal(d?.goal || d)).catch(() => {}),
-        userAPI.getSubscription().then(d => setSubscription(d)).catch(() => {})
+        userAPI.getCheckinStats().then(d => { if (!signal.aborted) setCheckinStats(d); }).catch(() => {}),
+        userAPI.getCheckinHistory(30).then(d => { if (!signal.aborted) setCheckinHistory(Array.isArray(d) ? d : []); }).catch(() => {}),
+        userAPI.getActiveGoal().then(d => { if (!signal.aborted) setActiveGoal(d?.goal || d); }).catch(() => {}),
+        userAPI.getSubscription().then(d => { if (!signal.aborted) setSubscription(d); }).catch(() => {})
       ]);
-      setLoading(false);
+      if (!signal.aborted) setLoading(false);
     };
     fetchAll();
+    return () => controller.abort();
   }, [user]);
 
   // Derive mastered scenarios from activeGoal (needed for achievements)

@@ -2,65 +2,70 @@
 
 ## In Progress
 
-- [ ] [Testing] user.js 事务 rollback 路径测试（User.create identity 插入失败回滚、createGoal task 插入失败回滚）
-- [ ] [Performance] user_identities 表添加 (user_id, provider) 索引以优化 LEFT JOIN 查询
-- [ ] [Performance] Conversation.js DEFAULT_SCENARIOS 大对象在组件内重复创建，应移至模块顶层
-- [ ] [Performance] Profile.js useEffect 4 个并发请求缺 AbortController
 
 ## Backlog
 
 
-- [x] [Testing] handleAuthResponse 单元测试覆盖（401 不跳转、错误消息透传 vs handleResponse 的 token 过期跳转）
-- [x] [Testing] userController.js 登录 null-password 路径 + 注册 duplicate key 错误处理集成测试
-
-- [ ] [Testing] Achievements.js 新页面零测试覆盖（数据获取/分类网格/解锁状态渲染）
-- [ ] [Testing] user.js submitFeedback/getDailyProgress/recordPracticeTime 零测试覆盖
-- [ ] [Testing] ai-omni-service magic_sentence 提取正则零测试覆盖（「」引号匹配/""fallback）
-- [ ] [Commercialization]  Defined a tiered subscription model (Freemium/Pro) and cost-per-minute unit economics for AI-driven oral practice.
-- [ ] [Feature]  Tell me a good way to plan a live activity for when I background the app.
-- [ ] [Performance] Goals.js: summary stats 数组（含 JSX icon）每次 render 重建，可用 useMemo 按 activeGoals/totalCompletedScenes/streak 依赖缓存
-- [ ] [Performance] Goals.js: useEffect load() 缺少 AbortController，组件卸载后仍触发 setAllGoals（低频页面，低优先级）
-- [ ] [Testing] Goals.js GoalCard 组件零测试（进度计算、场景折叠展开逻辑、继续练习按钮导航）
-- [ ] [Testing] Conversation.js ScorePopup 组件零测试（触发条件 keyword_coverage && delta>0、onClose 回调、圆环数字计算）
-- [ ] [Testing] GoalSetting.js 自定义练习方向零测试覆盖（customGoalType 空值校验、API传值、goalType==='custom'时UI显示/隐藏、handleSubmit 传 finalGoalType）
-- [ ] [Testing] Onboarding.js 精简后单步流程无测试（单步navigate到/goal-setting、无问卷显示、nickname必填校验）
-- [ ] [Security] ai-omni-service POST /tts 端点 voice 参数缺少白名单校验（直接透传给 DashScope，应用 _VOICE_RE 正则验证，参考 /stream 端点 line 1464）
-- [ ] [Performance] GoalSetting.js: handleGenerateScenarios 缺少 AbortController，组件卸载后仍触发 setState（内存泄漏风险）
-- [ ] [Performance] Discovery.js overallProgress 计算每次 render 重算，应用 useMemo
-- [ ] [Testing] Conversation.js isRecallMode 分支无测试（recall模式 phase_transition→navigate('/discovery')、magic card 仅 recall 模式显示）
-- [x] [Testing] Onboarding.js 更新后的4题问卷无对应测试（已随问卷从 Onboarding 移除而失效，GoalSetting Step3 继承问卷逻辑）
-- [ ] [Performance] Discovery.js: enrichedScenarios/filteredScenarios 每次 render 重新计算，应用 useMemo（场景列表大时影响滚动流畅度）
-- [ ] [Performance] Discovery.js L138-189: useEffect 内多个 await 调用缺少 AbortController（组件卸载后仍触发 setState）
-- [ ] [Performance] GoalSetting.js: handleGenerateScenarios 无防抖/AbortController，用户快速点击可发起多个并发生成请求
-- [ ] [Security] ai-omni-service /translate 端点 LLM prompt injection 风险（用户文本直接拼入 prompt，建议使用结构化 message roles 隔离）
-- [ ] [Testing] ai-omni-service `_wav_extract_pcm()` / `_trim_wav_onset()` 新增纯函数零测试覆盖（WAV header 解析、截断文件、非 WAV passthrough）
-- [ ] [Testing] proficiency_scoring CJK 评分阈值零测试覆盖（target_language=Japanese/Chinese 时 _min_len=4, _min_remaining=2 路径）
-- [ ] [Testing] GoalSetting.js 多步向导零测试覆盖（calcQuizScore/scoreToProficiency/自定义目标/音色 fallback）
-
-- [ ] [Security] Subscription.js 优惠码（WELCOME20/ANNUAL50）硬编码在前端 JS 中，应改为服务端校验
-- [ ] [Security] Conversation.js review 数据写入 window 全局对象（window.currentScenarioReview），应改用 React state
-- [ ] [Security] Subscription.js token 模式 Authorization header 与 httpOnly cookie 不兼容（header 发送 "Bearer null"）
-- [ ] [Performance] GuajiMascot.jsx 内联 style 对象每次 render 重建，应提升为模块级常量
-- [ ] [Performance] VoiceBubble.jsx Array.from + Math.sin 每次 render 计算 24 个柱高，应 useMemo
-- [ ] [Performance] Discovery.js greeting 计算每次 render 执行 new Date()，应 useMemo 空依赖
-- [ ] [Performance] AiAvatar.jsx boxShadow 动画数组每次 render 新建引用，应 useMemo 按 color 依赖
-- [ ] [Testing] GuajiMascot.jsx 状态→图片映射 + 覆盖层逻辑零测试
-- [ ] [Testing] DiffBadge.jsx fallback 路径零测试（未知 diff 值渲染原始字符串）
-- [ ] [Testing] ScenarioCard.jsx 锁定交互守卫零测试（locked 状态 onStart 不应触发）
-- [ ] [Testing] MessageBubble.jsx loading 状态 + audioUrl 分支零测试
-- [ ] [Testing] MicBar/ConvHeader/HintBanner/VoiceBubble/GuajiAvatar 新组件零测试
-- [ ] [Testing] Recall.js similarity()/pickRecallScenario()/normalise() 纯函数零测试（边界：空数组、skipIndex>=length、CJK 标点）
-- [ ] [Testing] _check_auto_pass() 白名单零测试（正面指示符变体、response_count 阈值、空文本拒绝）
-- [ ] [Testing] splitIntoSentences() CJK+Latin 混合句子分割零测试
-- [ ] [Testing] CCRollingCaption 组件零测试（NaN ratio 安全、句子索引单调递增、rAF 清理）
-- [ ] [Testing] calcUnlockedCount() 渐进解锁逻辑零测试（初始3个、完成后+1、Pro 全解锁）
-- [ ] [Performance] Recall.js loadScenario Promise.all 翻译请求无并发限制（50+ 句子触发 50 并发请求）
-- [ ] [Performance] Recall.js ensureRecognition useCallback 缺 targetLang 依赖（语言切换后 stale closure）
-- [ ] [Performance] Conversation.js shouldSuppressAutoPlay 函数在每次消息附加时重建（应提取为稳定函数）
-- [ ] [Performance] ai-omni-service _classify_script_share() 每次 daily-QA 检查都全字符遍历（可缓存结果）
-- [ ] [Feature] 6.31 完成今日复述后再次进入时切换新句子（当前已实现基础切换，需要后端持久化切换记录）
-
 ## Done
+
+<!-- 2026-06-03 收尾：原 5 项剩余 backlog 全部处理 —— #1/#2 直接修复，#3 全栈持久化(workflow)，#4/#5 转设计文档。
+     收尾回归全绿：user-service jest 41 passed (6 suites), workflow-service 101 passed (+2 pre-existing 越界),
+     ai-omni 72 passed, 前端 jest 26 suites / 392 tests 全绿。 -->
+- [x] [Performance] Profile.js fetchAll useEffect 添加 AbortController + signal.aborted 守卫（5 个并发请求卸载后不再 setState）
+- [x] [Security] Conversation.js 移除 window.currentScenarioReview 死写入（grep 确认无读取处，已有 setScenarioReviewData React state 覆盖；删两处写入）
+- [x] [Feature] 今日复述切换记录后端持久化：新建 recall_daily_state 表(UUID FK) + 3 端点(/recall/daily-state·switch·complete) + api.js + Recall.js 对接（localStorage 降级为离线 fallback）；recallState.test.js 8 + recall-switch-limit.test.js 5
+- [x] [Commercialization] 订阅分层模型 + 单位经济文档：docs/Pricing_Unit_Economics.md（量化门控矩阵贴代码 + per-minute 成本模型 + LTV/CAC + 标出 Free 缺时长门控最大漏点）
+- [x] [Feature] App 后台 Live Activity 规划文档：docs/Live_Activity_Background.md（澄清 Web/PWA 做不了真 iOS Live Activity，按平台分 A/B/C 档 + 增量路线 + 阻塞决策清单）
+
+### 已知预存项（非本批引入，待后续单独处理）
+- [ ] [Bug] update_db.sql user_checkins.user_id 声明为 INT 但 users.id 实为 UUID（迁移脚本类型不一致；init.sql 正确，仅 update_db.sql 漂移）
+- [ ] [Testing] workflow-service test_proficiency_scoring.py 2 个 TestTaskCompleted 用例预存失败（task_completed 阈值断言，与本批工作无关）
+
+<!-- 2026-06-03 backlog-48 批量工作流：13 个文件级 agent 并行实现 + 测试，5 个 verify agent 回归。
+     全量回归绿：workflow-service 101 passed (+2 pre-existing 越界失败), ai-omni 72 passed,
+     user-service jest 33 passed, 前端 jest 25 suites / 387 tests 全绿。前端 build 仅余预存 CI 严格
+     lint warnings（符号计数与 HEAD 一致，本批未引入新 unused var）。 -->
+- [x] [Testing] user.js 事务 rollback 路径测试（User.create identity 插入回滚 + createGoal task 插入回滚，userModelTx.test.js 2 tests）
+- [x] [Performance] user_identities 表添加 (user_id, provider) 复合索引（init.sql + update_db.sql，优化 LEFT JOIN）
+- [x] [Performance] Conversation.js DEFAULT_SCENARIOS 提升至模块顶层常量
+- [x] [Testing] Achievements.js 分类网格 + 解锁状态派生纯逻辑测试（achievements-logic.test.js 12 tests）
+- [x] [Testing] user.js submitFeedback/getDailyProgress/recordPracticeTime 测试（userEndpoints.test.js 10 tests）
+- [x] [Testing] ai-omni-service magic_sentence 提取正则测试（test_magic_sentence.py 12 tests，「」/直引号 fallback/无匹配）
+- [x] [Performance] Goals.js summary stats 数组 useMemo（按 activeGoals.length/totalCompletedScenes/streak）
+- [x] [Performance] Goals.js useEffect load() 添加 AbortController
+- [x] [Testing] Goals.js GoalCard 进度计算 + 折叠展开 reducer 纯逻辑测试（goals-logic.test.js 13 tests）
+- [x] [Testing] Conversation.js ScorePopup 触发条件/onClose/圆环数字测试（conversation-scorepopup.test.js 19 tests）
+- [x] [Testing] GoalSetting.js 自定义练习方向 + 向导评分测试（goalsetting-logic.test.js 37 tests）
+- [x] [Testing] Onboarding.js 单步流程 nickname 校验 + navigate 测试（onboarding-flow.test.js 12 tests）
+- [x] [Security] ai-omni-service POST /tts voice 参数 _VOICE_RE 白名单校验（非法 → HTTPException 400）
+- [x] [Performance] GoalSetting.js handleGenerateScenarios AbortController（防卸载 setState + 并发请求，覆盖两条相关项）
+- [x] [Performance] Discovery.js overallProgress useMemo（已存在，确认）
+- [x] [Testing] Conversation.js isRecallMode 分支测试（conversation-recall-branch.test.js 18 tests）
+- [x] [Performance] Discovery.js enrichedScenarios/filteredScenarios useMemo（已存在，确认）
+- [x] [Performance] Discovery.js useEffect 多 await 添加 signal.aborted 守卫（AbortController 已有，补 setState 前守卫）
+- [x] [Security] ai-omni-service /translate 改为结构化 message roles（system 指令 + user 仅含 req.text，隔离 prompt injection）
+- [x] [Testing] ai-omni-service _wav_extract_pcm() / _trim_wav_onset() 测试（test_wav_funcs.py 10 tests）
+- [x] [Testing] proficiency_scoring CJK 评分阈值测试（test_proficiency_cjk.py 10 tests，_min_len=4/_min_remaining=2 路径）
+- [x] [Security] Subscription.js 优惠码改服务端校验（POST /api/users/promo/validate + cookie-aware protect，promo.test.js 8 tests）
+- [x] [Security] Subscription.js 移除 "Bearer null" header，改 credentials:include cookie 鉴权（auth gating 由 token 改 user）
+- [x] [Performance] GuajiMascot.jsx 静态 inline style 对象提升为模块级常量
+- [x] [Performance] VoiceBubble.jsx 24 柱高 Array.from+Math.sin useMemo（按 [bars]）
+- [x] [Performance] Discovery.js greeting 由每 render new Date() 改 useMemo([])
+- [x] [Performance] AiAvatar.jsx boxShadow 动画数组 useMemo（按 [color]）
+- [x] [Testing] GuajiMascot.jsx 状态→图片映射 + 覆盖层逻辑测试（guajimascot-logic.test.js 15 tests）
+- [x] [Testing] DiffBadge.jsx fallback 路径测试（diffbadge-logic.test.js 10 tests）
+- [x] [Testing] ScenarioCard.jsx locked 守卫测试（scenariocard-guard.test.js 6 tests，locked → onStart 不触发）
+- [x] [Testing] MessageBubble.jsx loading + audioUrl 分支测试（messagebubble-logic.test.js 15 tests）
+- [x] [Testing] MicBar/ConvHeader/HintBanner/VoiceBubble/GuajiAvatar 组件纯逻辑测试（misc-components.test.js 20 tests）
+- [x] [Testing] Recall.js similarity/pickRecallScenario/normalize/extractSentences 纯函数测试（recall-logic.test.js 28 tests）
+- [x] [Testing] _check_auto_pass() 白名单测试（test_auto_pass_whitelist.py 15 tests）
+- [x] [Testing] splitIntoSentences() CJK+Latin 测试（split-sentences.test.js 12 tests）
+- [x] [Testing] CCRollingCaption NaN/单调索引/rAF 清理测试（cc-rolling-caption.test.js 12 tests）
+- [x] [Testing] calcUnlockedCount() 渐进解锁测试（calc-unlocked.test.js 10 tests）
+- [x] [Performance] Recall.js loadScenario 翻译请求改有界并发池（TRANSLATE_CONCURRENCY=5，保序+缓存+逐项 fallback）
+- [x] [Performance] Recall.js ensureRecognition useCallback 依赖核查：已正确 [targetLang]，无 stale closure（未伪造改动）
+- [x] [Performance] Conversation.js shouldSuppressAutoPlay 提取为模块级稳定纯函数（显式传参，消除每次消息追加重建）
+- [x] [Performance] ai-omni-service _classify_script_share() 结果缓存（_SCRIPT_SHARE_CACHE，返回副本防污染，行为一致）
 
 - [x] [Feature] AI 导师角色(Persona)系统：4 音色 × 4 角色性格（Tina/Serena/Evan/Arda），字母头像，免费用户限 Tina，前后端 personaConfig + persona_config.py + prompt 注入
 - [x] [Feature] Achievements 成就页面：前端页面 + 后端 API + user_achievements 表 + 12 个成就定义 + BottomNav Awards tab

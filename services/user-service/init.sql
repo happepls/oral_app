@@ -99,6 +99,7 @@ CREATE INDEX IF NOT EXISTS idx_recall_daily_state_user_date ON recall_daily_stat
 -- Add indexes for better query performance
 CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);
 CREATE INDEX IF NOT EXISTS idx_user_identities_user_id ON user_identities(user_id);
+CREATE INDEX IF NOT EXISTS idx_user_identities_user_provider ON user_identities (user_id, provider);
 CREATE INDEX IF NOT EXISTS idx_user_goals_user_id ON user_goals(user_id);
 CREATE INDEX IF NOT EXISTS idx_user_goals_status ON user_goals(status);
 CREATE INDEX IF NOT EXISTS idx_user_tasks_goal_id ON user_tasks(goal_id);
