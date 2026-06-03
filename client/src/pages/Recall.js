@@ -178,21 +178,58 @@ function Recall() {
     }
   }, []);
 
-  // Initial load — check if already completed today
+  // Initial load — fetch backend-authoritative daily state (switch count +
+  // completion). localStorage stays as an OFFLINE FALLBACK only: if the backend
+  // call fails (offline / network error) we read the legacy keys so the page
+  // still works. `ignore` guards setState if the component unmounts mid-fetch.
   useEffect(() => {
+    let ignore = false;
     const today = new Date().toISOString().slice(0, 10);
-    const done = localStorage.getItem(`recall_completed_${today}`) === 'true';
-    setAlreadyCompleted(done);
-    const todaySwitches = parseInt(localStorage.getItem(`recall_switches_${today}`) || '0', 10);
-    setSwitchCount(todaySwitches);
-    loadScenario(done ? 1 : 0); // if done, try next scenario
+    (async () => {
+      let done = false;
+      try {
+        const res = await userAPI.getRecallDailyState();
+        const data = res?.data || res || {};
+        if (ignore) return;
+        done = !!data.completed;
+        setSwitchCount(Number(data.switch_count) || 0);
+        setAlreadyCompleted(done);
+      } catch (e) {
+        // Offline fallback: read legacy localStorage keys.
+        console.warn('[Recall] getRecallDailyState failed, fallback to localStorage:', e);
+        if (ignore) return;
+        done = localStorage.getItem(`recall_completed_${today}`) === 'true';
+        const todaySwitches = parseInt(localStorage.getItem(`recall_switches_${today}`) || '0', 10);
+        setSwitchCount(todaySwitches);
+        setAlreadyCompleted(done);
+      }
+      if (ignore) return;
+      loadScenario(done ? 1 : 0); // if done, try next scenario
+    })();
+    return () => { ignore = true; };
   }, [loadScenario]);
 
-  const handleSwitchScenario = () => {
+  const handleSwitchScenario = async () => {
     const today = new Date().toISOString().slice(0, 10);
-    const newCount = switchCount + 1;
-    setSwitchCount(newCount);
-    localStorage.setItem(`recall_switches_${today}`, String(newCount));
+    try {
+      const res = await userAPI.incrementRecallSwitch();
+      const data = res?.data || res || {};
+      const serverCount = Number(data.switch_count);
+      if (Number.isFinite(serverCount)) {
+        setSwitchCount(serverCount);
+      } else {
+        // Unexpected shape — fall back to optimistic local increment.
+        const newCount = switchCount + 1;
+        setSwitchCount(newCount);
+        localStorage.setItem(`recall_switches_${today}`, String(newCount));
+      }
+    } catch (e) {
+      // Offline fallback: optimistic local increment.
+      console.warn('[Recall] incrementRecallSwitch failed, fallback to localStorage:', e);
+      const newCount = switchCount + 1;
+      setSwitchCount(newCount);
+      localStorage.setItem(`recall_switches_${today}`, String(newCount));
+    }
     setAlreadyCompleted(false);
     loadScenario((scenarioIdx + 1) % Math.max(allScenarios.length, 1));
   };
@@ -291,9 +328,17 @@ function Recall() {
   const goNext = () => {
     if (!canAdvance) return;
     if (isLast) {
-      const today = new Date().toISOString().slice(0, 10);
-      try { localStorage.setItem(`recall_completed_${today}`, 'true'); } catch {}
       setAlreadyCompleted(true);
+      // Persist completion to backend; localStorage stays as offline fallback.
+      (async () => {
+        try {
+          await userAPI.markRecallComplete();
+        } catch (e) {
+          console.warn('[Recall] markRecallComplete failed, fallback to localStorage:', e);
+          const today = new Date().toISOString().slice(0, 10);
+          try { localStorage.setItem(`recall_completed_${today}`, 'true'); } catch {}
+        }
+      })();
       return;
     }
     setIdx(idx + 1);

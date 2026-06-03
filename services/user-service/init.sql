@@ -84,6 +84,18 @@ CREATE TABLE IF NOT EXISTS daily_qa_passes (
 );
 CREATE INDEX IF NOT EXISTS idx_daily_qa_passes_user_date ON daily_qa_passes(user_id, pass_date);
 
+-- Create the recall_daily_state table (Daily Recall switch-count + completion state)
+CREATE TABLE IF NOT EXISTS recall_daily_state (
+    id SERIAL PRIMARY KEY,
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    state_date DATE NOT NULL DEFAULT CURRENT_DATE,
+    switch_count INTEGER NOT NULL DEFAULT 0,
+    completed BOOLEAN NOT NULL DEFAULT FALSE,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE(user_id, state_date)
+);
+CREATE INDEX IF NOT EXISTS idx_recall_daily_state_user_date ON recall_daily_state(user_id, state_date);
+
 -- Add indexes for better query performance
 CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);
 CREATE INDEX IF NOT EXISTS idx_user_identities_user_id ON user_identities(user_id);

@@ -955,6 +955,75 @@ exports.recordDailyQAPassInternal = async (req, res) => {
     }
 };
 
+// ===== Daily Recall State APIs =====
+// Backend-authoritative per-user/per-day switch count + completion state.
+// Replaces the previous localStorage (`recall_switches_*` / `recall_completed_*`)
+// so the free-tier daily switch limit cannot be reset by clearing the browser.
+
+exports.getRecallDailyState = async (req, res) => {
+    try {
+        const db = require('../models/db');
+        const result = await db.query(
+            `SELECT switch_count, completed
+             FROM recall_daily_state
+             WHERE user_id = $1 AND state_date = CURRENT_DATE
+             LIMIT 1`,
+            [req.user.id]
+        );
+        const row = result.rows[0];
+        res.json({
+            success: true,
+            data: {
+                switch_count: row ? row.switch_count : 0,
+                completed: row ? row.completed : false,
+            },
+        });
+    } catch (error) {
+        console.error('getRecallDailyState error:', error);
+        res.status(500).json({ success: false, error: 'Internal server error' });
+    }
+};
+
+exports.incrementRecallSwitch = async (req, res) => {
+    try {
+        const db = require('../models/db');
+        // Idempotent per-day row: first switch inserts with count=1, subsequent
+        // switches bump the existing row's count. UNIQUE(user_id, state_date)
+        // anchors the conflict target.
+        const result = await db.query(
+            `INSERT INTO recall_daily_state (user_id, state_date, switch_count)
+             VALUES ($1, CURRENT_DATE, 1)
+             ON CONFLICT (user_id, state_date)
+             DO UPDATE SET switch_count = recall_daily_state.switch_count + 1,
+                           updated_at = NOW()
+             RETURNING switch_count`,
+            [req.user.id]
+        );
+        res.json({ success: true, data: { switch_count: result.rows[0].switch_count } });
+    } catch (error) {
+        console.error('incrementRecallSwitch error:', error);
+        res.status(500).json({ success: false, error: 'Internal server error' });
+    }
+};
+
+exports.markRecallCompleted = async (req, res) => {
+    try {
+        const db = require('../models/db');
+        await db.query(
+            `INSERT INTO recall_daily_state (user_id, state_date, completed)
+             VALUES ($1, CURRENT_DATE, TRUE)
+             ON CONFLICT (user_id, state_date)
+             DO UPDATE SET completed = TRUE,
+                           updated_at = NOW()`,
+            [req.user.id]
+        );
+        res.json({ success: true, data: { completed: true } });
+    } catch (error) {
+        console.error('markRecallCompleted error:', error);
+        res.status(500).json({ success: false, error: 'Internal server error' });
+    }
+};
+
 // ===== Daily Scenario Count =====
 exports.getDailyScenarioCount = async (req, res) => {
     try {

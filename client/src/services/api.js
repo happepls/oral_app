@@ -280,6 +280,33 @@ export const userAPI = {
     return handleResponse(response);
   },
 
+  // Daily Recall state APIs (backend-authoritative switch count + completion)
+  async getRecallDailyState() {
+    const response = await fetch(`${API_BASE_URL}/users/recall/daily-state`, {
+      headers: getAuthHeaders(),
+      credentials: 'include',
+    });
+    return handleResponse(response);
+  },
+
+  async incrementRecallSwitch() {
+    const response = await fetch(`${API_BASE_URL}/users/recall/switch`, {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      credentials: 'include',
+    });
+    return handleResponse(response);
+  },
+
+  async markRecallComplete() {
+    const response = await fetch(`${API_BASE_URL}/users/recall/complete`, {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      credentials: 'include',
+    });
+    return handleResponse(response);
+  },
+
   async achievements() {
     const response = await fetch(`${API_BASE_URL}/users/achievements`, {
       headers: getAuthHeaders(),

@@ -50,6 +50,11 @@ router.get('/api/users/checkin/stats', protect, userController.getCheckinStats);
 // Daily QA pass routes
 router.get('/api/users/daily-qa-pass', protect, userController.getDailyQAPassStatus);
 
+// Daily Recall state routes (backend-authoritative switch count + completion)
+router.get('/api/users/recall/daily-state', protect, userController.getRecallDailyState);
+router.post('/api/users/recall/switch', protect, userController.incrementRecallSwitch);
+router.post('/api/users/recall/complete', protect, userController.markRecallCompleted);
+
 // Daily practice time / progress
 router.post('/api/users/practice-time', protect, userController.recordPracticeTime);
 router.get('/api/users/daily-progress', protect, userController.getDailyProgress);

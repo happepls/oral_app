@@ -49,3 +49,13 @@ CREATE TABLE IF NOT EXISTS user_checkins (
 
 CREATE INDEX IF NOT EXISTS idx_user_checkins_user_id ON user_checkins(user_id);
 CREATE INDEX IF NOT EXISTS idx_user_checkins_date ON user_checkins(checkin_date);
+
+-- Daily Recall state table (added for backend-persisted Recall switch count + completion)
+CREATE TABLE IF NOT EXISTS recall_daily_state (
+    id SERIAL PRIMARY KEY,
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    state_date DATE NOT NULL DEFAULT CURRENT_DATE,
+    switch_count INTEGER NOT NULL DEFAULT 0,
+    completed BOOLEAN NOT NULL DEFAULT FALSE,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE(user_id, state_date)
