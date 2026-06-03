@@ -3,6 +3,7 @@ import { BrowserRouter as Router, Route, Routes, Navigate } from 'react-router-d
 import { GoogleOAuthProvider } from '@react-oauth/google';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 import { NotificationProvider } from './contexts/NotificationContext';
+import { TourProvider } from './contexts/TourContext';
 import Welcome from './pages/Welcome';
 import Landing from './pages/Landing';
 import Login from './pages/Login';
@@ -69,9 +70,11 @@ function App() {
             {showSplash ? (
               <SplashScreen onComplete={() => setShowSplash(false)} />
             ) : (
-              <div className="min-h-screen bg-gray-50 dark:bg-gray-900 transition-colors duration-300">
-                <AppRoutes />
-              </div>
+              <TourProvider>
+                <div className="min-h-screen bg-gray-50 dark:bg-gray-900 transition-colors duration-300">
+                  <AppRoutes />
+                </div>
+              </TourProvider>
             )}
           </Router>
         </NotificationProvider>

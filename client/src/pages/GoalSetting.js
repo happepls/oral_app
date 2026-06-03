@@ -271,7 +271,8 @@ export default function GoalSetting() {
         scenarios: scenarios.map(s => ({ title: s.title, tasks: s.tasks })),
       });
       setSuccess('目标设置成功！');
-      setTimeout(() => navigate('/discovery'), 1200);
+      // Signal first-login Onboarding Tour to auto-start on Discovery landing.
+      setTimeout(() => navigate('/discovery', { state: { startTour: true } }), 1200);
     } catch (err) {
       setError(err.message || '设置目标失败，请重试。');
     }

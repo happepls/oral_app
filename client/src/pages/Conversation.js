@@ -465,6 +465,8 @@ function Conversation() {
   // useRef 保证只在首次挂载时读取 URL，避免每次 render 重新解析
   const isRecallMode = useRef(new URLSearchParams(window.location.search).get('mode') === 'recall').current;
   const isDailyQAMode = useRef(new URLSearchParams(window.location.search).get('mode') === 'daily_qa').current;
+  // Onboarding Tour demo: highlight the mic UI only — no WS, no AI calls.
+  const isTourMode = useRef(new URLSearchParams(window.location.search).get('mode') === 'tour').current;
   const [currentPhase, setCurrentPhase] = useState(isRecallMode ? 'magic_repetition' : 'scene_theater');
   const currentPhaseRef = useRef(isRecallMode ? 'magic_repetition' : 'scene_theater');
   const [sceneImageUrl, setSceneImageUrl] = useState(null);
@@ -2115,6 +2117,13 @@ function Conversation() {
     const init = async () => {
       if (!user?.id) return; // Cookie-based auth: only need user, token is in httpOnly cookie
 
+      // Onboarding Tour demo: render the static UI (incl. mic) but never open a
+      // WebSocket or fetch tasks — the tour only highlights the control.
+      if (isTourMode) {
+        console.log('[Tour] demo mode — skipping WebSocket/AI init');
+        return;
+      }
+
       // Don't auto-reconnect on every render - only on initial mount or manual retry
       if (isManualDisconnect) {
         console.log('Manual disconnect detected, skipping auto-init');
@@ -3103,7 +3112,7 @@ function Conversation() {
         <div className="flex flex-col items-center gap-3">
             {/* Main Controls: Recorder + Restart Button */}
             <div className="flex items-center gap-3 w-full max-w-md">
-                <div className="flex-1 relative">
+                <div className="flex-1 relative" data-tour="mic">
                     {dailyScenariosUsed >= 3 && (
                       <div className="absolute inset-0 z-10 rounded-full pointer-events-none" />
                     )}

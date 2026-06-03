@@ -5,6 +5,7 @@ import { StreakRing } from '../components/StreakRing';
 import { ScenarioCard } from '../components/ScenarioCard';
 import { useAuth } from '../contexts/AuthContext';
 import { useNotifications } from '../contexts/NotificationContext';
+import { useTour } from '../contexts/TourContext';
 import { userAPI, historyAPI, aiAPI } from '../services/api';
 import { StatCard } from '../components/StatCard';
 import { GuajiAvatar } from '../components/GuajiAvatar';
@@ -179,8 +180,21 @@ function Discovery() {
   const navigate = useNavigate();
   const location = useLocation();
   const { user } = useAuth();
+  const tour = useTour();
 
   const qaPoolAbortControllerRef = useRef(null);
+  const tourStartedRef = useRef(false);
+
+  // First-login Onboarding Tour: start once when GoalSetting hands off with
+  // startTour, then clear the nav state so returning to Discovery won't retrigger.
+  useEffect(() => {
+    if (tourStartedRef.current) return;
+    if (location.state?.startTour && tour && !tour.completed) {
+      tourStartedRef.current = true;
+      tour.start();
+      navigate(location.pathname, { replace: true, state: {} });
+    }
+  }, [location.state, location.pathname, tour, navigate]);
 
   const [activeGoal, setActiveGoal] = useState(null);
   const [activeSessions, setActiveSessions] = useState([]);
@@ -890,12 +904,14 @@ function Discovery() {
         )}
 
         {/* ── 连续学习进度环 ── */}
-        <StreakRing
-          streak={dailyProgress?.streak || checkinStats.currentStreak}
-          monthlyCheckinDays={dailyProgress?.monthlyCheckinDays || 0}
-          checkedInToday={dailyProgress?.checkedInToday || checkinStats.checkedInToday}
-          onCheckin={handleCheckin}
-        />
+        <div data-tour="recall-streak">
+          <StreakRing
+            streak={dailyProgress?.streak || checkinStats.currentStreak}
+            monthlyCheckinDays={dailyProgress?.monthlyCheckinDays || 0}
+            checkedInToday={dailyProgress?.checkedInToday || checkinStats.checkedInToday}
+            onCheckin={handleCheckin}
+          />
+        </div>
 
         {/* ── 4格统计 ── */}
         <section>
@@ -949,7 +965,7 @@ function Discovery() {
           </div>
 
           {/* 2列网格卡片 */}
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-2 gap-3" data-tour="scenario-card">
             {filteredScenarios.map((s) => (
               <ScenarioCard
                 key={s.index}

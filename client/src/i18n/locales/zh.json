@@ -112,5 +112,14 @@
   "daily_qa_paywall_cancel": "取消",
   "daily_qa_paywall_upgrade": "去升级",
   "task_confirm_next": "✅ 切到下个任务",
-  "task_confirm_continue": "继续深入练习"
+  "task_confirm_continue": "继续深入练习",
+  "tour_step1_title": "选择练习场景",
+  "tour_step1_body": "点这里选一个场景，开始你的口语练习。",
+  "tour_step2_title": "每日打卡",
+  "tour_step2_body": "每天复述打卡，坚持下去就能看到进步。",
+  "tour_step3_title": "按住说话",
+  "tour_step3_body": "按住麦克风开口说，AI 会实时陪练并纠正发音。",
+  "tour_next": "下一步",
+  "tour_done": "完成",
+  "tour_skip": "跳过"
 }

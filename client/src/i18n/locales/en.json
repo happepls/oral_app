@@ -112,5 +112,14 @@
   "daily_qa_paywall_cancel": "Cancel",
   "daily_qa_paywall_upgrade": "Upgrade",
   "task_confirm_next": "✅ Move to Next Task",
-  "task_confirm_continue": "Continue Deep Practice"
+  "task_confirm_continue": "Continue Deep Practice",
+  "tour_step1_title": "Pick a Scenario",
+  "tour_step1_body": "Tap here to choose a scenario and start practicing speaking.",
+  "tour_step2_title": "Daily Check-in",
+  "tour_step2_body": "Recap and check in every day — consistency drives progress.",
+  "tour_step3_title": "Hold to Speak",
+  "tour_step3_body": "Hold the mic and speak. The AI coaches and corrects you in real time.",
+  "tour_next": "Next",
+  "tour_done": "Done",
+  "tour_skip": "Skip"
 }

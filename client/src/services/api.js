@@ -280,6 +280,24 @@ export const userAPI = {
     return handleResponse(response);
   },
 
+  // Onboarding Tour state (first-login guided tour; backend-authoritative)
+  async getOnboardingTour() {
+    const response = await fetch(`${API_BASE_URL}/users/onboarding-tour`, {
+      headers: getAuthHeaders(),
+      credentials: 'include',
+    });
+    return handleResponse(response);
+  },
+
+  async markOnboardingTourComplete() {
+    const response = await fetch(`${API_BASE_URL}/users/onboarding-tour/complete`, {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      credentials: 'include',
+    });
+    return handleResponse(response);
+  },
+
   // Daily Recall state APIs (backend-authoritative switch count + completion)
   async getRecallDailyState() {
     const response = await fetch(`${API_BASE_URL}/users/recall/daily-state`, {
