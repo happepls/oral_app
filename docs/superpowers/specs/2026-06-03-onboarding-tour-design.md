@@ -147,3 +147,57 @@ userAPI.markOnboardingTourComplete()
 5. 完成/跳过后刷新或重登录，不再展示（后端 + localStorage 双层校验）
 6. 移动端 (PWA) + 桌面 Web 响应式正常，触摸/点击均可
 7. 全套测试回归绿，build 通过
+
+---
+
+## v2 扩展（2026-06-04，E2E 验证后用户反馈）
+
+E2E 验证暴露两点 + 用户要求扩展覆盖：
+
+### 11. 步序扩展 3→6 步
+
+按用户指定顺序（今日任务→打卡环→统计→场景卡→麦克风→CC字幕）：
+
+| # | id | anchor | route | placement |
+|---|---|---|---|---|
+| 1 | today-tasks | `today-tasks`（今日任务卡） | /discovery | bottom |
+| 2 | recall-streak | `recall-streak`（打卡进度环） | /discovery | bottom |
+| 3 | stats | `stats`（4 格统计卡） | /discovery | top |
+| 4 | scenario-card | `scenario-card`（场景网格） | /discovery | top |
+| 5 | mic | `mic`（麦克风） | /conversation?mode=tour | top |
+| 6 | cc-mode | `cc-mode`（CC 切换按钮） | /conversation?mode=tour | top |
+
+文案语义：
+1. 今日任务 — "每天 3 个任务，复述/问答/练习"
+2. 打卡 — "每日打卡，坚持出成效"（原 step2 复用）
+3. 统计 — "这里看你的学习进度与成果"
+4. 场景卡 — "选练习场景开始对话"（原 step1 复用）
+5. 麦克风 — "按住说话，AI 实时陪练"（原 step3 复用）
+6. CC 字幕 — "开 CC 模式，边说边看字幕辅助"
+
+新增 3 处 `data-tour`：今日任务 section、4 格统计 section、CC 切换按钮容器。
+
+### 12. "上一步"导航
+
+- Spotlight 气泡加「‹ 上一步」按钮；**首步（stepIndex===0）显示但禁用**（置灰，位置恒定）。
+- `prev()` 镜像 `next()`：`getPrevStep(idx)` → `idx-1` 或 `null`（首步）；新步 route≠当前 path → navigate（跨页回退，如 step5→step4 自动回 /discovery）。
+- 纯逻辑测试加 `getPrevStep`。
+
+### 13. demo 态修复（已提交 bc3fc9c）
+
+- Conversation `?mode=tour` header 显紫色「演示」而非误导的「连接中」。
+- tour 完成/跳过在 demo 路由时 `navigate('/discovery')`，不 strand 用户在无 WS 的 demo 页。
+- CC 步只高亮按钮，不实际进 CC 模式（遵循 demo 态，遮罩拦截背景点击）。
+
+### 14. v2 验收增补
+
+8. tour 共 6 步，按指定顺序依次推进
+9. 每步「上一步」可回退（含跨页 step5→step4 回 /discovery）；首步「上一步」置灰禁用
+10. demo 态 header 显「演示」；完成/跳过落 /discovery
+11. 新增 3 锚点超时兜底（统计/今日任务恒在；CC 按钮 demo 态 `!ccMode` 恒显）
+
+### 15. v2 YAGNI
+
+- CC 步不进真实 CC overlay（demo 无对话内容）
+- 仍不做独立"重看引导"入口（重测靠后端 reset + goal-setting 真实路径）
+- 不持久化中间步（刷新从 step0 重起，沿用 v1）
