@@ -84,7 +84,12 @@ export function TourProvider({ children }) {
   const finish = useCallback(() => {
     setActive(false);
     persistComplete();
-  }, [persistComplete]);
+    // The mic step lives on a demo /conversation?mode=tour page that never opens
+    // a WebSocket — leave the user on a usable page after the tour ends.
+    if (new URLSearchParams(location.search).get('mode') === 'tour') {
+      navigate('/discovery');
+    }
+  }, [persistComplete, navigate, location.search]);
 
   const next = useCallback(() => {
     setStepIndex((idx) => {

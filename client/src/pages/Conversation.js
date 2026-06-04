@@ -2709,12 +2709,15 @@ function Conversation() {
               </div>
             )}
 
-            {/* AI 导师状态 */}
+            {/* AI 导师状态（Tour demo 态不连 WS，显"演示"而非误导的"连接中"） */}
             <span className={`text-xs px-2 py-0.5 rounded-full flex items-center gap-1 ${
-              isConnected ? 'bg-emerald-50 text-emerald-600' : 'bg-amber-50 text-amber-600'
+              isTourMode ? 'bg-violet-50 text-violet-600'
+                : isConnected ? 'bg-emerald-50 text-emerald-600' : 'bg-amber-50 text-amber-600'
             }`}>
-              <span className={`w-1.5 h-1.5 rounded-full ${isConnected ? 'bg-emerald-500' : 'bg-amber-400'}`} />
-              {isConnected ? '在线' : '连接中'}
+              <span className={`w-1.5 h-1.5 rounded-full ${
+                isTourMode ? 'bg-violet-500' : isConnected ? 'bg-emerald-500' : 'bg-amber-400'
+              }`} />
+              {isTourMode ? '演示' : isConnected ? '在线' : '连接中'}
             </span>
           </div>
         </div>
