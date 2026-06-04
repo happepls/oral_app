@@ -2,9 +2,13 @@ import React, { createContext, useContext, useState, useEffect, useCallback, use
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { userAPI } from '../services/api';
+import { useAuth } from './AuthContext';
 import Spotlight from '../components/Spotlight';
 
-const LS_KEY = 'onboarding_tour_completed';
+// Per-user localStorage key — a global key leaks one account's "completed"
+// state into the next account on the same browser (test5 done → test6 skipped).
+const LS_PREFIX = 'onboarding_tour_completed';
+const lsKey = (userId) => (userId ? `${LS_PREFIX}_${userId}` : LS_PREFIX);
 
 // Step sequence (design §11). `anchor` matches data-tour="<anchor>" in pages.
 export const TOUR_STEPS = [
@@ -53,37 +57,45 @@ export function useTour() {
 export function TourProvider({ children }) {
   const navigate = useNavigate();
   const location = useLocation();
+  const { user } = useAuth();
+  const userId = user?.id;
 
   const [active, setActive] = useState(false);
   const [stepIndex, setStepIndex] = useState(0);
-  // Optimistic read from localStorage prevents a flash before the API responds.
+  // Optimistic read from this user's localStorage key prevents a flash before
+  // the API responds. Falls back to the base key only when userId is unknown.
   const [completed, setCompleted] = useState(
-    () => localStorage.getItem(LS_KEY) === 'true'
+    () => localStorage.getItem(lsKey(userId)) === 'true'
   );
   const completedRef = useRef(completed);
   completedRef.current = completed;
 
-  // Reconcile with backend-authoritative value on mount.
+  // Reconcile with backend-authoritative value whenever the logged-in user
+  // changes. Backend is the source of truth: it OVERRIDES the optimistic
+  // localStorage value in BOTH directions, so a stale "true" from a previous
+  // account on this browser cannot suppress a new user's tour.
   useEffect(() => {
+    if (!userId) return undefined;
     let cancelled = false;
+    // Re-seed optimistic value from this user's own key on account switch.
+    setCompleted(localStorage.getItem(lsKey(userId)) === 'true');
     userAPI
       .getOnboardingTour()
       .then((res) => {
+        if (cancelled) return;
         const done = !!(res?.data?.completed ?? res?.completed);
-        if (!cancelled && done) {
-          setCompleted(true);
-          localStorage.setItem(LS_KEY, 'true');
-        }
+        setCompleted(done);
+        localStorage.setItem(lsKey(userId), done ? 'true' : 'false');
       })
       .catch(() => {/* offline / soft-fail: keep optimistic value */});
     return () => { cancelled = true; };
-  }, []);
+  }, [userId]);
 
   const persistComplete = useCallback(() => {
-    localStorage.setItem(LS_KEY, 'true');
+    localStorage.setItem(lsKey(userId), 'true');
     setCompleted(true);
     userAPI.markOnboardingTourComplete().catch(() => {/* localStorage covers it */});
-  }, []);
+  }, [userId]);
 
   const start = useCallback(() => {
     if (completedRef.current) return; // never re-run for finished users
