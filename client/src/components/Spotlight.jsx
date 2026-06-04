@@ -40,12 +40,15 @@ export default function Spotlight({
   stepIndex,
   total,
   isLast,
+  isFirst,
   prefer = 'bottom',
   onNext,
+  onPrev,
   onSkip,
   nextLabel = 'Next',
   doneLabel = 'Done',
   skipLabel = 'Skip',
+  prevLabel = 'Back',
 }) {
   const { rect, timedOut } = useAnchorRect(anchor);
 
@@ -161,7 +164,7 @@ export default function Spotlight({
               />
             ))}
           </div>
-          <div style={{ display: 'flex', gap: 8 }}>
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
             <button
               onClick={onSkip}
               style={{
@@ -173,6 +176,21 @@ export default function Spotlight({
               }}
             >
               {skipLabel}
+            </button>
+            <button
+              onClick={isFirst ? undefined : onPrev}
+              disabled={isFirst}
+              style={{
+                background: 'transparent',
+                border: '1px solid #E2E8F0',
+                color: isFirst ? '#CBD5E1' : '#64748b',
+                fontSize: 13,
+                padding: '6px 12px',
+                borderRadius: 10,
+                cursor: isFirst ? 'not-allowed' : 'pointer',
+              }}
+            >
+              {prevLabel}
             </button>
             <button
               onClick={onNext}

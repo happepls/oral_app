@@ -121,5 +121,18 @@
   "tour_step3_body": "Hold the mic and speak. The AI coaches and corrects you in real time.",
   "tour_next": "Next",
   "tour_done": "Done",
-  "tour_skip": "Skip"
+  "tour_skip": "Skip",
+  "tour_prev": "Back",
+  "tour_step_tasks_title": "Daily Tasks",
+  "tour_step_tasks_body": "Three tasks a day: recap, Q&A, and practice — keep it up.",
+  "tour_step_streak_title": "Daily Check-in",
+  "tour_step_streak_body": "Check in every day — consistency drives progress.",
+  "tour_step_stats_title": "Your Progress",
+  "tour_step_stats_body": "See your total chats, learning days, and overall progress here.",
+  "tour_step_scenario_title": "Pick a Scenario",
+  "tour_step_scenario_body": "Tap here to choose a scenario and start practicing speaking.",
+  "tour_step_mic_title": "Hold to Speak",
+  "tour_step_mic_body": "Hold the mic and speak. The AI coaches and corrects you in real time.",
+  "tour_step_cc_title": "Immersive Mode",
+  "tour_step_cc_body": "Turn on immersive mode to follow live captions while you speak."
 }

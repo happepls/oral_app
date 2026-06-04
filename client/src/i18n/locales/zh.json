@@ -121,5 +121,18 @@
   "tour_step3_body": "按住麦克风开口说，AI 会实时陪练并纠正发音。",
   "tour_next": "下一步",
   "tour_done": "完成",
-  "tour_skip": "跳过"
+  "tour_skip": "跳过",
+  "tour_prev": "上一步",
+  "tour_step_tasks_title": "今日任务",
+  "tour_step_tasks_body": "每天 3 个任务：复述、问答、练习，坚持完成。",
+  "tour_step_streak_title": "每日打卡",
+  "tour_step_streak_body": "每日打卡，坚持下去就能看到进步。",
+  "tour_step_stats_title": "学习进度",
+  "tour_step_stats_body": "这里查看你的对话数、学习天数与总进度。",
+  "tour_step_scenario_title": "选择练习场景",
+  "tour_step_scenario_body": "点这里选一个场景，开始你的口语练习。",
+  "tour_step_mic_title": "按住说话",
+  "tour_step_mic_body": "按住麦克风开口说，AI 会实时陪练并纠正发音。",
+  "tour_step_cc_title": "沉浸体验模式",
+  "tour_step_cc_body": "开启沉浸体验模式，边说边看字幕辅助理解。"
 }

@@ -15,6 +15,12 @@ function getNextStep(idx, total) {
   return next < total ? next : null;
 }
 
+// Returns the previous step index, or null when already on the first step.
+function getPrevStep(idx) {
+  if (typeof idx !== 'number') return null;
+  return idx > 0 ? idx - 1 : null;
+}
+
 // Tour starts only when not yet completed AND the start signal is present.
 function shouldStartTour(completed, startTourFlag) {
   return !completed && !!startTourFlag;
@@ -65,6 +71,21 @@ describe('getNextStep', () => {
   test('returns null for invalid input', () => {
     expect(getNextStep(undefined, 3)).toBeNull();
     expect(getNextStep(0, undefined)).toBeNull();
+  });
+});
+
+describe('getPrevStep', () => {
+  test('goes back mid-sequence', () => {
+    expect(getPrevStep(2)).toBe(1);
+    expect(getPrevStep(1)).toBe(0);
+  });
+
+  test('returns null on first step', () => {
+    expect(getPrevStep(0)).toBeNull();
+  });
+
+  test('returns null for invalid input', () => {
+    expect(getPrevStep(undefined)).toBeNull();
   });
 });
 

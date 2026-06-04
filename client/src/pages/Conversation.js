@@ -3136,6 +3136,7 @@ function Conversation() {
                     control in the footer. */}
                 {!ccMode && (
                   <button
+                    data-tour="cc-mode"
                     onClick={() => setCcMode(true)}
                     className="flex-shrink-0 w-12 h-12 rounded-xl flex items-center justify-center transition"
                     style={{

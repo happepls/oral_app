@@ -790,7 +790,7 @@ function Discovery() {
 
         {/* ── 今日任务（合并卡片） ── */}
         {dailyProgress && (
-          <section>
+          <section data-tour="today-tasks">
             <div className="rounded-2xl p-5 bg-white dark:bg-slate-800 shadow-sm border border-slate-200 dark:border-slate-700">
               {/* 标题栏 */}
               <div className="flex items-center justify-between mb-4 pb-4 border-b border-slate-200 dark:border-slate-700">
@@ -914,7 +914,7 @@ function Discovery() {
         </div>
 
         {/* ── 4格统计 ── */}
-        <section>
+        <section data-tour="stats">
           <div style={{ display: 'flex', gap: 8 }}>
             <StatCard emoji="📚" value={stats?.totalSessions || activeSessions?.length || 0} label="总对话" />
             <StatCard emoji="📅" value={stats?.learningDays || checkinStats.totalCheckins || 0} label="学习天" />

@@ -6,14 +6,20 @@ import Spotlight from '../components/Spotlight';
 
 const LS_KEY = 'onboarding_tour_completed';
 
-// Step sequence (design §3). `anchor` matches data-tour="<anchor>" in pages.
+// Step sequence (design §11). `anchor` matches data-tour="<anchor>" in pages.
 export const TOUR_STEPS = [
-  { id: 'scenario-card', route: '/discovery',    anchor: 'scenario-card',
-    titleKey: 'tour_step1_title', bodyKey: 'tour_step1_body', placement: 'bottom' },
-  { id: 'recall-streak', route: '/discovery',    anchor: 'recall-streak',
-    titleKey: 'tour_step2_title', bodyKey: 'tour_step2_body', placement: 'top' },
+  { id: 'today-tasks',   route: '/discovery',              anchor: 'today-tasks',
+    titleKey: 'tour_step_tasks_title',  bodyKey: 'tour_step_tasks_body',  placement: 'bottom' },
+  { id: 'recall-streak', route: '/discovery',              anchor: 'recall-streak',
+    titleKey: 'tour_step_streak_title', bodyKey: 'tour_step_streak_body', placement: 'bottom' },
+  { id: 'stats',         route: '/discovery',              anchor: 'stats',
+    titleKey: 'tour_step_stats_title',  bodyKey: 'tour_step_stats_body',  placement: 'top' },
+  { id: 'scenario-card', route: '/discovery',              anchor: 'scenario-card',
+    titleKey: 'tour_step_scenario_title', bodyKey: 'tour_step_scenario_body', placement: 'top' },
   { id: 'mic',           route: '/conversation?mode=tour', anchor: 'mic', demoMode: true,
-    titleKey: 'tour_step3_title', bodyKey: 'tour_step3_body', placement: 'top' },
+    titleKey: 'tour_step_mic_title',    bodyKey: 'tour_step_mic_body',    placement: 'top' },
+  { id: 'cc-mode',       route: '/conversation?mode=tour', anchor: 'cc-mode', demoMode: true,
+    titleKey: 'tour_step_cc_title',     bodyKey: 'tour_step_cc_body',     placement: 'top' },
 ];
 
 // ── Pure logic (replicated verbatim in tour-logic.test.js — keep in sync) ──
@@ -23,6 +29,12 @@ export function getNextStep(idx, total) {
   if (typeof idx !== 'number' || typeof total !== 'number') return null;
   const next = idx + 1;
   return next < total ? next : null;
+}
+
+// Returns the previous step index, or null when already on the first step.
+export function getPrevStep(idx) {
+  if (typeof idx !== 'number') return null;
+  return idx > 0 ? idx - 1 : null;
 }
 
 // Tour starts only when not yet completed AND the start signal is present.
@@ -104,9 +116,19 @@ export function TourProvider({ children }) {
     });
   }, [finish, navigate, location.pathname]);
 
+  const prev = useCallback(() => {
+    setStepIndex((idx) => {
+      const pi = getPrevStep(idx);
+      if (pi === null) return idx; // first step: no-op (button is disabled in UI)
+      const step = TOUR_STEPS[pi];
+      if (step && location.pathname !== step.route.split('?')[0]) navigate(step.route);
+      return pi;
+    });
+  }, [navigate, location.pathname]);
+
   const skip = finish;
 
-  const value = { active, stepIndex, completed, start, next, skip, TOUR_STEPS };
+  const value = { active, stepIndex, completed, start, next, prev, skip, TOUR_STEPS };
 
   return (
     <TourContext.Provider value={value}>
@@ -137,12 +159,15 @@ function TourHost() {
       stepIndex={ctx.stepIndex}
       total={TOUR_STEPS.length}
       isLast={ctx.stepIndex === TOUR_STEPS.length - 1}
+      isFirst={ctx.stepIndex === 0}
       prefer={step.placement}
       onNext={ctx.next}
+      onPrev={ctx.prev}
       onSkip={ctx.skip}
       nextLabel={t('tour_next')}
       doneLabel={t('tour_done')}
       skipLabel={t('tour_skip')}
+      prevLabel={t('tour_prev')}
     />
   );
 }
