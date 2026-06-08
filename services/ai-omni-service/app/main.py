@@ -1522,6 +1522,7 @@ class WebSocketCallback(OmniRealtimeCallback):
         self.last_user_audio_url = None
         self._skip_next_magic_pass = False  # Set True after task-switch trigger to avoid false detection
         self.last_ai_audio_url = None
+        self.counts_against_quota = False  # 仅真用户练习输入触发的轮才计入每日额度
         self.welcome_sent = False
         self.welcome_muted = False  # Flag to suppress welcome message after retry
         self.session_ready = False
@@ -1921,7 +1922,16 @@ class WebSocketCallback(OmniRealtimeCallback):
                     if self.ai_audio_buffer:
                         data = bytes(self.ai_audio_buffer)
                         self.ai_audio_buffer = bytearray()
-                        
+
+                        # ── 每日轮次记账：仅对真用户输入触发的轮，且在慢 COS 上传之前 ──
+                        if self.counts_against_quota:
+                            self.counts_against_quota = False  # 立即清零，防系统续轮误计
+                            try:
+                                _rc_incr = _get_redis_client()
+                                await _incr_daily_turns(_rc_incr, self.user_id)
+                            except Exception as _e:
+                                logger.warning(f"[DailyLimit] incr on audio.done failed: {_e}")
+
                         # 获取goal_id和task_id用于工作流调用
                         goal_id = self.user_context.get('active_goal', {}).get('id')
                         task_id = self.user_context.get('active_goal', {}).get('current_task', {}).get('id')

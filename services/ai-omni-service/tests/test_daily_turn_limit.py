@@ -97,3 +97,9 @@ async def test_get_daily_turns_fail_open_on_redis_error():
 async def test_incr_fail_open_on_none_client():
     # rc=None → 静默返回 0，不抛
     assert await omni._incr_daily_turns(None, "u1") == 0
+
+@pytest.mark.asyncio
+async def test_incr_called_n_times(fake_redis):
+    for _ in range(3):
+        await omni._incr_daily_turns(fake_redis, "u9")
+    assert await omni._get_daily_turns(fake_redis, "u9") == 3
