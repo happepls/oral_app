@@ -13,6 +13,7 @@ import AudioBar from '../components/AudioBar.jsx';
 import NetworkAdaptiveManager from '../utils/network-adaptive-manager';
 import OptimizedWebSocket from '../utils/websocket-optimized';
 import { motion, AnimatePresence } from 'motion/react';
+import { resolveDailyLimitModal } from './dailyLimitLogic';
 
 const MAGIC_TIPS = [
   '点击消息气泡右侧的喇叭图标，可重听 AI 的示范发音。',
@@ -507,6 +508,9 @@ function Conversation() {
 
   // Task Completion Confirmation State
   const [taskReadyToComplete, setTaskReadyToComplete] = useState(null); // shape: { task_id, task_title } | null
+
+  // 每日对话轮次上限 — daily_limit_reached 事件弹出的模态
+  const [dailyLimitModal, setDailyLimitModal] = useState(null);
 
   const getScoreFeedback = (score, reviewData = null) => {
     const stripEmoji = (s) => s.replace(
@@ -1808,6 +1812,14 @@ function Conversation() {
         case 'dashscope_response':
            // Internal DashScope events - ignore
            break;
+        case 'daily_limit_reached': {
+           console.log('⛔ Daily limit reached', data);
+           const modal = resolveDailyLimitModal(data);
+           setDailyLimitModal(modal);
+           // 停录，禁止继续发：RealTimeRecorder imperative handle
+           try { recorderRef.current?.stopRecording?.(); } catch (_) {}
+           break;
+        }
         default:
            // Ignore unknown message types silently
            break;
@@ -3215,6 +3227,56 @@ function Conversation() {
           onReturn={() => navigate('/discovery')}
           isBonus={dailyQAIsBonus}
         />
+      )}
+      {dailyLimitModal && (
+        <div
+          style={{
+            position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 300,
+          }}
+          onClick={() => setDailyLimitModal(null)}>
+          <div
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              background: '#FFFFFF', borderRadius: 24, padding: 32,
+              maxWidth: 360, width: '90%', textAlign: 'center',
+              boxShadow: '0 20px 40px rgba(0,0,0,0.2)',
+            }}>
+            <div style={{ fontSize: 56, marginBottom: 12 }}>
+              {dailyLimitModal.kind === 'paywall' ? '🔒' : '🌙'}
+            </div>
+            <h2 style={{ fontSize: 20, fontWeight: 700, color: '#1F2937', marginBottom: 8 }}>
+              {dailyLimitModal.kind === 'paywall' ? '今日免费对话已用完' : '今日对话已达上限'}
+            </h2>
+            <p style={{ fontSize: 14, color: '#6B7280', marginBottom: 24, lineHeight: 1.55 }}>
+              {dailyLimitModal.kind === 'paywall'
+                ? `免费版每日 ${dailyLimitModal.limit} 轮已用完，升级 Pro 解锁更多练习。`
+                : `已达每日 ${dailyLimitModal.limit} 轮上限，明日继续练习。`}
+            </p>
+            <div style={{ display: 'flex', gap: 12 }}>
+              <button
+                onClick={() => setDailyLimitModal(null)}
+                style={{
+                  flex: 1, padding: '10px 0', borderRadius: 12,
+                  background: '#F3F4F6', color: '#374151', border: 'none',
+                  fontWeight: 600, fontSize: 14, cursor: 'pointer',
+                }}>
+                {dailyLimitModal.kind === 'paywall' ? '取消' : '知道了'}
+              </button>
+              {dailyLimitModal.ctaToSubscription && (
+                <button
+                  onClick={() => navigate('/subscription')}
+                  style={{
+                    flex: 1, padding: '10px 0', borderRadius: 12,
+                    background: '#6366F1', color: '#fff', border: 'none',
+                    fontWeight: 700, fontSize: 14, cursor: 'pointer',
+                  }}>
+                  去升级
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
       )}
       {/* Language gate warning — visible amber banner anchored to the top.
           Without this, the only signal that the daily QA was rejected for
