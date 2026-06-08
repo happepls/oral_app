@@ -18,8 +18,8 @@
 - [x] [Feature] App 后台 Live Activity 规划文档：docs/Live_Activity_Background.md（澄清 Web/PWA 做不了真 iOS Live Activity，按平台分 A/B/C 档 + 增量路线 + 阻塞决策清单）
 
 ### 已知预存项（非本批引入，待后续单独处理）
-- [ ] [Bug] update_db.sql user_checkins.user_id 声明为 INT 但 users.id 实为 UUID（迁移脚本类型不一致；init.sql 正确，仅 update_db.sql 漂移）
-- [ ] [Testing] workflow-service test_proficiency_scoring.py 2 个 TestTaskCompleted 用例预存失败（task_completed 阈值断言，与本批工作无关）
+- [x] [Bug] update_db.sql user_checkins.user_id 声明为 INT 但 users.id 实为 UUID（迁移脚本类型不一致；init.sql 正确，仅 update_db.sql 漂移）→ 已改 UUID（2026-06-08）
+- [x] [Testing] workflow-service test_proficiency_scoring.py 2 个 TestTaskCompleted 用例预存失败 → 测试断言陈旧（完成改"确认制"后 task_completed 恒 False），更新为断言 task_ready_to_complete=True；80 passed（2026-06-08）
 
 <!-- 2026-06-03 backlog-48 批量工作流：13 个文件级 agent 并行实现 + 测试，5 个 verify agent 回归。
      全量回归绿：workflow-service 101 passed (+2 pre-existing 越界失败), ai-omni 72 passed,

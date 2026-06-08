@@ -384,7 +384,10 @@ class TestTaskCompleted:
 
     @pytest.mark.asyncio
     async def test_task_completed_when_threshold_met(self, workflow, mock_db):
-        """score>=9 AND interaction_count>=3 AND status!='completed' → task_completed=True"""
+        """score>=9 AND status!='completed' → task_ready_to_complete=True (确认制).
+
+        Note: 完成改为用户确认制——达阈值只发 ready_to_complete 信号，
+        task_completed 恒为 False，真正完成由 user-service/confirm-complete 触发。"""
         # First fetchrow: get native_language
         # Second fetchrow (in _update): before update check
         # Third fetchrow: after update
@@ -416,7 +419,8 @@ class TestTaskCompleted:
                 db_connection=mock_db
             )
 
-        assert result["task_completed"] is True
+        assert result["task_ready_to_complete"] is True
+        assert result["task_completed"] is False
 
     @pytest.mark.asyncio
     async def test_task_not_completed_low_score(self, workflow, mock_db):
@@ -452,7 +456,9 @@ class TestTaskCompleted:
 
     @pytest.mark.asyncio
     async def test_task_completed_score_threshold_low_interaction(self, workflow, mock_db):
-        """score >= 9 → task_completed=True regardless of interaction_count (gate removed)."""
+        """score >= 9 → task_ready_to_complete=True regardless of interaction_count (gate removed).
+
+        确认制：task_completed 恒 False，达阈值只发 ready 信号。"""
         mock_db.fetchrow = AsyncMock(side_effect=[
             {"native_language": "English"},
             {"score": 7, "status": "in_progress", "interaction_count": 1, "task_description": "Test", "scenario_title": "Test"},
@@ -480,7 +486,8 @@ class TestTaskCompleted:
                 db_connection=mock_db
             )
 
-        assert result["task_completed"] is True
+        assert result["task_ready_to_complete"] is True
+        assert result["task_completed"] is False
 
     @pytest.mark.asyncio
     async def test_already_completed_task_skips_update(self, workflow, mock_db):
