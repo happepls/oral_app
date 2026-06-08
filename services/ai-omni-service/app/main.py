@@ -665,6 +665,50 @@ def _today_utc_str() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%d")
 
 
+# ── 每日对话轮次上限（成本护栏） ──
+FREE_DAILY_TURNS = int(os.getenv("FREE_DAILY_TURNS", "15"))
+PRO_DAILY_TURNS = int(os.getenv("PRO_DAILY_TURNS", "150"))
+_DAILY_TURN_TTL_SECONDS = 48 * 3600  # 容忍跨日，与 daily_qa 一致
+
+def _daily_turn_key(user_id: str) -> str:
+    return f"daily_turns:{user_id}:{_today_utc_str()}"
+
+async def _get_daily_turns(rc, user_id: str) -> int:
+    """当日已用轮次。rc=None 或 Redis 故障 → fail-open 返回 0（成本护栏非安全边界）。"""
+    if rc is None:
+        return 0
+    try:
+        raw = await rc.get(_daily_turn_key(user_id))
+        return int(raw or 0)
+    except Exception as e:
+        logger.warning(f"[DailyLimit] _get_daily_turns fail-open: {e}")
+        return 0
+
+async def _incr_daily_turns(rc, user_id: str) -> int:
+    """真用户轮的 AI 语音完成后 +1，并续 48h TTL。rc=None/故障 → 静默返回 0（不阻断主流程）。"""
+    if rc is None:
+        return 0
+    try:
+        key = _daily_turn_key(user_id)
+        n = await rc.incr(key)
+        await rc.expire(key, _DAILY_TURN_TTL_SECONDS)
+        return n
+    except Exception as e:
+        logger.warning(f"[DailyLimit] _incr_daily_turns failed: {e}")
+        return 0
+
+def _daily_turn_limit(user_ctx: dict) -> int:
+    status = (user_ctx or {}).get("subscription_status")
+    return PRO_DAILY_TURNS if status == "active" else FREE_DAILY_TURNS
+
+async def _check_daily_limit(rc, user_id: str, user_ctx: dict):
+    """返回 (blocked: bool, info: dict)。info 含 tier/used/limit，供 WS 事件用。"""
+    limit = _daily_turn_limit(user_ctx)
+    used = await _get_daily_turns(rc, user_id)
+    tier = "pro" if (user_ctx or {}).get("subscription_status") == "active" else "free"
+    return (used >= limit, {"tier": tier, "used": used, "limit": limit})
+
+
 def _strip_daily_qa_marker(text: str) -> str:
     """Remove [DAILY_QA_PASSED] marker from a string (used before TTS)."""
     if not text:
