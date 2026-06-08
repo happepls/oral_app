@@ -334,9 +334,11 @@ function Profile() {
                         || 'Pro 会员'}
                     </p>
                   </div>
-                  {subscription.subscription?.current_period_end && (
+                  {(subscription.subscription?.items?.data?.[0]?.current_period_end
+                    || subscription.subscription?.current_period_end) && (
                     <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
-                      到期日：{new Date(subscription.subscription.current_period_end * 1000).toLocaleDateString('zh-CN')}
+                      到期日：{new Date((subscription.subscription?.items?.data?.[0]?.current_period_end
+                        || subscription.subscription.current_period_end) * 1000).toLocaleDateString('zh-CN')}
                     </p>
                   )}
                 </div>

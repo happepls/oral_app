@@ -127,3 +127,6 @@ skills-lock.json
 
 # Local editor / terminal artifacts
 iTerm2
+
+# JetBrains Junie AI config
+.junie/

@@ -589,3 +589,68 @@ mcp__github__(list_secret_scanning_alerts/get_secret_scanning_alert/list_code_sc
 
 #### 默认权限模式
 `acceptEdits` — 文件编辑自动批准，其他操作需确认
+
+<!-- ===== 以下为原 QWEN.md 独有设计文档，SSOT 合并入此（QWEN.md 现为本文件 symlink） ===== -->
+
+## Daily QA 付费门控（Apr 2026，Task #13）
+
+通过后出口升级：`DailyQAPassModal` 庆祝弹窗后跳 `/discovery`，卡片从单纯 "✅ 今日问答已完成" 标签升级为「再次回答」+「换一题」两按钮。Pro 用户（`user.subscription_status === 'active'`）直接进入 `/conversation?mode=daily_qa`；免费用户弹 `DailyQAPaywallModal` 引导 `/subscription`。
+
+- **后端两端点**（`services/ai-omni-service/app/main.py`）：
+  - `POST /api/ai/daily-question/re-answer` — 清 `daily_qa_passed:{uid}:{date}` Redis key，返回当前 `picked`
+  - `POST /api/ai/daily-question/change-question` — 清 passed key + `_advance_daily_qa_pool` 轮转 pool index，返回新 picked
+  - 两接口均走 `_assert_pro(user_ctx)` 门闸，非 active → 403 `{"detail":"pro_required"}`
+- **Redis 缓存形状升级**（向后兼容）：`daily_qa_pool:{uid}:{date}` 由单 dict 升级为 `{"pool":[...], "index":n, "picked":{...}}`。`handle_daily_question` 读路径同时认识新旧两种形状；`_advance_daily_qa_pool` 透明迁移 legacy 形状。
+- **Pool 耗尽策略**：`index = (index+1) % len(pool)` 循环；若 `len(pool)<=1`，实时调 `_generate_daily_question_pool` 补齐再推进。
+- **前端**：`client/src/pages/Discovery.js` 新增 `handleDailyQAAction` + `DailyQAPaywallModal`；`client/src/services/api.js` 新增 `aiAPI.reAnswerDaily()` / `changeDailyQuestion()`（两方法对 403 单独抛带 `status` 的 Error 以便 UI 精确捕获）。
+- **顺手修复**：`DailyQAPassModal` 原本无关闭按钮且无 backdrop 点击响应 — 新增 `onClose` prop + 右上 `×`，保留既有 2.5s 自跳 `/discovery`。
+- **测试**：`services/ai-omni-service/tests/test_daily_qa.py` 扩展 7 个用例（advance/wrap/legacy-migrate/assert_pro 变体），并修补了 stub（补齐 `dashscope.audio.qwen_omni` 子模块 + 预设 `QWEN3_OMNI_API_KEY`），让历史 9 个测试从 skip 变成能真跑——现在全部 16 个测试全绿。
+- **Docker 热加载**：Python 源改动无 requirements 变动，用 `docker cp app/main.py oral_app_ai_omni_service:/app/app/main.py && docker compose restart ai-omni-service` 即可，无需 rebuild。
+
+## 设计集成测试 §9.5 + §10 响应式（Jun 2026）
+
+测试文档 `docs/test-cases-design-integration.md`。
+
+- **§9.5 品牌图标修复**：原用例期望 `/guaji-icon.png`（透明背景对称猫头鹰），但该 PNG 从不存在、代码也无引用。项目实际用 SVG 矢量图标。改为验证 `/guaji-logo.svg`——已确认透明背景（无 `<rect>`/background 填充）、双翅(ellipse cx±56)/耳簇(path±14)/脚(±12)对称猫头鹰，符合规格，标 ☑。
+- **§10 响应式 5 条全部 ✅**（真实 iPhone 14 = 390×844 dpr=3）：
+  - 10.1 Discovery：场景网格 `grid grid-cols-2 gap-3`，每列 165.5px×2+12gap=343<390，scrollW=390 无溢出
+  - 10.2 Conversation：ConvHeader(✕/标题/3 相位点/在线) + MicBar(点击说话/CC/重播) 适配，0 溢出
+  - 10.3 CC 模式：猫头鹰 `bird-logo.svg` cx=195=视口正中心居中，无横向滚动
+  - 10.4 BottomNav：`position:fixed` 底锚定(bottom=844)，3 tab(首页/目标/我的) 中心 63/188/313 间距均匀 125px
+  - 10.5 Landing(登出态)：hero 标题 4 行合理换行，两个 CTA 竖排(cx=195 居中全宽 358px)
+- **测试方法（关键工具坑）**：
+  - Chrome 强制最小窗口宽 ~592px，`resize_window`/窗口缩放**无法**降到 390。真实 390px 视口须用 **CDP `Emulation.setDeviceMetricsOverride`**（width=390 height=844 deviceScaleFactor=3 mobile=true）。
+  - **Playwright MCP 当前不可用**：`.mcp.json` 固定 `--cdp-endpoint http://localhost:9222`，attach Chrome 148 时 `/json/version` 握手返回 `Unexpected status 400`（版本兼容问题）。改用 CDP 直连 `:3000` dev-server（与 `:5001` prod 同源）+ JS 遍历 `getBoundingClientRect` 探溢出 + `Page.captureScreenshot` 截图。
+  - 截图证据：`docs/mobile-test-screenshots/`（5 张 PNG）。
+
+## 首次登录引导 Onboarding Tour（Jun 2026）
+
+新用户首次完成 GoalSetting 落地 Discovery 时自动启动一次跨页 spotlight 引导，**6 步**、可跳过、可回退、完成后持久化永不重复。设计/计划见 `docs/superpowers/specs/2026-06-03-onboarding-tour-design.md`（v2 §11-15）+ `plans/2026-06-04-onboarding-tour-v2.md`。
+
+- **步骤序列**（`TourContext.TOUR_STEPS`，6 步，语义化 i18n key `tour_step_*`）：① 今日任务 `data-tour="today-tasks"`（Discovery 今日任务 section）② 打卡环 `data-tour="recall-streak"`（StreakRing 包裹 div）③ 4 格统计 `data-tour="stats"`（Discovery 统计 section）④ 场景卡 `data-tour="scenario-card"`（grid 容器）⑤ Conversation 麦克风 `data-tour="mic"`（RealTimeRecorder 父容器，**非 MicBar**——MicBar.jsx 未被引用）⑥ CC/沉浸体验按钮 `data-tour="cc-mode"`（demo 态 `!ccMode` 恒显）。
+- **导航**：每步「下一步/上一步/跳过」；`next()`/`prev()` 镜像，`getNextStep`/`getPrevStep` 纯逻辑；**首步「上一步」置灰禁用**（`isFirst`）；跨页回退（step5→step4 自动 navigate 回 /discovery）。末步「完成」+ demo 路由 → `navigate('/discovery')`。
+- **触发**：`GoalSetting.handleSubmit` → `navigate('/discovery', { state:{ startTour:true } })`（保留 1200ms setTimeout）。Discovery mount effect 读 `location.state.startTour && !tour.completed` → `tour.start()`，随后 `navigate(replace,{state:{}})` 清信号防重入（`tourStartedRef` 兜底）。
+- **持久化双层**：localStorage `onboarding_tour_completed` 乐观值（防闪现）+ 后端权威 `GET /api/users/onboarding-tour`（mount 校正）。完成/跳过 → `POST /api/users/onboarding-tour/complete`（幂等 UPDATE）+ 写 localStorage。users 表加 `onboarding_tour_completed BOOLEAN`。
+- **跨页编排**：step5/6 route=`/conversation?mode=tour`；`TourHost`/`start`/`next`/`prev` 路由比对均 `route.split('?')[0]` 取 path（query 不参与 pathname 比对）。
+- **Conversation demo 态**：`isTourMode = ?mode=tour`，init useEffect 早返回——**不建 WS、不 fetch tasks、不触发 AI**，仅渲染静态麦克风 UI 供高亮。header 显紫色「演示」（非误导的「连接中」）。CC 步只高亮按钮，不实际进 CC overlay。
+- **核心组件**（零新依赖，复用 motion@12）：`contexts/TourContext.js`、`components/Spotlight.jsx`（Portal+SVG mask 挖洞+气泡卡+超时降级 onNext）、`hooks/useAnchorRect.js`（getBoundingClientRect + MutationObserver 等元素 + resize/scroll 重测 + 3s 超时 timedOut）。
+- **测试**：后端 `onboardingTour.test.js`（7 例，复刻 recall db-mock 模式）；前端 `tour-logic.test.js`（14 例纯逻辑，getNextStep/shouldStartTour/computePlacement/shouldSkipStep verbatim）。
+- **i18n**：`tour_step1/2/3_title/body` + `tour_next/done/skip`，zh/en 全译，其余语言 fallbackLng=en。翻译在 `i18n/locales/*.json`（**非内联**，CLAUDE.md 旧描述已过时）。
+
+## Stripe 支付集成（去 Replit · 原生 SDK，Jun 2026）
+
+真实可收款的 Stripe 订阅支付。Wise 仅作 Dashboard 提现目的地（Payouts→银行账户，无代码）。代码层 100% 走 Stripe 原生 Node SDK（`stripe@^20`），已**移除 Replit 专用包 `stripe-replit-sync`**。
+
+- **定价**（`seed-products.js` CATALOG）：周订阅 $4.99（`unit_amount:499`）/ 年订阅 $99（`9900`），USD。成本依据：app 用 `qwen3.5-omni-flash-realtime`，音频输出 107 元/百万 token（~$14.86）为主成本，中度用户月成本 ~$13 → 年档对中重度用户亏损，**每日轮次上限为必须的紧接 backlog**（用 `interaction_count` 扩展）。
+- **后端**（`services/user-service/src/stripe/`）：
+  - `stripeClient.js`：纯 env 读 key（`STRIPE_SECRET_KEY`/`STRIPE_PUBLISHABLE_KEY`/`STRIPE_WEBHOOK_SECRET`），客户端单例缓存。`getWebhookSecret()` 新增。**不再读 Replit Connectors**。
+  - `stripeService.js`：products/prices/subscription **直接调 Stripe API**（不再读本地 `stripe.*` 同步表），按 `metadata.app==='guaji_ai'` 过滤。checkout 支持 `promotionCode`（resolve promo code→discounts，否则 `allow_promotion_codes`）。新增 `updateUserStripeInfoByCustomerId`（webhook 只有 customerId）。
+  - `webhookHandlers.js`：原生 `stripe.webhooks.constructEvent` 自验签。处理 `checkout.session.completed`/`customer.subscription.created|updated|deleted`/`invoice.payment_failed` → 写 `users` 表。`mapSubscriptionStatus` 映射 Stripe status→本地（active/past_due/paused/canceled/free）。
+  - `index.js`：删 Replit `runMigrations`/`syncBackfill`/managed webhook，`initStripe()` 仅做配置日志检查。webhook 路由（`express.raw` 在 `express.json()` 前）保留。
+- **DB**：`users` 加 `stripe_customer_id`/`stripe_subscription_id`/`subscription_status`（init.sql + `migrations/add_stripe_columns.sql`，`ALTER ... IF NOT EXISTS`）+ `idx_users_stripe_customer`。
+- **前端**（`Subscription.js`/`Profile.js`）：订阅页走 `/products-with-prices` 动态拉真实价（`FALLBACK_PRODUCTS` 仅降级，已同步 499/9900）。Profile `current_period_end` 读 `subscription.items.data[0].current_period_end`（新版 Stripe API 位置，顶层已废）。
+- **网关**（`api-gateway/nginx.conf`）：`/api/stripe/` 整体透传 user-service，路径保留 → webhook `/api/stripe/webhook` 直达。
+- **env 陷阱**：docker-compose `user-service.environment` 曾用 `${STRIPE_*:-}`，宿主空 shell 变量会**覆盖** `env_file` 的值 → 已删除，Stripe key 唯一来源 `services/user-service/.env`。
+- **本地测试**：`stripe listen --forward-to localhost:8081/api/stripe/webhook` 拿 `whsec_` 写 .env。test 卡 `4242 4242 4242 4242`。`seed-products.js` 宿主跑（脚本仅调 Stripe API，Pool 惰性不阻塞）。Stripe price 不可改金额 → seed 脚本「比对金额，不符则新建 price + archive 旧 price」。
+- **生产（Zeabur）**：切 `sk_live_`/`pk_live_` + Dashboard 建 webhook endpoint 拿生产 `whsec_` + `STRIPE_ALLOWED_ORIGINS=https://guajiguaji.top`。
+- **已验证**（Jun 8）：真实付款全链路（订阅页真实价→Checkout→4242 付款→webhook 写 active→Profile "Pro 会员"），取消链路（cancel→webhook→canceled）。

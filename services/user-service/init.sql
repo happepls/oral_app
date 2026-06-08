@@ -12,9 +12,13 @@ CREATE TABLE IF NOT EXISTS users (
     interests TEXT, -- Comma separated or JSON
     points INT DEFAULT 0,
     onboarding_tour_completed BOOLEAN NOT NULL DEFAULT FALSE,
+    stripe_customer_id VARCHAR(255),
+    stripe_subscription_id VARCHAR(255),
+    subscription_status VARCHAR(50) DEFAULT 'free',
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+CREATE INDEX IF NOT EXISTS idx_users_stripe_customer ON users(stripe_customer_id);
 
 -- Create the user_identities table
 CREATE TABLE IF NOT EXISTS user_identities (

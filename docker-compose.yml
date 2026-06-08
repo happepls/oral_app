@@ -122,8 +122,8 @@ services:
       - DB_PORT=5432
       - DATABASE_URL=postgresql://user:password@postgres:5432/oral_app
       - JWT_SECRET=your_jwt_secret_key_change_in_production
-      - STRIPE_PUBLISHABLE_KEY=${STRIPE_PUBLISHABLE_KEY:-}
-      - STRIPE_SECRET_KEY=${STRIPE_SECRET_KEY:-}
+      # Stripe keys come from ./services/user-service/.env (env_file) to avoid
+      # empty host-shell vars overriding them. Do NOT re-add ${STRIPE_*:-} here.
       - HTTPS_PROXY=http://host.docker.internal:7890
       - HTTP_PROXY=http://host.docker.internal:7890
       - NO_PROXY=localhost,127.0.0.1,postgres,redis,mongo
@@ -217,6 +217,10 @@ services:
       - ./services/media-processing-service/.env:/app/.env
     env_file:
       - ./services/media-processing-service/.env
+    environment:
+      # 临时绕过部署网络对腾讯云 COS 的 TLS 拦截（伪 VeriSign 证书）。
+      # ⚠️ 仅本地测试用：生产部署前必须移除并安装拦截代理的正确 root CA。
+      - NODE_TLS_REJECT_UNAUTHORIZED=0
     networks:
       - oral_app_net
 

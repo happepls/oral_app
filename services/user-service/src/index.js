@@ -14,56 +14,17 @@ const {
   requestSizeLimiter
 } = require('./middleware/securityMiddleware');
 
-const { runMigrations } = require('stripe-replit-sync');
-const { getStripeSync } = require('./stripe/stripeClient');
 const { WebhookHandlers } = require('./stripe/webhookHandlers');
 
-async function initStripe() {
-  const databaseUrl = process.env.DATABASE_URL;
-  if (!databaseUrl) {
-    console.warn('DATABASE_URL not set, skipping Stripe initialization');
-    return;
-  }
-
-  try {
-    console.log('Initializing Stripe schema...');
-    await runMigrations({ databaseUrl, schema: 'stripe' });
-    console.log('Stripe schema ready');
-
-    const stripeSync = await getStripeSync();
-    
-    // If stripeSync is null, it means Stripe keys were not available
-    if (!stripeSync) {
-      console.log('Stripe not configured, skipping webhook and sync setup');
-      return;
-    }
-
-    const replitDomains = process.env.REPLIT_DOMAINS;
-    if (replitDomains) {
-      console.log('Setting up managed webhook...');
-      const webhookBaseUrl = `https://${replitDomains.split(',')[0]}`;
-      try {
-        const result = await stripeSync.findOrCreateManagedWebhook(
-          `${webhookBaseUrl}/api/stripe/webhook`
-        );
-        if (result?.webhook?.url) {
-          console.log(`Webhook configured: ${result.webhook.url}`);
-        } else {
-          console.log('Webhook setup completed (no URL returned)');
-        }
-      } catch (webhookError) {
-        console.warn('Webhook setup failed, continuing without managed webhook:', webhookError.message);
-      }
-    } else {
-      console.log('REPLIT_DOMAINS not set, skipping webhook setup');
-    }
-
-    console.log('Syncing Stripe data...');
-    stripeSync.syncBackfill()
-      .then(() => console.log('Stripe data synced'))
-      .catch((err) => console.error('Error syncing Stripe data:', err));
-  } catch (error) {
-    console.error('Failed to initialize Stripe:', error);
+// Stripe now uses native SDK webhooks (no Replit sync / managed webhook).
+// Products, prices and subscriptions are fetched live from the Stripe API,
+// and webhook events update the users table directly. Nothing to bootstrap
+// here beyond a config sanity check.
+function initStripe() {
+  if (process.env.STRIPE_SECRET_KEY && process.env.STRIPE_WEBHOOK_SECRET) {
+    console.log('Stripe configured (native SDK webhooks).');
+  } else {
+    console.warn('Stripe not fully configured (STRIPE_SECRET_KEY / STRIPE_WEBHOOK_SECRET missing). Payments disabled.');
   }
 }
 
@@ -179,4 +140,4 @@ app.listen(PORT, '0.0.0.0', () => {
 });
 
 // Initialize Stripe in the background (non-blocking)
-initStripe().catch(err => console.error('Stripe initialization error:', err));
+initStripe();

@@ -34,7 +34,7 @@ const FALLBACK_PRODUCTS = [
     metadata: { tier: 'weekly' },
     prices: [{
       id: null,
-      unit_amount: 290,
+      unit_amount: 499,
       currency: 'usd',
       recurring: { interval: 'week' }
     }]
@@ -42,11 +42,11 @@ const FALLBACK_PRODUCTS = [
   {
     id: 'annual-fallback',
     name: '年付会员',
-    description: '最划算选项，节省60%',
+    description: '最划算选项，节省62%',
     metadata: { tier: 'annual' },
     prices: [{
       id: null,
-      unit_amount: 8990,
+      unit_amount: 9900,
       currency: 'usd',
       recurring: { interval: 'year' }
     }]

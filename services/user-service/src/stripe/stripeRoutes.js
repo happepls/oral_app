@@ -108,7 +108,7 @@ router.get('/subscription', protect, async (req, res) => {
 router.post('/checkout', protect, async (req, res) => {
   try {
     const user = await stripeService.getUserById(req.user.id);
-    const { priceId } = req.body;
+    const { priceId, promotionCode } = req.body;
 
     if (!priceId) {
       return res.status(400).json({ error: 'Price ID is required' });
@@ -134,7 +134,8 @@ router.post('/checkout', protect, async (req, res) => {
         customerId,
         priceId,
         `${baseUrl}/subscription/success?session_id={CHECKOUT_SESSION_ID}`,
-        `${baseUrl}/subscription/cancel`
+        `${baseUrl}/subscription/cancel`,
+        promotionCode
       );
 
       res.json({ url: session.url });
