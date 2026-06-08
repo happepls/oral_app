@@ -1806,7 +1806,7 @@ class WebSocketCallback(OmniRealtimeCallback):
         files = {audio_type: (filename, audio_data, 'application/octet-stream')}
         async with httpx.AsyncClient() as client:
             try:
-                resp = await client.post(url, files=files, timeout=10.0)
+                resp = await client.post(url, files=files, timeout=30.0)
                 if resp.status_code == 200:
                     return resp.json().get('data', {}).get(f'{audio_type}Url')
                 logger.error(f"Failed to upload audio: {resp.status_code} {resp.text}")
