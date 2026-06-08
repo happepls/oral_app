@@ -2938,6 +2938,14 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query(None), ses
                         except Exception as e:
                             logger.error(f"Error decoding audio data: {e}")
                 elif msg_type == 'user_audio_ended':
+                    _rc = _get_redis_client()
+                    _blocked, _info = await _check_daily_limit(_rc, callback.user_id, callback.user_context)
+                    if _blocked:
+                        callback.user_audio_buffer = bytearray()  # 丢弃未提交的本地音频
+                        await websocket.send_json({"type": "daily_limit_reached", **_info})
+                        logger.info(f"[DailyLimit] blocked(audio) user={callback.user_id} {_info}")
+                        continue
+                    callback.counts_against_quota = True  # 本轮是真用户练习输入 → 记入额度
                     if callback.user_audio_buffer:
                         if callback.is_connected:
                             try:
@@ -2961,6 +2969,13 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query(None), ses
                 elif msg_type in ['text_message', 'input_text']:
                     text = payload.get('text')
                     if text:
+                        _rc = _get_redis_client()
+                        _blocked, _info = await _check_daily_limit(_rc, callback.user_id, callback.user_context)
+                        if _blocked:
+                            await websocket.send_json({"type": "daily_limit_reached", **_info})
+                            logger.info(f"[DailyLimit] blocked(text) user={callback.user_id} {_info}")
+                            continue
+                        callback.counts_against_quota = True
                         callback.messages.append({"role": "user", "content": text, "timestamp": datetime.utcnow().isoformat()})
                         if callback.is_connected:
                             try:

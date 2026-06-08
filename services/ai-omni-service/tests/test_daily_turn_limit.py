@@ -103,3 +103,26 @@ async def test_incr_called_n_times(fake_redis):
     for _ in range(3):
         await omni._incr_daily_turns(fake_redis, "u9")
     assert await omni._get_daily_turns(fake_redis, "u9") == 3
+
+@pytest.mark.asyncio
+async def test_check_daily_limit_blocks_at_limit(fake_redis):
+    for _ in range(omni.FREE_DAILY_TURNS):
+        await omni._incr_daily_turns(fake_redis, "uF")
+    blocked, info = await omni._check_daily_limit(fake_redis, "uF", {"subscription_status": "free"})
+    assert blocked is True
+    assert info == {"tier": "free", "used": omni.FREE_DAILY_TURNS, "limit": omni.FREE_DAILY_TURNS}
+
+@pytest.mark.asyncio
+async def test_check_daily_limit_allows_below(fake_redis):
+    await omni._incr_daily_turns(fake_redis, "uP")
+    blocked, info = await omni._check_daily_limit(fake_redis, "uP", {"subscription_status": "active"})
+    assert blocked is False
+    assert info["tier"] == "pro"
+    assert info["used"] == 1
+    assert info["limit"] == omni.PRO_DAILY_TURNS
+
+@pytest.mark.asyncio
+async def test_check_daily_limit_fail_open_none_client():
+    blocked, info = await omni._check_daily_limit(None, "uX", {"subscription_status": "free"})
+    assert blocked is False  # used=0 < limit
+    assert info["used"] == 0
