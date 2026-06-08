@@ -11,6 +11,7 @@
 <!-- 2026-06-03 收尾：原 5 项剩余 backlog 全部处理 —— #1/#2 直接修复，#3 全栈持久化(workflow)，#4/#5 转设计文档。
      收尾回归全绿：user-service jest 41 passed (6 suites), workflow-service 101 passed (+2 pre-existing 越界),
      ai-omni 72 passed, 前端 jest 26 suites / 392 tests 全绿。 -->
+- [x] [Commercialization] 每日对话轮次上限（免费 15 / 付费 150 轮/日）：Redis `daily_turns:{uid}:{date}` 48h，计数+拦截仅在 2 个真用户输入站点、记账提前到 audio.done（`counts_against_quota` 门控，系统续轮免计免拦）、fail-open、前端 paywall/明日再来 modal + 停录。后端 9 + 前端 3 测试全绿；真实运行栈 E2E 验证免费/付费/fail-open（Jun 8）。E2E 顺带发现并热修 ai-omni 镜像缺 redis 库（apt 镜像抖动致 rebuild 失败）—— 详见 CLAUDE.md「每日对话轮次上限」节部署陷阱。
 - [x] [Performance] Profile.js fetchAll useEffect 添加 AbortController + signal.aborted 守卫（5 个并发请求卸载后不再 setState）
 - [x] [Security] Conversation.js 移除 window.currentScenarioReview 死写入（grep 确认无读取处，已有 setScenarioReviewData React state 覆盖；删两处写入）
 - [x] [Feature] 今日复述切换记录后端持久化：新建 recall_daily_state 表(UUID FK) + 3 端点(/recall/daily-state·switch·complete) + api.js + Recall.js 对接（localStorage 降级为离线 fallback）；recallState.test.js 8 + recall-switch-limit.test.js 5
