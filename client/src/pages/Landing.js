@@ -36,12 +36,12 @@ function Landing() {
       cta: t('plan_free_cta'), highlight: false,
     },
     {
-      name: t('plan_week_name'), price: '2.90', period: '/wk',
+      name: t('plan_week_name'), price: '4.99', period: '/wk',
       features: [t('plan_week_f1'), t('plan_week_f2'), t('plan_week_f3'), t('plan_week_f4')],
       cta: t('plan_week_cta'), highlight: true,
     },
     {
-      name: t('plan_year_name'), price: '89.90', period: '/yr',
+      name: t('plan_year_name'), price: '99', period: '/yr',
       features: [t('plan_year_f1'), t('plan_year_f2'), t('plan_year_f3'), t('plan_year_f4'), t('plan_year_f5')],
       cta: t('plan_year_cta'), highlight: false,
     },

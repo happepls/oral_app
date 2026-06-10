@@ -993,44 +993,6 @@ function Discovery() {
             </p>
           )}
         </section>
-
-        {/* ── 最近活动 ── */}
-        {activeSessions.length > 0 && (
-          <section>
-            <h2 className="text-lg font-bold text-slate-900 dark:text-white mb-3">最近活动</h2>
-            <div className="space-y-2">
-              {activeSessions.slice(0, 3).map((session, idx) => {
-                const score = session.score || session.avg_score;
-                const badgeLabel = score >= 90 ? '优秀' : score >= 75 ? '良好' : score ? '继续加油' : null;
-                const badgeColor = score >= 90 ? '#10B981' : score >= 75 ? '#637FF1' : '#9CA3AF';
-                return (
-                  <div key={session.sessionId || idx}
-                    className="flex items-center gap-3 bg-white dark:bg-slate-800 rounded-2xl p-3.5 shadow-sm">
-                    <div className="w-10 h-10 rounded-xl flex items-center justify-center text-xl flex-shrink-0"
-                      style={{ background: '#F3F4F6' }}>
-                      🗣️
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <p className="text-sm font-medium text-slate-800 dark:text-slate-100 truncate">
-                        {session.topic || '自由对话'}
-                      </p>
-                      <p className="text-xs text-slate-400">
-                        {session.createdAt ? new Date(session.createdAt).toLocaleDateString('zh-CN') : ''}
-                        {score ? ` · 得分 ${score}` : ''}
-                      </p>
-                    </div>
-                    {badgeLabel && (
-                      <span className="text-xs px-2 py-0.5 rounded-full text-white flex-shrink-0"
-                        style={{ backgroundColor: badgeColor }}>
-                        {badgeLabel}
-                      </span>
-                    )}
-                  </div>
-                );
-              })}
-            </div>
-          </section>
-        )}
       </main>
 
       <BottomNav currentPage="home" />

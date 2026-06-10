@@ -68,6 +68,7 @@
   "login_register_link": "Regístrate",
   "login_google_fail": "Error con Google. Inténtalo de nuevo",
   "login_fail": "Error al iniciar sesión. Comprueba tu correo y contraseña",
+  "login_invalid_credentials": "Correo o contraseña incorrectos, inténtalo de nuevo",
   "register_title": "Crear cuenta",
   "register_subtitle": "Comienza tu viaje de aprendizaje con IA",
   "username_label": "Nombre de usuario",

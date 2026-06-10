@@ -30,6 +30,8 @@ function Login() {
     const result = await login({ email, password });
     if (result.success) {
       navigate('/discovery');
+    } else if (result.code === 'invalid_credentials') {
+      setError(t('login_invalid_credentials'));
     } else {
       setError(result.message || t('login_fail'));
     }

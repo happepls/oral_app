@@ -68,6 +68,7 @@
   "login_register_link": "S'inscrire",
   "login_google_fail": "Échec de la connexion Google, réessayez",
   "login_fail": "Connexion échouée, vérifiez votre e-mail et mot de passe",
+  "login_invalid_credentials": "E-mail ou mot de passe incorrect, veuillez réessayer",
   "register_title": "Créer un compte",
   "register_subtitle": "Commencez votre voyage d'apprentissage oral avec l'IA",
   "username_label": "Nom d'utilisateur",

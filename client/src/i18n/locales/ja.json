@@ -68,6 +68,7 @@
   "login_register_link": "新規登録",
   "login_google_fail": "Googleログインに失敗しました。もう一度お試しください",
   "login_fail": "ログインに失敗しました。メールアドレスとパスワードを確認してください",
+  "login_invalid_credentials": "メールアドレスまたはパスワードが正しくありません。もう一度お試しください",
   "register_title": "アカウント作成",
   "register_subtitle": "AIスピーキング学習の旅を始めましょう",
   "username_label": "ユーザー名",

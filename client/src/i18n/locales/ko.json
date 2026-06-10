@@ -68,6 +68,7 @@
   "login_register_link": "회원가입",
   "login_google_fail": "Google 로그인 실패, 다시 시도해 주세요",
   "login_fail": "로그인 실패, 이메일과 비밀번호를 확인해 주세요",
+  "login_invalid_credentials": "이메일 또는 비밀번호가 올바르지 않습니다. 다시 시도해 주세요",
   "register_title": "계정 만들기",
   "register_subtitle": "AI 스피킹 학습 여정을 시작하세요",
   "username_label": "사용자 이름",

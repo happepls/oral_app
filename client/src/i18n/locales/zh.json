@@ -68,6 +68,7 @@
   "login_register_link": "立即注册",
   "login_google_fail": "Google 登录失败，请重试",
   "login_fail": "登录失败，请检查您的邮箱和密码",
+  "login_invalid_credentials": "邮箱或密码不正确，请重新输入",
   "register_title": "创建账户",
   "register_subtitle": "开始您的AI口语学习之旅",
   "username_label": "用户名",

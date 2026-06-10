@@ -87,7 +87,14 @@ export const AuthProvider = ({ children }) => {
     } catch (err) {
       const errorMessage = err.message || '登录失败，请稍后重试';
       setError(errorMessage);
-      return { success: false, message: errorMessage };
+      // Backend returns English "Invalid credentials." for wrong email/password.
+      // Surface a code so the UI can show a localized, direct message.
+      const isInvalidCreds = /invalid credentials/i.test(err.message || '');
+      return {
+        success: false,
+        message: errorMessage,
+        code: isInvalidCreds ? 'invalid_credentials' : undefined,
+      };
     } finally {
       setLoading(false);
     }

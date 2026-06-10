@@ -784,6 +784,8 @@ function Conversation() {
             const ctxNow = audioContextRef.current?.currentTime ?? 0;
             if (audioQueueRef.current.length === 0 && nextStartTimeRef.current <= ctxNow + 0.05) {
               setIsAISpeaking(false);
+              // Turn finished — ensure the mascot's thinking face can't persist.
+              setIsWaitingForAIResponse(false);
             }
             console.log('Audio playback ended');
           };
@@ -837,6 +839,7 @@ function Conversation() {
         const ctxNow = audioContextRef.current?.currentTime ?? 0;
         if (audioQueueRef.current.length === 0 && nextStartTimeRef.current <= ctxNow + 0.05) {
           setIsAISpeaking(false);
+          setIsWaitingForAIResponse(false);
         }
       };
     } catch (err) {
@@ -1794,6 +1797,12 @@ function Conversation() {
            break;
         case 'response.audio.done':
            // Backend signals the current AI turn's TTS is fully delivered.
+           // The user is no longer waiting on the model — clear the thinking
+           // flag now so the mascot can't get stuck on the thinking face after
+           // a turn ends (e.g. welcome / system-continuation turns that never
+           // produced a user-driven `isWaitingForAIResponse=true` clear path,
+           // or audio that finished without flipping the flag back).
+           setIsWaitingForAIResponse(false);
            // Schedule the speaking flag to flip off shortly after the last
            // queued chunk finishes — this drives CC subtitle auto-clear.
            {
@@ -1866,6 +1875,7 @@ function Conversation() {
          const ctxNow = audioContextRef.current?.currentTime ?? 0;
          if (audioQueueRef.current.length === 0 && nextStartTimeRef.current <= ctxNow + 0.05) {
            setIsAISpeaking(false);
+           setIsWaitingForAIResponse(false);
          }
     };
 
@@ -2653,18 +2663,19 @@ function Conversation() {
   };
 
   // AiAvatar status derived from recording / AI speaking states.
-  // `thinking` covers two windows where the user is waiting on the model:
-  //   1. After the user releases the recorder until the first AI audio frame
-  //      starts playing (driven by `isWaitingForAIResponse`).
-  //   2. AI text arrived but its audio hasn't started yet (fallback).
-  // Without (1) the mascot would flash thinking only briefly when the AI
-  // text frame landed, then jump straight to speaking — the user wouldn't
-  // perceive any "the bird is thinking" pause.
-  const isAIThinking = messages.length > 0 && messages[messages.length - 1].type === 'ai'
-    && !messages[messages.length - 1].audioUrl && !isAISpeaking;
+  // `thinking` is shown ONLY while the user is actually waiting on the model
+  // (driven by `isWaitingForAIResponse`, set when the user input is sent and
+  // cleared once the AI response/audio arrives).
+  //
+  // Previously we also showed thinking whenever the last AI message had no
+  // audioUrl. That fallback got stuck permanently when an AI turn never
+  // produced COS audio (marker-only / system-continuation / dropped upload),
+  // leaving the mascot frozen on `bird-expression-thinking.svg` after the
+  // round ended. Tying thinking to `isWaitingForAIResponse` lets the mascot
+  // fall back to idle (`bird-logo.svg`) as soon as playback finishes.
   const avatarStatus = isAISpeaking ? 'speaking'
     : isUserRecording ? 'listening'
-    : (isWaitingForAIResponse || isAIThinking) ? 'thinking'
+    : isWaitingForAIResponse ? 'thinking'
     : 'idle';
 
   return (
@@ -2695,15 +2706,15 @@ function Conversation() {
               <span className="material-symbols-outlined" style={{ fontSize: '16px' }}>close</span>
             </button>
             <p className="text-gray-900 font-semibold text-sm leading-tight truncate">
-              {currentScenarioTitle || 'AI 口语导师'}
+              {isDailyQAMode ? '今日问答' : (currentScenarioTitle || 'AI 口语导师')}
             </p>
           </div>
 
           {/* 右：子任务进度点 + AI 状态 */}
           <div className="flex items-center gap-3 shrink-0">
 
-            {/* 任务完成进度点（recall模式显示复述进度，普通模式显示场景进度） */}
-            {isRecallMode ? (
+            {/* 任务完成进度点（recall模式显示复述进度，普通模式显示场景进度；daily_qa 无子任务，不显示） */}
+            {isDailyQAMode ? null : isRecallMode ? (
               <div className="flex gap-1">
                 {[0,1,2].map(i => (
                   <div key={i} className={`w-2 h-2 rounded-full transition-colors duration-300 ${
@@ -2735,10 +2746,10 @@ function Conversation() {
         </div>
       </div>
 
-      {/* 每日限制 Banner */}
+      {/* 每日场景鼓励 Banner（软提示，非硬限制；真正的轮次硬护栏由后端 daily_limit_reached 负责） */}
       {dailyScenariosUsed >= 3 && !isDailyQAMode && (
-        <div className="flex items-center justify-center px-4 py-1.5 bg-amber-900/40 text-amber-300 text-xs">
-          今日练习已满 3 个场景，明天继续加油
+        <div className="flex items-center justify-center px-4 py-1.5 bg-emerald-900/30 text-emerald-300 text-xs">
+          🎉 今天已完成 3 个场景，状态很棒！想继续可以接着练
         </div>
       )}
 
@@ -3103,6 +3114,26 @@ function Conversation() {
             borderRadius: 20, padding: '5px 12px', fontSize: 11, fontWeight: 600,
             color: 'var(--foreground-muted)', cursor: 'pointer', fontFamily: 'inherit',
           }}>退出 CC &times;</button>
+
+          {/* 当前子任务进度（CC 浮层会盖住主视图任务面板，这里补一个紧凑进度指示） */}
+          {!isRecallMode && !isDailyQAMode && (
+            <div style={{
+              position: 'absolute', top: 12, left: 0, right: 0,
+              display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6,
+            }}>
+              <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--foreground-muted)' }}>
+                子任务 {Math.min(theaterCompletedTasks.size + 1, 3)}/3
+              </span>
+              <div style={{ width: 160, height: 6, borderRadius: 3, background: 'rgba(99,127,241,0.15)', overflow: 'hidden' }}>
+                <div style={{
+                  width: `${Math.max(0, Math.min(100, currentTaskProgress))}%`,
+                  height: '100%', borderRadius: 3, background: '#637FF1',
+                  transition: 'width 0.4s ease',
+                }} />
+              </div>
+            </div>
+          )}
+
           <GuajiMascot state={avatarStatus} size={200} />
           <CCRollingCaption
             isAISpeaking={isAISpeaking}
@@ -3128,9 +3159,7 @@ function Conversation() {
             {/* Main Controls: Recorder + Restart Button */}
             <div className="flex items-center gap-3 w-full max-w-md">
                 <div className="flex-1 relative" data-tour="mic">
-                    {dailyScenariosUsed >= 3 && (
-                      <div className="absolute inset-0 z-10 rounded-full pointer-events-none" />
-                    )}
+                    {/* 3-场景仅为软性鼓励，不再禁用录音；硬护栏由后端 daily_limit_reached 负责 */}
                     <RealTimeRecorder
                       ref={recorderRef}
                       isConnected={isConnected}
@@ -3139,7 +3168,6 @@ function Conversation() {
                       onCancel={handleRecordingCancel}
                       enableCompression={true}
                       enableMetrics={true}
-                      disabled={dailyScenariosUsed >= 3}
                     />
                 </div>
                 
@@ -3164,7 +3192,12 @@ function Conversation() {
                 {/* Restart Practice Button - Icon only */}
                 {(tasks.length > 0 || location.state?.scenario || new URLSearchParams(window.location.search).get('scenario')) && (
                     <button
-                      onClick={() => handleRetryCurrentScenario({ keepHistory: false, resetProgress: true })}
+                      onClick={() => {
+                        // 二次确认：重置会清空当前对话与进度，不可撤销，防误触
+                        if (window.confirm('确定重新练习？当前对话进度将被清空，且无法恢复。')) {
+                          handleRetryCurrentScenario({ keepHistory: false, resetProgress: true });
+                        }
+                      }}
                       className="flex-shrink-0 w-12 h-12 bg-amber-100 dark:bg-amber-900/30 hover:bg-amber-200 dark:hover:bg-amber-900/50 text-amber-700 dark:text-amber-300 rounded-xl flex items-center justify-center transition border border-amber-200 dark:border-amber-700"
                       title="重新练习"
                     >
