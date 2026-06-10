@@ -461,6 +461,8 @@ function Conversation() {
   const [currentScenarioTitle, setCurrentScenarioTitle] = useState('');
   const completionCheckedRef = useRef(false); // Prevent duplicate modal triggers
   const hasViewedCompletionModalRef = useRef(false); // Track if user has already viewed and closed the modal
+  const pendingCompletionModalRef = useRef(false); // Modal wants to open but is waiting on scenario_review WS
+  const completionFallbackTimerRef = useRef(null); // Hard-timeout that opens the modal even if review never lands
 
   // 双阶段 UI State（Magic Repetition 和 Scene Theater）
   // useRef 保证只在首次挂载时读取 URL，避免每次 render 重新解析
@@ -608,10 +610,27 @@ function Conversation() {
               !completionCheckedRef.current && !hasViewedCompletionModalRef.current) {
               completionCheckedRef.current = true;
               
-              // Fetch scenario review from backend for personalized AI feedback
-              const fetchReviewAndShowModal = async () => {
+              // Fetch scenario review for personalized AI feedback, THEN open the
+              // completion modal — but only once the AI commentary is actually
+              // available. The old code opened the modal on a fixed 1s timer,
+              // which fired well before the backend's scenario_review WS event
+              // (two serial ~20s LLM calls), so the report showed an empty
+              // 「详细反馈」. Now: if the REST review is ready we open immediately;
+              // otherwise we mark the open as pending and let the WS
+              // scenario_review handler (which sets scenarioReviewData) trigger
+              // the open via the effect below. A hard timeout still opens the
+              // modal so the user is never stuck waiting if the review never lands.
+              const clearMagicProgress = () => {
                   try {
-                      const review = await userAPI.getScenarioReview(currentScenarioTitle);
+                      const sc = new URLSearchParams(window.location.search).get('scenario') || '';
+                      if (sc) localStorage.removeItem(_lsScenarioKey('magic_passed_', sc));
+                      if (sc) localStorage.removeItem(_lsScenarioKey('magic_sentence_', sc));
+                  } catch {}
+              };
+              const fetchReviewAndShowModal = async () => {
+                  let review = null;
+                  try {
+                      review = await userAPI.getScenarioReview(currentScenarioTitle);
                       if (review) {
                           console.log('📊 Fetched scenario review:', review);
                           setScenarioReviewData(review);
@@ -619,15 +638,22 @@ function Conversation() {
                   } catch (error) {
                       console.error('Failed to fetch scenario review:', error);
                   } finally {
-                      // Show modal after 1 second delay; clear magic progress for this scenario
-                      setTimeout(() => {
+                      clearMagicProgress();
+                      if (review) {
+                          // REST already has the commentary — open right away.
                           setShowCompletionModal(true);
-                          try {
-                              const sc = new URLSearchParams(window.location.search).get('scenario') || '';
-                              if (sc) localStorage.removeItem(_lsScenarioKey('magic_passed_', sc));
-                              if (sc) localStorage.removeItem(_lsScenarioKey('magic_sentence_', sc));
-                          } catch {}
-                      }, 1000);
+                      } else {
+                          // Wait for the WS scenario_review to deliver commentary;
+                          // the effect watching scenarioReviewData opens the modal.
+                          pendingCompletionModalRef.current = true;
+                          // Hard fallback: open anyway after 25s so we never hang.
+                          completionFallbackTimerRef.current = setTimeout(() => {
+                              if (pendingCompletionModalRef.current) {
+                                  pendingCompletionModalRef.current = false;
+                                  setShowCompletionModal(true);
+                              }
+                          }, 25000);
+                      }
                   }
               };
               fetchReviewAndShowModal();
@@ -659,6 +685,24 @@ function Conversation() {
     }, 9000);
     return () => clearInterval(timer);
   }, [currentPhase, magicCardState]);
+
+  // 当 scenario_review（WS）迟到送达 AI 点评时，若完成弹窗在等待中则立即打开，
+  // 并清掉硬超时兜底。这样报告打开时「详细反馈」已有内容，不再空标题。
+  useEffect(() => {
+    if (scenarioReviewData && pendingCompletionModalRef.current) {
+      pendingCompletionModalRef.current = false;
+      if (completionFallbackTimerRef.current) {
+        clearTimeout(completionFallbackTimerRef.current);
+        completionFallbackTimerRef.current = null;
+      }
+      setShowCompletionModal(true);
+    }
+  }, [scenarioReviewData]);
+
+  // 卸载时清理兜底定时器
+  useEffect(() => () => {
+    if (completionFallbackTimerRef.current) clearTimeout(completionFallbackTimerRef.current);
+  }, []);
 
   // 监听 showCompletionModal，当显示时增加每日场景计数
   useEffect(() => {

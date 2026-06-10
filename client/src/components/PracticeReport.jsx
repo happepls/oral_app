@@ -437,13 +437,17 @@ export function PracticeReport({
           ))}
         </div>
 
-        {/* ── Feedback Cards ── */}
-        <h2 className="text-base font-bold text-slate-900 dark:text-white mb-3">详细反馈</h2>
-        <div className="space-y-3 mb-5">
-          <FeedbackCard type="good" items={strengths} />
-          <FeedbackCard type="improve" items={improveItems} />
-          {vocabItems.length > 0 && <FeedbackCard type="vocab" items={vocabItems} />}
-        </div>
+        {/* ── Feedback Cards ── 三项全空时整块隐藏，避免空标题冗余 */}
+        {(strengths.length > 0 || improveItems.length > 0 || vocabItems.length > 0) && (
+          <>
+            <h2 className="text-base font-bold text-slate-900 dark:text-white mb-3">详细反馈</h2>
+            <div className="space-y-3 mb-5">
+              {strengths.length > 0 && <FeedbackCard type="good" items={strengths} />}
+              {improveItems.length > 0 && <FeedbackCard type="improve" items={improveItems} />}
+              {vocabItems.length > 0 && <FeedbackCard type="vocab" items={vocabItems} />}
+            </div>
+          </>
+        )}
 
         {/* ── Conversation Timeline ── */}
         {messages.length > 0 && (

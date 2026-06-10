@@ -32,12 +32,12 @@
 - ✅ **已修复并验证**：`Conversation.js` 标题加 `isDailyQAMode ? '今日问答' : ...` 分支 + 隐藏无意义进度点。Chrome 实测显「今日问答」。
 - **问题2**：/conversation?mode=daily_qa 页面 中的问题固化，存在重复问题，需根据用户目标个性化设计。
 - **影响**：每天打开都是同样的问题重复出现次。
-- 🚧 **第二批 M 进行中**：`_generate_daily_question_pool` prompt 注入 goal/interests + Redis 历史去重。
+- ✅ **已修复（第二批 M）**：`_generate_daily_question_pool` 新增 goal_type/interests/goal_description 参数注入 prompt 个性化；新增 Redis `daily_qa_history:{uid}`（近 20 题，30d TTL）跨天去重——生成时 prompt 附「avoid these recent」+ 返回 pool 文本去重 + 记录已出题。3 个 call site + `_advance_daily_qa_pool` 全部透传 goal ctx。fail-open（redis 异常返回空/静默）。容器 smoke 通过。
 
 ## 个人详情页问题描述
 - **问题**：/stripe页面订阅成功后 自动跳转至/profile页面，但页面加载不成功需要手动刷新才能正常显示。
 - **影响**：触发对话门限升级后无法回到当前会话。
-- 🚧 **第二批 M 进行中**：整页重定向后 AuthContext 重 init `loading` 卡 true + webhook 异步未到。改 refreshProfile 轮询 + loading 解耦 user。
+- ✅ **已修复（第二批 M 保底）**：(1) Profile.js fetchAll 把 `setLoading(false)` 移入 `finally`——无论 abort 与否总执行，根治整页重定向后 loading 卡 true 白屏。(2) Subscription.js 成功 effect 改 refreshProfile 轮询（≤5 次/1.5s）直到 `subscription_status==='active'` 再 navigate，等 webhook 落库。(3) AuthContext.refreshProfile 返回 userData 供轮询读状态。Chrome 实测 Profile 正常加载。
 - **问题2**："意见反馈"的提交有效，但开发者和后台管理无法查看，缺少用开发者账号登录的维护看版。POST /api/users/feedback HTTP/1.1" 200 173 "http://localhost:3000/profile"
 - **影响**： 用户虽然成功得提交了请求，但app开发者不知道去哪里看用户反馈的意见。
 - ⏸️ **Defer**：反馈已入 `user_feedback` 表但无读 API、无 admin 角色。推荐最小方案 SQL/CLI 查询文档（S），待后续。
@@ -54,7 +54,7 @@
 - ✅ **已修复并验证**：CC 浮层顶部加「子任务 X/3」+ 进度条（复用 `currentTaskProgress`/`theaterCompletedTasks`）。Chrome 实测显「子任务 1/3」。
 - **问题4**：/conversation 场景练习的3个子任务全部完成后（未使用通关口令），弹出的练习报告中缺少AI点评。
 - **影响**：用户无法查看AI对当前任务的文字点评，无法评估自己的学习效果，详细反馈标题显得很"多余"。
-- 🚧 **第二批 M 进行中**：弹窗固定 1s 早于 scenario_review 双 LLM；`_save_review_to_db` 是空操作 REST 恒 null。方案 A 空则隐标题 + C 等数据 loading 态。
+- ✅ **已修复（第二批 M，A+C）**：(C) Conversation.js 完成弹窗不再固定 1s 触发——REST review 有则立即开；无则标记 pending，由 scenario_review WS 事件（setScenarioReviewData）经新 effect 触发打开，并加 25s 硬超时兜底防卡。(A) PracticeReport.jsx「详细反馈」h2 在 strengths/improveItems/vocabItems 全空时整块隐藏，消除空标题冗余。前端 build 通过。
 - **问题5**：/conversation 当日练满3个场景后提示明天继续但没有触发对话门限。
 - **影响**：用户当日可以无限制练习，不会因为练满3个场景而被限制。
 - ✅ **已修复（软提示决策）**：3-场景为纯前端 localStorage 软门，banner 改鼓励语 +移除录音 disable；真正硬护栏由后端 `daily_limit_reached`（已有，免费 15/付费 150 轮）负责。
@@ -83,6 +83,8 @@
 ### 总结
 
 2026年6月9日实测，9类问题。2026年6月10日修复进展：
-- ✅ **已修复并验证（11）**：登录-1、复述-1、复述-2、问答-1、个人详情(订阅空白除外)、场景-1、场景-2、场景-3、场景-5、场景-6、发现页-1、Landing-1
-- 🚧 **第二批 M 进行中（3）**：问答-2、个人详情页-问题1（订阅成功空白）、场景-4
+- ✅ **第一批已修复并验证（11）**：登录-1、复述-1、复述-2、问答-1、场景-1、场景-2、场景-3、场景-5、场景-6、发现页-1、Landing-1
+- ✅ **第二批 M 已修复（3）**：问答-2（题目个性化+跨天去重）、个人详情页-问题1（订阅成功空白·保底修复）、场景-4（报告 AI 点评·A+C）
 - ⏸️ **Defer L（5）**：登录-2（多登录方式）、密码重置、个人详情页-问题2（反馈后台）、订阅-1（Stripe Portal 运维）、Landing-2（客服 widget）
+
+> 第二批验证说明：场景-4（需走完 3 子任务真实对话）、问答-2（跨天去重需多日观察）、Profile-1（需真实 Stripe 订阅复现）—— 三项均为时序/多日/外部依赖场景，难即时可视复现，已通过代码核验 + 后端容器 smoke + Profile 正常加载冒烟确认。

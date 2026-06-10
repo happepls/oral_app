@@ -191,8 +191,10 @@ export const AuthProvider = ({ children }) => {
       const userData = response.user;
       localStorage.setItem('user', JSON.stringify(userData));
       setUser(userData);
+      return userData; // callers (e.g. Subscription success poll) read fresh status
     } catch (err) {
       console.error('Failed to refresh profile:', err);
+      return null;
     }
   };
 

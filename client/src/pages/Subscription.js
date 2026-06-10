@@ -68,13 +68,32 @@ function Subscription() {
   const [promoApplied, setPromoApplied] = useState(null);
 
   useEffect(() => {
-    if (searchParams.get('session_id')) {
-      setShowSuccess(true);
-      if (refreshProfile) refreshProfile();
-      setTimeout(() => {
+    if (!searchParams.get('session_id')) return;
+    setShowSuccess(true);
+    // After Stripe redirects back, the subscription_status is written by an
+    // async webhook that often hasn't landed yet. Poll refreshProfile a few
+    // times so the user object is `active` (and AuthContext fully re-ready)
+    // before we navigate to /profile — otherwise Profile renders before the
+    // user is hydrated and can sit blank until a manual refresh.
+    let cancelled = false;
+    let tries = 0;
+    const MAX_TRIES = 5;
+    const tick = async () => {
+      tries += 1;
+      let updated = null;
+      try {
+        updated = refreshProfile ? await refreshProfile() : null;
+      } catch { /* keep polling */ }
+      if (cancelled) return;
+      const active = updated?.subscription_status === 'active';
+      if (active || tries >= MAX_TRIES) {
         navigate('/profile');
-      }, 3000);
-    }
+      } else {
+        setTimeout(tick, 1500);
+      }
+    };
+    tick();
+    return () => { cancelled = true; };
   }, [searchParams, navigate, refreshProfile]);
 
   useEffect(() => {

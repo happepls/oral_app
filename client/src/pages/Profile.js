@@ -78,23 +78,32 @@ function Profile() {
     const { signal } = controller;
     const fetchAll = async () => {
       if (!user?.id) { setLoading(false); return; }
-      await Promise.allSettled([
-        historyAPI.getStats(user.id).then(d => {
-          if (signal.aborted) return;
-          const total = d?.totalSessions || 0;
-          const hours = (total * 15 / 60).toFixed(1);
-          setStats({
-            sessions: `${total} 次`,
-            practiceTime: `${hours} 小时`,
-            totalSessions: total
-          });
-        }),
-        userAPI.getCheckinStats().then(d => { if (!signal.aborted) setCheckinStats(d); }).catch(() => {}),
-        userAPI.getCheckinHistory(30).then(d => { if (!signal.aborted) setCheckinHistory(Array.isArray(d) ? d : []); }).catch(() => {}),
-        userAPI.getActiveGoal().then(d => { if (!signal.aborted) setActiveGoal(d?.goal || d); }).catch(() => {}),
-        userAPI.getSubscription().then(d => { if (!signal.aborted) setSubscription(d); }).catch(() => {})
-      ]);
-      if (!signal.aborted) setLoading(false);
+      try {
+        await Promise.allSettled([
+          historyAPI.getStats(user.id).then(d => {
+            if (signal.aborted) return;
+            const total = d?.totalSessions || 0;
+            const hours = (total * 15 / 60).toFixed(1);
+            setStats({
+              sessions: `${total} 次`,
+              practiceTime: `${hours} 小时`,
+              totalSessions: total
+            });
+          }),
+          userAPI.getCheckinStats().then(d => { if (!signal.aborted) setCheckinStats(d); }).catch(() => {}),
+          userAPI.getCheckinHistory(30).then(d => { if (!signal.aborted) setCheckinHistory(Array.isArray(d) ? d : []); }).catch(() => {}),
+          userAPI.getActiveGoal().then(d => { if (!signal.aborted) setActiveGoal(d?.goal || d); }).catch(() => {}),
+          userAPI.getSubscription().then(d => { if (!signal.aborted) setSubscription(d); }).catch(() => {})
+        ]);
+      } finally {
+        // ALWAYS clear loading — even if this run was aborted (a newer run, or
+        // the cleanup, fired). Leaving loading=true here was the root cause of
+        // the post-Stripe-redirect blank page: the full-page redirect re-inits
+        // AuthContext, `user` goes null→populated, this effect re-runs and the
+        // earlier run aborted mid-flight, so `setLoading(false)` was skipped and
+        // the page sat on the spinner until a manual refresh.
+        setLoading(false);
+      }
     };
     fetchAll();
     return () => controller.abort();

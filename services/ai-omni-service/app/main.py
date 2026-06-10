@@ -562,6 +562,8 @@ _DAILY_QA_PASSED_RE = re.compile(r"\[DAILY_QA_PASSED\]", re.IGNORECASE)
 _DAILY_QA_TTL_SECONDS = 48 * 3600  # 48h matches test expectation
 _DAILY_QA_POOL_TTL_SECONDS = 30 * 24 * 3600  # 30d per design
 _DAILY_QA_POOL_CAP = 10
+_DAILY_QA_HISTORY_CAP = 20          # how many recently-seen questions to remember per user
+_DAILY_QA_HISTORY_TTL_SECONDS = 30 * 24 * 3600  # 30d — recent-question memory for cross-day dedup
 
 _DAILY_QA_FALLBACK = {
     "English": [
@@ -890,17 +892,54 @@ def _parse_daily_qa_pool_text(text: str) -> list:
     return out
 
 
-async def _generate_daily_question_pool(target_language: str, native_language: str, count: int = 10) -> list:
+async def _generate_daily_question_pool(target_language: str, native_language: str, count: int = 10,
+                                        goal_type: str = "", interests: str = "",
+                                        goal_description: str = "", avoid_questions: list = None) -> list:
     """Call qwen-turbo to generate a pool of daily practice questions with reference answers.
 
     Single-call generation: questions in target_language + reference answers in native_language
     are produced together in one JSON payload. On any error falls back to _DAILY_QA_FALLBACK_POOL.
+
+    Personalization: the learner's goal_type / interests / goal_description are woven into the
+    prompt so questions are tailored, not generic. ``avoid_questions`` (recent history) is passed
+    so the LLM does not repeat questions the user has already seen on previous days.
     """
     count = max(1, min(int(count or 10), _DAILY_QA_POOL_CAP))
+    goal_type = (goal_type or "").strip()[:60]
+    interests = (interests or "").strip()[:200]
+    goal_description = (goal_description or "").strip()[:200]
+
+    # Personalization block — only include lines we actually have.
+    personal_lines = []
+    if goal_type:
+        personal_lines.append(f"- Learning goal: {goal_type}")
+    if goal_description:
+        personal_lines.append(f"- Goal detail: {goal_description}")
+    if interests:
+        personal_lines.append(f"- Interests: {interests}")
+    personal_block = ""
+    if personal_lines:
+        personal_block = (
+            "Tailor the questions to THIS learner's profile — prefer topics tied to their "
+            "goal and interests over generic small talk:\n" + "\n".join(personal_lines) + "\n\n"
+        )
+
+    # Avoid-list block — keep it bounded so the prompt doesn't balloon.
+    avoid_block = ""
+    avoid_questions = [q for q in (avoid_questions or []) if q][:_DAILY_QA_HISTORY_CAP]
+    if avoid_questions:
+        joined = "\n".join(f"- {q}" for q in avoid_questions)
+        avoid_block = (
+            "Do NOT repeat or closely paraphrase any of these questions the learner has "
+            f"already seen recently — produce fresh, different ones:\n{joined}\n\n"
+        )
+
     prompt = (
         f"Generate exactly {count} short, friendly daily speaking-practice questions "
         f"for a learner practising {target_language}. Each question must be answerable "
         f"in 2-4 sentences and touch everyday life (food, hobbies, goals, feelings).\n\n"
+        f"{personal_block}"
+        f"{avoid_block}"
         f"For EACH question, also provide a short sample answer (2-3 sentences) written "
         f"ENTIRELY in {native_language}. The answer must be in {native_language} only — "
         f"do not mix in {target_language}.\n\n"
@@ -955,8 +994,64 @@ def _lang_cache_slug(target_language: str) -> str:
     return (target_language or "english").strip().lower().replace(" ", "_") or "english"
 
 
+def _extract_goal_qa_ctx(user_context: dict) -> tuple:
+    """Pull (goal_type, interests, goal_description) from active_goal for daily-QA personalization."""
+    ag = (user_context or {}).get("active_goal") or {}
+    goal_type = ag.get("type") or ag.get("goal_type") or ""
+    interests = ag.get("interests") or ""
+    goal_description = ag.get("description") or ag.get("goal_description") or ""
+    return goal_type, interests, goal_description
+
+
+async def _get_daily_qa_history(redis, user_id: str) -> list:
+    """Recently-seen daily-QA question texts for this user (cross-day dedup memory).
+
+    Stored as a Redis list ``daily_qa_history:{user_id}`` (newest at head). Fail-open:
+    any Redis hiccup returns [] so question generation is never blocked.
+    """
+    if redis is None or not user_id:
+        return []
+    try:
+        key = f"daily_qa_history:{user_id}"
+        items = await redis.lrange(key, 0, _DAILY_QA_HISTORY_CAP - 1)
+        out = []
+        for it in (items or []):
+            s = it.decode("utf-8") if isinstance(it, (bytes, bytearray)) else str(it)
+            if s:
+                out.append(s)
+        return out
+    except Exception as e:
+        logger.warning(f"[DAILY_QA] history read fail-open: {e}")
+        return []
+
+
+async def _add_daily_qa_history(redis, user_id: str, question_texts) -> None:
+    """Record newly-surfaced question texts so they aren't repeated on later days.
+
+    Pushes to the head, trims to ``_DAILY_QA_HISTORY_CAP``, refreshes TTL. Fail-open.
+    """
+    if redis is None or not user_id:
+        return
+    if isinstance(question_texts, str):
+        question_texts = [question_texts]
+    texts = [q for q in (question_texts or []) if q]
+    if not texts:
+        return
+    try:
+        key = f"daily_qa_history:{user_id}"
+        # newest first; lpush in reverse so list order is newest→oldest
+        for q in reversed(texts):
+            await redis.lpush(key, q)
+        await redis.ltrim(key, 0, _DAILY_QA_HISTORY_CAP - 1)
+        await redis.expire(key, _DAILY_QA_HISTORY_TTL_SECONDS)
+    except Exception as e:
+        logger.warning(f"[DAILY_QA] history write fail-open: {e}")
+
+
 async def handle_daily_question(redis, user_id: str, target_language: str = "English",
-                                native_language: str = "Chinese") -> dict:
+                                native_language: str = "Chinese",
+                                goal_type: str = "", interests: str = "",
+                                goal_description: str = "") -> dict:
     """Return today's daily question for the user, hitting Redis cache first.
 
     Redis keys:
@@ -1011,16 +1106,31 @@ async def handle_daily_question(redis, user_id: str, target_language: str = "Eng
                 "passed": passed,
             }
 
-    # Miss — generate a pool, take the first question, cache pool+index+picked (new shape)
-    pool = await _generate_daily_question_pool(target_language, native_language, count=_DAILY_QA_POOL_CAP)
+    # Miss — generate a personalized pool, avoiding recently-seen questions, take the
+    # first question, cache pool+index+picked (new shape), and record into history.
+    recent = await _get_daily_qa_history(redis, user_id)
+    pool = await _generate_daily_question_pool(
+        target_language, native_language, count=_DAILY_QA_POOL_CAP,
+        goal_type=goal_type, interests=interests, goal_description=goal_description,
+        avoid_questions=recent,
+    )
     if not pool:
         pool = _fallback_by_language(target_language)
+    # Belt-and-suspenders dedup: drop any pool item whose text matches recent history
+    # (case/space-insensitive) in case the LLM ignored the avoid-list.
+    if recent:
+        _recent_norm = {(_q or "").strip().lower() for _q in recent}
+        deduped = [q for q in pool if (q.get("question_text", "").strip().lower()) not in _recent_norm]
+        if deduped:
+            pool = deduped
     picked = pool[0]
     payload = {"pool": pool, "index": 0, "picked": picked}
     try:
         await redis.setex(cache_key, _DAILY_QA_TTL_SECONDS, json.dumps(payload, ensure_ascii=False))
     except Exception as e:
         logger.warning(f"[DAILY_QA] failed to cache question: {e}")
+    # Remember the question we just surfaced so future days don't repeat it.
+    await _add_daily_qa_history(redis, user_id, picked.get("question_text", ""))
 
     return {
         "question_text": picked.get("question_text", ""),
@@ -1153,7 +1263,9 @@ async def _handle_daily_qa_marker(redis, user_id: str, websocket, ai_text: str) 
 
 
 async def _advance_daily_qa_pool(redis, user_id: str, date_str: str, *,
-                                 target_language: str, native_language: str) -> dict:
+                                 target_language: str, native_language: str,
+                                 goal_type: str = "", interests: str = "",
+                                 goal_description: str = "") -> dict:
     """Advance the user's daily-QA pool index and return the new picked question.
 
     Handles both new-shape (`{pool, index, picked}`) and legacy-shape cache values.
@@ -1193,7 +1305,12 @@ async def _advance_daily_qa_pool(redis, user_id: str, date_str: str, *,
     # Regenerate if pool is empty or has <=1 item (no real alternative to rotate to)
     if len(pool) <= 1:
         try:
-            fresh = await _generate_daily_question_pool(target_language, native_language, count=_DAILY_QA_POOL_CAP)
+            _recent = await _get_daily_qa_history(redis, user_id)
+            fresh = await _generate_daily_question_pool(
+                target_language, native_language, count=_DAILY_QA_POOL_CAP,
+                goal_type=goal_type, interests=interests, goal_description=goal_description,
+                avoid_questions=_recent,
+            )
         except Exception as e:
             logger.warning(f"[DAILY_QA] advance: pool regeneration failed: {e}")
             fresh = []
@@ -1214,6 +1331,9 @@ async def _advance_daily_qa_pool(redis, user_id: str, date_str: str, *,
         await redis.setex(cache_key, _DAILY_QA_TTL_SECONDS, json.dumps(payload, ensure_ascii=False))
     except Exception as e:
         logger.warning(f"[DAILY_QA] advance: write cache failed: {e}")
+
+    # Remember the newly-surfaced question so future days/advances don't repeat it.
+    await _add_daily_qa_history(redis, user_id, picked.get("question_text", ""))
 
     logger.info(f"[DAILY_QA] advanced pool for user={user_id}: index {index} → {new_index} (pool_size={len(pool)})")
     return picked
@@ -2719,8 +2839,10 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query(None), ses
         _qa_payload = None
         if _rc is not None:
             try:
+                _gt, _int, _gd = _extract_goal_qa_ctx(user_context)
                 _qa_payload = await handle_daily_question(
                     _rc, user_id, target_language=target_language, native_language=native_language,
+                    goal_type=_gt, interests=_int, goal_description=_gd,
                 )
             except Exception as _qe:
                 logger.warning(f"[DAILY_QA] handle_daily_question failed: {_qe}")
@@ -3242,10 +3364,12 @@ async def daily_question_endpoint(request: _FastAPIRequest):
         }
 
     try:
+        _gt, _int, _gd = _extract_goal_qa_ctx(user_ctx)
         payload = await handle_daily_question(
             redis_client, user_id,
             target_language=target_language,
             native_language=native_language,
+            goal_type=_gt, interests=_int, goal_description=_gd,
         )
     except Exception as e:
         logger.error(f"[DAILY_QA] /daily-question handler error: {e}")
@@ -3285,10 +3409,12 @@ async def daily_question_re_answer(request: _FastAPIRequest):
     # Keep passed key — extra practice should not re-trigger pass ceremony
 
     try:
+        _gt, _int, _gd = _extract_goal_qa_ctx(user_ctx)
         payload = await handle_daily_question(
             redis_client, user_id,
             target_language=target_language,
             native_language=native_language,
+            goal_type=_gt, interests=_int, goal_description=_gd,
         )
     except Exception as e:
         logger.error(f"[DAILY_QA] re-answer: handle_daily_question error: {e}")
@@ -3333,10 +3459,12 @@ async def daily_question_change_question(request: _FastAPIRequest):
         logger.warning(f"[DAILY_QA] change-question: delete passed key failed: {e}")
 
     try:
+        _gt, _int, _gd = _extract_goal_qa_ctx(user_ctx)
         picked = await _advance_daily_qa_pool(
             redis_client, user_id, date_str,
             target_language=target_language,
             native_language=native_language,
+            goal_type=_gt, interests=_int, goal_description=_gd,
         )
     except Exception as e:
         logger.error(f"[DAILY_QA] change-question: advance failed: {e}")
