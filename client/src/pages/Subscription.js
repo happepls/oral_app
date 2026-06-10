@@ -66,6 +66,8 @@ function Subscription() {
   const [promoCode, setPromoCode] = useState('');
   const [promoError, setPromoError] = useState('');
   const [promoApplied, setPromoApplied] = useState(null);
+  const [portalError, setPortalError] = useState('');
+  const [portalLoading, setPortalLoading] = useState(false);
 
   useEffect(() => {
     if (!searchParams.get('session_id')) return;
@@ -206,22 +208,35 @@ function Subscription() {
   };
 
   const handleManageSubscription = async () => {
+    setPortalError('');
+    setPortalLoading(true);
     try {
       const res = await fetch(`${API_BASE}/stripe/portal`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include'
       });
-      const data = await res.json();
-      if (data.url) {
+      let data = {};
+      try { data = await res.json(); } catch { /* non-JSON (e.g. 502 HTML) */ }
+      if (res.ok && data.url) {
         if (isAllowedRedirect(data.url)) {
           window.location.href = data.url;
-        } else {
-          console.error('Refused portal redirect to disallowed URL:', data.url);
+          return;
         }
+        console.error('Refused portal redirect to disallowed URL:', data.url);
+        setPortalError('订阅管理页地址异常，请稍后再试或联系客服。');
+      } else if (res.status === 400 && /no stripe customer/i.test(data.error || '')) {
+        // active 状态但无 Stripe 客户（如测试号或历史数据）——没有可管理的真实订阅
+        setPortalError('未找到可管理的 Stripe 订阅记录。若你是通过支付订阅的，请联系客服处理。');
+      } else {
+        // 500 / 502 / Stripe Portal 未在 Dashboard 启用等
+        setPortalError('暂时无法打开订阅管理页，请稍后再试。如持续失败请联系客服。');
       }
     } catch (error) {
       console.error('Error opening portal:', error);
+      setPortalError('网络异常，无法打开订阅管理页，请稍后再试。');
+    } finally {
+      setPortalLoading(false);
     }
   };
 
@@ -296,11 +311,15 @@ function Subscription() {
             </div>
             <button
               onClick={handleManageSubscription}
-              className="px-4 py-2 text-sm font-medium text-indigo-600 border border-indigo-300 rounded-lg hover:bg-indigo-50 dark:hover:bg-indigo-900/30"
+              disabled={portalLoading}
+              className="px-4 py-2 text-sm font-medium text-indigo-600 border border-indigo-300 rounded-lg hover:bg-indigo-50 dark:hover:bg-indigo-900/30 disabled:opacity-50"
             >
-              管理订阅
+              {portalLoading ? '打开中…' : '管理订阅'}
             </button>
           </div>
+          {portalError && (
+            <p className="mt-3 text-sm text-red-600 dark:text-red-400">{portalError}</p>
+          )}
         </div>
       )}
 

@@ -1,4 +1,20 @@
 require('dotenv').config();
+
+// ── Last-resort crash guards ──────────────────────────────────────────────
+// A transient Redis blip (ioredis emits "Error: Connection is closed." when a
+// connection drops) was taking down the ENTIRE user-service process, returning
+// 502 for every /api/users/* and /api/stripe/* request until a manual restart.
+// These handlers keep the API alive through infrastructure hiccups: log the
+// error instead of letting Node exit. This is a safety net — individual Redis
+// clients still attach their own 'error' handlers; this only catches anything
+// that slips through (e.g. rejections from in-flight commands flushed on close).
+process.on('unhandledRejection', (reason) => {
+  console.error('[user-service] UNHANDLED REJECTION (kept alive):', reason && reason.message ? reason.message : reason);
+});
+process.on('uncaughtException', (err) => {
+  console.error('[user-service] UNCAUGHT EXCEPTION (kept alive):', err && err.message ? err.message : err);
+});
+
 const express = require('express');
 const cookieParser = require('cookie-parser');
 const app = express();

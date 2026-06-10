@@ -70,7 +70,8 @@
 ## 订阅问题描述
 - **问题1**：/subscription 页点击 "管理订阅"按钮点击无效， POST /api/stripe/webhook POST /api/stripe/portal 请求失败。
 - **影响**：用户无法取消订阅。
-- ⏸️ **Defer（主因运维）**：根因是 Stripe Dashboard 未激活 Customer Portal → `billingPortal.sessions.create` 抛错；纯代码改不了核心，需 Dashboard 激活 + env 加生产 origin + 前端透传错误。
+- ✅ **已修复并验证（真实 test 订阅全链路 E2E，Jun 10）**：根因有三层——(1) **致命**：`user-service` 因 ioredis `Connection is closed.` 未捕获异常 **crash 整进程** → 所有 `/api/users/*` + `/api/stripe/*` 返 502（含 portal）。修复：`sseRoutes.js` 的 SSE subscriber 加 `error` handler + cleanup 守卫；`index.js` 加全局 `uncaughtException`/`unhandledRejection` 兜底防线。(2) 前端 portal 失败静默吞错 → 体感「点击无效」。修复：`Subscription.js` portal 失败显具体错误提示（区分 400 无客户 / 500-502 / 网络）+ loading 态。(3) Stripe Dashboard 需激活 Customer Portal（运维，已由用户在 test mode 激活 `bpc_...`）。**验证**：test1 真实 checkout（$99 年订 4242 付款）→ webhook 写 active+customer_id → 管理订阅成功跳 `billing.stripe.com` Portal → 取消成功（cancel_at_period_end 2027-06-10）→ webhook 200 → DB 一致 → user-service 全程无 crash。
+- ⏸️ **生产上线前运维项**：(1) `.env` 切 `sk_live_`/`pk_live_` + `STRIPE_ALLOWED_ORIGINS=https://guajiguaji.top` 后 `docker compose up -d user-service`（recreate 才重读 env）。(2) Stripe Dashboard 建 **live** webhook endpoint（`https://guajiguaji.top/api/stripe/webhook`）拿 live `whsec_` 写 .env。(3) Dashboard 激活 **live** Customer Portal（test 已激活，live 需单独再激活一次）。
 
 ## landing页(https://guajiguaji.top/)问题描述
 - **问题1**：主页上显示的当前套餐价格与 实际不一致。
@@ -85,6 +86,7 @@
 2026年6月9日实测，9类问题。2026年6月10日修复进展：
 - ✅ **第一批已修复并验证（11）**：登录-1、复述-1、复述-2、问答-1、场景-1、场景-2、场景-3、场景-5、场景-6、发现页-1、Landing-1
 - ✅ **第二批 M 已修复（3）**：问答-2（题目个性化+跨天去重）、个人详情页-问题1（订阅成功空白·保底修复）、场景-4（报告 AI 点评·A+C）
-- ⏸️ **Defer L（5）**：登录-2（多登录方式）、密码重置、个人详情页-问题2（反馈后台）、订阅-1（Stripe Portal 运维）、Landing-2（客服 widget）
+- ✅ **订阅-1 已修复并验证**：user-service crash 根治 + portal 错误提示 + 真实 test 订阅/取消全链路 E2E 通过（顺带修订阅区「免费版/Pro」矛盾）
+- ⏸️ **Defer L（4）**：登录-2（多登录方式）、密码重置、个人详情页-问题2（反馈后台）、Landing-2（客服 widget）
 
 > 第二批验证说明：场景-4（需走完 3 子任务真实对话）、问答-2（跨天去重需多日观察）、Profile-1（需真实 Stripe 订阅复现）—— 三项均为时序/多日/外部依赖场景，难即时可视复现，已通过代码核验 + 后端容器 smoke + Profile 正常加载冒烟确认。

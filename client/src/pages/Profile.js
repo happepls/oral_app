@@ -332,19 +332,22 @@ function Profile() {
         <div className="px-4 pt-4 pb-4">
           <h2 className="text-base font-bold text-slate-900 dark:text-white pb-3">💎 我的订阅</h2>
           <div className="bg-white dark:bg-slate-800 rounded-2xl p-4 shadow-brand border border-slate-100 dark:border-slate-700">
-            {(subscription?.status === 'active' && subscription?.subscription) ? (
+            {/* Pro 判定以 user.subscription_status 为权威，与顶部「会员已激活」banner 一致，
+                避免 getSubscription() soft-fail / 形状不符时这里误显「免费版」造成前后矛盾。
+                subscription 详情（套餐名/到期日）若拿到则展示，拿不到回退通用文案。 */}
+            {(user?.subscription_status === 'active' || subscription?.status === 'active') ? (
               <div className="flex items-center justify-between">
                 <div>
                   <div className="flex items-center gap-2">
                     <Crown className="w-4 h-4 text-amber-500" />
                     <p className="text-base font-semibold text-slate-900 dark:text-white">
-                      {subscription.subscription?.items?.data?.[0]?.price?.nickname
-                        || subscription.subscription?.plan?.nickname
+                      {subscription?.subscription?.items?.data?.[0]?.price?.nickname
+                        || subscription?.subscription?.plan?.nickname
                         || 'Pro 会员'}
                     </p>
                   </div>
-                  {(subscription.subscription?.items?.data?.[0]?.current_period_end
-                    || subscription.subscription?.current_period_end) && (
+                  {(subscription?.subscription?.items?.data?.[0]?.current_period_end
+                    || subscription?.subscription?.current_period_end) && (
                     <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
                       到期日：{new Date((subscription.subscription?.items?.data?.[0]?.current_period_end
                         || subscription.subscription.current_period_end) * 1000).toLocaleDateString('zh-CN')}
