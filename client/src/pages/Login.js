@@ -58,8 +58,14 @@ function Login() {
 
   const handleSendCode = async () => {
     setError('');
-    if (!/^\+[1-9]\d{1,14}$/.test(phone.trim())) {
+    const trimmed = phone.trim();
+    if (!/^\+[1-9]\d{1,14}$/.test(trimmed)) {
       setError(t('phone_invalid'));
+      return;
+    }
+    // 中国大陆 +86 号码 Twilio 不支持（监管限制，error 60220）→ 前置拦截，引导其他方式
+    if (/^\+86/.test(trimmed)) {
+      setError(t('phone_cn_unsupported'));
       return;
     }
     setSending(true);
