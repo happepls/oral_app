@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
+import SupportChat from '../components/SupportChat';
 
 // Aligns with services/api.js: env var (or default) already includes the `/api`
 // prefix. Append only the resource path here — never re-prepend `/api/`, that
@@ -268,8 +269,9 @@ function Subscription() {
 
   return (
     <div className="min-h-screen pb-24" style={{ background: 'var(--background)' }}>
+      <SupportChat />
       <div className="px-4 pt-6 pb-4">
-        <button 
+        <button
           onClick={() => navigate(-1)}
           className="flex items-center text-slate-600 dark:text-slate-400 mb-4"
         >

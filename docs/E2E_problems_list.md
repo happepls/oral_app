@@ -9,13 +9,22 @@
 - ✅ **已修复并验证**：`AuthContext.login` catch 识别凭证错误返回 `code:'invalid_credentials'`，`Login.js` 据 code 显 i18n；9 语言新增 `login_invalid_credentials`。Chrome 实测输错密码 → 显「邮箱或密码不正确，请重新输入」。
 - **问题2**：登录方式单一，只有邮箱和Google账户两种方式
 - **影响**：用户只能使用邮箱或Google账户登录，无法使用其他方式（如手机号、微信、SSO等）登录。
-- ⏸️ **Defer**：非 bug，每种方式需第三方注册+合规+DB account linking（单项 L）。待定目标市场后排期。
+- ✅ **已实现并验证（手机号验证码登录 · Twilio Verify）**：用户选「手机号登录」→ 输入含国家码手机号 → 收 6 位短信验证码 → 登录/注册。
+  - 后端：`utils/twilioVerify.js`（纯 REST + Basic Auth，无 twilio SDK 依赖；未配置 env 时 dev 固定码 000000 fallback）。`POST /api/users/phone/send-code` + `POST /api/users/phone/login`（authRateLimiter，校验码 → `User.findOrCreateByPhone` 建号/登录 → 签 JWT cookie）。`users` 表加 `phone VARCHAR(32) UNIQUE`（init.sql + migrations/add_phone_column.sql）。
+  - 前端：`Login.js` 加「邮箱/手机号」切换 tab + 手机表单（获取验证码 + 60s 倒计时）；`AuthContext.loginWithPhone`；`api.js` sendPhoneCode/phoneLogin；zh/en i18n。
+  - 凭证：`TWILIO_ACCOUNT_SID`/`TWILIO_AUTH_TOKEN`/`TWILIO_VERIFY_SERVICE_SID` 在 `services/user-service/.env`（gitignored）。
+  - 验证：send-code → Twilio 真实返回 success(devMode:false)；错误码 → 401；无效手机格式 → 400；前端 tab/表单 Chrome 实测。完整 login 链路（真码→建号→cookie）逻辑全通，仅差「真实手机收码」人工一步。
+  - 微信/SSO 仍 defer（需企业资质/SAML，当前 C 端无需求）。
 
 ## 密码重置功能问题描述
 - **问题**：/login页面没有密码重置功能
 - **影响**：用户无法找回密码，只能通过联系客服重置密码。
-- ⏸️ **Defer**：仓库无任何邮件基建（无 mailer/SMTP）。需 mailer + token 存储 + 2 端点 + 2 页 + 9 语言（L）。待定发信渠道（Zeabur ZSend / SMTP / Resend）后做。
-
+- ✅ **已实现并验证（Zeabur ZSend 发信）**：/login 加「忘记密码?」→ 输邮箱 → 收重置邮件 → `/reset-password?token=` 设新密码。
+  - 后端：`utils/mailer.js`（ZSend REST 封装，未配置则 fail-safe 返回 not_configured）。`POST /api/users/password/forgot`（防枚举恒 200，token hash 存 Redis `pwreset:` 30min TTL，发邮件）+ `POST /api/users/password/reset`（校验 token → `User.updateLocalPassword` bcrypt 写 `user_identities.provider_uid` → 删 token）。
+  - 前端：`ForgotPassword.js` + `ResetPassword.js` + App.js 路由 + Login「忘记密码」链接 + api.js + zh/en i18n（其余语言 fallback en）。
+  - 凭证：`ZSEND_API_KEY`/`ZSEND_FROM`/`PASSWORD_RESET_BASE_URL` 在 `.env`（gitignored）。
+  - 验证：forgot → token 生成存 Redis；reset → 新密码登录 200；token 一次性（二次用 400）。**全链路逻辑通过**。
+  - ⏸️ **剩运维**：ZSend 发信域名 `guajiguaji.top` 待 DNS 验证（加 3 条 CNAME 后真发邮件；当前 ZSend 返 400 domain not found，走日志 fallback 输出重置链接）。
 
 ## 复述功能问题描述
 - **问题1**：/recall 页面 "按住说话" 按钮冗余，考虑将"跟读练习"与"背诵练习"的音频输入按钮合并为一个。
@@ -40,7 +49,7 @@
 - ✅ **已修复（第二批 M 保底）**：(1) Profile.js fetchAll 把 `setLoading(false)` 移入 `finally`——无论 abort 与否总执行，根治整页重定向后 loading 卡 true 白屏。(2) Subscription.js 成功 effect 改 refreshProfile 轮询（≤5 次/1.5s）直到 `subscription_status==='active'` 再 navigate，等 webhook 落库。(3) AuthContext.refreshProfile 返回 userData 供轮询读状态。Chrome 实测 Profile 正常加载。
 - **问题2**："意见反馈"的提交有效，但开发者和后台管理无法查看，缺少用开发者账号登录的维护看版。POST /api/users/feedback HTTP/1.1" 200 173 "http://localhost:3000/profile"
 - **影响**： 用户虽然成功得提交了请求，但app开发者不知道去哪里看用户反馈的意见。
-- ⏸️ **Defer**：反馈已入 `user_feedback` 表但无读 API、无 admin 角色。推荐最小方案 SQL/CLI 查询文档（S），待后续。
+- ✅ **已实现并验证（SQL/CLI 查询脚本）**：新增 `services/user-service/src/scripts/list-feedback.js` + npm `feedback` 脚本，JOIN users 拉取反馈明细（支持 limit/category/--json）。运维命令：`docker compose exec user-service node src/scripts/list-feedback.js [limit] [category]`。零新攻击面、无需 admin 角色。容器实测拉出 4 条真实反馈（含 bug/功能建议 + 用户 + 邮箱 + 时间）。网页 admin 后台仍 defer（需引入 admin 角色全链路，量大再做）。
 
 ## 场景对话功能问题描述
 - **问题1**：/conversation 页面 用户尝试偏离话题对话成功，AI导师并没有进行相应的约束。
@@ -79,14 +88,23 @@
 - ✅ **已修复并验证**：`Landing.js` 硬编码价 `2.90/89.90` → `4.99/99`，与结账价一致。Chrome 实测周 $4.99 / 年 $99。
 - **问题2**：主页上缺少客服对话悬浮入口，用户无法联系客服咨询，缺少用户与平台的沟通渠道。
 - **影响**：用户无法及时获取客服帮助，导致用户满意度下降。
-- ⏸️ **Defer**：需接第三方 widget（Tawk.to 免费 / Crisp），涉及账号/值守/隐私合规（L）。待决策后做。
+- ✅ **已实现并验证（Tawk.to 客服 widget）**：新增 `components/SupportChat.jsx`（读 `REACT_APP_TAWK_PROPERTY_ID`/`REACT_APP_TAWK_WIDGET_ID` 异步注入 Tawk 脚本，未配置则不渲染），挂在 Landing + Subscription 两页（降低第三方加载面）。ID 配在 `client/.env`（property `6a2a1221...` / widget `1jqq5dkro`）。Chrome 实测 Landing 右下角客服悬浮窗完整加载并展开（「Customer Support」+「Powered by tawk.to」）。
+  - ⏸️ **上线备注**：CSP allowlist 加 `*.tawk.to`；隐私政策声明第三方客服。
 
 ### 总结
 
-2026年6月9日实测，9类问题。2026年6月10日修复进展：
+2026年6月9日实测，9类问题（18 项）。2026年6月10-11日**全部闭环**：
 - ✅ **第一批已修复并验证（11）**：登录-1、复述-1、复述-2、问答-1、场景-1、场景-2、场景-3、场景-5、场景-6、发现页-1、Landing-1
 - ✅ **第二批 M 已修复（3）**：问答-2（题目个性化+跨天去重）、个人详情页-问题1（订阅成功空白·保底修复）、场景-4（报告 AI 点评·A+C）
 - ✅ **订阅-1 已修复并验证**：user-service crash 根治 + portal 错误提示 + 真实 test 订阅/取消全链路 E2E 通过（顺带修订阅区「免费版/Pro」矛盾）
-- ⏸️ **Defer L（4）**：登录-2（多登录方式）、密码重置、个人详情页-问题2（反馈后台）、Landing-2（客服 widget）
+- ✅ **第三批 L 已实现并验证（4）**：登录-2（手机号验证码登录·Twilio Verify）、密码重置（Zeabur ZSend）、个人详情页-问题2（反馈 SQL/CLI 脚本）、Landing-2（Tawk.to 客服 widget）
 
-> 第二批验证说明：场景-4（需走完 3 子任务真实对话）、问答-2（跨天去重需多日观察）、Profile-1（需真实 Stripe 订阅复现）—— 三项均为时序/多日/外部依赖场景，难即时可视复现，已通过代码核验 + 后端容器 smoke + Profile 正常加载冒烟确认。
+**剩余均为运维/外部配置项（非代码）**：
+1. ZSend 发信域名 `guajiguaji.top` 待 DNS 加 3 条 CNAME 验证（验证前密码重置走日志 fallback）
+2. 微信/SSO 登录 defer（企业资质/SAML，C 端暂无需求）
+3. 反馈网页 admin 后台 defer（需 admin 角色全链路，量大再做）
+4. Stripe 上线：切 live key + live webhook endpoint + 激活 live Customer Portal
+5. Tawk.to：CSP allowlist + 隐私政策声明
+
+> 验证方式：Chrome MCP 实测 localhost:5001 + 后端 curl 端到端 + 容器 smoke。涉及外部凭证的（ZSend/Twilio）凭证均存 `.env`（gitignored），代码读 env、缺则 fail-safe。
+

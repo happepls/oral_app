@@ -8,6 +8,8 @@ import Welcome from './pages/Welcome';
 import Landing from './pages/Landing';
 import Login from './pages/Login';
 import Register from './pages/Register';
+import ForgotPassword from './pages/ForgotPassword';
+import ResetPassword from './pages/ResetPassword';
 import Conversation from './pages/Conversation';
 import Recall from './pages/Recall';
 import Discovery from './pages/Discovery';
@@ -30,6 +32,8 @@ const AppRoutes = () => {
             <Route path="/welcome" element={<Welcome />} />
             <Route path="/login" element={<Login />} />
             <Route path="/register" element={<Register />} />
+            <Route path="/forgot-password" element={<ForgotPassword />} />
+            <Route path="/reset-password" element={<ResetPassword />} />
             <Route path="/onboarding" element={<Onboarding />} />
             <Route path="/goal-setting" element={<GoalSetting />} />
             <Route path="/conversation" element={<Conversation />} />

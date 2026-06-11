@@ -100,6 +100,47 @@ export const authAPI = {
       body: JSON.stringify({ token })
     });
     return handleAuthResponse(response);
+  },
+
+  // 发起密码重置（后端永远返回 200 防枚举）
+  async forgotPassword(email) {
+    const response = await fetch(`${API_BASE_URL}/users/password/forgot`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email })
+    });
+    return response.json();
+  },
+
+  // 用 token 设置新密码
+  async resetPassword(token, password) {
+    const response = await fetch(`${API_BASE_URL}/users/password/reset`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token, password })
+    });
+    return response.json();
+  },
+
+  // 发送手机验证码
+  async sendPhoneCode(phone) {
+    const response = await fetch(`${API_BASE_URL}/users/phone/send-code`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ phone })
+    });
+    return response.json();
+  },
+
+  // 手机验证码登录（成功后 cookie 已种，返回 user）
+  async phoneLogin(phone, code) {
+    const response = await fetch(`${API_BASE_URL}/users/phone/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify({ phone, code })
+    });
+    return handleAuthResponse(response);
   }
 };
 

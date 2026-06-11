@@ -18,6 +18,14 @@ router.post('/api/users/login', authRateLimiter, validateLogin, handleValidation
 router.post('/api/users/google', authRateLimiter, userController.googleSignIn);
 router.post('/api/users/verify', userController.verifyToken);
 
+// Password reset (rate-limited; forgot 永远返回 200 防枚举)
+router.post('/api/users/password/forgot', authRateLimiter, userController.forgotPassword);
+router.post('/api/users/password/reset', authRateLimiter, userController.resetPassword);
+
+// Phone (SMS) login — Twilio Verify
+router.post('/api/users/phone/send-code', authRateLimiter, userController.sendPhoneCode);
+router.post('/api/users/phone/login', authRateLimiter, userController.phoneLogin);
+
 // Logout and token migration routes
 router.post('/api/users/logout', userController.logout);
 router.post('/api/users/token-migrate', userController.tokenMigrate);

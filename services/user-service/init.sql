@@ -3,6 +3,7 @@ CREATE TABLE IF NOT EXISTS users (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     username VARCHAR(50) UNIQUE NOT NULL,
     email VARCHAR(255) UNIQUE,
+    phone VARCHAR(32) UNIQUE, -- 手机号验证码登录（登录-2）
     nickname VARCHAR(50),
     gender INT CHECK (gender IN (0, 1, 2)), -- 0: Female, 1: Male, 2: Other
     birth_year INT,

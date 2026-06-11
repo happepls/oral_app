@@ -100,6 +100,25 @@ export const AuthProvider = ({ children }) => {
     }
   };
 
+  const loginWithPhone = async (phone, code) => {
+    try {
+      setError(null);
+      setLoading(true);
+      const response = await authAPI.phoneLogin(phone, code);
+      const { user: userData } = response;
+      localStorage.setItem('user', JSON.stringify(userData));
+      setUser(userData);
+      setToken(null);
+      return { success: true, user: userData };
+    } catch (err) {
+      const errorMessage = err.message || '手机登录失败，请稍后重试';
+      setError(errorMessage);
+      return { success: false, message: errorMessage };
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const register = async (userData) => {
     try {
       setError(null);

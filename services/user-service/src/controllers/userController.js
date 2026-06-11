@@ -1,8 +1,24 @@
 const jwt = require('jsonwebtoken');
+const crypto = require('crypto');
 const User = require('../models/user');
 const { OAuth2Client } = require('google-auth-library');
 const bcrypt = require('bcryptjs');
 const { publishNotification } = require('../utils/notificationPublisher');
+const redis = require('../utils/redisClient');
+const { sendEmail } = require('../utils/mailer');
+const twilioVerify = require('../utils/twilioVerify');
+
+// 简单 E.164 校验：+ 开头，2-15 位数字
+function _isValidPhone(p) {
+  return typeof p === 'string' && /^\+[1-9]\d{1,14}$/.test(p.trim());
+}
+
+// 密码重置 token 配置
+const RESET_TOKEN_TTL_SECONDS = 30 * 60; // 30 分钟
+const RESET_TOKEN_PREFIX = 'pwreset:';
+function _hashResetToken(token) {
+  return crypto.createHash('sha256').update(token).digest('hex');
+}
 
 
 const client = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
@@ -1098,6 +1114,150 @@ exports.getDailyScenarioCount = async (req, res) => {
     } catch (error) {
         console.error('getDailyScenarioCount error:', error);
         res.status(500).json({ success: false });
+    }
+};
+
+// ===== Password Reset =====
+
+// POST /api/users/password/forgot — 发起密码重置
+// 防枚举：无论邮箱是否存在都返回 200 + 同一文案。仅当存在且为本地账号时
+// 才生成 token、存 hash、发邮件。
+exports.forgotPassword = async (req, res) => {
+    const { email } = req.body || {};
+    const genericOk = { success: true, message: '若该邮箱已注册，我们已发送密码重置邮件。' };
+    try {
+        if (!email || typeof email !== 'string') {
+            return res.status(400).json({ success: false, message: '请输入邮箱地址。' });
+        }
+        const user = await User.findByEmail(email.trim().toLowerCase());
+        // 邮箱不存在，或是 Google-only 账号（无本地密码）→ 静默成功，不泄露
+        if (!user || !user.id) {
+            return res.json(genericOk);
+        }
+
+        const token = crypto.randomBytes(32).toString('hex');
+        const tokenHash = _hashResetToken(token);
+        try {
+            await redis.setex(`${RESET_TOKEN_PREFIX}${tokenHash}`, RESET_TOKEN_TTL_SECONDS, String(user.id));
+        } catch (e) {
+            console.error('[forgotPassword] redis setex failed:', e.message);
+            return res.status(500).json({ success: false, message: '服务暂时不可用，请稍后再试。' });
+        }
+
+        const baseUrl = process.env.PASSWORD_RESET_BASE_URL || 'http://localhost:5001';
+        const resetUrl = `${baseUrl}/reset-password?token=${token}`;
+        const html =
+            `<div style="font-family:sans-serif;max-width:480px;margin:0 auto">` +
+            `<h2>重置您的密码</h2>` +
+            `<p>我们收到了重置 Guaji AI 账户密码的请求。点击下方按钮设置新密码（链接 30 分钟内有效）：</p>` +
+            `<p><a href="${resetUrl}" style="display:inline-block;padding:10px 20px;background:#637FF1;color:#fff;border-radius:8px;text-decoration:none">重置密码</a></p>` +
+            `<p style="color:#888;font-size:13px">若按钮无法点击，请复制此链接到浏览器：<br>${resetUrl}</p>` +
+            `<p style="color:#888;font-size:13px">如果不是您本人操作，请忽略此邮件，您的密码不会被更改。</p></div>`;
+
+        const result = await sendEmail({
+            to: user.email,
+            subject: 'Guaji AI 密码重置',
+            html,
+            text: `重置您的 Guaji AI 密码（30 分钟内有效）：${resetUrl}`,
+        });
+
+        if (!result.sent) {
+            // 开发期/未配置 ZSend：把链接打到日志，方便本地走通流程。
+            // 生产配好 ZSEND_API_KEY 后此分支不会触发。
+            console.warn(`[forgotPassword] 邮件未发送 (${result.reason})。重置链接(仅日志): ${resetUrl}`);
+        }
+        return res.json(genericOk);
+    } catch (error) {
+        console.error('forgotPassword error:', error);
+        // 仍返回通用成功，避免泄露内部错误/邮箱存在性
+        return res.json(genericOk);
+    }
+};
+
+// POST /api/users/password/reset — 用 token 设置新密码
+exports.resetPassword = async (req, res) => {
+    const { token, password } = req.body || {};
+    try {
+        if (!token || !password) {
+            return res.status(400).json({ success: false, message: '缺少 token 或新密码。' });
+        }
+        if (typeof password !== 'string' || password.length < 6) {
+            return res.status(400).json({ success: false, message: '密码至少需要 6 位。' });
+        }
+        const tokenHash = _hashResetToken(token);
+        const key = `${RESET_TOKEN_PREFIX}${tokenHash}`;
+        let userId = null;
+        try {
+            userId = await redis.get(key);
+        } catch (e) {
+            console.error('[resetPassword] redis get failed:', e.message);
+            return res.status(500).json({ success: false, message: '服务暂时不可用，请稍后再试。' });
+        }
+        if (!userId) {
+            return res.status(400).json({ success: false, message: '重置链接无效或已过期，请重新申请。' });
+        }
+
+        await User.updateLocalPassword(userId, password);
+        // 一次性：用完即删
+        try { await redis.del(key); } catch (_) {}
+
+        return res.json({ success: true, message: '密码已重置，请用新密码登录。' });
+    } catch (error) {
+        console.error('resetPassword error:', error);
+        return res.status(500).json({ success: false, message: '重置失败，请稍后再试。' });
+    }
+};
+
+// ===== Phone (SMS) Login — Twilio Verify =====
+
+// POST /api/users/phone/send-code — 发送短信验证码
+exports.sendPhoneCode = async (req, res) => {
+    const { phone } = req.body || {};
+    try {
+        if (!_isValidPhone(phone)) {
+            return res.status(400).json({ success: false, message: '请输入有效的手机号（含国家码，如 +8613800138000）。' });
+        }
+        const result = await twilioVerify.sendCode(phone.trim());
+        if (result.sent || result.devMode) {
+            // devMode 也返回成功（验证码走 dev 固定码 000000，日志已提示）
+            return res.json({ success: true, message: '验证码已发送，请查收短信。', devMode: !!result.devMode });
+        }
+        return res.status(502).json({ success: false, message: '验证码发送失败，请稍后再试。' });
+    } catch (error) {
+        console.error('sendPhoneCode error:', error);
+        return res.status(500).json({ success: false, message: '服务异常，请稍后再试。' });
+    }
+};
+
+// POST /api/users/phone/login — 校验验证码 → 登录/注册 → 签 JWT cookie
+exports.phoneLogin = async (req, res) => {
+    const { phone, code } = req.body || {};
+    try {
+        if (!_isValidPhone(phone)) {
+            return res.status(400).json({ success: false, message: '手机号格式不正确。' });
+        }
+        if (!code || !/^\d{4,8}$/.test(String(code).trim())) {
+            return res.status(400).json({ success: false, message: '验证码格式不正确。' });
+        }
+        const check = await twilioVerify.checkCode(phone.trim(), String(code).trim());
+        if (!check.ok) {
+            return res.status(401).json({ success: false, message: '验证码错误或已过期。' });
+        }
+
+        const user = await User.findOrCreateByPhone(phone.trim());
+        const userWithoutPassword = { ...user };
+        delete userWithoutPassword.password;
+
+        const token = generateToken(user.id);
+        res.cookie('accessToken', token, COOKIE_OPTIONS);
+        return res.json({
+            success: true,
+            message: '登录成功',
+            data: { token, user: userWithoutPassword },
+        });
+    } catch (error) {
+        console.error('phoneLogin error:', error);
+        return res.status(500).json({ success: false, message: '登录失败，请稍后再试。' });
     }
 };
 
