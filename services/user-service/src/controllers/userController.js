@@ -338,6 +338,15 @@ exports.updateProfile = async (req, res) => {
   } catch (error) {
     console.error('Update Profile Error:', error.message);
     if (error.detail) console.error('Error Detail:', error.detail);
+    // username UNIQUE 冲突（手机号用户改名撞名）→ 409 友好提示
+    // 注：db wrapper 可能不透传 pg error.code，故同时认 code 与 message/detail 文本
+    const errText = `${error.code || ''} ${error.detail || ''} ${error.message || ''}`;
+    if (/23505|duplicate key|users_username_key/i.test(errText) && /username/i.test(errText)) {
+      return res.status(409).json({
+        success: false,
+        message: '该用户名已被占用，请换一个'
+      });
+    }
     res.status(500).json({
       success: false,
       message: '更新用户资料时服务器错误'

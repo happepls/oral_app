@@ -47,6 +47,31 @@ function Profile() {
   const [savingLang, setSavingLang] = useState(false);
   const [langSaveError, setLangSaveError] = useState('');
 
+  // Username edit state（手机号用户默认「用户xxxx」，登录后可改）
+  const [editingName, setEditingName] = useState(false);
+  const [nameValue, setNameValue] = useState('');
+  const [savingName, setSavingName] = useState(false);
+  const [nameSaveError, setNameSaveError] = useState('');
+
+  const handleSaveUsername = async () => {
+    const trimmed = nameValue.trim();
+    if (!trimmed) { setNameSaveError('用户名不能为空'); return; }
+    if (trimmed.length > 30) { setNameSaveError('用户名不超过 30 字'); return; }
+    if (trimmed === user?.username) { setEditingName(false); return; }
+    setSavingName(true);
+    setNameSaveError('');
+    try {
+      await userAPI.updateProfile({ username: trimmed });
+      if (refreshProfile) await refreshProfile();
+      setEditingName(false);
+    } catch (err) {
+      // username UNIQUE 冲突 → 后端 409/500，提示换一个
+      setNameSaveError(/exist|unique|已被|占用|409/i.test(err.message || '') ? '该用户名已被占用，请换一个' : '保存失败，请重试');
+    } finally {
+      setSavingName(false);
+    }
+  };
+
   const handleSaveNativeLang = async (value) => {
     setSavingLang(true);
     setLangSaveError('');
@@ -303,7 +328,46 @@ function Profile() {
               </div>
             )}
             <div className="flex flex-col items-center gap-1">
-              <p className="text-2xl font-bold text-slate-900 dark:text-white">{user?.username || '用户'}</p>
+              {editingName ? (
+                <div className="flex flex-col items-center gap-2">
+                  <input
+                    type="text"
+                    value={nameValue}
+                    onChange={(e) => setNameValue(e.target.value)}
+                    maxLength={30}
+                    autoFocus
+                    disabled={savingName}
+                    className="px-3 py-1.5 rounded-lg border border-primary/40 bg-slate-50 dark:bg-slate-700 text-center text-xl font-bold text-slate-900 dark:text-white focus:ring-2 focus:ring-primary/20 outline-none disabled:opacity-50"
+                    placeholder="输入用户名"
+                  />
+                  <div className="flex gap-2">
+                    <button
+                      onClick={handleSaveUsername}
+                      disabled={savingName}
+                      className="px-3 py-1 rounded-lg bg-primary text-white text-sm font-medium disabled:opacity-50"
+                    >
+                      {savingName ? '保存中…' : '保存'}
+                    </button>
+                    <button
+                      onClick={() => { setEditingName(false); setNameSaveError(''); }}
+                      disabled={savingName}
+                      className="px-3 py-1 rounded-lg border border-slate-300 dark:border-slate-600 text-slate-600 dark:text-slate-300 text-sm disabled:opacity-50"
+                    >
+                      取消
+                    </button>
+                  </div>
+                  {nameSaveError && <p className="text-xs text-red-500">{nameSaveError}</p>}
+                </div>
+              ) : (
+                <button
+                  onClick={() => { setNameValue(user?.username || ''); setEditingName(true); setNameSaveError(''); }}
+                  className="flex items-center gap-1.5 group"
+                  title="点击修改用户名"
+                >
+                  <span className="text-2xl font-bold text-slate-900 dark:text-white">{user?.username || '用户'}</span>
+                  <Pencil className="w-4 h-4 text-slate-400 group-hover:text-primary transition-colors" />
+                </button>
+              )}
               <p className="text-sm text-slate-500 dark:text-slate-400">{user?.email || ''}</p>
             </div>
           </div>
