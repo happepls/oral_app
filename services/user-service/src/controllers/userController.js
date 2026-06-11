@@ -7,10 +7,17 @@ const { publishNotification } = require('../utils/notificationPublisher');
 const redis = require('../utils/redisClient');
 const { sendEmail } = require('../utils/mailer');
 const twilioVerify = require('../utils/twilioVerify');
+const aliyunSms = require('../utils/aliyunSms');
 
 // 简单 E.164 校验：+ 开头，2-15 位数字
 function _isValidPhone(p) {
   return typeof p === 'string' && /^\+[1-9]\d{1,14}$/.test(p.trim());
+}
+
+// 短信通道路由：+86（中国大陆）走阿里云，其他走 Twilio。
+// Twilio 不支持中国大陆号（监管限制 error 60220），阿里云不支持国际号（需国际短信资质）。
+function _smsProvider(phone) {
+  return /^\+86/.test(phone.trim()) ? aliyunSms : twilioVerify;
 }
 
 // 密码重置 token 配置
@@ -1217,7 +1224,7 @@ exports.sendPhoneCode = async (req, res) => {
         if (!_isValidPhone(phone)) {
             return res.status(400).json({ success: false, message: '请输入有效的手机号（含国家码，如 +8613800138000）。' });
         }
-        const result = await twilioVerify.sendCode(phone.trim());
+        const result = await _smsProvider(phone).sendCode(phone.trim());
         if (result.sent || result.devMode) {
             // devMode 也返回成功（验证码走 dev 固定码 000000，日志已提示）
             return res.json({ success: true, message: '验证码已发送，请查收短信。', devMode: !!result.devMode });
@@ -1239,7 +1246,7 @@ exports.phoneLogin = async (req, res) => {
         if (!code || !/^\d{4,8}$/.test(String(code).trim())) {
             return res.status(400).json({ success: false, message: '验证码格式不正确。' });
         }
-        const check = await twilioVerify.checkCode(phone.trim(), String(code).trim());
+        const check = await _smsProvider(phone).checkCode(phone.trim(), String(code).trim());
         if (!check.ok) {
             return res.status(401).json({ success: false, message: '验证码错误或已过期。' });
         }

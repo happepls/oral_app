@@ -63,11 +63,6 @@ function Login() {
       setError(t('phone_invalid'));
       return;
     }
-    // 中国大陆 +86 号码 Twilio 不支持（监管限制，error 60220）→ 前置拦截，引导其他方式
-    if (/^\+86/.test(trimmed)) {
-      setError(t('phone_cn_unsupported'));
-      return;
-    }
     setSending(true);
     try {
       const res = await authAPI.sendPhoneCode(phone.trim());
