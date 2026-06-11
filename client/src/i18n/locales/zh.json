@@ -61,6 +61,8 @@
   "login_subtitle": "登录您的账户继续学习",
   "email_label": "邮箱地址",
   "password_label": "密码",
+  "password_show": "显示密码",
+  "password_hide": "隐藏密码",
   "login_submit": "登录",
   "login_loading": "登录中...",
   "or_divider": "或",

@@ -61,6 +61,8 @@
   "login_subtitle": "Sign in to continue your learning",
   "email_label": "Email Address",
   "password_label": "Password",
+  "password_show": "Show password",
+  "password_hide": "Hide password",
   "login_submit": "Sign In",
   "login_loading": "Signing in...",
   "or_divider": "or",
