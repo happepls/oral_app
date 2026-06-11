@@ -237,6 +237,7 @@ export const AuthProvider = ({ children }) => {
     error,
     login,
     loginWithGoogle,
+    loginWithPhone,
     register,
     logout,
     updateProfile,
@@ -244,7 +245,7 @@ export const AuthProvider = ({ children }) => {
     checkTokenExpiry,
     refreshToken,
     isAuthenticated: !!user
-  }), [user, token, loading, error, login, loginWithGoogle, register, logout, updateProfile, refreshProfile, checkTokenExpiry, refreshToken]);
+  }), [user, token, loading, error, login, loginWithGoogle, loginWithPhone, register, logout, updateProfile, refreshProfile, checkTokenExpiry, refreshToken]);
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 };
