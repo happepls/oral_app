@@ -957,7 +957,11 @@ exports.generateTaskKeywords = async (req, res) => {
 
 // Logout — clear httpOnly cookie
 exports.logout = (req, res) => {
+  // Clear the current Path=/api cookie plus any legacy cookies set under
+  // Path=/ by older builds — duplicate accessToken cookies (different paths)
+  // otherwise shadow the fresh one on /api/ai routes, causing stale-token 401s.
   res.clearCookie('accessToken', { path: '/api' });
+  res.clearCookie('accessToken', { path: '/' });
   res.json({ success: true, message: '已登出' });
 };
 

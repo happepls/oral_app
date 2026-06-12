@@ -1162,11 +1162,31 @@ Write a short, personalized performance review in {native_language}. Requirement
         analysis: Dict[str, Any],
         db_connection: Any
     ) -> None:
-        """保存复盘报告到数据库"""
-        # 这里可以创建一个新表 scenario_reviews 来存储复盘报告
-        # 或者将报告添加到 goal 的某个字段中
-        # 由于数据库结构限制，这里仅记录日志
-        print(f"Scenario Review saved for user {user_id}, scenario: {scenario_title}")
+        """保存复盘报告到 user_goals.scenario_review（JSONB）。
+
+        前端 getScenarioReview 读取 goal.scenario_review，因此存成与 WS payload
+        一致的形状 {review_report, recommendations, analysis}，让 REST 立即拿到真
+        数据、无需等 ~15s 的慢 WS。失败不抛——评审展示不应因落库失败而中断。
+        """
+        if db_connection is None:
+            logger.warning(f"[SCENARIO_REVIEW] no db_connection, skip persist for {scenario_title}")
+            return
+        payload = {
+            "review_report": review_report,
+            "recommendations": recommendations,
+            "analysis": analysis,
+            "scenario_title": scenario_title,
+        }
+        try:
+            # asyncpg 不会把 dict 自动编码成 jsonb——显式 json.dumps + ::jsonb 转型。
+            await db_connection.execute(
+                "UPDATE user_goals SET scenario_review = $1::jsonb, updated_at = NOW() WHERE id = $2",
+                json.dumps(payload, ensure_ascii=False),
+                goal_id,
+            )
+            logger.info(f"[SCENARIO_REVIEW] persisted to user_goals.scenario_review (goal={goal_id}, scenario={scenario_title})")
+        except Exception as e:
+            logger.error(f"[SCENARIO_REVIEW] failed to persist review (goal={goal_id}): {e}")
         print(f"Report: {review_report[:200]}...")
     
     def check_scenario_completion(

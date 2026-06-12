@@ -43,6 +43,7 @@ CREATE TABLE IF NOT EXISTS user_goals (
     completion_time_days INT,
     interests TEXT, -- Goal specific interests
     scenarios JSONB, -- List of 10 scenarios + tasks
+    scenario_review JSONB, -- Latest per-scenario AI review (review_report/recommendations/analysis) for instant REST fetch
     status VARCHAR(20) DEFAULT 'active', -- active, completed, abandoned
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),

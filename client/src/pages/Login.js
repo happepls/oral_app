@@ -5,6 +5,7 @@ import { GoogleLogin } from '@react-oauth/google';
 import { useAuth } from '../contexts/AuthContext';
 import { authAPI } from '../services/api';
 import LanguageSwitcher from '../components/LanguageSwitcher';
+import CountryCodeSelect, { COUNTRIES, DEFAULT_COUNTRY } from '../components/CountryCodeSelect';
 import { motion } from 'motion/react';
 import { ArrowLeft, Eye, EyeOff } from 'lucide-react';
 
@@ -19,6 +20,9 @@ function Login() {
   const [error, setError] = useState('');
 
   // 手机登录状态
+  // 分离式：country 存 iso2（区号由 COUNTRIES 查得），phone 只存本国号码数字。
+  // 提交时拼接成 E.164：dialCode + localNumber。
+  const [country, setCountry] = useState(DEFAULT_COUNTRY.iso2);
   const [phone, setPhone] = useState('');
   const [smsCode, setSmsCode] = useState('');
   const [codeSent, setCodeSent] = useState(false);
@@ -57,16 +61,23 @@ function Login() {
     }, 1000);
   };
 
+  // 拼接 E.164：区号 + 本国号码（去掉用户可能误输的前导 0 和非数字字符）。
+  const buildE164 = () => {
+    const dial = (COUNTRIES.find((c) => c.iso2 === country) || DEFAULT_COUNTRY).dial;
+    const local = phone.replace(/\D/g, '').replace(/^0+/, '');
+    return dial + local;
+  };
+
   const handleSendCode = async () => {
     setError('');
-    const trimmed = phone.trim();
-    if (!/^\+[1-9]\d{1,14}$/.test(trimmed)) {
+    const full = buildE164();
+    if (!/^\+[1-9]\d{1,14}$/.test(full)) {
       setError(t('phone_invalid'));
       return;
     }
     setSending(true);
     try {
-      const res = await authAPI.sendPhoneCode(phone.trim());
+      const res = await authAPI.sendPhoneCode(full);
       if (res && res.success) {
         setCodeSent(true);
         startCooldown();
@@ -83,7 +94,7 @@ function Login() {
   const handlePhoneLogin = async (e) => {
     e.preventDefault();
     setError('');
-    const result = await loginWithPhone(phone.trim(), smsCode.trim());
+    const result = await loginWithPhone(buildE164(), smsCode.trim());
     if (result.success) {
       navigate('/discovery');
     } else {
@@ -216,15 +227,24 @@ function Login() {
                 <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">
                   {t('phone_label')}
                 </label>
-                <input
-                  type="tel"
-                  value={phone}
-                  onChange={(e) => setPhone(e.target.value)}
-                  required
-                  disabled={loading}
-                  className="w-full px-4 py-3 rounded-xl border border-slate-200 dark:border-slate-600 bg-slate-50 dark:bg-slate-700 text-slate-900 dark:text-white focus:border-primary focus:ring-2 focus:ring-primary/20 outline-none disabled:opacity-50 transition"
-                  placeholder="+8613800138000"
-                />
+                <div className="flex">
+                  <CountryCodeSelect
+                    value={country}
+                    onChange={setCountry}
+                    disabled={loading}
+                    t={t}
+                  />
+                  <input
+                    type="tel"
+                    inputMode="numeric"
+                    value={phone}
+                    onChange={(e) => setPhone(e.target.value)}
+                    required
+                    disabled={loading}
+                    className="flex-1 min-w-0 px-4 py-3 rounded-r-xl border border-slate-200 dark:border-slate-600 bg-slate-50 dark:bg-slate-700 text-slate-900 dark:text-white focus:border-primary focus:ring-2 focus:ring-primary/20 outline-none disabled:opacity-50 transition"
+                    placeholder={t('phone_local_placeholder')}
+                  />
+                </div>
                 <p className="mt-1 text-xs text-slate-400">{t('phone_hint')}</p>
               </div>
 

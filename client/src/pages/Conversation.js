@@ -628,32 +628,21 @@ function Conversation() {
                   } catch {}
               };
               const fetchReviewAndShowModal = async () => {
-                  let review = null;
+                  clearMagicProgress();
+                  // 立即打开报告 —— 不再等慢 WS（~20s 双 LLM 调用）。PracticeReport 在
+                  // reviewData 缺失时用技能分数兜底渲染「详细反馈」，等 REST/WS 的真
+                  // 点评到达后 setScenarioReviewData 触发 re-render 自动补全，无空白、无卡顿。
+                  setShowCompletionModal(true);
                   try {
-                      review = await userAPI.getScenarioReview(currentScenarioTitle);
+                      const review = await userAPI.getScenarioReview(currentScenarioTitle);
                       if (review) {
-                          console.log('📊 Fetched scenario review:', review);
+                          console.log('📊 Fetched scenario review (REST):', review);
                           setScenarioReviewData(review);
                       }
+                      // REST 为空时（首次完成，DB 尚未写入），WS scenario_review 事件会
+                      // 稍后送达并 setScenarioReviewData —— 报告已打开，届时自动补全点评。
                   } catch (error) {
                       console.error('Failed to fetch scenario review:', error);
-                  } finally {
-                      clearMagicProgress();
-                      if (review) {
-                          // REST already has the commentary — open right away.
-                          setShowCompletionModal(true);
-                      } else {
-                          // Wait for the WS scenario_review to deliver commentary;
-                          // the effect watching scenarioReviewData opens the modal.
-                          pendingCompletionModalRef.current = true;
-                          // Hard fallback: open anyway after 25s so we never hang.
-                          completionFallbackTimerRef.current = setTimeout(() => {
-                              if (pendingCompletionModalRef.current) {
-                                  pendingCompletionModalRef.current = false;
-                                  setShowCompletionModal(true);
-                              }
-                          }, 25000);
-                      }
                   }
               };
               fetchReviewAndShowModal();
@@ -2790,10 +2779,13 @@ function Conversation() {
         </div>
       </div>
 
-      {/* 每日场景鼓励 Banner（软提示，非硬限制；真正的轮次硬护栏由后端 daily_limit_reached 负责） */}
+      {/* 每日鼓励 Banner（软提示，非硬限制；真正的轮次硬护栏由后端 daily_limit_reached 负责）。
+          dailyScenariosUsed 计的是场景数（每完成 1 场景的完成弹窗 +1），每场景含 3 个 task。
+          原文案硬编码「3 个场景」会被误读为任务数 —— 改成动态显示已完成的 task 数
+          （场景数 ×3），文案明确用「任务」。阈值仍为完成 3 场景（=9 任务）的软上限提示。 */}
       {dailyScenariosUsed >= 3 && !isDailyQAMode && (
         <div className="flex items-center justify-center px-4 py-1.5 bg-emerald-900/30 text-emerald-300 text-xs">
-          🎉 今天已完成 3 个场景，状态很棒！想继续可以接着练
+          🎉 今天已完成 {dailyScenariosUsed * 3} 个任务（{dailyScenariosUsed} 个场景），状态很棒！想继续可以接着练
         </div>
       )}
 
