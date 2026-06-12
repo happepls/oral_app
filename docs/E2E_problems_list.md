@@ -100,7 +100,6 @@
 - ✅ **第三批 L 已实现并验证（4）**：登录-2（手机号验证码登录·Twilio Verify）、密码重置（Zeabur ZSend）、个人详情页-问题2（反馈 SQL/CLI 脚本）、Landing-2（Tawk.to 客服 widget）
 
 **剩余均为运维/外部配置项（非代码）**：
-1. ZSend 发信域名 `guajiguaji.top` 待 DNS 加 3 条 CNAME 验证（验证前密码重置走日志 fallback）
 2. 微信/SSO 登录 defer（企业资质/SAML，C 端暂无需求）
 3. 反馈网页 admin 后台 defer（需 admin 角色全链路，量大再做）
 4. Stripe 上线：切 live key + live webhook endpoint + 激活 live Customer Portal
