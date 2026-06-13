@@ -609,7 +609,20 @@ function Conversation() {
           if (objectTaskCount > 0 && completedCount === objectTaskCount &&
               !completionCheckedRef.current && !hasViewedCompletionModalRef.current) {
               completionCheckedRef.current = true;
-              
+
+              // 每日场景计数 +1 —— 在此处（completionCheckedRef 守卫，每个场景仅触发
+              // 一次）记账，而非监听 showCompletionModal 可见性。后者会在弹窗多次
+              // 开关 / re-render 时重复 +1，导致「完成 1 场景却记 3 场景」的虚高。
+              try {
+                  const today = new Date().toISOString().slice(0, 10);
+                  const dkey = `daily_scenarios_${today}`;
+                  const prev = parseInt(localStorage.getItem(dkey) || '0', 10);
+                  const next = Math.min(prev + 1, 3);
+                  localStorage.setItem(dkey, String(next));
+                  setDailyScenariosUsed(next);
+              } catch {}
+
+
               // Fetch scenario review for personalized AI feedback, THEN open the
               // completion modal — but only once the AI commentary is actually
               // available. The old code opened the modal on a fixed 1s timer,
@@ -693,17 +706,8 @@ function Conversation() {
     if (completionFallbackTimerRef.current) clearTimeout(completionFallbackTimerRef.current);
   }, []);
 
-  // 监听 showCompletionModal，当显示时增加每日场景计数
-  useEffect(() => {
-    if (showCompletionModal) {
-      const today = new Date().toISOString().slice(0, 10);
-      const key = `daily_scenarios_${today}`;
-      const count = parseInt(localStorage.getItem(key) || '0', 10);
-      const newCount = Math.min(count + 1, 3);
-      localStorage.setItem(key, String(newCount));
-      setDailyScenariosUsed(newCount);
-    }
-  }, [showCompletionModal]);
+  // 注：每日场景计数已移至场景完成检测处（completionCheckedRef 守卫，每场景仅 +1），
+  // 不再监听 showCompletionModal 可见性——避免弹窗重复开关导致计数虚高。
 
   // Audio context and refs
   const audioContextRef = useRef(null);
