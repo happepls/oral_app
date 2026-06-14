@@ -3,7 +3,6 @@ import { useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { useAuth } from '../contexts/AuthContext';
 import LanguageSwitcher from '../components/LanguageSwitcher';
-import SupportChat from '../components/SupportChat';
 import { motion } from 'motion/react';
 import { Mic, GraduationCap, Timer, TrendingUp, ChevronRight, ArrowRight } from 'lucide-react';
 
@@ -48,13 +47,12 @@ function Landing() {
     },
   ], [t]);
 
+  // 已登录用户可以主动回访首页（不再强制 redirect 到 /discovery）。
+  // 仅当账号尚未完成 onboarding（无 native_language）时才引导去 /onboarding，
+  // 否则停留首页，由 navbar 提供「进入应用」入口。
   useEffect(() => {
-    if (user) {
-      if (user.native_language) {
-        navigate('/discovery');
-      } else {
-        navigate('/onboarding');
-      }
+    if (user && !user.native_language) {
+      navigate('/onboarding');
     }
   }, [user, navigate]);
 
@@ -67,7 +65,6 @@ function Landing() {
 
   return (
     <div className="min-h-screen bg-gradient-to-b from-slate-50 to-white dark:from-slate-900 dark:to-slate-800">
-      <SupportChat />
       {/* ── Navbar ── */}
       <nav className="fixed top-0 left-0 right-0 z-50 bg-white/80 dark:bg-slate-900/80 backdrop-blur-md border-b border-slate-200 dark:border-slate-800">
         <div className="max-w-6xl mx-auto px-4 py-4 flex items-center justify-between">
@@ -77,19 +74,36 @@ function Landing() {
           </div>
           <div className="flex items-center gap-3">
             <LanguageSwitcher />
-            <button
-              onClick={() => navigate('/login')}
-              className="text-slate-600 dark:text-slate-300 hover:text-primary font-medium px-4 py-2 transition-colors"
-            >
-              {t('nav_login')}
-            </button>
-            <button
-              onClick={() => navigate('/register')}
-              className="text-white font-medium px-5 py-2 rounded-lg transition hover:opacity-90"
-              style={{ background: 'linear-gradient(135deg, #637FF1, #a47af6)' }}
-            >
-              {t('nav_free_start')}
-            </button>
+            {user ? (
+              <>
+                <span className="text-slate-700 dark:text-slate-200 font-medium px-2 hidden sm:inline">
+                  {user.nickname || user.username || t('learner_default')}
+                </span>
+                <button
+                  onClick={() => navigate('/discovery')}
+                  className="text-white font-medium px-5 py-2 rounded-lg transition hover:opacity-90"
+                  style={{ background: 'linear-gradient(135deg, #637FF1, #a47af6)' }}
+                >
+                  {t('nav_enter_app')}
+                </button>
+              </>
+            ) : (
+              <>
+                <button
+                  onClick={() => navigate('/login')}
+                  className="text-slate-600 dark:text-slate-300 hover:text-primary font-medium px-4 py-2 transition-colors"
+                >
+                  {t('nav_login')}
+                </button>
+                <button
+                  onClick={() => navigate('/register')}
+                  className="text-white font-medium px-5 py-2 rounded-lg transition hover:opacity-90"
+                  style={{ background: 'linear-gradient(135deg, #637FF1, #a47af6)' }}
+                >
+                  {t('nav_free_start')}
+                </button>
+              </>
+            )}
           </div>
         </div>
       </nav>

@@ -21,6 +21,7 @@ import Goals from './pages/Goals';
 import Subscription from './pages/Subscription';
 import Achievements from './pages/Achievements';
 import SplashScreen from './components/SplashScreen';
+import SupportChat from './components/SupportChat';
 import './App.css';
 
 // Separate Layout component for Routes to keep main App clean
@@ -76,6 +77,7 @@ function App() {
             ) : (
               <TourProvider>
                 <div className="min-h-screen bg-gray-50 dark:bg-gray-900 transition-colors duration-300">
+                  <SupportChat />
                   <AppRoutes />
                 </div>
               </TourProvider>
