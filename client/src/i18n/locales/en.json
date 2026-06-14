@@ -192,5 +192,18 @@
   "phone_login_submit": "Log in / Sign up",
   "phone_invalid": "Invalid phone number (include country code, e.g. +1...)",
   "phone_send_fail": "Failed to send code, please try again later",
-  "phone_login_fail": "Login failed, please check the code"
+  "phone_login_fail": "Login failed, please check the code",
+  "daily_qa_pass_title": "Today's Q&A completed",
+  "daily_qa_pass_desc": "Great job! Keep up your daily learning habit.",
+  "daily_qa_pass_bonus_title": "Answer completed",
+  "daily_qa_pass_bonus_desc": "This question is done — feel free to pick another one.",
+  "daily_qa_pass_return": "Back to Discover",
+  "daily_qa_pass_continue": "Keep viewing conversation",
+  "daily_limit_paywall_title": "Free daily conversations used up",
+  "daily_limit_paywall_desc": "You've used all {{limit}} free turns today. Upgrade to Pro to unlock more practice.",
+  "daily_limit_reached_title": "Daily conversation limit reached",
+  "daily_limit_reached_desc": "You've reached the daily limit of {{limit}} turns. Come back tomorrow to continue.",
+  "daily_limit_cancel": "Cancel",
+  "daily_limit_got_it": "Got it",
+  "daily_limit_upgrade": "Upgrade"
 }

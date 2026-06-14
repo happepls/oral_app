@@ -192,5 +192,18 @@
   "phone_login_submit": "登录 / 注册",
   "phone_invalid": "手机号格式不正确（需含国家码，如 +86...）",
   "phone_send_fail": "验证码发送失败，请稍后再试",
-  "phone_login_fail": "登录失败，请检查验证码"
+  "phone_login_fail": "登录失败，请检查验证码",
+  "daily_qa_pass_title": "今日问答已完成",
+  "daily_qa_pass_desc": "很棒！继续保持每日学习的好习惯。",
+  "daily_qa_pass_bonus_title": "回答完成",
+  "daily_qa_pass_bonus_desc": "这道题练习完成，可以继续选择其他题目。",
+  "daily_qa_pass_return": "返回发现页",
+  "daily_qa_pass_continue": "继续查看对话",
+  "daily_limit_paywall_title": "今日免费对话已用完",
+  "daily_limit_paywall_desc": "免费版每日 {{limit}} 轮已用完，升级 Pro 解锁更多练习。",
+  "daily_limit_reached_title": "今日对话已达上限",
+  "daily_limit_reached_desc": "已达每日 {{limit}} 轮上限，明日继续练习。",
+  "daily_limit_cancel": "取消",
+  "daily_limit_got_it": "知道了",
+  "daily_limit_upgrade": "去升级"
 }
