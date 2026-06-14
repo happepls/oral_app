@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { userAPI, aiAPI } from '../services/api';
@@ -190,6 +190,12 @@ export default function GoalSetting() {
   const [error, setError]   = useState('');
   const [success, setSuccess] = useState('');
 
+  // Abort the in-flight generate-scenarios request when the component unmounts
+  // or a new request supersedes it — prevents setState-after-unmount warnings
+  // and concurrent duplicate requests from rapid re-clicks.
+  const generateAbortRef = useRef(null);
+  useEffect(() => () => { generateAbortRef.current?.abort(); }, []);
+
   const nativeLanguage = user?.native_language || 'Chinese';
   const quizScore      = calcQuizScore(quizAnswers);
   const proficiency    = scoreToProficiency(quizScore);
@@ -209,11 +215,19 @@ export default function GoalSetting() {
       setError('请填写自定义练习方向');
       return;
     }
+    // Abort any prior in-flight request before starting a new one so rapid
+    // re-clicks never fire concurrent generate requests.
+    generateAbortRef.current?.abort();
+    const controller = new AbortController();
+    generateAbortRef.current = controller;
+    const { signal } = controller;
+
     setIsGenerating(true);
     setError('');
     try {
       await updateProfile({ target_language: targetLanguage, interests, points: proficiency });
     } catch {}
+    if (signal.aborted) return;
     try {
       const result = await aiAPI.generateScenarios({
         type: goalType === 'custom' ? customGoalType.trim() : goalType,
@@ -222,6 +236,7 @@ export default function GoalSetting() {
         interests,
         native_language: nativeLanguage,
       });
+      if (signal.aborted) return;
       if (result.scenarios?.length > 0) {
         setScenarios(result.scenarios.map((s, i) => ({ ...s, id: i })));
         localStorage.setItem('ai_voice', selectedVoice);
@@ -230,9 +245,12 @@ export default function GoalSetting() {
         setError('AI 未返回有效场景，请重试。');
       }
     } catch {
+      if (signal.aborted) return;
       setError('场景生成失败，请检查网络后重试。');
     }
+    if (signal.aborted) return;
     setIsGenerating(false);
+    if (generateAbortRef.current === controller) generateAbortRef.current = null;
   };
 
   const handleSubmit = async () => {
@@ -253,7 +271,8 @@ export default function GoalSetting() {
         scenarios: scenarios.map(s => ({ title: s.title, tasks: s.tasks })),
       });
       setSuccess('目标设置成功！');
-      setTimeout(() => navigate('/discovery'), 1200);
+      // Signal first-login Onboarding Tour to auto-start on Discovery landing.
+      setTimeout(() => navigate('/discovery', { state: { startTour: true } }), 1200);
     } catch (err) {
       setError(err.message || '设置目标失败，请重试。');
     }

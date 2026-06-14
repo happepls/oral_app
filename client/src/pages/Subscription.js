@@ -24,9 +24,39 @@ function isAllowedRedirect(url) {
   }
 }
 
+// Static fallback used when Stripe is not yet configured (empty products from API).
+// Prices mirror Landing.js Pricing section: $2.90/wk, $89.90/yr.
+const FALLBACK_PRODUCTS = [
+  {
+    id: 'weekly-fallback',
+    name: '周付会员',
+    description: '解锁全部高级功能',
+    metadata: { tier: 'weekly' },
+    prices: [{
+      id: null,
+      unit_amount: 499,
+      currency: 'usd',
+      recurring: { interval: 'week' }
+    }]
+  },
+  {
+    id: 'annual-fallback',
+    name: '年付会员',
+    description: '最划算选项，节省62%',
+    metadata: { tier: 'annual' },
+    prices: [{
+      id: null,
+      unit_amount: 9900,
+      currency: 'usd',
+      recurring: { interval: 'year' }
+    }]
+  }
+];
+
 function Subscription() {
   const navigate = useNavigate();
-  const { user, token, refreshProfile } = useAuth();
+  // Cookie mode: `token` is always null — gate auth on `user` instead.
+  const { user, refreshProfile } = useAuth();
   const [searchParams] = useSearchParams();
   const [products, setProducts] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -36,31 +66,57 @@ function Subscription() {
   const [promoCode, setPromoCode] = useState('');
   const [promoError, setPromoError] = useState('');
   const [promoApplied, setPromoApplied] = useState(null);
+  const [portalError, setPortalError] = useState('');
+  const [portalLoading, setPortalLoading] = useState(false);
+  const [checkoutError, setCheckoutError] = useState('');
 
   useEffect(() => {
-    if (searchParams.get('session_id')) {
-      setShowSuccess(true);
-      if (refreshProfile) refreshProfile();
-      setTimeout(() => {
+    if (!searchParams.get('session_id')) return;
+    setShowSuccess(true);
+    // After Stripe redirects back, the subscription_status is written by an
+    // async webhook that often hasn't landed yet. Poll refreshProfile a few
+    // times so the user object is `active` (and AuthContext fully re-ready)
+    // before we navigate to /profile — otherwise Profile renders before the
+    // user is hydrated and can sit blank until a manual refresh.
+    let cancelled = false;
+    let tries = 0;
+    const MAX_TRIES = 5;
+    const tick = async () => {
+      tries += 1;
+      let updated = null;
+      try {
+        updated = refreshProfile ? await refreshProfile() : null;
+      } catch { /* keep polling */ }
+      if (cancelled) return;
+      const active = updated?.subscription_status === 'active';
+      if (active || tries >= MAX_TRIES) {
         navigate('/profile');
-      }, 3000);
-    }
+      } else {
+        setTimeout(tick, 1500);
+      }
+    };
+    tick();
+    return () => { cancelled = true; };
   }, [searchParams, navigate, refreshProfile]);
 
   useEffect(() => {
     fetchProducts();
-    if (token) {
+    if (user) {
       fetchSubscription();
     }
-  }, [token]);
+  }, [user]);
 
   const fetchProducts = async () => {
     try {
       const res = await fetch(`${API_BASE}/stripe/products-with-prices`);
       const data = await res.json();
-      setProducts(data.data || []);
+      const list = Array.isArray(data?.data) && data.data.length > 0
+        ? data.data
+        : FALLBACK_PRODUCTS;
+      setProducts(list);
     } catch (error) {
       console.error('Error fetching products:', error);
+      setProducts(FALLBACK_PRODUCTS);
     } finally {
       setLoading(false);
     }
@@ -68,8 +124,11 @@ function Subscription() {
 
   const fetchSubscription = async () => {
     try {
+      // Cookie-based auth: httpOnly cookie is auto-sent via credentials.
+      // Do NOT send `Authorization: Bearer null` in cookie mode (token is null).
       const res = await fetch(`${API_BASE}/stripe/subscription`, {
-        headers: { 'Authorization': `Bearer ${token}` }
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include'
       });
       const data = await res.json();
       setCurrentSubscription(data);
@@ -78,31 +137,50 @@ function Subscription() {
     }
   };
 
-  const handleApplyPromo = () => {
+  const handleApplyPromo = async () => {
     setPromoError('');
     const code = promoCode.trim().toUpperCase();
-    
+
     if (!code) {
       setPromoError('请输入优惠码');
       return;
     }
 
-    if (code === 'WELCOME20') {
-      setPromoApplied({ code, discount: 20, description: '新用户8折优惠' });
-    } else if (code === 'ANNUAL50') {
-      setPromoApplied({ code, discount: 50, description: '年度订阅5折特惠' });
-    } else {
-      setPromoError('优惠码无效或已过期');
+    try {
+      // Validate server-side so the discount table is never exposed in JS.
+      const res = await fetch(`${API_BASE}/users/promo/validate`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ code })
+      });
+      const data = await res.json();
+      if (res.ok && data?.valid) {
+        setPromoApplied({
+          code: data.code,
+          discount: data.discount,
+          description: data.description
+        });
+      } else {
+        setPromoError(data?.error || '优惠码无效或已过期');
+        setPromoApplied(null);
+      }
+    } catch (error) {
+      console.error('Error validating promo code:', error);
+      // Graceful fallback: the server is the source of truth, but if it's
+      // unreachable surface a friendly retry message instead of crashing.
+      setPromoError('优惠码校验失败，请稍后再试');
       setPromoApplied(null);
     }
   };
 
   const handleCheckout = async (priceId) => {
-    if (!token) {
+    if (!user) {
       navigate('/login');
       return;
     }
 
+    setCheckoutError('');
     setCheckoutLoading(priceId);
     try {
       const body = { priceId };
@@ -112,46 +190,64 @@ function Subscription() {
 
       const res = await fetch(`${API_BASE}/stripe/checkout`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
-        },
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
         body: JSON.stringify(body)
       });
-      const data = await res.json();
-      if (data.url) {
+      // 包裹 res.json()：502 等返回 HTML 错误页时 .json() 会抛，
+      // 不包裹则与网络错误无法区分，且用户看不到任何提示。
+      let data = {};
+      try { data = await res.json(); } catch { /* non-JSON (e.g. 502 HTML) */ }
+      if (res.ok && data.url) {
         if (isAllowedRedirect(data.url)) {
           window.location.href = data.url;
-        } else {
-          console.error('Refused checkout redirect to disallowed URL:', data.url);
+          return;
         }
+        console.error('Refused checkout redirect to disallowed URL:', data.url);
+        setCheckoutError('支付页地址异常，请稍后再试或联系客服。');
+      } else {
+        // 4xx/5xx / Stripe 配置缺失等
+        console.error('Checkout failed:', res.status, data);
+        setCheckoutError('暂时无法创建支付订单，请稍后再试。如持续失败请联系客服。');
       }
     } catch (error) {
       console.error('Error creating checkout:', error);
+      setCheckoutError('网络异常，无法连接支付服务，请检查网络后重试。');
     } finally {
       setCheckoutLoading(null);
     }
   };
 
   const handleManageSubscription = async () => {
+    setPortalError('');
+    setPortalLoading(true);
     try {
       const res = await fetch(`${API_BASE}/stripe/portal`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
-        }
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include'
       });
-      const data = await res.json();
-      if (data.url) {
+      let data = {};
+      try { data = await res.json(); } catch { /* non-JSON (e.g. 502 HTML) */ }
+      if (res.ok && data.url) {
         if (isAllowedRedirect(data.url)) {
           window.location.href = data.url;
-        } else {
-          console.error('Refused portal redirect to disallowed URL:', data.url);
+          return;
         }
+        console.error('Refused portal redirect to disallowed URL:', data.url);
+        setPortalError('订阅管理页地址异常，请稍后再试或联系客服。');
+      } else if (res.status === 400 && /no stripe customer/i.test(data.error || '')) {
+        // active 状态但无 Stripe 客户（如测试号或历史数据）——没有可管理的真实订阅
+        setPortalError('未找到可管理的 Stripe 订阅记录。若你是通过支付订阅的，请联系客服处理。');
+      } else {
+        // 500 / 502 / Stripe Portal 未在 Dashboard 启用等
+        setPortalError('暂时无法打开订阅管理页，请稍后再试。如持续失败请联系客服。');
       }
     } catch (error) {
       console.error('Error opening portal:', error);
+      setPortalError('网络异常，无法打开订阅管理页，请稍后再试。');
+    } finally {
+      setPortalLoading(false);
     }
   };
 
@@ -184,7 +280,7 @@ function Subscription() {
   return (
     <div className="min-h-screen pb-24" style={{ background: 'var(--background)' }}>
       <div className="px-4 pt-6 pb-4">
-        <button 
+        <button
           onClick={() => navigate(-1)}
           className="flex items-center text-slate-600 dark:text-slate-400 mb-4"
         >
@@ -226,11 +322,15 @@ function Subscription() {
             </div>
             <button
               onClick={handleManageSubscription}
-              className="px-4 py-2 text-sm font-medium text-indigo-600 border border-indigo-300 rounded-lg hover:bg-indigo-50 dark:hover:bg-indigo-900/30"
+              disabled={portalLoading}
+              className="px-4 py-2 text-sm font-medium text-indigo-600 border border-indigo-300 rounded-lg hover:bg-indigo-50 dark:hover:bg-indigo-900/30 disabled:opacity-50"
             >
-              管理订阅
+              {portalLoading ? '打开中…' : '管理订阅'}
             </button>
           </div>
+          {portalError && (
+            <p className="mt-3 text-sm text-red-600 dark:text-red-400">{portalError}</p>
+          )}
         </div>
       )}
 
@@ -301,24 +401,32 @@ function Subscription() {
                 ))}
               </ul>
               
-              {price && (
-                <button
-                  onClick={() => handleCheckout(price.id)}
-                  disabled={checkoutLoading === price.id || isSubscribed}
-                  className={`w-full py-3 rounded-xl font-medium transition-all ${
-                    isSubscribed
-                      ? 'bg-slate-300 dark:bg-slate-600 text-slate-500 dark:text-slate-400 cursor-not-allowed'
-                      : isAnnual
-                        ? 'bg-gradient-to-r from-indigo-500 to-purple-500 text-white hover:opacity-90'
-                        : 'bg-slate-900 dark:bg-white text-white dark:text-slate-900 hover:opacity-90'
-                  } ${checkoutLoading === price.id ? 'opacity-50' : ''}`}
-                >
-                  {isSubscribed ? '已订阅' : checkoutLoading === price.id ? '处理中...' : '立即订阅'}
-                </button>
-              )}
+              <button
+                onClick={() => {
+                  if (!price?.id) {
+                    alert('支付功能即将上线，敬请期待');
+                    return;
+                  }
+                  handleCheckout(price.id);
+                }}
+                disabled={checkoutLoading === price?.id || isSubscribed}
+                className={`w-full py-3 rounded-xl font-medium transition-all ${
+                  isSubscribed
+                    ? 'bg-slate-300 dark:bg-slate-600 text-slate-500 dark:text-slate-400 cursor-not-allowed'
+                    : isAnnual
+                      ? 'bg-gradient-to-r from-indigo-500 to-purple-500 text-white hover:opacity-90'
+                      : 'bg-slate-900 dark:bg-white text-white dark:text-slate-900 hover:opacity-90'
+                } ${checkoutLoading === price?.id ? 'opacity-50' : ''}`}
+              >
+                {isSubscribed ? '已订阅' : checkoutLoading === price?.id ? '处理中...' : '立即订阅'}
+              </button>
             </div>
           );
         })}
+
+        {checkoutError && (
+          <p className="mt-4 text-sm text-red-600 dark:text-red-400 text-center">{checkoutError}</p>
+        )}
 
         <div className="mt-6 p-4 bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700">
           <h4 className="font-medium text-slate-900 dark:text-white mb-3">优惠码</h4>
@@ -348,7 +456,7 @@ function Subscription() {
             </div>
           )}
           <p className="text-xs text-slate-500 mt-2">
-            试试：WELCOME20 (8折) 或 ANNUAL50 (年订阅5折)
+            输入优惠码即可享受专属折扣
           </p>
         </div>
       </div>

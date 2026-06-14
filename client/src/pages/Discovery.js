@@ -5,6 +5,7 @@ import { StreakRing } from '../components/StreakRing';
 import { ScenarioCard } from '../components/ScenarioCard';
 import { useAuth } from '../contexts/AuthContext';
 import { useNotifications } from '../contexts/NotificationContext';
+import { useTour } from '../contexts/TourContext';
 import { userAPI, historyAPI, aiAPI } from '../services/api';
 import { StatCard } from '../components/StatCard';
 import { GuajiAvatar } from '../components/GuajiAvatar';
@@ -179,8 +180,21 @@ function Discovery() {
   const navigate = useNavigate();
   const location = useLocation();
   const { user } = useAuth();
+  const tour = useTour();
 
   const qaPoolAbortControllerRef = useRef(null);
+  const tourStartedRef = useRef(false);
+
+  // First-login Onboarding Tour: start once when GoalSetting hands off with
+  // startTour, then clear the nav state so returning to Discovery won't retrigger.
+  useEffect(() => {
+    if (tourStartedRef.current) return;
+    if (location.state?.startTour && tour && !tour.completed) {
+      tourStartedRef.current = true;
+      tour.start();
+      navigate(location.pathname, { replace: true, state: {} });
+    }
+  }, [location.state, location.pathname, tour, navigate]);
 
   const [activeGoal, setActiveGoal] = useState(null);
   const [activeSessions, setActiveSessions] = useState([]);
@@ -297,15 +311,17 @@ function Discovery() {
         if (!user.native_language) { navigate('/onboarding'); return; }
 
         const goalRes = await userAPI.getActiveGoal();
+        if (abortController.signal.aborted) return;
         if (!goalRes || !goalRes.goal) { navigate('/goal-setting'); return; }
         setActiveGoal(goalRes.goal);
         checkAchievement(goalRes.goal);
 
         try {
           const goalsRes = await userAPI.getUserGoals();
+          if (abortController.signal.aborted) return;
           const other = (goalsRes.goals || []).filter(g => g.status !== 'active');
           setHasOtherGoals(other.length > 0);
-        } catch (_) { setHasOtherGoals(false); }
+        } catch (_) { if (!abortController.signal.aborted) setHasOtherGoals(false); }
 
         if (goalRes.goal.scenarios?.length > 0) {
           setScenarios(goalRes.goal.scenarios);
@@ -319,6 +335,7 @@ function Discovery() {
           userAPI.getCheckinStats(),
           aiAPI.getDailyQuestion({ signal: abortController.signal }),
         ]);
+        if (abortController.signal.aborted) return;
 
         if (statsRes.status === 'fulfilled' && statsRes.value) {
           const s = statsRes.value.data || statsRes.value;
@@ -346,11 +363,13 @@ function Discovery() {
 
         // Check daily QA pass status from database
         userAPI.getDailyQAPassStatus().then(res => {
+          if (abortController.signal.aborted) return;
           if (res?.data?.passed) setDailyQAPassedDB(true);
         }).catch(() => {});
 
         // Load daily progress and merge frontend-tracked state
         userAPI.getDailyProgress().then(res => {
+          if (abortController.signal.aborted) return;
           const dp = res?.data || res || {};
           // Recall completion tracked in localStorage (backend has no recall-specific record)
           const today = new Date().toISOString().slice(0, 10);
@@ -359,11 +378,12 @@ function Discovery() {
           setDailyProgress(dp);
         }).catch(() => {});
       } catch (e) {
+        if (abortController.signal.aborted) return;
         console.error('Dashboard fetch error:', e);
         setDailyQAError(true);
         setDailyQALoading(false);
       } finally {
-        setLoading(false);
+        if (!abortController.signal.aborted) setLoading(false);
       }
     };
 
@@ -543,12 +563,12 @@ function Discovery() {
   }), [enrichedScenarios, filterTab]);
 
   const userName = user?.username || user?.name || '学习者';
-  const greeting = (() => {
+  const greeting = useMemo(() => {
     const h = new Date().getHours();
     if (h < 12) return '早上好';
     if (h < 18) return '下午好';
     return '晚上好';
-  })();
+  }, []);
 
   if (loading) {
     return (
@@ -770,7 +790,7 @@ function Discovery() {
 
         {/* ── 今日任务（合并卡片） ── */}
         {dailyProgress && (
-          <section>
+          <section data-tour="today-tasks">
             <div className="rounded-2xl p-5 bg-white dark:bg-slate-800 shadow-sm border border-slate-200 dark:border-slate-700">
               {/* 标题栏 */}
               <div className="flex items-center justify-between mb-4 pb-4 border-b border-slate-200 dark:border-slate-700">
@@ -884,15 +904,17 @@ function Discovery() {
         )}
 
         {/* ── 连续学习进度环 ── */}
-        <StreakRing
-          streak={dailyProgress?.streak || checkinStats.currentStreak}
-          monthlyCheckinDays={dailyProgress?.monthlyCheckinDays || 0}
-          checkedInToday={dailyProgress?.checkedInToday || checkinStats.checkedInToday}
-          onCheckin={handleCheckin}
-        />
+        <div data-tour="recall-streak">
+          <StreakRing
+            streak={dailyProgress?.streak || checkinStats.currentStreak}
+            monthlyCheckinDays={dailyProgress?.monthlyCheckinDays || 0}
+            checkedInToday={dailyProgress?.checkedInToday || checkinStats.checkedInToday}
+            onCheckin={handleCheckin}
+          />
+        </div>
 
         {/* ── 4格统计 ── */}
-        <section>
+        <section data-tour="stats">
           <div style={{ display: 'flex', gap: 8 }}>
             <StatCard emoji="📚" value={stats?.totalSessions || activeSessions?.length || 0} label="总对话" />
             <StatCard emoji="📅" value={stats?.learningDays || checkinStats.totalCheckins || 0} label="学习天" />
@@ -943,7 +965,7 @@ function Discovery() {
           </div>
 
           {/* 2列网格卡片 */}
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-2 gap-3" data-tour="scenario-card">
             {filteredScenarios.map((s) => (
               <ScenarioCard
                 key={s.index}
@@ -971,44 +993,6 @@ function Discovery() {
             </p>
           )}
         </section>
-
-        {/* ── 最近活动 ── */}
-        {activeSessions.length > 0 && (
-          <section>
-            <h2 className="text-lg font-bold text-slate-900 dark:text-white mb-3">最近活动</h2>
-            <div className="space-y-2">
-              {activeSessions.slice(0, 3).map((session, idx) => {
-                const score = session.score || session.avg_score;
-                const badgeLabel = score >= 90 ? '优秀' : score >= 75 ? '良好' : score ? '继续加油' : null;
-                const badgeColor = score >= 90 ? '#10B981' : score >= 75 ? '#637FF1' : '#9CA3AF';
-                return (
-                  <div key={session.sessionId || idx}
-                    className="flex items-center gap-3 bg-white dark:bg-slate-800 rounded-2xl p-3.5 shadow-sm">
-                    <div className="w-10 h-10 rounded-xl flex items-center justify-center text-xl flex-shrink-0"
-                      style={{ background: '#F3F4F6' }}>
-                      🗣️
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <p className="text-sm font-medium text-slate-800 dark:text-slate-100 truncate">
-                        {session.topic || '自由对话'}
-                      </p>
-                      <p className="text-xs text-slate-400">
-                        {session.createdAt ? new Date(session.createdAt).toLocaleDateString('zh-CN') : ''}
-                        {score ? ` · 得分 ${score}` : ''}
-                      </p>
-                    </div>
-                    {badgeLabel && (
-                      <span className="text-xs px-2 py-0.5 rounded-full text-white flex-shrink-0"
-                        style={{ backgroundColor: badgeColor }}>
-                        {badgeLabel}
-                      </span>
-                    )}
-                  </div>
-                );
-              })}
-            </div>
-          </section>
-        )}
       </main>
 
       <BottomNav currentPage="home" />

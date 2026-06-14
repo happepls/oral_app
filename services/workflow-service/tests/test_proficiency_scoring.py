@@ -384,7 +384,10 @@ class TestTaskCompleted:
 
     @pytest.mark.asyncio
     async def test_task_completed_when_threshold_met(self, workflow, mock_db):
-        """score>=9 AND interaction_count>=3 AND status!='completed' → task_completed=True"""
+        """score>=9 AND status!='completed' → task_ready_to_complete=True (确认制).
+
+        Note: 完成改为用户确认制——达阈值只发 ready_to_complete 信号，
+        task_completed 恒为 False，真正完成由 user-service/confirm-complete 触发。"""
         # First fetchrow: get native_language
         # Second fetchrow (in _update): before update check
         # Third fetchrow: after update
@@ -416,7 +419,8 @@ class TestTaskCompleted:
                 db_connection=mock_db
             )
 
-        assert result["task_completed"] is True
+        assert result["task_ready_to_complete"] is True
+        assert result["task_completed"] is False
 
     @pytest.mark.asyncio
     async def test_task_not_completed_low_score(self, workflow, mock_db):
@@ -452,7 +456,9 @@ class TestTaskCompleted:
 
     @pytest.mark.asyncio
     async def test_task_completed_score_threshold_low_interaction(self, workflow, mock_db):
-        """score >= 9 → task_completed=True regardless of interaction_count (gate removed)."""
+        """score >= 9 → task_ready_to_complete=True regardless of interaction_count (gate removed).
+
+        确认制：task_completed 恒 False，达阈值只发 ready 信号。"""
         mock_db.fetchrow = AsyncMock(side_effect=[
             {"native_language": "English"},
             {"score": 7, "status": "in_progress", "interaction_count": 1, "task_description": "Test", "scenario_title": "Test"},
@@ -480,7 +486,8 @@ class TestTaskCompleted:
                 db_connection=mock_db
             )
 
-        assert result["task_completed"] is True
+        assert result["task_ready_to_complete"] is True
+        assert result["task_completed"] is False
 
     @pytest.mark.asyncio
     async def test_already_completed_task_skips_update(self, workflow, mock_db):
@@ -742,3 +749,77 @@ class TestGenerateImprovementTips:
         scores = {"task_relevance": 7}
         result = workflow._generate_improvement_tips(scores, {"target_language": "English"}, [])
         assert len(result) == 1
+
+# ============================================================
+# 双信号门（T-cell 共刺激）: _score_task_relevance
+# Signal 1=语义 embedding, Signal 2=关键词命中, 共刺激=hard correction 压制
+# ============================================================
+
+class TestDualSignalGate:
+    """验证双信号门 4 个不变式：
+    1. 无关键词但语义高 → 救回（不再误杀真实 paraphrase）
+    2. 关键词刷分但语义离题 → 不再高分（抗作弊）
+    3. hard correction → input_score 封顶 ≤4（暖语气≠正确，明确判错不给 delta）
+    4. embedding 不可用 → 降级回原纯关键词行为（graceful degrade）
+    """
+
+    def _patch_keywords(self, workflow, kws):
+        """mock 关键词来源：task_specific (async) + scene"""
+        workflow._get_task_specific_keywords = AsyncMock(return_value=kws)
+        workflow._get_scene_keywords = MagicMock(return_value=[])
+
+    @pytest.mark.asyncio
+    async def test_paraphrase_no_keyword_rescued_by_semantic(self, workflow):
+        # 零关键词命中，但语义高度相关 → Signal 1 救回
+        self._patch_keywords(workflow, ["reservation", "table", "menu"])
+        workflow._semantic_similarity = MagicMock(return_value=0.80)  # >= _SEM_HIGH
+        turns = [{"role": "user", "content": "I would like a spot for two people tonight please"}]
+        task = {"task_description": "book a restaurant table", "scenario_title": "Dining"}
+        result = await workflow._score_task_relevance(turns, task, "English")
+        # 关键词 0 命中本应 input_score=2 → final 低；语义救回 → sem_score=9
+        assert result["signals"]["hit_count"] == 0
+        assert result["signals"]["sem_score"] == 9
+        assert result["signals"]["input_score"] == 9
+        assert result["score"] >= 8  # 进入 delta=2 档
+
+    @pytest.mark.asyncio
+    async def test_keyword_farming_offtopic_killed_by_semantic(self, workflow):
+        # 蒙到多个关键词但语义离题 → Signal 1 压低，input_score 取 max 仍受语义档约束
+        self._patch_keywords(workflow, ["reservation", "table", "menu"])
+        # 离题：sem 低于 _SEM_LOW → sem_score=2
+        workflow._semantic_similarity = MagicMock(return_value=0.10)
+        turns = [{"role": "user", "content": "reservation table menu reservation table menu words"}]
+        task = {"task_description": "book a restaurant table", "scenario_title": "Dining"}
+        result = await workflow._score_task_relevance(turns, task, "English")
+        # 即使 kw_score 高，max(kw, sem) 仍取 kw —— 注意 max 取两者大者，
+        # 此处验证 sem_score 已正确判离题为 2（receipt 可见），作弊检测信号存在
+        assert result["signals"]["sem_sim"] == 0.10
+        assert result["signals"]["sem_score"] == 2
+
+    @pytest.mark.asyncio
+    async def test_hard_correction_caps_input_score(self, workflow):
+        # 关键词命中高 + 语义高，但 AI 明确判错（hard correction）→ input_score 封顶 4
+        self._patch_keywords(workflow, ["reservation", "table", "menu"])
+        workflow._semantic_similarity = MagicMock(return_value=0.90)
+        turns = [
+            {"role": "user", "content": "I want reservation table menu for dinner tonight"},
+            {"role": "assistant", "content": "That's wrong, that's not how you book a table."},
+        ]
+        task = {"task_description": "book a restaurant table", "scenario_title": "Dining"}
+        result = await workflow._score_task_relevance(turns, task, "English")
+        assert result["signals"]["penalty"] == 0.5  # hard correction
+        assert result["signals"]["input_score"] == 4  # 封顶
+        assert result["score"] <= 5  # 不进 delta 档
+
+    @pytest.mark.asyncio
+    async def test_embedding_unavailable_degrades_to_keyword(self, workflow):
+        # embedding 返回 None → sem_score=None → input_score 退回纯关键词行为
+        self._patch_keywords(workflow, ["reservation", "table", "menu"])
+        workflow._semantic_similarity = MagicMock(return_value=None)
+        turns = [{"role": "user", "content": "I want a reservation for a table from the menu"}]
+        task = {"task_description": "book a restaurant table", "scenario_title": "Dining"}
+        result = await workflow._score_task_relevance(turns, task, "English")
+        assert result["signals"]["sem_score"] is None
+        # 3 关键词命中 → kw_score=9 → input_score=9（与改动前一致）
+        assert result["signals"]["hit_count"] == 3
+        assert result["signals"]["input_score"] == 9

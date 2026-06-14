@@ -1,8 +1,31 @@
 const jwt = require('jsonwebtoken');
+const crypto = require('crypto');
 const User = require('../models/user');
 const { OAuth2Client } = require('google-auth-library');
 const bcrypt = require('bcryptjs');
 const { publishNotification } = require('../utils/notificationPublisher');
+const redis = require('../utils/redisClient');
+const { sendEmail } = require('../utils/mailer');
+const twilioVerify = require('../utils/twilioVerify');
+const aliyunSms = require('../utils/aliyunSms');
+
+// 简单 E.164 校验：+ 开头，2-15 位数字
+function _isValidPhone(p) {
+  return typeof p === 'string' && /^\+[1-9]\d{1,14}$/.test(p.trim());
+}
+
+// 短信通道路由：+86（中国大陆）走阿里云，其他走 Twilio。
+// Twilio 不支持中国大陆号（监管限制 error 60220），阿里云不支持国际号（需国际短信资质）。
+function _smsProvider(phone) {
+  return /^\+86/.test(phone.trim()) ? aliyunSms : twilioVerify;
+}
+
+// 密码重置 token 配置
+const RESET_TOKEN_TTL_SECONDS = 30 * 60; // 30 分钟
+const RESET_TOKEN_PREFIX = 'pwreset:';
+function _hashResetToken(token) {
+  return crypto.createHash('sha256').update(token).digest('hex');
+}
 
 
 const client = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
@@ -26,6 +49,23 @@ const COOKIE_OPTIONS = {
   sameSite: 'lax',
   path: '/api',
   maxAge: 7 * 24 * 60 * 60 * 1000 // 7 days
+};
+
+// ===== Promo codes (server-side source of truth) =====
+// Moved off the frontend so the discount table can't be read/tampered from JS.
+// Keyed by uppercase code; `discount` is a percentage off.
+const PROMO_CODES = {
+  WELCOME20: { code: 'WELCOME20', discount: 20, description: '新用户8折优惠' },
+  ANNUAL50: { code: 'ANNUAL50', discount: 50, description: '年度订阅5折特惠' },
+};
+
+// Pure validator — no I/O, easy to unit test. Returns the promo object on a
+// valid code, or null when the code is missing/unknown.
+const validatePromo = (rawCode) => {
+  if (typeof rawCode !== 'string') return null;
+  const code = rawCode.trim().toUpperCase();
+  if (!code) return null;
+  return PROMO_CODES[code] || null;
 };
 
 // Helper to generate JWT with proper configuration
@@ -298,6 +338,15 @@ exports.updateProfile = async (req, res) => {
   } catch (error) {
     console.error('Update Profile Error:', error.message);
     if (error.detail) console.error('Error Detail:', error.detail);
+    // username UNIQUE 冲突（手机号用户改名撞名）→ 409 友好提示
+    // 注：db wrapper 可能不透传 pg error.code，故同时认 code 与 message/detail 文本
+    const errText = `${error.code || ''} ${error.detail || ''} ${error.message || ''}`;
+    if (/23505|duplicate key|users_username_key/i.test(errText) && /username/i.test(errText)) {
+      return res.status(409).json({
+        success: false,
+        message: '该用户名已被占用，请换一个'
+      });
+    }
     res.status(500).json({
       success: false,
       message: '更新用户资料时服务器错误'
@@ -908,7 +957,11 @@ exports.generateTaskKeywords = async (req, res) => {
 
 // Logout — clear httpOnly cookie
 exports.logout = (req, res) => {
+  // Clear the current Path=/api cookie plus any legacy cookies set under
+  // Path=/ by older builds — duplicate accessToken cookies (different paths)
+  // otherwise shadow the fresh one on /api/ai routes, causing stale-token 401s.
   res.clearCookie('accessToken', { path: '/api' });
+  res.clearCookie('accessToken', { path: '/' });
   res.json({ success: true, message: '已登出' });
 };
 
@@ -955,6 +1008,114 @@ exports.recordDailyQAPassInternal = async (req, res) => {
     }
 };
 
+// ===== Daily Recall State APIs =====
+// Backend-authoritative per-user/per-day switch count + completion state.
+// Replaces the previous localStorage (`recall_switches_*` / `recall_completed_*`)
+// so the free-tier daily switch limit cannot be reset by clearing the browser.
+
+exports.getRecallDailyState = async (req, res) => {
+    try {
+        const db = require('../models/db');
+        const result = await db.query(
+            `SELECT switch_count, completed
+             FROM recall_daily_state
+             WHERE user_id = $1 AND state_date = CURRENT_DATE
+             LIMIT 1`,
+            [req.user.id]
+        );
+        const row = result.rows[0];
+        res.json({
+            success: true,
+            data: {
+                switch_count: row ? row.switch_count : 0,
+                completed: row ? row.completed : false,
+            },
+        });
+    } catch (error) {
+        console.error('getRecallDailyState error:', error);
+        res.status(500).json({ success: false, error: 'Internal server error' });
+    }
+};
+
+exports.incrementRecallSwitch = async (req, res) => {
+    try {
+        const db = require('../models/db');
+        // Idempotent per-day row: first switch inserts with count=1, subsequent
+        // switches bump the existing row's count. UNIQUE(user_id, state_date)
+        // anchors the conflict target.
+        const result = await db.query(
+            `INSERT INTO recall_daily_state (user_id, state_date, switch_count)
+             VALUES ($1, CURRENT_DATE, 1)
+             ON CONFLICT (user_id, state_date)
+             DO UPDATE SET switch_count = recall_daily_state.switch_count + 1,
+                           updated_at = NOW()
+             RETURNING switch_count`,
+            [req.user.id]
+        );
+        res.json({ success: true, data: { switch_count: result.rows[0].switch_count } });
+    } catch (error) {
+        console.error('incrementRecallSwitch error:', error);
+        res.status(500).json({ success: false, error: 'Internal server error' });
+    }
+};
+
+exports.markRecallCompleted = async (req, res) => {
+    try {
+        const db = require('../models/db');
+        await db.query(
+            `INSERT INTO recall_daily_state (user_id, state_date, completed)
+             VALUES ($1, CURRENT_DATE, TRUE)
+             ON CONFLICT (user_id, state_date)
+             DO UPDATE SET completed = TRUE,
+                           updated_at = NOW()`,
+            [req.user.id]
+        );
+        res.json({ success: true, data: { completed: true } });
+    } catch (error) {
+        console.error('markRecallCompleted error:', error);
+        res.status(500).json({ success: false, error: 'Internal server error' });
+    }
+};
+
+// ===== Onboarding Tour State APIs =====
+// Backend-authoritative first-login guided tour completion flag. localStorage
+// mirrors this value for optimistic flicker-free reads; the backend is the
+// source of truth so the tour cannot re-appear after clearing the browser.
+
+exports.getOnboardingTour = async (req, res) => {
+    try {
+        const db = require('../models/db');
+        const result = await db.query(
+            `SELECT onboarding_tour_completed FROM users WHERE id = $1 LIMIT 1`,
+            [req.user.id]
+        );
+        const row = result.rows[0];
+        res.json({
+            success: true,
+            data: { completed: row ? !!row.onboarding_tour_completed : false },
+        });
+    } catch (error) {
+        console.error('getOnboardingTour error:', error);
+        res.status(500).json({ success: false, error: 'Internal server error' });
+    }
+};
+
+exports.markOnboardingTourComplete = async (req, res) => {
+    try {
+        const db = require('../models/db');
+        // Idempotent: flipping an already-TRUE flag is a no-op.
+        await db.query(
+            `UPDATE users SET onboarding_tour_completed = TRUE, updated_at = NOW()
+             WHERE id = $1`,
+            [req.user.id]
+        );
+        res.json({ success: true, data: { completed: true } });
+    } catch (error) {
+        console.error('markOnboardingTourComplete error:', error);
+        res.status(500).json({ success: false, error: 'Internal server error' });
+    }
+};
+
 // ===== Daily Scenario Count =====
 exports.getDailyScenarioCount = async (req, res) => {
     try {
@@ -973,6 +1134,150 @@ exports.getDailyScenarioCount = async (req, res) => {
     } catch (error) {
         console.error('getDailyScenarioCount error:', error);
         res.status(500).json({ success: false });
+    }
+};
+
+// ===== Password Reset =====
+
+// POST /api/users/password/forgot — 发起密码重置
+// 防枚举：无论邮箱是否存在都返回 200 + 同一文案。仅当存在且为本地账号时
+// 才生成 token、存 hash、发邮件。
+exports.forgotPassword = async (req, res) => {
+    const { email } = req.body || {};
+    const genericOk = { success: true, message: '若该邮箱已注册，我们已发送密码重置邮件。' };
+    try {
+        if (!email || typeof email !== 'string') {
+            return res.status(400).json({ success: false, message: '请输入邮箱地址。' });
+        }
+        const user = await User.findByEmail(email.trim().toLowerCase());
+        // 邮箱不存在，或是 Google-only 账号（无本地密码）→ 静默成功，不泄露
+        if (!user || !user.id) {
+            return res.json(genericOk);
+        }
+
+        const token = crypto.randomBytes(32).toString('hex');
+        const tokenHash = _hashResetToken(token);
+        try {
+            await redis.setex(`${RESET_TOKEN_PREFIX}${tokenHash}`, RESET_TOKEN_TTL_SECONDS, String(user.id));
+        } catch (e) {
+            console.error('[forgotPassword] redis setex failed:', e.message);
+            return res.status(500).json({ success: false, message: '服务暂时不可用，请稍后再试。' });
+        }
+
+        const baseUrl = process.env.PASSWORD_RESET_BASE_URL || 'http://localhost:5001';
+        const resetUrl = `${baseUrl}/reset-password?token=${token}`;
+        const html =
+            `<div style="font-family:sans-serif;max-width:480px;margin:0 auto">` +
+            `<h2>重置您的密码</h2>` +
+            `<p>我们收到了重置 Guaji AI 账户密码的请求。点击下方按钮设置新密码（链接 30 分钟内有效）：</p>` +
+            `<p><a href="${resetUrl}" style="display:inline-block;padding:10px 20px;background:#637FF1;color:#fff;border-radius:8px;text-decoration:none">重置密码</a></p>` +
+            `<p style="color:#888;font-size:13px">若按钮无法点击，请复制此链接到浏览器：<br>${resetUrl}</p>` +
+            `<p style="color:#888;font-size:13px">如果不是您本人操作，请忽略此邮件，您的密码不会被更改。</p></div>`;
+
+        const result = await sendEmail({
+            to: user.email,
+            subject: 'Guaji AI 密码重置',
+            html,
+            text: `重置您的 Guaji AI 密码（30 分钟内有效）：${resetUrl}`,
+        });
+
+        if (!result.sent) {
+            // 开发期/未配置 ZSend：把链接打到日志，方便本地走通流程。
+            // 生产配好 ZSEND_API_KEY 后此分支不会触发。
+            console.warn(`[forgotPassword] 邮件未发送 (${result.reason})。重置链接(仅日志): ${resetUrl}`);
+        }
+        return res.json(genericOk);
+    } catch (error) {
+        console.error('forgotPassword error:', error);
+        // 仍返回通用成功，避免泄露内部错误/邮箱存在性
+        return res.json(genericOk);
+    }
+};
+
+// POST /api/users/password/reset — 用 token 设置新密码
+exports.resetPassword = async (req, res) => {
+    const { token, password } = req.body || {};
+    try {
+        if (!token || !password) {
+            return res.status(400).json({ success: false, message: '缺少 token 或新密码。' });
+        }
+        if (typeof password !== 'string' || password.length < 6) {
+            return res.status(400).json({ success: false, message: '密码至少需要 6 位。' });
+        }
+        const tokenHash = _hashResetToken(token);
+        const key = `${RESET_TOKEN_PREFIX}${tokenHash}`;
+        let userId = null;
+        try {
+            userId = await redis.get(key);
+        } catch (e) {
+            console.error('[resetPassword] redis get failed:', e.message);
+            return res.status(500).json({ success: false, message: '服务暂时不可用，请稍后再试。' });
+        }
+        if (!userId) {
+            return res.status(400).json({ success: false, message: '重置链接无效或已过期，请重新申请。' });
+        }
+
+        await User.updateLocalPassword(userId, password);
+        // 一次性：用完即删
+        try { await redis.del(key); } catch (_) {}
+
+        return res.json({ success: true, message: '密码已重置，请用新密码登录。' });
+    } catch (error) {
+        console.error('resetPassword error:', error);
+        return res.status(500).json({ success: false, message: '重置失败，请稍后再试。' });
+    }
+};
+
+// ===== Phone (SMS) Login — Twilio Verify =====
+
+// POST /api/users/phone/send-code — 发送短信验证码
+exports.sendPhoneCode = async (req, res) => {
+    const { phone } = req.body || {};
+    try {
+        if (!_isValidPhone(phone)) {
+            return res.status(400).json({ success: false, message: '请输入有效的手机号（含国家码，如 +8613800138000）。' });
+        }
+        const result = await _smsProvider(phone).sendCode(phone.trim());
+        if (result.sent || result.devMode) {
+            // devMode 也返回成功（验证码走 dev 固定码 000000，日志已提示）
+            return res.json({ success: true, message: '验证码已发送，请查收短信。', devMode: !!result.devMode });
+        }
+        return res.status(502).json({ success: false, message: '验证码发送失败，请稍后再试。' });
+    } catch (error) {
+        console.error('sendPhoneCode error:', error);
+        return res.status(500).json({ success: false, message: '服务异常，请稍后再试。' });
+    }
+};
+
+// POST /api/users/phone/login — 校验验证码 → 登录/注册 → 签 JWT cookie
+exports.phoneLogin = async (req, res) => {
+    const { phone, code } = req.body || {};
+    try {
+        if (!_isValidPhone(phone)) {
+            return res.status(400).json({ success: false, message: '手机号格式不正确。' });
+        }
+        if (!code || !/^\d{4,8}$/.test(String(code).trim())) {
+            return res.status(400).json({ success: false, message: '验证码格式不正确。' });
+        }
+        const check = await _smsProvider(phone).checkCode(phone.trim(), String(code).trim());
+        if (!check.ok) {
+            return res.status(401).json({ success: false, message: '验证码错误或已过期。' });
+        }
+
+        const user = await User.findOrCreateByPhone(phone.trim());
+        const userWithoutPassword = { ...user };
+        delete userWithoutPassword.password;
+
+        const token = generateToken(user.id);
+        res.cookie('accessToken', token, COOKIE_OPTIONS);
+        return res.json({
+            success: true,
+            message: '登录成功',
+            data: { token, user: userWithoutPassword },
+        });
+    } catch (error) {
+        console.error('phoneLogin error:', error);
+        return res.status(500).json({ success: false, message: '登录失败，请稍后再试。' });
     }
 };
 
@@ -1064,3 +1369,31 @@ exports.submitFeedback = async (req, res) => {
         res.status(500).json({ error: err.message });
     }
 };
+
+// ===== Promo code validation =====
+
+// POST /api/users/promo/validate — validates a promo code server-side and
+// returns the discount. The discount table lives only here (not in frontend JS),
+// so codes can't be enumerated or tampered from the client.
+exports.validatePromoCode = async (req, res) => {
+    try {
+        const { code } = req.body || {};
+        const promo = validatePromo(code);
+        if (!promo) {
+            return res.status(404).json({ valid: false, error: '优惠码无效或已过期' });
+        }
+        res.json({
+            valid: true,
+            code: promo.code,
+            discount: promo.discount,
+            description: promo.description
+        });
+    } catch (err) {
+        console.error('validatePromoCode Error:', err);
+        res.status(500).json({ valid: false, error: err.message });
+    }
+};
+
+// Exported for unit tests (pure, no I/O)
+exports._validatePromo = validatePromo;
+exports._PROMO_CODES = PROMO_CODES;

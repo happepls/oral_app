@@ -18,13 +18,26 @@ const SVG_MAP = {
   calm: 'bird-logo.svg',
 };
 
+const THINKING_DOTS_WRAP_STYLE = {
+  position: 'absolute', top: 4, right: '50%', transform: 'translateX(60%)',
+  background: '#fff', borderRadius: 14, padding: '6px 10px',
+  boxShadow: '0 4px 12px rgba(0,0,0,0.1)', display: 'flex', gap: 4,
+};
+
+const IMG_STYLE = {
+  width: '85%',
+  height: '85%',
+  objectFit: 'contain',
+  transition: 'opacity 0.15s ease',
+};
+
+const LISTEN_RING_STYLE = {
+  position: 'absolute', top: 0, left: 0, pointerEvents: 'none',
+};
+
 function ThinkingDots() {
   return (
-    <div style={{
-      position: 'absolute', top: 4, right: '50%', transform: 'translateX(60%)',
-      background: '#fff', borderRadius: 14, padding: '6px 10px',
-      boxShadow: '0 4px 12px rgba(0,0,0,0.1)', display: 'flex', gap: 4,
-    }}>
+    <div style={THINKING_DOTS_WRAP_STYLE}>
       {[0, 1, 2].map((i) => (
         <div key={i} style={{
           width: 6, height: 6, borderRadius: '50%', background: '#8B87C0',
@@ -68,19 +81,12 @@ export function GuajiMascot({
         <img
           src={svgPath}
           alt="mascot"
-          style={{
-            width: '85%',
-            height: '85%',
-            objectFit: 'contain',
-            transition: 'opacity 0.15s ease',
-          }}
+          style={IMG_STYLE}
         />
       </div>
 
       {state === 'listening' && (
-        <svg viewBox="0 0 200 200" width={size} height={size} style={{
-          position: 'absolute', top: 0, left: 0, pointerEvents: 'none',
-        }}>
+        <svg viewBox="0 0 200 200" width={size} height={size} style={LISTEN_RING_STYLE}>
           <g opacity="0.3">
             {[0, 1, 2].map((i) => (
               <circle key={i} cx="100" cy="100" r={50 + i * 30} fill="none"

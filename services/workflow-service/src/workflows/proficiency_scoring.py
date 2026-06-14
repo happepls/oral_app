@@ -10,8 +10,48 @@ Workflow 2: Proficiency Scoring (熟练度打分)
 """
 import json
 import re
+import os
+import math
+import hashlib
+import logging
 from typing import Dict, List, Any, Optional, Tuple
 from datetime import datetime
+
+try:
+    import dashscope
+    from dashscope import TextEmbedding
+    _DASHSCOPE_AVAILABLE = True
+except ImportError:
+    dashscope = None
+    TextEmbedding = None
+    _DASHSCOPE_AVAILABLE = False
+
+logger = logging.getLogger(__name__)
+
+# 双信号门 Signal 1（语义）配置
+_EMBED_MODEL = os.getenv("TASK_EMBED_MODEL", "text-embedding-v3")
+# 语义相似度阈值（cosine）。低于 _SEM_LOW → 不提供语义信号；高于 _SEM_HIGH → 强语义信号
+#
+# 标定依据（text-embedding-v3，2026-06 容器内实测样本）：
+#   完全无关/离题句的噪声底 ≈ 0.44-0.46（跨语言 cosine 基线偏高，不接近 0）
+#   弱/中相关 ≈ 0.58，强相关 paraphrase ≈ 0.64，原词复用 ≈ 0.86
+# 故 _SEM_LOW=0.52 把噪声底排除在语义信号之外（无关句不得分），
+# _SEM_HIGH=0.62 让真实 paraphrase（0.64）进 9 档。
+# 换 embedding 模型或语言对差异大时，用 env 覆盖并重新取样标定。
+_SEM_LOW = float(os.getenv("TASK_SEM_LOW", "0.52"))
+_SEM_HIGH = float(os.getenv("TASK_SEM_HIGH", "0.62"))
+
+
+def _cosine(a: List[float], b: List[float]) -> float:
+    """两向量余弦相似度，长度不一致或零向量返回 0.0"""
+    if not a or not b or len(a) != len(b):
+        return 0.0
+    dot = sum(x * y for x, y in zip(a, b))
+    na = math.sqrt(sum(x * x for x in a))
+    nb = math.sqrt(sum(y * y for y in b))
+    if na == 0.0 or nb == 0.0:
+        return 0.0
+    return dot / (na * nb)
 
 
 class ProficiencyScoringWorkflow:
@@ -438,6 +478,55 @@ class ProficiencyScoringWorkflow:
         else:
             return 1.0
 
+    def _embed_text(self, text: str) -> Optional[List[float]]:
+        """同步调用 DashScope text-embedding，返回向量；失败返回 None（graceful degrade）"""
+        if not _DASHSCOPE_AVAILABLE or not text or not text.strip():
+            return None
+        api_key = os.getenv("DASHSCOPE_API_KEY") or os.getenv("QWEN3_OMNI_API_KEY")
+        if not api_key:
+            return None
+        try:
+            dashscope.api_key = api_key
+            resp = TextEmbedding.call(model=_EMBED_MODEL, input=text.strip())
+            # DashScope 成功返回 status_code 200，向量在 output.embeddings[0].embedding
+            if getattr(resp, "status_code", None) == 200:
+                embeddings = resp.output.get("embeddings") if isinstance(resp.output, dict) else None
+                if embeddings:
+                    return embeddings[0].get("embedding")
+            logger.warning(f"[Embed] TextEmbedding non-200: {getattr(resp, 'status_code', 'n/a')}")
+            return None
+        except Exception as e:
+            logger.warning(f"[Embed] TextEmbedding call failed: {e}")
+            return None
+
+    def _gold_embedding(self, gold_text: str) -> Optional[List[float]]:
+        """获取任务 gold 文本的 embedding，优先读 Redis 缓存（gold 文本稳定，可长缓存）"""
+        if not gold_text or not gold_text.strip():
+            return None
+        try:
+            from cache import cache as _cache
+        except Exception:
+            _cache = None
+        task_key = hashlib.sha256(gold_text.strip().encode("utf-8")).hexdigest()[:16]
+        if _cache is not None:
+            cached = _cache.get_task_embedding(task_key)
+            if cached:
+                return cached
+        vec = self._embed_text(gold_text)
+        if vec and _cache is not None:
+            _cache.set_task_embedding(task_key, vec)
+        return vec
+
+    def _semantic_similarity(self, user_content: str, gold_text: str) -> Optional[float]:
+        """Signal 1：用户回答与任务 gold 文本的语义余弦相似度。embedding 不可用时返回 None"""
+        gold_vec = self._gold_embedding(gold_text)
+        if not gold_vec:
+            return None
+        user_vec = self._embed_text(user_content)
+        if not user_vec:
+            return None
+        return _cosine(user_vec, gold_vec)
+
     async def _score_task_relevance(
         self,
         turns: List[Dict[str, Any]],
@@ -445,21 +534,24 @@ class ProficiencyScoringWorkflow:
         target_language: str = "English"
     ) -> Dict[str, Any]:
         """
-        任务相关性评分 (0-10) - 双信号混合评分
+        任务相关性评分 (0-10) - 双信号门（T-cell 共刺激）评分
 
-        公式: task_relevance = input_relevance_score × correction_penalty × sentence_quality_factor
+        公式: task_relevance = input_score × correction_penalty × sentence_quality_factor
 
-        input_relevance_score（用户输入关键词命中）:
-            >=3 命中 → 9 | 2 命中 → 7 | 1 命中 → 5 | 0 命中 → 2
+        input_score = max(Signal1_语义, Signal2_关键词)  —— 任一信号亮即救回真实回答：
+          Signal 1（语义）: embedding cosine(user, task gold)
+              >=_SEM_HIGH → 9 | >=_SEM_LOW → 7 | 否则 → 2 | embedding 不可用 → None（降级纯关键词）
+          Signal 2（关键词）: hit_count >=3→9 | 2→7 | 1→4 | 0→2
 
-        correction_penalty（AI 纠错惩罚）:
-            无纠错 → ×1.0 | 1处纠错 → ×0.7 | 多处纠错 → ×0.5
+        共刺激门: AI hard correction（penalty=0.5，明确判错）→ input_score 封顶 ≤4，
+                 暖语气错答靠 penalty 扣分，明确判错直接不给 delta。
 
-        sentence_quality_factor（句子质量）:
-            <8字符 → ×0.6 | 关键词命中但无实质内容 → ×0.7 | 正常 → ×1.0
+        correction_penalty（AI 纠错惩罚）: 无纠错 ×1.0 | 轻度 ×0.7 | 强纠正 ×0.5
+        sentence_quality_factor（句子质量）: <min_len ×0.6 | 关键词命中无实质内容 ×0.7 | 正常 ×1.0
 
         Returns:
-            {"score": int, "suggested_keywords": List[str], "matched_keywords": List[str]}
+            {"score": int, "suggested_keywords": List[str], "matched_keywords": List[str],
+             "signals": {双信号 receipt}}
         """
         if not current_task:
             return {"score": 5, "suggested_keywords": [], "matched_keywords": []}
@@ -501,21 +593,48 @@ class ProficiencyScoringWorkflow:
                 'is_repetitive': True,
             }
 
-        # 3. 计算用户输入关键词命中数（模糊匹配）
+        # 3. 双信号门（T-cell 共刺激）计算 input_score
+        #    Signal 1（语义）: embedding 相似度，救回无关键词命中的真实 paraphrase
+        #    Signal 2（关键词）: 原 hit_count 映射，作为低成本快速信号 + embedding 降级时的兜底
+        #    共刺激规则: input_score = max(两信号)；任一亮即救回，但 verdict=hard correction 时压制
+
+        # Signal 2: 关键词命中（模糊匹配）
         matched = [kw for kw in all_keywords if self._fuzzy_match(kw, user_content)] if user_content else []
         hit_count = len(matched)
-
         if hit_count >= 3:
-            input_score = 9
+            kw_score = 9
         elif hit_count == 2:
-            input_score = 7
+            kw_score = 7
         elif hit_count == 1:
-            input_score = 4  # 单关键词命中不足以加分（<=4 阈值），需 2+ 才能得分
+            kw_score = 4  # 单关键词命中不足以加分（<=4 阈值），需 2+ 才能得分
         else:
-            input_score = 2  # 未命中但保留基础分
+            kw_score = 2  # 未命中但保留基础分
 
-        # 4. AI 纠错惩罚系数
+        # Signal 1: 语义相似度（embedding 不可用时为 None → 降级纯关键词，不清零）
+        gold_text = f"{scenario_title} {task_desc}".strip()
+        sem_sim = self._semantic_similarity(user_content, gold_text) if user_content else None
+        sem_score = None
+        if sem_sim is not None:
+            if sem_sim >= _SEM_HIGH:
+                sem_score = 9   # 强语义相关：与任务高度契合（救回零关键词的 paraphrase）
+            elif sem_sim >= _SEM_LOW:
+                sem_score = 7   # 中等语义相关
+            else:
+                sem_score = 2   # 语义离题：即使蒙到关键词也不应高分
+
+        # 共刺激：取两信号最大值（任一信号亮即救回真实回答）
+        if sem_score is not None:
+            input_score = max(kw_score, sem_score)
+        else:
+            input_score = kw_score  # graceful degrade：embedding 不可用 → 退回原纯关键词行为
+
+        # 4. AI 纠错惩罚系数（Signal 2 verdict：hard correction = 判定回答错误）
         penalty = self._get_correction_penalty(last_ai_response)
+
+        # 共刺激门：hard correction（penalty=0.5，AI 明确判错）压制 input_score，
+        # 警语气≠正确——暖语气错答仍会因 penalty 扣分，明确判错则直接封顶 ≤4 不给 delta
+        if penalty <= 0.5 and input_score > 4:
+            input_score = 4
 
         # 5. 句子质量系数
         sentence_quality_factor = 1.0
@@ -538,12 +657,23 @@ class ProficiencyScoringWorkflow:
 
         # 6. 最终 task_relevance
         final_score = max(1, min(10, round(input_score * penalty * sentence_quality_factor)))
-        print(f"[DEBUG] task_relevance: hits={hit_count}, input_score={input_score}, penalty={penalty}, quality={sentence_quality_factor}, final={final_score}")
+        _sem_dbg = f"{sem_sim:.3f}" if sem_sim is not None else "n/a"
+        print(f"[DEBUG] task_relevance: hits={hit_count}, kw_score={kw_score}, sem_sim={_sem_dbg}, sem_score={sem_score}, input_score={input_score}, penalty={penalty}, quality={sentence_quality_factor}, final={final_score}")
 
         return {
             "score": final_score,
             "suggested_keywords": all_keywords[:6],  # 用于 improvement_tips 💡 展示
             "matched_keywords": matched,              # 保留供 debug
+            # 双信号门 receipt：3am 可回放，无需从 print 反推
+            "signals": {
+                "kw_score": kw_score,
+                "hit_count": hit_count,
+                "sem_sim": round(sem_sim, 4) if sem_sim is not None else None,
+                "sem_score": sem_score,
+                "input_score": input_score,
+                "penalty": penalty,
+                "quality": sentence_quality_factor,
+            },
         }
 
     async def _get_task_specific_keywords(self, task_desc: str, scenario_title: str, task_id: int = None, user_id: str = None, token: str = None, target_language: str = "English") -> List[str]:

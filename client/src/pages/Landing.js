@@ -36,24 +36,23 @@ function Landing() {
       cta: t('plan_free_cta'), highlight: false,
     },
     {
-      name: t('plan_week_name'), price: '2.90', period: '/wk',
+      name: t('plan_week_name'), price: '4.99', period: '/wk',
       features: [t('plan_week_f1'), t('plan_week_f2'), t('plan_week_f3'), t('plan_week_f4')],
       cta: t('plan_week_cta'), highlight: true,
     },
     {
-      name: t('plan_year_name'), price: '89.90', period: '/yr',
+      name: t('plan_year_name'), price: '99', period: '/yr',
       features: [t('plan_year_f1'), t('plan_year_f2'), t('plan_year_f3'), t('plan_year_f4'), t('plan_year_f5')],
       cta: t('plan_year_cta'), highlight: false,
     },
   ], [t]);
 
+  // 已登录用户可以主动回访首页（不再强制 redirect 到 /discovery）。
+  // 仅当账号尚未完成 onboarding（无 native_language）时才引导去 /onboarding，
+  // 否则停留首页，由 navbar 提供「进入应用」入口。
   useEffect(() => {
-    if (user) {
-      if (user.native_language) {
-        navigate('/discovery');
-      } else {
-        navigate('/onboarding');
-      }
+    if (user && !user.native_language) {
+      navigate('/onboarding');
     }
   }, [user, navigate]);
 
@@ -75,19 +74,36 @@ function Landing() {
           </div>
           <div className="flex items-center gap-3">
             <LanguageSwitcher />
-            <button
-              onClick={() => navigate('/login')}
-              className="text-slate-600 dark:text-slate-300 hover:text-primary font-medium px-4 py-2 transition-colors"
-            >
-              {t('nav_login')}
-            </button>
-            <button
-              onClick={() => navigate('/register')}
-              className="text-white font-medium px-5 py-2 rounded-lg transition hover:opacity-90"
-              style={{ background: 'linear-gradient(135deg, #637FF1, #a47af6)' }}
-            >
-              {t('nav_free_start')}
-            </button>
+            {user ? (
+              <>
+                <span className="text-slate-700 dark:text-slate-200 font-medium px-2 hidden sm:inline">
+                  {user.nickname || user.username || t('learner_default')}
+                </span>
+                <button
+                  onClick={() => navigate('/discovery')}
+                  className="text-white font-medium px-5 py-2 rounded-lg transition hover:opacity-90"
+                  style={{ background: 'linear-gradient(135deg, #637FF1, #a47af6)' }}
+                >
+                  {t('nav_enter_app')}
+                </button>
+              </>
+            ) : (
+              <>
+                <button
+                  onClick={() => navigate('/login')}
+                  className="text-slate-600 dark:text-slate-300 hover:text-primary font-medium px-4 py-2 transition-colors"
+                >
+                  {t('nav_login')}
+                </button>
+                <button
+                  onClick={() => navigate('/register')}
+                  className="text-white font-medium px-5 py-2 rounded-lg transition hover:opacity-90"
+                  style={{ background: 'linear-gradient(135deg, #637FF1, #a47af6)' }}
+                >
+                  {t('nav_free_start')}
+                </button>
+              </>
+            )}
           </div>
         </div>
       </nav>

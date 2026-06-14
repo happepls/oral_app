@@ -3,10 +3,13 @@ import { BrowserRouter as Router, Route, Routes, Navigate } from 'react-router-d
 import { GoogleOAuthProvider } from '@react-oauth/google';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 import { NotificationProvider } from './contexts/NotificationContext';
+import { TourProvider } from './contexts/TourContext';
 import Welcome from './pages/Welcome';
 import Landing from './pages/Landing';
 import Login from './pages/Login';
 import Register from './pages/Register';
+import ForgotPassword from './pages/ForgotPassword';
+import ResetPassword from './pages/ResetPassword';
 import Conversation from './pages/Conversation';
 import Recall from './pages/Recall';
 import Discovery from './pages/Discovery';
@@ -18,6 +21,7 @@ import Goals from './pages/Goals';
 import Subscription from './pages/Subscription';
 import Achievements from './pages/Achievements';
 import SplashScreen from './components/SplashScreen';
+import SupportChat from './components/SupportChat';
 import './App.css';
 
 // Separate Layout component for Routes to keep main App clean
@@ -29,6 +33,8 @@ const AppRoutes = () => {
             <Route path="/welcome" element={<Welcome />} />
             <Route path="/login" element={<Login />} />
             <Route path="/register" element={<Register />} />
+            <Route path="/forgot-password" element={<ForgotPassword />} />
+            <Route path="/reset-password" element={<ResetPassword />} />
             <Route path="/onboarding" element={<Onboarding />} />
             <Route path="/goal-setting" element={<GoalSetting />} />
             <Route path="/conversation" element={<Conversation />} />
@@ -69,9 +75,12 @@ function App() {
             {showSplash ? (
               <SplashScreen onComplete={() => setShowSplash(false)} />
             ) : (
-              <div className="min-h-screen bg-gray-50 dark:bg-gray-900 transition-colors duration-300">
-                <AppRoutes />
-              </div>
+              <TourProvider>
+                <div className="min-h-screen bg-gray-50 dark:bg-gray-900 transition-colors duration-300">
+                  <SupportChat />
+                  <AppRoutes />
+                </div>
+              </TourProvider>
             )}
           </Router>
         </NotificationProvider>

@@ -54,6 +54,7 @@ code {
   --border-solid: #E5E7EB;
   --border-focus: #637FF1;
   --input-background: #f3f3f5;
+  --background-translucent: rgba(246, 247, 248, 0.96);
 
   /* ── Brand Colors ── */
   --primary: #637FF1;
@@ -106,4 +107,20 @@ code {
   --font-display: 'Lexend', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
   --font-body: 'Lexend', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
   --font-mono: source-code-pro, Menlo, Monaco, Consolas, 'Courier New', monospace;
+}
+
+/* ── Dark Mode Variable Overrides ── */
+.dark {
+  --background: #101922;
+  --foreground: #f1f5f9;
+  --foreground-secondary: #cbd5e1;
+  --foreground-muted: #94a3b8;
+  --card: #1e293b;
+  --card-foreground: #f1f5f9;
+  --muted: #1e293b;
+  --muted-foreground: #94a3b8;
+  --border: rgba(255, 255, 255, 0.1);
+  --border-solid: #334155;
+  --input-background: #1e293b;
+  --background-translucent: rgba(16, 25, 34, 0.96);
 }

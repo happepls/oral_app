@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'motion/react';
 import { ChevronDown, ChevronUp, Plus, Target, Flame, CheckCircle, Lock } from 'lucide-react';
@@ -137,12 +137,14 @@ function Goals() {
   const [practiceGoal, setPracticeGoal] = useState(() => user?.daily_practice_goal || 15);
 
   useEffect(() => {
+    const controller = new AbortController();
     const load = async () => {
       try {
         const [goalsRes, checkinRes] = await Promise.all([
           userAPI.getUserGoals().catch(() => null),
           userAPI.getCheckinStats().catch(() => null),
         ]);
+        if (controller.signal.aborted) return;
         if (goalsRes?.goals) setAllGoals(goalsRes.goals);
         else if (goalsRes?.goal) setAllGoals([goalsRes.goal]);
         if (checkinRes?.streak) setStreak(checkinRes.streak);
@@ -150,12 +152,14 @@ function Goals() {
           setPracticeGoal(user.daily_practice_goal);
         }
       } catch (e) {
+        if (controller.signal.aborted) return;
         console.error('Goals load error:', e);
       } finally {
-        setLoading(false);
+        if (!controller.signal.aborted) setLoading(false);
       }
     };
     load();
+    return () => controller.abort();
   }, [user?.daily_practice_goal]);
 
   const handleVoiceChange = (id) => {
@@ -179,6 +183,14 @@ function Goals() {
       s.tasks?.length > 0 && s.tasks.every(t => t.status === 'completed')
     ).length;
   }, 0);
+
+  // Summary stats contain JSX icons — memoize so the array (and its
+  // <Target/> etc. elements) isn't rebuilt on every render.
+  const summaryStats = useMemo(() => [
+    { label: '进行中', value: activeGoals.length, icon: <Target className="w-4 h-4" />, color: 'text-primary', bg: 'bg-primary/10' },
+    { label: '已完成场景', value: totalCompletedScenes, icon: <CheckCircle className="w-4 h-4" />, color: 'text-emerald-500', bg: 'bg-emerald-50 dark:bg-emerald-900/20' },
+    { label: '连续天数', value: streak, icon: <Flame className="w-4 h-4" />, color: 'text-amber-500', bg: 'bg-amber-50 dark:bg-amber-900/20' },
+  ], [activeGoals.length, totalCompletedScenes, streak]);
 
   if (loading) {
     return (
@@ -209,11 +221,7 @@ function Goals() {
           animate={{ opacity: 1, y: 0 }}
           className="flex gap-3 px-4 pt-4 mb-4"
         >
-          {[
-            { label: '进行中', value: activeGoals.length, icon: <Target className="w-4 h-4" />, color: 'text-primary', bg: 'bg-primary/10' },
-            { label: '已完成场景', value: totalCompletedScenes, icon: <CheckCircle className="w-4 h-4" />, color: 'text-emerald-500', bg: 'bg-emerald-50 dark:bg-emerald-900/20' },
-            { label: '连续天数', value: streak, icon: <Flame className="w-4 h-4" />, color: 'text-amber-500', bg: 'bg-amber-50 dark:bg-amber-900/20' },
-          ].map((s, i) => (
+          {summaryStats.map((s, i) => (
             <motion.div
               key={s.label}
               initial={{ opacity: 0, y: 12 }}

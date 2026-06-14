@@ -13,6 +13,8 @@ import AudioBar from '../components/AudioBar.jsx';
 import NetworkAdaptiveManager from '../utils/network-adaptive-manager';
 import OptimizedWebSocket from '../utils/websocket-optimized';
 import { motion, AnimatePresence } from 'motion/react';
+import { useTranslation } from 'react-i18next';
+import { resolveDailyLimitModal } from './dailyLimitLogic';
 
 const MAGIC_TIPS = [
   '点击消息气泡右侧的喇叭图标，可重听 AI 的示范发音。',
@@ -24,12 +26,93 @@ const MAGIC_TIPS = [
   '说出来的速度不需要追求完美，意思准确是第一步。',
 ];
 
+// Default scenario templates — hoisted to module scope so the (large) object
+// is allocated once at module load instead of being recreated on every render.
+const DEFAULT_SCENARIOS = {
+  daily_conversation: [
+    { title: "Casual Greetings", tasks: ["Greet someone you just met", "Ask how someone is doing", "Make small talk about the weather"] },
+    { title: "Coffee Shop Order", tasks: ["Order your favorite drink", "Ask about menu items", "Request modifications"] },
+    { title: "Grocery Shopping", tasks: ["Ask for item locations", "Request quantity and price", "Handle checkout conversation"] },
+    { title: "Directions", tasks: ["Ask for directions to a location", "Clarify route details", "Thank for help"] },
+    { title: "Phone Call Basics", tasks: ["Answer a phone call properly", "Ask who is calling", "End a call politely"] },
+    { title: "Restaurant Dining", tasks: ["Make a reservation", "Order food from menu", "Ask for the bill"] },
+    { title: "Public Transport", tasks: ["Ask about schedules", "Buy a ticket", "Confirm your stop"] },
+    { title: "Weekend Plans", tasks: ["Discuss weekend activities", "Make suggestions", "Accept or decline invitations"] },
+    { title: "Hobbies Discussion", tasks: ["Share your hobbies", "Ask about others' interests", "Make related plans"] },
+    { title: "Small Talk (Culture)", tasks: ["Discuss local customs", "Share interesting facts", "Express opinions politely"] }
+  ],
+  business_meeting: [
+    { title: "Self Introduction", tasks: ["Introduce yourself professionally", "Share your role and company", "Exchange contact information"] },
+    { title: "Meeting Scheduling", tasks: ["Propose meeting times", "Confirm availability", "Send meeting invites"] },
+    { title: "Project Status Update", tasks: ["Summarize current progress", "Discuss blockers", "Plan next steps"] },
+    { title: "Client Presentation", tasks: ["Open a presentation", "Explain key points", "Handle Q&A"] },
+    { title: "Negotiation Basics", tasks: ["State your position", "Listen to counteroffers", "Reach a compromise"] },
+    { title: "Email Discussion", tasks: ["Reference an important email", "Clarify email contents", "Agree on follow-up actions"] },
+    { title: "Team Collaboration", tasks: ["Assign tasks to team members", "Check on task progress", "Provide feedback"] },
+    { title: "Conference Call", tasks: ["Join a video call", "Share your screen", "Wrap up the call"] },
+    { title: "Deadline Management", tasks: ["Discuss timeline constraints", "Request deadline extension", "Commit to new dates"] },
+    { title: "Professional Small Talk", tasks: ["Chat about industry news", "Discuss career journeys", "Build rapport"] }
+  ],
+  travel_survival: [
+    { title: "Airport Check-in", tasks: ["Check in for your flight", "Ask about seat preferences", "Handle baggage check"] },
+    { title: "Immigration Control", tasks: ["Answer officer questions", "Explain your trip purpose", "Provide required documents"] },
+    { title: "Hotel Reservation", tasks: ["Book a room", "Ask about amenities", "Request early check-in"] },
+    { title: "Taxi & Rideshare", tasks: ["Request a ride", "Give your destination", "Handle payment"] },
+    { title: "Asking Directions", tasks: ["Ask how to get somewhere", "Understand landmark references", "Confirm the route"] },
+    { title: "Restaurant Ordering", tasks: ["Ask for recommendations", "Order local cuisine", "Handle dietary requirements"] },
+    { title: "Shopping Abroad", tasks: ["Ask prices", "Negotiate or bargain", "Request tax refund info"] },
+    { title: "Emergency Situations", tasks: ["Ask for help", "Explain your situation", "Contact emergency services"] },
+    { title: "Sightseeing Tours", tasks: ["Book a tour", "Ask tour guide questions", "Express interest or concerns"] },
+    { title: "Cultural Small Talk", tasks: ["Discuss local culture", "Share your impressions", "Learn local expressions"] }
+  ],
+  exam_prep: [
+    { title: "Self Introduction (Exam)", tasks: ["Introduce yourself clearly", "Mention your background", "State your goals"] },
+    { title: "Describing Pictures", tasks: ["Describe a photo in detail", "Compare two images", "Express your opinion"] },
+    { title: "Opinion Questions", tasks: ["State your opinion clearly", "Give supporting reasons", "Conclude your answer"] },
+    { title: "Problem Solving", tasks: ["Identify the problem", "Suggest solutions", "Evaluate options"] },
+    { title: "Role-play Scenarios", tasks: ["Understand the situation", "Respond appropriately", "Handle follow-ups"] },
+    { title: "Discussion & Debate", tasks: ["Express agreement/disagreement", "Build on others' points", "Summarize the discussion"] },
+    { title: "Long Turn Speaking", tasks: ["Speak for 1-2 minutes fluently", "Structure your answer", "Manage your time"] },
+    { title: "Pronunciation Practice", tasks: ["Practice difficult sounds", "Work on intonation", "Reduce accent interference"] },
+    { title: "Vocabulary Expansion", tasks: ["Use academic vocabulary", "Explain complex terms", "Paraphrase effectively"] },
+    { title: "Mock Exam Practice", tasks: ["Complete a timed practice", "Self-evaluate performance", "Identify improvement areas"] }
+  ],
+  presentation: [
+    { title: "Opening Strong", tasks: ["Grab audience attention", "Introduce your topic", "Preview main points"] },
+    { title: "Explaining Data", tasks: ["Present statistics clearly", "Interpret chart information", "Draw conclusions"] },
+    { title: "Storytelling", tasks: ["Share a relevant story", "Connect to your message", "Engage emotionally"] },
+    { title: "Handling Q&A", tasks: ["Listen carefully to questions", "Provide clear answers", "Handle difficult questions"] },
+    { title: "Visual Aid Description", tasks: ["Reference your slides", "Explain diagrams", "Guide audience attention"] },
+    { title: "Transitions", tasks: ["Move between topics smoothly", "Recap previous points", "Preview next sections"] },
+    { title: "Persuasion Techniques", tasks: ["Present your argument", "Address counter-arguments", "Call to action"] },
+    { title: "Closing Impact", tasks: ["Summarize key takeaways", "End with a memorable statement", "Thank your audience"] },
+    { title: "Team Presentation", tasks: ["Coordinate with co-presenters", "Handle handoffs", "Support each other"] },
+    { title: "Impromptu Speaking", tasks: ["Speak on unexpected topics", "Organize thoughts quickly", "Deliver confidently"] }
+  ]
+};
+
 function stripAIMarkers(text) {
   if (!text) return text;
   return text
     .replace(/\[DAILY_QA_PASSED\]/gi, '')
     .replace(/\[\s*NATIVE:\s*[^\]]*\]/gi, '')
     .trim();
+}
+
+// Determine whether to suppress auto-play for a given AI message at index `idx`.
+// Default: COS URL triggers auto-play (audioPlayed=false) to guarantee playback
+// even when streaming PCM chunks failed to play (autoplay policy, decode error,
+// network drop, etc). The auto-play handler stops in-flight streaming audio
+// before playing the COS URL, preventing double playback.
+// Only suppress for the muted welcome message after a refresh/retry.
+// Hoisted to module scope (takes welcomeMuted + messages as explicit args) so it
+// is allocated once instead of being rebuilt on every message append/setMessages.
+function shouldSuppressAutoPlay(welcomeMuted, messages, idx) {
+  if (welcomeMuted) {
+    const isFirst = idx === 0 || (idx === 1 && messages[0]?.type === 'system');
+    if (isFirst) return true;
+  }
+  return false;
 }
 
 // Split text into sentence-sized chunks for the rolling CC caption.
@@ -88,6 +171,7 @@ function CCRollingCaption({ isAISpeaking, text, getProgressRatio }) {
 }
 
 function DailyQAPassModal({ onClose, onReturn, isBonus }) {
+  const { t } = useTranslation();
   return (
     <div style={{
       position: 'fixed', bottom: 80, left: '50%', transform: 'translateX(-50%)',
@@ -98,10 +182,10 @@ function DailyQAPassModal({ onClose, onReturn, isBonus }) {
     }}>
       <div style={{ fontSize: 48, marginBottom: 8 }}>{isBonus ? '👏' : '✅'}</div>
       <h3 style={{ fontSize: 18, fontWeight: 700, color: '#1F2937', marginBottom: 6 }}>
-        {isBonus ? '回答完成' : '今日问答已完成'}
+        {isBonus ? t('daily_qa_pass_bonus_title') : t('daily_qa_pass_title')}
       </h3>
       <p style={{ fontSize: 13, color: '#6B7280', marginBottom: 16 }}>
-        {isBonus ? '这道题练习完成，可以继续选择其他题目。' : '很棒！继续保持每日学习的好习惯。'}
+        {isBonus ? t('daily_qa_pass_bonus_desc') : t('daily_qa_pass_desc')}
       </p>
       <button
         onClick={onReturn}
@@ -110,7 +194,7 @@ function DailyQAPassModal({ onClose, onReturn, isBonus }) {
           background: 'linear-gradient(135deg, #637FF1, #a47af6)', color: '#fff',
           fontWeight: 700, fontSize: 15, border: 'none', cursor: 'pointer', marginBottom: 8
         }}>
-        返回发现页
+        {t('daily_qa_pass_return')}
       </button>
       <button
         onClick={onClose}
@@ -118,7 +202,7 @@ function DailyQAPassModal({ onClose, onReturn, isBonus }) {
           background: 'transparent', border: 'none', color: '#9CA3AF',
           fontSize: 13, cursor: 'pointer', padding: '4px 0'
         }}>
-        继续查看对话
+        {t('daily_qa_pass_continue')}
       </button>
       <style>{`
         @keyframes slideUpBanner {
@@ -296,6 +380,7 @@ function TaskCompletionSheet({ taskReadyToComplete, tasks, completedTasks, onCon
 function Conversation() {
   const navigate = useNavigate();
   const location = useLocation();
+  const { t } = useTranslation();
   const { user, token, loading } = useAuth(); // Added loading state
   const scenarioEmoji = location.state?.emoji;
   const persona = getPersona(localStorage.getItem('ai_voice') || 'Tina');
@@ -325,69 +410,7 @@ function Conversation() {
   const [reconnectAttempts, setReconnectAttempts] = useState(0); // Track reconnection attempts
   const MAX_RECONNECT_ATTEMPTS = 3; // Maximum automatic reconnect attempts before requiring manual intervention
 
-  // Default scenario templates
-  const DEFAULT_SCENARIOS = {
-    daily_conversation: [
-      { title: "Casual Greetings", tasks: ["Greet someone you just met", "Ask how someone is doing", "Make small talk about the weather"] },
-      { title: "Coffee Shop Order", tasks: ["Order your favorite drink", "Ask about menu items", "Request modifications"] },
-      { title: "Grocery Shopping", tasks: ["Ask for item locations", "Request quantity and price", "Handle checkout conversation"] },
-      { title: "Directions", tasks: ["Ask for directions to a location", "Clarify route details", "Thank for help"] },
-      { title: "Phone Call Basics", tasks: ["Answer a phone call properly", "Ask who is calling", "End a call politely"] },
-      { title: "Restaurant Dining", tasks: ["Make a reservation", "Order food from menu", "Ask for the bill"] },
-      { title: "Public Transport", tasks: ["Ask about schedules", "Buy a ticket", "Confirm your stop"] },
-      { title: "Weekend Plans", tasks: ["Discuss weekend activities", "Make suggestions", "Accept or decline invitations"] },
-      { title: "Hobbies Discussion", tasks: ["Share your hobbies", "Ask about others' interests", "Make related plans"] },
-      { title: "Small Talk (Culture)", tasks: ["Discuss local customs", "Share interesting facts", "Express opinions politely"] }
-    ],
-    business_meeting: [
-      { title: "Self Introduction", tasks: ["Introduce yourself professionally", "Share your role and company", "Exchange contact information"] },
-      { title: "Meeting Scheduling", tasks: ["Propose meeting times", "Confirm availability", "Send meeting invites"] },
-      { title: "Project Status Update", tasks: ["Summarize current progress", "Discuss blockers", "Plan next steps"] },
-      { title: "Client Presentation", tasks: ["Open a presentation", "Explain key points", "Handle Q&A"] },
-      { title: "Negotiation Basics", tasks: ["State your position", "Listen to counteroffers", "Reach a compromise"] },
-      { title: "Email Discussion", tasks: ["Reference an important email", "Clarify email contents", "Agree on follow-up actions"] },
-      { title: "Team Collaboration", tasks: ["Assign tasks to team members", "Check on task progress", "Provide feedback"] },
-      { title: "Conference Call", tasks: ["Join a video call", "Share your screen", "Wrap up the call"] },
-      { title: "Deadline Management", tasks: ["Discuss timeline constraints", "Request deadline extension", "Commit to new dates"] },
-      { title: "Professional Small Talk", tasks: ["Chat about industry news", "Discuss career journeys", "Build rapport"] }
-    ],
-    travel_survival: [
-      { title: "Airport Check-in", tasks: ["Check in for your flight", "Ask about seat preferences", "Handle baggage check"] },
-      { title: "Immigration Control", tasks: ["Answer officer questions", "Explain your trip purpose", "Provide required documents"] },
-      { title: "Hotel Reservation", tasks: ["Book a room", "Ask about amenities", "Request early check-in"] },
-      { title: "Taxi & Rideshare", tasks: ["Request a ride", "Give your destination", "Handle payment"] },
-      { title: "Asking Directions", tasks: ["Ask how to get somewhere", "Understand landmark references", "Confirm the route"] },
-      { title: "Restaurant Ordering", tasks: ["Ask for recommendations", "Order local cuisine", "Handle dietary requirements"] },
-      { title: "Shopping Abroad", tasks: ["Ask prices", "Negotiate or bargain", "Request tax refund info"] },
-      { title: "Emergency Situations", tasks: ["Ask for help", "Explain your situation", "Contact emergency services"] },
-      { title: "Sightseeing Tours", tasks: ["Book a tour", "Ask tour guide questions", "Express interest or concerns"] },
-      { title: "Cultural Small Talk", tasks: ["Discuss local culture", "Share your impressions", "Learn local expressions"] }
-    ],
-    exam_prep: [
-      { title: "Self Introduction (Exam)", tasks: ["Introduce yourself clearly", "Mention your background", "State your goals"] },
-      { title: "Describing Pictures", tasks: ["Describe a photo in detail", "Compare two images", "Express your opinion"] },
-      { title: "Opinion Questions", tasks: ["State your opinion clearly", "Give supporting reasons", "Conclude your answer"] },
-      { title: "Problem Solving", tasks: ["Identify the problem", "Suggest solutions", "Evaluate options"] },
-      { title: "Role-play Scenarios", tasks: ["Understand the situation", "Respond appropriately", "Handle follow-ups"] },
-      { title: "Discussion & Debate", tasks: ["Express agreement/disagreement", "Build on others' points", "Summarize the discussion"] },
-      { title: "Long Turn Speaking", tasks: ["Speak for 1-2 minutes fluently", "Structure your answer", "Manage your time"] },
-      { title: "Pronunciation Practice", tasks: ["Practice difficult sounds", "Work on intonation", "Reduce accent interference"] },
-      { title: "Vocabulary Expansion", tasks: ["Use academic vocabulary", "Explain complex terms", "Paraphrase effectively"] },
-      { title: "Mock Exam Practice", tasks: ["Complete a timed practice", "Self-evaluate performance", "Identify improvement areas"] }
-    ],
-    presentation: [
-      { title: "Opening Strong", tasks: ["Grab audience attention", "Introduce your topic", "Preview main points"] },
-      { title: "Explaining Data", tasks: ["Present statistics clearly", "Interpret chart information", "Draw conclusions"] },
-      { title: "Storytelling", tasks: ["Share a relevant story", "Connect to your message", "Engage emotionally"] },
-      { title: "Handling Q&A", tasks: ["Listen carefully to questions", "Provide clear answers", "Handle difficult questions"] },
-      { title: "Visual Aid Description", tasks: ["Reference your slides", "Explain diagrams", "Guide audience attention"] },
-      { title: "Transitions", tasks: ["Move between topics smoothly", "Recap previous points", "Preview next sections"] },
-      { title: "Persuasion Techniques", tasks: ["Present your argument", "Address counter-arguments", "Call to action"] },
-      { title: "Closing Impact", tasks: ["Summarize key takeaways", "End with a memorable statement", "Thank your audience"] },
-      { title: "Team Presentation", tasks: ["Coordinate with co-presenters", "Handle handoffs", "Support each other"] },
-      { title: "Impromptu Speaking", tasks: ["Speak on unexpected topics", "Organize thoughts quickly", "Deliver confidently"] }
-    ]
-  };
+  // Default scenario templates are hoisted to module scope (see DEFAULT_SCENARIOS above).
 
   // localStorage key helper — encodes scenario name to prevent key injection via crafted URLs
   const _lsScenarioKey = (prefix, raw) => `${prefix}${encodeURIComponent(raw || '')}`;
@@ -441,11 +464,15 @@ function Conversation() {
   const [currentScenarioTitle, setCurrentScenarioTitle] = useState('');
   const completionCheckedRef = useRef(false); // Prevent duplicate modal triggers
   const hasViewedCompletionModalRef = useRef(false); // Track if user has already viewed and closed the modal
+  const pendingCompletionModalRef = useRef(false); // Modal wants to open but is waiting on scenario_review WS
+  const completionFallbackTimerRef = useRef(null); // Hard-timeout that opens the modal even if review never lands
 
   // 双阶段 UI State（Magic Repetition 和 Scene Theater）
   // useRef 保证只在首次挂载时读取 URL，避免每次 render 重新解析
   const isRecallMode = useRef(new URLSearchParams(window.location.search).get('mode') === 'recall').current;
   const isDailyQAMode = useRef(new URLSearchParams(window.location.search).get('mode') === 'daily_qa').current;
+  // Onboarding Tour demo: highlight the mic UI only — no WS, no AI calls.
+  const isTourMode = useRef(new URLSearchParams(window.location.search).get('mode') === 'tour').current;
   const [currentPhase, setCurrentPhase] = useState(isRecallMode ? 'magic_repetition' : 'scene_theater');
   const currentPhaseRef = useRef(isRecallMode ? 'magic_repetition' : 'scene_theater');
   const [sceneImageUrl, setSceneImageUrl] = useState(null);
@@ -486,6 +513,9 @@ function Conversation() {
 
   // Task Completion Confirmation State
   const [taskReadyToComplete, setTaskReadyToComplete] = useState(null); // shape: { task_id, task_title } | null
+
+  // 每日对话轮次上限 — daily_limit_reached 事件弹出的模态
+  const [dailyLimitModal, setDailyLimitModal] = useState(null);
 
   const getScoreFeedback = (score, reviewData = null) => {
     const stripEmoji = (s) => s.replace(
@@ -582,27 +612,53 @@ function Conversation() {
           if (objectTaskCount > 0 && completedCount === objectTaskCount &&
               !completionCheckedRef.current && !hasViewedCompletionModalRef.current) {
               completionCheckedRef.current = true;
-              
-              // Fetch scenario review from backend for personalized AI feedback
+
+              // 每日场景计数 +1 —— 在此处（completionCheckedRef 守卫，每个场景仅触发
+              // 一次）记账，而非监听 showCompletionModal 可见性。后者会在弹窗多次
+              // 开关 / re-render 时重复 +1，导致「完成 1 场景却记 3 场景」的虚高。
+              try {
+                  const today = new Date().toISOString().slice(0, 10);
+                  const dkey = `daily_scenarios_${today}`;
+                  const prev = parseInt(localStorage.getItem(dkey) || '0', 10);
+                  const next = Math.min(prev + 1, 3);
+                  localStorage.setItem(dkey, String(next));
+                  setDailyScenariosUsed(next);
+              } catch {}
+
+
+              // Fetch scenario review for personalized AI feedback, THEN open the
+              // completion modal — but only once the AI commentary is actually
+              // available. The old code opened the modal on a fixed 1s timer,
+              // which fired well before the backend's scenario_review WS event
+              // (two serial ~20s LLM calls), so the report showed an empty
+              // 「详细反馈」. Now: if the REST review is ready we open immediately;
+              // otherwise we mark the open as pending and let the WS
+              // scenario_review handler (which sets scenarioReviewData) trigger
+              // the open via the effect below. A hard timeout still opens the
+              // modal so the user is never stuck waiting if the review never lands.
+              const clearMagicProgress = () => {
+                  try {
+                      const sc = new URLSearchParams(window.location.search).get('scenario') || '';
+                      if (sc) localStorage.removeItem(_lsScenarioKey('magic_passed_', sc));
+                      if (sc) localStorage.removeItem(_lsScenarioKey('magic_sentence_', sc));
+                  } catch {}
+              };
               const fetchReviewAndShowModal = async () => {
+                  clearMagicProgress();
+                  // 立即打开报告 —— 不再等慢 WS（~20s 双 LLM 调用）。PracticeReport 在
+                  // reviewData 缺失时用技能分数兜底渲染「详细反馈」，等 REST/WS 的真
+                  // 点评到达后 setScenarioReviewData 触发 re-render 自动补全，无空白、无卡顿。
+                  setShowCompletionModal(true);
                   try {
                       const review = await userAPI.getScenarioReview(currentScenarioTitle);
                       if (review) {
-                          console.log('📊 Fetched scenario review:', review);
+                          console.log('📊 Fetched scenario review (REST):', review);
                           setScenarioReviewData(review);
                       }
+                      // REST 为空时（首次完成，DB 尚未写入），WS scenario_review 事件会
+                      // 稍后送达并 setScenarioReviewData —— 报告已打开，届时自动补全点评。
                   } catch (error) {
                       console.error('Failed to fetch scenario review:', error);
-                  } finally {
-                      // Show modal after 1 second delay; clear magic progress for this scenario
-                      setTimeout(() => {
-                          setShowCompletionModal(true);
-                          try {
-                              const sc = new URLSearchParams(window.location.search).get('scenario') || '';
-                              if (sc) localStorage.removeItem(_lsScenarioKey('magic_passed_', sc));
-                              if (sc) localStorage.removeItem(_lsScenarioKey('magic_sentence_', sc));
-                          } catch {}
-                      }, 1000);
                   }
               };
               fetchReviewAndShowModal();
@@ -635,17 +691,26 @@ function Conversation() {
     return () => clearInterval(timer);
   }, [currentPhase, magicCardState]);
 
-  // 监听 showCompletionModal，当显示时增加每日场景计数
+  // 当 scenario_review（WS）迟到送达 AI 点评时，若完成弹窗在等待中则立即打开，
+  // 并清掉硬超时兜底。这样报告打开时「详细反馈」已有内容，不再空标题。
   useEffect(() => {
-    if (showCompletionModal) {
-      const today = new Date().toISOString().slice(0, 10);
-      const key = `daily_scenarios_${today}`;
-      const count = parseInt(localStorage.getItem(key) || '0', 10);
-      const newCount = Math.min(count + 1, 3);
-      localStorage.setItem(key, String(newCount));
-      setDailyScenariosUsed(newCount);
+    if (scenarioReviewData && pendingCompletionModalRef.current) {
+      pendingCompletionModalRef.current = false;
+      if (completionFallbackTimerRef.current) {
+        clearTimeout(completionFallbackTimerRef.current);
+        completionFallbackTimerRef.current = null;
+      }
+      setShowCompletionModal(true);
     }
-  }, [showCompletionModal]);
+  }, [scenarioReviewData]);
+
+  // 卸载时清理兜底定时器
+  useEffect(() => () => {
+    if (completionFallbackTimerRef.current) clearTimeout(completionFallbackTimerRef.current);
+  }, []);
+
+  // 注：每日场景计数已移至场景完成检测处（completionCheckedRef 守卫，每场景仅 +1），
+  // 不再监听 showCompletionModal 可见性——避免弹窗重复开关导致计数虚高。
 
   // Audio context and refs
   const audioContextRef = useRef(null);
@@ -759,6 +824,8 @@ function Conversation() {
             const ctxNow = audioContextRef.current?.currentTime ?? 0;
             if (audioQueueRef.current.length === 0 && nextStartTimeRef.current <= ctxNow + 0.05) {
               setIsAISpeaking(false);
+              // Turn finished — ensure the mascot's thinking face can't persist.
+              setIsWaitingForAIResponse(false);
             }
             console.log('Audio playback ended');
           };
@@ -812,6 +879,7 @@ function Conversation() {
         const ctxNow = audioContextRef.current?.currentTime ?? 0;
         if (audioQueueRef.current.length === 0 && nextStartTimeRef.current <= ctxNow + 0.05) {
           setIsAISpeaking(false);
+          setIsWaitingForAIResponse(false);
         }
       };
     } catch (err) {
@@ -1245,20 +1313,6 @@ function Conversation() {
                setMessages(prev => {
                    const newMessages = [...prev];
 
-                   // Helper: determine whether to suppress auto-play for a given message.
-                   // Default: COS URL triggers auto-play (audioPlayed=false) to guarantee playback
-                   // even when streaming PCM chunks failed to play (autoplay policy, decode error,
-                   // network drop, etc). The auto-play handler will stop in-flight streaming audio
-                   // before playing the COS URL, preventing double playback.
-                   // Only suppress for the muted welcome message after a refresh/retry.
-                   const shouldSuppressAutoPlay = (msg, idx) => {
-                       if (welcomeMuted) {
-                           const isFirst = idx === 0 || (idx === 1 && newMessages[0]?.type === 'system');
-                           if (isFirst) return true;
-                       }
-                       return false;
-                   };
-
                    // 1. Try Strict Match by Response ID
                    if (targetResponseId) {
                        const index = newMessages.findIndex(m => m.type === 'ai' && m.responseId === targetResponseId);
@@ -1267,7 +1321,7 @@ function Conversation() {
                            newMessages[index] = {
                                ...newMessages[index],
                                audioUrl: url,
-                               audioPlayed: shouldSuppressAutoPlay(newMessages[index], index)
+                               audioPlayed: shouldSuppressAutoPlay(welcomeMuted, newMessages, index)
                            };
                            return newMessages;
                        }
@@ -1280,7 +1334,7 @@ function Conversation() {
                            newMessages[i] = {
                                ...newMessages[i],
                                audioUrl: url,
-                               audioPlayed: shouldSuppressAutoPlay(newMessages[i], i)
+                               audioPlayed: shouldSuppressAutoPlay(welcomeMuted, newMessages, i)
                            };
                            break;
                        }
@@ -1743,7 +1797,6 @@ function Conversation() {
            if (data.payload) {
                // Store review data for personalized AI feedback in completion modal
                setScenarioReviewData(data.payload);
-               window.currentScenarioReview = data.payload;
                console.log('📚 AI 点评数据已存储，场景完成时将显示个性化点评');
 
                // Trigger ScorePopup with consolidated scenario scores (not batch_eval)
@@ -1761,7 +1814,6 @@ function Conversation() {
            if (data.payload) {
                // Store review data for personalized AI feedback in completion modal
                setScenarioReviewData(data.payload);
-               window.currentScenarioReview = data.payload;
                console.log('🧪 测试数据已存储，场景完成时将显示个性化 AI 点评');
            }
            break;
@@ -1785,6 +1837,12 @@ function Conversation() {
            break;
         case 'response.audio.done':
            // Backend signals the current AI turn's TTS is fully delivered.
+           // The user is no longer waiting on the model — clear the thinking
+           // flag now so the mascot can't get stuck on the thinking face after
+           // a turn ends (e.g. welcome / system-continuation turns that never
+           // produced a user-driven `isWaitingForAIResponse=true` clear path,
+           // or audio that finished without flipping the flag back).
+           setIsWaitingForAIResponse(false);
            // Schedule the speaking flag to flip off shortly after the last
            // queued chunk finishes — this drives CC subtitle auto-clear.
            {
@@ -1803,6 +1861,14 @@ function Conversation() {
         case 'dashscope_response':
            // Internal DashScope events - ignore
            break;
+        case 'daily_limit_reached': {
+           console.log('⛔ Daily limit reached', data);
+           const modal = resolveDailyLimitModal(data);
+           setDailyLimitModal(modal);
+           // 停录，禁止继续发：RealTimeRecorder imperative handle
+           try { recorderRef.current?.stopRecording?.(); } catch (_) {}
+           break;
+        }
         default:
            // Ignore unknown message types silently
            break;
@@ -1849,6 +1915,7 @@ function Conversation() {
          const ctxNow = audioContextRef.current?.currentTime ?? 0;
          if (audioQueueRef.current.length === 0 && nextStartTimeRef.current <= ctxNow + 0.05) {
            setIsAISpeaking(false);
+           setIsWaitingForAIResponse(false);
          }
     };
 
@@ -2111,6 +2178,13 @@ function Conversation() {
 
     const init = async () => {
       if (!user?.id) return; // Cookie-based auth: only need user, token is in httpOnly cookie
+
+      // Onboarding Tour demo: render the static UI (incl. mic) but never open a
+      // WebSocket or fetch tasks — the tour only highlights the control.
+      if (isTourMode) {
+        console.log('[Tour] demo mode — skipping WebSocket/AI init');
+        return;
+      }
 
       // Don't auto-reconnect on every render - only on initial mount or manual retry
       if (isManualDisconnect) {
@@ -2629,18 +2703,19 @@ function Conversation() {
   };
 
   // AiAvatar status derived from recording / AI speaking states.
-  // `thinking` covers two windows where the user is waiting on the model:
-  //   1. After the user releases the recorder until the first AI audio frame
-  //      starts playing (driven by `isWaitingForAIResponse`).
-  //   2. AI text arrived but its audio hasn't started yet (fallback).
-  // Without (1) the mascot would flash thinking only briefly when the AI
-  // text frame landed, then jump straight to speaking — the user wouldn't
-  // perceive any "the bird is thinking" pause.
-  const isAIThinking = messages.length > 0 && messages[messages.length - 1].type === 'ai'
-    && !messages[messages.length - 1].audioUrl && !isAISpeaking;
+  // `thinking` is shown ONLY while the user is actually waiting on the model
+  // (driven by `isWaitingForAIResponse`, set when the user input is sent and
+  // cleared once the AI response/audio arrives).
+  //
+  // Previously we also showed thinking whenever the last AI message had no
+  // audioUrl. That fallback got stuck permanently when an AI turn never
+  // produced COS audio (marker-only / system-continuation / dropped upload),
+  // leaving the mascot frozen on `bird-expression-thinking.svg` after the
+  // round ended. Tying thinking to `isWaitingForAIResponse` lets the mascot
+  // fall back to idle (`bird-logo.svg`) as soon as playback finishes.
   const avatarStatus = isAISpeaking ? 'speaking'
     : isUserRecording ? 'listening'
-    : (isWaitingForAIResponse || isAIThinking) ? 'thinking'
+    : isWaitingForAIResponse ? 'thinking'
     : 'idle';
 
   return (
@@ -2671,15 +2746,15 @@ function Conversation() {
               <span className="material-symbols-outlined" style={{ fontSize: '16px' }}>close</span>
             </button>
             <p className="text-gray-900 font-semibold text-sm leading-tight truncate">
-              {currentScenarioTitle || 'AI 口语导师'}
+              {isDailyQAMode ? '今日问答' : (currentScenarioTitle || 'AI 口语导师')}
             </p>
           </div>
 
           {/* 右：子任务进度点 + AI 状态 */}
           <div className="flex items-center gap-3 shrink-0">
 
-            {/* 任务完成进度点（recall模式显示复述进度，普通模式显示场景进度） */}
-            {isRecallMode ? (
+            {/* 任务完成进度点（recall模式显示复述进度，普通模式显示场景进度；daily_qa 无子任务，不显示） */}
+            {isDailyQAMode ? null : isRecallMode ? (
               <div className="flex gap-1">
                 {[0,1,2].map(i => (
                   <div key={i} className={`w-2 h-2 rounded-full transition-colors duration-300 ${
@@ -2697,21 +2772,27 @@ function Conversation() {
               </div>
             )}
 
-            {/* AI 导师状态 */}
+            {/* AI 导师状态（Tour demo 态不连 WS，显"演示"而非误导的"连接中"） */}
             <span className={`text-xs px-2 py-0.5 rounded-full flex items-center gap-1 ${
-              isConnected ? 'bg-emerald-50 text-emerald-600' : 'bg-amber-50 text-amber-600'
+              isTourMode ? 'bg-violet-50 text-violet-600'
+                : isConnected ? 'bg-emerald-50 text-emerald-600' : 'bg-amber-50 text-amber-600'
             }`}>
-              <span className={`w-1.5 h-1.5 rounded-full ${isConnected ? 'bg-emerald-500' : 'bg-amber-400'}`} />
-              {isConnected ? '在线' : '连接中'}
+              <span className={`w-1.5 h-1.5 rounded-full ${
+                isTourMode ? 'bg-violet-500' : isConnected ? 'bg-emerald-500' : 'bg-amber-400'
+              }`} />
+              {isTourMode ? '演示' : isConnected ? '在线' : '连接中'}
             </span>
           </div>
         </div>
       </div>
 
-      {/* 每日限制 Banner */}
+      {/* 每日鼓励 Banner（软提示，非硬限制；真正的轮次硬护栏由后端 daily_limit_reached 负责）。
+          dailyScenariosUsed 计的是场景数（每完成 1 场景的完成弹窗 +1），每场景含 3 个 task。
+          原文案硬编码「3 个场景」会被误读为任务数 —— 改成动态显示已完成的 task 数
+          （场景数 ×3），文案明确用「任务」。阈值仍为完成 3 场景（=9 任务）的软上限提示。 */}
       {dailyScenariosUsed >= 3 && !isDailyQAMode && (
-        <div className="flex items-center justify-center px-4 py-1.5 bg-amber-900/40 text-amber-300 text-xs">
-          今日练习已满 3 个场景，明天继续加油
+        <div className="flex items-center justify-center px-4 py-1.5 bg-emerald-900/30 text-emerald-300 text-xs">
+          🎉 今天已完成 {dailyScenariosUsed * 3} 个任务（{dailyScenariosUsed} 个场景），状态很棒！想继续可以接着练
         </div>
       )}
 
@@ -3076,6 +3157,26 @@ function Conversation() {
             borderRadius: 20, padding: '5px 12px', fontSize: 11, fontWeight: 600,
             color: 'var(--foreground-muted)', cursor: 'pointer', fontFamily: 'inherit',
           }}>退出 CC &times;</button>
+
+          {/* 当前子任务进度（CC 浮层会盖住主视图任务面板，这里补一个紧凑进度指示） */}
+          {!isRecallMode && !isDailyQAMode && (
+            <div style={{
+              position: 'absolute', top: 12, left: 0, right: 0,
+              display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6,
+            }}>
+              <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--foreground-muted)' }}>
+                子任务 {Math.min(theaterCompletedTasks.size + 1, 3)}/3
+              </span>
+              <div style={{ width: 160, height: 6, borderRadius: 3, background: 'rgba(99,127,241,0.15)', overflow: 'hidden' }}>
+                <div style={{
+                  width: `${Math.max(0, Math.min(100, currentTaskProgress))}%`,
+                  height: '100%', borderRadius: 3, background: '#637FF1',
+                  transition: 'width 0.4s ease',
+                }} />
+              </div>
+            </div>
+          )}
+
           <GuajiMascot state={avatarStatus} size={200} />
           <CCRollingCaption
             isAISpeaking={isAISpeaking}
@@ -3100,10 +3201,8 @@ function Conversation() {
         <div className="flex flex-col items-center gap-3">
             {/* Main Controls: Recorder + Restart Button */}
             <div className="flex items-center gap-3 w-full max-w-md">
-                <div className="flex-1 relative">
-                    {dailyScenariosUsed >= 3 && (
-                      <div className="absolute inset-0 z-10 rounded-full pointer-events-none" />
-                    )}
+                <div className="flex-1 relative" data-tour="mic">
+                    {/* 3-场景仅为软性鼓励，不再禁用录音；硬护栏由后端 daily_limit_reached 负责 */}
                     <RealTimeRecorder
                       ref={recorderRef}
                       isConnected={isConnected}
@@ -3112,7 +3211,6 @@ function Conversation() {
                       onCancel={handleRecordingCancel}
                       enableCompression={true}
                       enableMetrics={true}
-                      disabled={dailyScenariosUsed >= 3}
                     />
                 </div>
                 
@@ -3121,6 +3219,7 @@ function Conversation() {
                     control in the footer. */}
                 {!ccMode && (
                   <button
+                    data-tour="cc-mode"
                     onClick={() => setCcMode(true)}
                     className="flex-shrink-0 w-12 h-12 rounded-xl flex items-center justify-center transition"
                     style={{
@@ -3136,7 +3235,12 @@ function Conversation() {
                 {/* Restart Practice Button - Icon only */}
                 {(tasks.length > 0 || location.state?.scenario || new URLSearchParams(window.location.search).get('scenario')) && (
                     <button
-                      onClick={() => handleRetryCurrentScenario({ keepHistory: false, resetProgress: true })}
+                      onClick={() => {
+                        // 二次确认：重置会清空当前对话与进度，不可撤销，防误触
+                        if (window.confirm('确定重新练习？当前对话进度将被清空，且无法恢复。')) {
+                          handleRetryCurrentScenario({ keepHistory: false, resetProgress: true });
+                        }
+                      }}
                       className="flex-shrink-0 w-12 h-12 bg-amber-100 dark:bg-amber-900/30 hover:bg-amber-200 dark:hover:bg-amber-900/50 text-amber-700 dark:text-amber-300 rounded-xl flex items-center justify-center transition border border-amber-200 dark:border-amber-700"
                       title="重新练习"
                     >
@@ -3199,6 +3303,56 @@ function Conversation() {
           onReturn={() => navigate('/discovery')}
           isBonus={dailyQAIsBonus}
         />
+      )}
+      {dailyLimitModal && (
+        <div
+          style={{
+            position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 300,
+          }}
+          onClick={() => setDailyLimitModal(null)}>
+          <div
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              background: '#FFFFFF', borderRadius: 24, padding: 32,
+              maxWidth: 360, width: '90%', textAlign: 'center',
+              boxShadow: '0 20px 40px rgba(0,0,0,0.2)',
+            }}>
+            <div style={{ fontSize: 56, marginBottom: 12 }}>
+              {dailyLimitModal.kind === 'paywall' ? '🔒' : '🌙'}
+            </div>
+            <h2 style={{ fontSize: 20, fontWeight: 700, color: '#1F2937', marginBottom: 8 }}>
+              {dailyLimitModal.kind === 'paywall' ? t('daily_limit_paywall_title') : t('daily_limit_reached_title')}
+            </h2>
+            <p style={{ fontSize: 14, color: '#6B7280', marginBottom: 24, lineHeight: 1.55 }}>
+              {dailyLimitModal.kind === 'paywall'
+                ? t('daily_limit_paywall_desc', { limit: dailyLimitModal.limit })
+                : t('daily_limit_reached_desc', { limit: dailyLimitModal.limit })}
+            </p>
+            <div style={{ display: 'flex', gap: 12 }}>
+              <button
+                onClick={() => setDailyLimitModal(null)}
+                style={{
+                  flex: 1, padding: '10px 0', borderRadius: 12,
+                  background: '#F3F4F6', color: '#374151', border: 'none',
+                  fontWeight: 600, fontSize: 14, cursor: 'pointer',
+                }}>
+                {dailyLimitModal.kind === 'paywall' ? t('daily_limit_cancel') : t('daily_limit_got_it')}
+              </button>
+              {dailyLimitModal.ctaToSubscription && (
+                <button
+                  onClick={() => navigate('/subscription')}
+                  style={{
+                    flex: 1, padding: '10px 0', borderRadius: 12,
+                    background: '#6366F1', color: '#fff', border: 'none',
+                    fontWeight: 700, fontSize: 14, cursor: 'pointer',
+                  }}>
+                  {t('daily_limit_upgrade')}
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
       )}
       {/* Language gate warning — visible amber banner anchored to the top.
           Without this, the only signal that the daily QA was rejected for

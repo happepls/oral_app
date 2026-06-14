@@ -102,6 +102,9 @@ __pycache__/
 # Verification screenshots (temporary)
 verify-*.png
 
+# Mobile responsive test screenshots (one-off evidence; findings recorded in docs/test-cases-design-integration.md §10)
+docs/mobile-test-screenshots/
+
 # Large font files (use CDN)
 figma_app_template/Guaji AI_Design_System/fonts/
 
@@ -112,3 +115,18 @@ figma_app_template/Guaji AI_Design_System/screenshots/
 
 # Temporary image files
 img_*.png
+
+# AI coding assistant local files
+.agents/
+.claude/scheduled_tasks.lock
+.claude/skills/
+.claude/wf-*.js
+.codegraph/
+.qwen/skills/
+skills-lock.json
+
+# Local editor / terminal artifacts
+iTerm2
+
+# JetBrains Junie AI config
+.junie/

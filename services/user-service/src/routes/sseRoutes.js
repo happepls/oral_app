@@ -18,11 +18,41 @@ router.get('/api/users/sse', protect, (req, res) => {
 
   const subscriber = new Redis({
     host: process.env.REDIS_HOST || 'redis',
-    port: parseInt(process.env.REDIS_PORT || '6379', 10)
+    port: parseInt(process.env.REDIS_PORT || '6379', 10),
+    maxRetriesPerRequest: 3
   });
 
   const channel = `${CHANNEL_PREFIX}${userId}`;
-  subscriber.subscribe(channel);
+
+  const heartbeat = setInterval(() => {
+    res.write(`:heartbeat\n\n`);
+  }, 30000);
+
+  // CRITICAL: ioredis emits an 'error' event whenever the connection drops.
+  // Without an 'error' listener, Node treats it as an uncaught exception and
+  // CRASHES the whole user-service process (observed: "Error: Connection is
+  // closed." taking down /api/users/* and /api/stripe/* with 502s). Attach a
+  // handler so a transient Redis blip only kills THIS SSE stream, not the API.
+  let closed = false;
+  const cleanup = () => {
+    if (closed) return;
+    closed = true;
+    clearInterval(heartbeat);
+    try { subscriber.unsubscribe(channel); } catch (_) {}
+    try { subscriber.disconnect(); } catch (_) {}
+  };
+
+  subscriber.on('error', (err) => {
+    console.error('[SSE] subscriber Redis error:', err.message);
+    cleanup();
+    try { res.end(); } catch (_) {}
+  });
+
+  subscriber.subscribe(channel).catch((err) => {
+    console.error('[SSE] subscribe failed:', err.message);
+    cleanup();
+    try { res.end(); } catch (_) {}
+  });
 
   subscriber.on('message', (ch, message) => {
     if (ch !== channel) return;
@@ -34,15 +64,7 @@ router.get('/api/users/sse', protect, (req, res) => {
     }
   });
 
-  const heartbeat = setInterval(() => {
-    res.write(`:heartbeat\n\n`);
-  }, 30000);
-
-  req.on('close', () => {
-    clearInterval(heartbeat);
-    subscriber.unsubscribe(channel);
-    subscriber.disconnect();
-  });
+  req.on('close', cleanup);
 });
 
 module.exports = router;

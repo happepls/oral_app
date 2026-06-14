@@ -339,6 +339,31 @@ export function PracticeReport({
   // Extract vocab from messages (words in AI corrections)
   const vocabItems = extractVocabFromMessages(messages);
 
+  // 兜底：reviewData 缺失或 analysis 稀疏（strengths/weaknesses/recommendations 全空，
+  // 例如报告在慢 WS 到达前用 fallback-timer 打开）时，从 4 项技能分数派生反馈，
+  // 保证「详细反馈」永不空白。技能分数始终有值（有 fallback 计算）。
+  const SKILL_STRENGTH_LABEL = {
+    '发音准确度': '发音清晰准确',
+    '语速流畅度': '表达流畅自然',
+    '语调自然度': '语调自然得体',
+    '词汇完整度': '词汇运用丰富',
+  };
+  const SKILL_IMPROVE_LABEL = {
+    '发音准确度': '可加强发音准确度，放慢语速逐音清晰发音',
+    '语速流畅度': '可提升语速流畅度，减少停顿、多用连接词',
+    '语调自然度': '可优化语调，注意句子的升降调与重音',
+    '词汇完整度': '可扩展词汇量，尝试使用更地道的高级表达',
+  };
+  const derivedStrengths = skills.filter(s => s.score >= 75).map(s => SKILL_STRENGTH_LABEL[s.name]).filter(Boolean);
+  const derivedImprove = skills.filter(s => s.score < 65).map(s => SKILL_IMPROVE_LABEL[s.name]).filter(Boolean);
+
+  const finalStrengths = strengths.length > 0
+    ? strengths
+    : (derivedStrengths.length > 0 ? derivedStrengths : ['坚持完成练习，保持良好的学习节奏']);
+  const finalImproveItems = improveItems.length > 0
+    ? improveItems
+    : (derivedImprove.length > 0 ? derivedImprove : ['继续多听多说，挑战更复杂的句型表达']);
+
   // Format duration
   const durationStr = durationSeconds
     ? `${Math.floor(durationSeconds / 60)} 分 ${durationSeconds % 60} 秒`
@@ -437,11 +462,12 @@ export function PracticeReport({
           ))}
         </div>
 
-        {/* ── Feedback Cards ── */}
+        {/* ── Feedback Cards ── finalStrengths/finalImproveItems 总有兜底内容，
+            「详细反馈」恒显；vocabItems 来自对话纠错，可能为空，单独判断。 */}
         <h2 className="text-base font-bold text-slate-900 dark:text-white mb-3">详细反馈</h2>
         <div className="space-y-3 mb-5">
-          <FeedbackCard type="good" items={strengths} />
-          <FeedbackCard type="improve" items={improveItems} />
+          {finalStrengths.length > 0 && <FeedbackCard type="good" items={finalStrengths} />}
+          {finalImproveItems.length > 0 && <FeedbackCard type="improve" items={finalImproveItems} />}
           {vocabItems.length > 0 && <FeedbackCard type="vocab" items={vocabItems} />}
         </div>
 

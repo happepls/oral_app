@@ -103,6 +103,8 @@ function Recall() {
   const [recordingFor, setRecordingFor] = useState(null); // 'read' | 'recite' | null
   const [isPeeking, setIsPeeking] = useState(false);
   const [recognitionUnavailable, setRecognitionUnavailable] = useState(false);
+  const [synthesizing, setSynthesizing] = useState(false); // 试听 TTS 合成中
+  const previewAudioRef = useRef(null);
   const [alreadyCompleted, setAlreadyCompleted] = useState(false);
   const [allScenarios, setAllScenarios] = useState([]);
   const [scenarioIdx, setScenarioIdx] = useState(0);
@@ -155,14 +157,32 @@ function Recall() {
       } catch {}
 
       if (!translated) {
-        translated = await Promise.all(raw.map(async (s) => {
-          try {
-            const r = await aiAPI.translate(s, lang.code);
-            return (r?.translation || s).trim();
-          } catch {
-            return s;
+        // Bounded-concurrency translation pool: a naive Promise.all over 50+
+        // sentences fires 50 concurrent translate requests at once, hammering
+        // the AI gateway. Run at most TRANSLATE_CONCURRENCY workers, each
+        // pulling the next index off a shared cursor, writing results back in
+        // place to preserve order. Per-item try/catch falls back to original.
+        const TRANSLATE_CONCURRENCY = 5;
+        const results = new Array(raw.length);
+        let cursor = 0;
+        const worker = async () => {
+          while (cursor < raw.length) {
+            const i = cursor++;
+            const s = raw[i];
+            try {
+              const r = await aiAPI.translate(s, lang.code);
+              results[i] = (r?.translation || s).trim();
+            } catch {
+              results[i] = s;
+            }
           }
-        }));
+        };
+        const pool = Array.from(
+          { length: Math.min(TRANSLATE_CONCURRENCY, raw.length) },
+          () => worker()
+        );
+        await Promise.all(pool);
+        translated = results;
         try { localStorage.setItem(cacheKey, JSON.stringify(translated)); } catch {}
       }
 
@@ -178,21 +198,58 @@ function Recall() {
     }
   }, []);
 
-  // Initial load — check if already completed today
+  // Initial load — fetch backend-authoritative daily state (switch count +
+  // completion). localStorage stays as an OFFLINE FALLBACK only: if the backend
+  // call fails (offline / network error) we read the legacy keys so the page
+  // still works. `ignore` guards setState if the component unmounts mid-fetch.
   useEffect(() => {
+    let ignore = false;
     const today = new Date().toISOString().slice(0, 10);
-    const done = localStorage.getItem(`recall_completed_${today}`) === 'true';
-    setAlreadyCompleted(done);
-    const todaySwitches = parseInt(localStorage.getItem(`recall_switches_${today}`) || '0', 10);
-    setSwitchCount(todaySwitches);
-    loadScenario(done ? 1 : 0); // if done, try next scenario
+    (async () => {
+      let done = false;
+      try {
+        const res = await userAPI.getRecallDailyState();
+        const data = res?.data || res || {};
+        if (ignore) return;
+        done = !!data.completed;
+        setSwitchCount(Number(data.switch_count) || 0);
+        setAlreadyCompleted(done);
+      } catch (e) {
+        // Offline fallback: read legacy localStorage keys.
+        console.warn('[Recall] getRecallDailyState failed, fallback to localStorage:', e);
+        if (ignore) return;
+        done = localStorage.getItem(`recall_completed_${today}`) === 'true';
+        const todaySwitches = parseInt(localStorage.getItem(`recall_switches_${today}`) || '0', 10);
+        setSwitchCount(todaySwitches);
+        setAlreadyCompleted(done);
+      }
+      if (ignore) return;
+      loadScenario(done ? 1 : 0); // if done, try next scenario
+    })();
+    return () => { ignore = true; };
   }, [loadScenario]);
 
-  const handleSwitchScenario = () => {
+  const handleSwitchScenario = async () => {
     const today = new Date().toISOString().slice(0, 10);
-    const newCount = switchCount + 1;
-    setSwitchCount(newCount);
-    localStorage.setItem(`recall_switches_${today}`, String(newCount));
+    try {
+      const res = await userAPI.incrementRecallSwitch();
+      const data = res?.data || res || {};
+      const serverCount = Number(data.switch_count);
+      if (Number.isFinite(serverCount)) {
+        setSwitchCount(serverCount);
+      } else {
+        // Unexpected shape — fall back to optimistic local increment.
+        const newCount = switchCount + 1;
+        setSwitchCount(newCount);
+        localStorage.setItem(`recall_switches_${today}`, String(newCount));
+      }
+    } catch (e) {
+      // Offline fallback: optimistic local increment.
+      console.warn('[Recall] incrementRecallSwitch failed, fallback to localStorage:', e);
+      const newCount = switchCount + 1;
+      setSwitchCount(newCount);
+      localStorage.setItem(`recall_switches_${today}`, String(newCount));
+    }
     setAlreadyCompleted(false);
     loadScenario((scenarioIdx + 1) % Math.max(allScenarios.length, 1));
   };
@@ -291,9 +348,17 @@ function Recall() {
   const goNext = () => {
     if (!canAdvance) return;
     if (isLast) {
-      const today = new Date().toISOString().slice(0, 10);
-      try { localStorage.setItem(`recall_completed_${today}`, 'true'); } catch {}
       setAlreadyCompleted(true);
+      // Persist completion to backend; localStorage stays as offline fallback.
+      (async () => {
+        try {
+          await userAPI.markRecallComplete();
+        } catch (e) {
+          console.warn('[Recall] markRecallComplete failed, fallback to localStorage:', e);
+          const today = new Date().toISOString().slice(0, 10);
+          try { localStorage.setItem(`recall_completed_${today}`, 'true'); } catch {}
+        }
+      })();
       return;
     }
     setIdx(idx + 1);
@@ -313,6 +378,30 @@ function Recall() {
     setIsPeeking(true);
   };
   const endPeek = () => setIsPeeking(false);
+
+  // 试听：合成并播放当前句的目标语言发音（复用 /tts 端点）。
+  // 仅在跟读阶段（台词可见）提供，避免背诵遮挡阶段变相泄露答案。
+  const playPreview = async () => {
+    if (synthesizing || !currentSentence) return;
+    setSynthesizing(true);
+    try {
+      const blob = await aiAPI.tts(currentSentence);
+      const url = URL.createObjectURL(blob);
+      // 停掉上一段试听
+      try { previewAudioRef.current?.pause(); } catch {}
+      const audio = new Audio(url);
+      previewAudioRef.current = audio;
+      audio.onended = () => URL.revokeObjectURL(url);
+      await audio.play();
+    } catch (e) {
+      console.warn('[Recall] 试听合成失败:', e);
+    } finally {
+      setSynthesizing(false);
+    }
+  };
+
+  // 卸载时停掉试听音频
+  useEffect(() => () => { try { previewAudioRef.current?.pause(); } catch {} }, []);
 
   // Manual fallback when Web Speech is unavailable. Still requires two
   // independent "manual pass" presses — one per step — so the user cannot
@@ -427,15 +516,23 @@ function Recall() {
               passed={readPassed}
               collapsed={readPassed}
               score={row.read}
-              isRecording={recordingFor === 'read'}
-              onStart={() => startRecord('read')}
-              onStop={stopRecord}
-              recognitionUnavailable={recognitionUnavailable}
-              onManualPass={() => manualPass('read')}
             >
-              <p className="text-[17px] leading-relaxed text-slate-800 font-medium">
-                {currentSentence}
-              </p>
+              <div className="flex items-start gap-2">
+                <p className="flex-1 text-[17px] leading-relaxed text-slate-800 font-medium">
+                  {currentSentence}
+                </p>
+                {/* 试听：不认识的词可先听一遍目标语言发音 */}
+                <button
+                  type="button"
+                  onClick={playPreview}
+                  disabled={synthesizing}
+                  title="试听"
+                  className="shrink-0 inline-flex items-center gap-1 px-2.5 py-1.5 rounded-full text-xs font-semibold border transition disabled:opacity-50 select-none"
+                  style={{ borderColor: '#637FF1', color: '#637FF1', background: '#637FF108' }}
+                >
+                  {synthesizing ? '合成中…' : '🔊 试听'}
+                </button>
+              </div>
             </StepBlock>
 
             {/* Step 2: RECITE from memory (cue hidden unless peeking) */}
@@ -447,12 +544,7 @@ function Recall() {
                 : '请先完成跟读练习。'}
               passed={recitePassed}
               score={row.recite}
-              isRecording={recordingFor === 'recite'}
               disabled={!readPassed}
-              onStart={() => startRecord('recite')}
-              onStop={stopRecord}
-              recognitionUnavailable={recognitionUnavailable}
-              onManualPass={() => manualPass('recite')}
               peekControls={readPassed && !recitePassed && (
                 <PeekButton
                   isPeeking={isPeeking}
@@ -494,9 +586,59 @@ function Recall() {
             )}
           </motion.div>
         </AnimatePresence>
+      </section>
+
+      {/* ── 底部固定操作区：单个录音按钮（按当前步骤决定录 跟读/背诵）+ 导航 ── */}
+      <footer className="shrink-0 px-5 pb-6 pt-3 bg-white border-t border-slate-200 space-y-3">
+        {(() => {
+          // 当前活动步骤：跟读未过 → 录跟读；跟读已过 → 录背诵
+          const activeStep = !readPassed ? 'read' : 'recite';
+          const isRecording = recordingFor === activeStep;
+          const stepLabel = activeStep === 'read' ? '跟读' : '背诵';
+          return (
+            <>
+              {/* 微型步骤指示，告诉用户单按钮当前在录哪一步 */}
+              <div className="flex items-center justify-center gap-2 text-xs">
+                <span className={`px-2 py-0.5 rounded-full font-medium ${readPassed ? 'bg-emerald-50 text-emerald-600' : 'bg-indigo-50 text-indigo-600'}`}>
+                  跟读 {readPassed ? '✓' : '…'}
+                </span>
+                <span className={`px-2 py-0.5 rounded-full font-medium ${recitePassed ? 'bg-emerald-50 text-emerald-600' : readPassed ? 'bg-indigo-50 text-indigo-600' : 'bg-slate-100 text-slate-400'}`}>
+                  背诵 {recitePassed ? '✓' : readPassed ? '…' : ''}
+                </span>
+              </div>
+
+              <button
+                onMouseDown={() => startRecord(activeStep)}
+                onMouseUp={stopRecord}
+                onMouseLeave={isRecording ? stopRecord : undefined}
+                onTouchStart={() => startRecord(activeStep)}
+                onTouchEnd={stopRecord}
+                onTouchCancel={stopRecord}
+                disabled={canAdvance}
+                className="w-full px-4 py-3 rounded-full text-base font-bold text-white shadow active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed select-none"
+                style={{
+                  background: isRecording
+                    ? 'linear-gradient(135deg, #EF4444, #DC2626)'
+                    : 'linear-gradient(135deg, #637FF1, #a47af6)',
+                }}
+              >
+                🎙️ {isRecording ? '正在听...' : canAdvance ? '本句已完成' : `按住说话（${stepLabel}）`}
+              </button>
+
+              {recognitionUnavailable && !canAdvance && (
+                <button
+                  onClick={() => manualPass(activeStep)}
+                  className="block mx-auto text-xs text-slate-500 underline underline-offset-2"
+                >
+                  手动标记通过
+                </button>
+              )}
+            </>
+          );
+        })()}
 
         {/* Navigation */}
-        <div className="mt-5 flex items-center gap-3">
+        <div className="flex items-center gap-3">
           <button
             onClick={goPrev}
             disabled={idx === 0}
@@ -514,14 +656,14 @@ function Recall() {
             {isLast ? '完成' : '下一句 →'}
           </button>
         </div>
-      </section>
+      </footer>
     </div>
   );
 }
 
 function StepBlock({
-  stepNumber, title, hint, passed, collapsed, score, isRecording, disabled,
-  onStart, onStop, recognitionUnavailable, onManualPass, peekControls, children,
+  stepNumber, title, hint, passed, collapsed, score, disabled,
+  peekControls, children,
 }) {
   const pct = score == null ? null : Math.round(score * 100);
 
@@ -588,34 +730,11 @@ function StepBlock({
       </div>
       <p className="text-xs text-slate-500 mb-3">{hint}</p>
       <div className="min-h-[70px]">{children}</div>
-      <div className="mt-3 flex flex-wrap items-center gap-3">
-        <button
-          onMouseDown={() => !disabled && onStart()}
-          onMouseUp={onStop}
-          onMouseLeave={isRecording ? onStop : undefined}
-          onTouchStart={() => !disabled && onStart()}
-          onTouchEnd={onStop}
-          onTouchCancel={onStop}
-          disabled={disabled}
-          className="px-4 py-2 rounded-full text-sm font-semibold text-white shadow active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed select-none"
-          style={{
-            background: isRecording
-              ? 'linear-gradient(135deg, #EF4444, #DC2626)'
-              : 'linear-gradient(135deg, #637FF1, #a47af6)',
-          }}
-        >
-          🎙️ {isRecording ? '正在听...' : '按住说话'}
-        </button>
-        {peekControls}
-        {recognitionUnavailable && !passed && !disabled && (
-          <button
-            onClick={onManualPass}
-            className="text-xs text-slate-500 underline underline-offset-2"
-          >
-            手动标记通过
-          </button>
-        )}
-      </div>
+      {peekControls && (
+        <div className="mt-3 flex flex-wrap items-center gap-3">
+          {peekControls}
+        </div>
+      )}
     </div>
   );
 }

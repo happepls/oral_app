@@ -3,6 +3,7 @@ CREATE TABLE IF NOT EXISTS users (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     username VARCHAR(50) UNIQUE NOT NULL,
     email VARCHAR(255) UNIQUE,
+    phone VARCHAR(32) UNIQUE, -- 手机号验证码登录（登录-2）
     nickname VARCHAR(50),
     gender INT CHECK (gender IN (0, 1, 2)), -- 0: Female, 1: Male, 2: Other
     birth_year INT,
@@ -11,9 +12,14 @@ CREATE TABLE IF NOT EXISTS users (
     target_language VARCHAR(50), -- Current primary target language
     interests TEXT, -- Comma separated or JSON
     points INT DEFAULT 0,
+    onboarding_tour_completed BOOLEAN NOT NULL DEFAULT FALSE,
+    stripe_customer_id VARCHAR(255),
+    stripe_subscription_id VARCHAR(255),
+    subscription_status VARCHAR(50) DEFAULT 'free',
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+CREATE INDEX IF NOT EXISTS idx_users_stripe_customer ON users(stripe_customer_id);
 
 -- Create the user_identities table
 CREATE TABLE IF NOT EXISTS user_identities (
@@ -37,6 +43,7 @@ CREATE TABLE IF NOT EXISTS user_goals (
     completion_time_days INT,
     interests TEXT, -- Goal specific interests
     scenarios JSONB, -- List of 10 scenarios + tasks
+    scenario_review JSONB, -- Latest per-scenario AI review (review_report/recommendations/analysis) for instant REST fetch
     status VARCHAR(20) DEFAULT 'active', -- active, completed, abandoned
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -84,9 +91,22 @@ CREATE TABLE IF NOT EXISTS daily_qa_passes (
 );
 CREATE INDEX IF NOT EXISTS idx_daily_qa_passes_user_date ON daily_qa_passes(user_id, pass_date);
 
+-- Create the recall_daily_state table (Daily Recall switch-count + completion state)
+CREATE TABLE IF NOT EXISTS recall_daily_state (
+    id SERIAL PRIMARY KEY,
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    state_date DATE NOT NULL DEFAULT CURRENT_DATE,
+    switch_count INTEGER NOT NULL DEFAULT 0,
+    completed BOOLEAN NOT NULL DEFAULT FALSE,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE(user_id, state_date)
+);
+CREATE INDEX IF NOT EXISTS idx_recall_daily_state_user_date ON recall_daily_state(user_id, state_date);
+
 -- Add indexes for better query performance
 CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);
 CREATE INDEX IF NOT EXISTS idx_user_identities_user_id ON user_identities(user_id);
+CREATE INDEX IF NOT EXISTS idx_user_identities_user_provider ON user_identities (user_id, provider);
 CREATE INDEX IF NOT EXISTS idx_user_goals_user_id ON user_goals(user_id);
 CREATE INDEX IF NOT EXISTS idx_user_goals_status ON user_goals(status);
 CREATE INDEX IF NOT EXISTS idx_user_tasks_goal_id ON user_tasks(goal_id);

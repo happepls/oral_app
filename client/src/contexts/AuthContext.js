@@ -87,6 +87,32 @@ export const AuthProvider = ({ children }) => {
     } catch (err) {
       const errorMessage = err.message || '登录失败，请稍后重试';
       setError(errorMessage);
+      // Backend returns English "Invalid credentials." for wrong email/password.
+      // Surface a code so the UI can show a localized, direct message.
+      const isInvalidCreds = /invalid credentials/i.test(err.message || '');
+      return {
+        success: false,
+        message: errorMessage,
+        code: isInvalidCreds ? 'invalid_credentials' : undefined,
+      };
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const loginWithPhone = async (phone, code) => {
+    try {
+      setError(null);
+      setLoading(true);
+      const response = await authAPI.phoneLogin(phone, code);
+      const { user: userData } = response;
+      localStorage.setItem('user', JSON.stringify(userData));
+      setUser(userData);
+      setToken(null);
+      return { success: true, user: userData };
+    } catch (err) {
+      const errorMessage = err.message || '手机登录失败，请稍后重试';
+      setError(errorMessage);
       return { success: false, message: errorMessage };
     } finally {
       setLoading(false);
@@ -184,8 +210,10 @@ export const AuthProvider = ({ children }) => {
       const userData = response.user;
       localStorage.setItem('user', JSON.stringify(userData));
       setUser(userData);
+      return userData; // callers (e.g. Subscription success poll) read fresh status
     } catch (err) {
       console.error('Failed to refresh profile:', err);
+      return null;
     }
   };
 
@@ -209,6 +237,7 @@ export const AuthProvider = ({ children }) => {
     error,
     login,
     loginWithGoogle,
+    loginWithPhone,
     register,
     logout,
     updateProfile,
@@ -216,7 +245,7 @@ export const AuthProvider = ({ children }) => {
     checkTokenExpiry,
     refreshToken,
     isAuthenticated: !!user
-  }), [user, token, loading, error, login, loginWithGoogle, register, logout, updateProfile, refreshProfile, checkTokenExpiry, refreshToken]);
+  }), [user, token, loading, error, login, loginWithGoogle, loginWithPhone, register, logout, updateProfile, refreshProfile, checkTokenExpiry, refreshToken]);
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 };

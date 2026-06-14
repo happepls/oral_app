@@ -21,6 +21,7 @@ REDIS_PASSWORD = os.getenv('REDIS_PASSWORD', None)
 # 缓存过期时间（秒）
 CACHE_TTL_USER_INFO = 3600  # 用户信息缓存1小时
 CACHE_TTL_USER_LANGUAGE = 7200  # 用户语言设置缓存2小时
+CACHE_TTL_TASK_EMBEDDING = 86400  # 任务 gold embedding 缓存24小时（task 文本稳定）
 
 
 class RedisCache:
@@ -161,6 +162,50 @@ class RedisCache:
         except Exception as e:
             logger.warning(f"[Redis] Error setting user language cache: {e}")
     
+    def get_task_embedding(self, task_key: str) -> Optional[list]:
+        """
+        从缓存获取任务 gold 文本的 embedding 向量
+
+        Args:
+            task_key: 任务标识（如 f"{task_id}" 或 task 文本的 hash）
+
+        Returns:
+            embedding 向量（float list），不存在返回 None
+        """
+        if not self.is_connected():
+            return None
+
+        try:
+            key = f"task:embedding:{task_key}"
+            data = self._client.get(key)
+            if data:
+                logger.debug(f"[Redis] Task embedding cache hit for {task_key}")
+                return json.loads(data)
+            logger.debug(f"[Redis] Task embedding cache miss for {task_key}")
+            return None
+        except Exception as e:
+            logger.warning(f"[Redis] Error getting task embedding from cache: {e}")
+            return None
+
+    def set_task_embedding(self, task_key: str, vector: list, ttl: int = CACHE_TTL_TASK_EMBEDDING):
+        """
+        缓存任务 gold 文本的 embedding 向量
+
+        Args:
+            task_key: 任务标识
+            vector: embedding 向量（float list）
+            ttl: 过期时间（秒）
+        """
+        if not self.is_connected():
+            return
+
+        try:
+            key = f"task:embedding:{task_key}"
+            self._client.setex(key, ttl, json.dumps(vector))
+            logger.debug(f"[Redis] Cached task embedding for {task_key}, dim={len(vector)}, TTL={ttl}s")
+        except Exception as e:
+            logger.warning(f"[Redis] Error setting task embedding cache: {e}")
+
     def invalidate_user(self, user_id: str):
         """
         清除用户缓存（用于用户信息更新时）

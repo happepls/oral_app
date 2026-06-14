@@ -39,10 +39,38 @@ function Profile() {
   // Goal state
   const [activeGoal, setActiveGoal] = useState(null);
 
+  // Subscription state
+  const [subscription, setSubscription] = useState(null);
+
   // Native language edit state
   const [editingLang, setEditingLang] = useState(false);
   const [savingLang, setSavingLang] = useState(false);
   const [langSaveError, setLangSaveError] = useState('');
+
+  // Username edit state（手机号用户默认「用户xxxx」，登录后可改）
+  const [editingName, setEditingName] = useState(false);
+  const [nameValue, setNameValue] = useState('');
+  const [savingName, setSavingName] = useState(false);
+  const [nameSaveError, setNameSaveError] = useState('');
+
+  const handleSaveUsername = async () => {
+    const trimmed = nameValue.trim();
+    if (!trimmed) { setNameSaveError('用户名不能为空'); return; }
+    if (trimmed.length > 30) { setNameSaveError('用户名不超过 30 字'); return; }
+    if (trimmed === user?.username) { setEditingName(false); return; }
+    setSavingName(true);
+    setNameSaveError('');
+    try {
+      await userAPI.updateProfile({ username: trimmed });
+      if (refreshProfile) await refreshProfile();
+      setEditingName(false);
+    } catch (err) {
+      // username UNIQUE 冲突 → 后端 409/500，提示换一个
+      setNameSaveError(/exist|unique|已被|占用|409/i.test(err.message || '') ? '该用户名已被占用，请换一个' : '保存失败，请重试');
+    } finally {
+      setSavingName(false);
+    }
+  };
 
   const handleSaveNativeLang = async (value) => {
     setSavingLang(true);
@@ -71,25 +99,39 @@ function Profile() {
   }, []);
 
   useEffect(() => {
+    const controller = new AbortController();
+    const { signal } = controller;
     const fetchAll = async () => {
       if (!user?.id) { setLoading(false); return; }
-      await Promise.allSettled([
-        historyAPI.getStats(user.id).then(d => {
-          const total = d?.totalSessions || 0;
-          const hours = (total * 15 / 60).toFixed(1);
-          setStats({
-            sessions: `${total} 次`,
-            practiceTime: `${hours} 小时`,
-            totalSessions: total
-          });
-        }),
-        userAPI.getCheckinStats().then(d => setCheckinStats(d)).catch(() => {}),
-        userAPI.getCheckinHistory(30).then(d => setCheckinHistory(Array.isArray(d) ? d : [])).catch(() => {}),
-        userAPI.getActiveGoal().then(d => setActiveGoal(d?.goal || d)).catch(() => {})
-      ]);
-      setLoading(false);
+      try {
+        await Promise.allSettled([
+          historyAPI.getStats(user.id).then(d => {
+            if (signal.aborted) return;
+            const total = d?.totalSessions || 0;
+            const hours = (total * 15 / 60).toFixed(1);
+            setStats({
+              sessions: `${total} 次`,
+              practiceTime: `${hours} 小时`,
+              totalSessions: total
+            });
+          }),
+          userAPI.getCheckinStats().then(d => { if (!signal.aborted) setCheckinStats(d); }).catch(() => {}),
+          userAPI.getCheckinHistory(30).then(d => { if (!signal.aborted) setCheckinHistory(Array.isArray(d) ? d : []); }).catch(() => {}),
+          userAPI.getActiveGoal().then(d => { if (!signal.aborted) setActiveGoal(d?.goal || d); }).catch(() => {}),
+          userAPI.getSubscription().then(d => { if (!signal.aborted) setSubscription(d); }).catch(() => {})
+        ]);
+      } finally {
+        // ALWAYS clear loading — even if this run was aborted (a newer run, or
+        // the cleanup, fired). Leaving loading=true here was the root cause of
+        // the post-Stripe-redirect blank page: the full-page redirect re-inits
+        // AuthContext, `user` goes null→populated, this effect re-runs and the
+        // earlier run aborted mid-flight, so `setLoading(false)` was skipped and
+        // the page sat on the spinner until a manual refresh.
+        setLoading(false);
+      }
     };
     fetchAll();
+    return () => controller.abort();
   }, [user]);
 
   // Derive mastered scenarios from activeGoal (needed for achievements)
@@ -171,31 +213,39 @@ function Profile() {
     }
   };
 
+  const toLocalDateStr = (d) => {
+    const dt = (d instanceof Date) ? d : new Date(d);
+    if (isNaN(dt.getTime())) return '';
+    const y = dt.getFullYear();
+    const m = String(dt.getMonth() + 1).padStart(2, '0');
+    const day = String(dt.getDate()).padStart(2, '0');
+    return `${y}-${m}-${day}`;
+  };
+
+  const parseLocalDate = (dateStr) => new Date(`${dateStr}T00:00:00`);
+
   const getLast7Days = () => {
     const days = [];
     for (let i = 6; i >= 0; i--) {
       const date = new Date();
       date.setDate(date.getDate() - i);
-      days.push(date.toISOString().split('T')[0]);
+      days.push(toLocalDateStr(date));
     }
     return days;
   };
 
   const isDateCheckedIn = (dateStr) => {
-    return checkinHistory.some(h => {
-      const d = new Date(h.checkin_date).toISOString().split('T')[0];
-      return d === dateStr;
-    });
+    return checkinHistory.some(h => toLocalDateStr(h.checkin_date) === dateStr);
   };
 
   const getDayLabel = (dateStr) => {
-    const date = new Date(dateStr);
-    const today = new Date().toISOString().split('T')[0];
+    const date = parseLocalDate(dateStr);
+    const today = toLocalDateStr(new Date());
     if (dateStr === today) return '今';
     return ['日', '一', '二', '三', '四', '五', '六'][date.getDay()];
   };
 
-  const getDateNum = (dateStr) => new Date(dateStr).getDate();
+  const getDateNum = (dateStr) => parseLocalDate(dateStr).getDate();
 
   // Goal progress
   const goalTotalTasks = activeGoal?.scenarios
@@ -278,7 +328,46 @@ function Profile() {
               </div>
             )}
             <div className="flex flex-col items-center gap-1">
-              <p className="text-2xl font-bold text-slate-900 dark:text-white">{user?.username || '用户'}</p>
+              {editingName ? (
+                <div className="flex flex-col items-center gap-2">
+                  <input
+                    type="text"
+                    value={nameValue}
+                    onChange={(e) => setNameValue(e.target.value)}
+                    maxLength={30}
+                    autoFocus
+                    disabled={savingName}
+                    className="px-3 py-1.5 rounded-lg border border-primary/40 bg-slate-50 dark:bg-slate-700 text-center text-xl font-bold text-slate-900 dark:text-white focus:ring-2 focus:ring-primary/20 outline-none disabled:opacity-50"
+                    placeholder="输入用户名"
+                  />
+                  <div className="flex gap-2">
+                    <button
+                      onClick={handleSaveUsername}
+                      disabled={savingName}
+                      className="px-3 py-1 rounded-lg bg-primary text-white text-sm font-medium disabled:opacity-50"
+                    >
+                      {savingName ? '保存中…' : '保存'}
+                    </button>
+                    <button
+                      onClick={() => { setEditingName(false); setNameSaveError(''); }}
+                      disabled={savingName}
+                      className="px-3 py-1 rounded-lg border border-slate-300 dark:border-slate-600 text-slate-600 dark:text-slate-300 text-sm disabled:opacity-50"
+                    >
+                      取消
+                    </button>
+                  </div>
+                  {nameSaveError && <p className="text-xs text-red-500">{nameSaveError}</p>}
+                </div>
+              ) : (
+                <button
+                  onClick={() => { setNameValue(user?.username || ''); setEditingName(true); setNameSaveError(''); }}
+                  className="flex items-center gap-1.5 group"
+                  title="点击修改用户名"
+                >
+                  <span className="text-2xl font-bold text-slate-900 dark:text-white">{user?.username || '用户'}</span>
+                  <Pencil className="w-4 h-4 text-slate-400 group-hover:text-primary transition-colors" />
+                </button>
+              )}
               <p className="text-sm text-slate-500 dark:text-slate-400">{user?.email || ''}</p>
             </div>
           </div>
@@ -301,6 +390,57 @@ function Profile() {
               <p className="text-2xl font-bold text-slate-900 dark:text-white">{s.value}</p>
             </motion.div>
           ))}
+        </div>
+
+        {/* My Subscription */}
+        <div className="px-4 pt-4 pb-4">
+          <h2 className="text-base font-bold text-slate-900 dark:text-white pb-3">💎 我的订阅</h2>
+          <div className="bg-white dark:bg-slate-800 rounded-2xl p-4 shadow-brand border border-slate-100 dark:border-slate-700">
+            {/* Pro 判定以 user.subscription_status 为权威，与顶部「会员已激活」banner 一致，
+                避免 getSubscription() soft-fail / 形状不符时这里误显「免费版」造成前后矛盾。
+                subscription 详情（套餐名/到期日）若拿到则展示，拿不到回退通用文案。 */}
+            {(user?.subscription_status === 'active' || subscription?.status === 'active') ? (
+              <div className="flex items-center justify-between">
+                <div>
+                  <div className="flex items-center gap-2">
+                    <Crown className="w-4 h-4 text-amber-500" />
+                    <p className="text-base font-semibold text-slate-900 dark:text-white">
+                      {subscription?.subscription?.items?.data?.[0]?.price?.nickname
+                        || subscription?.subscription?.plan?.nickname
+                        || 'Pro 会员'}
+                    </p>
+                  </div>
+                  {(subscription?.subscription?.items?.data?.[0]?.current_period_end
+                    || subscription?.subscription?.current_period_end) && (
+                    <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
+                      到期日：{new Date((subscription.subscription?.items?.data?.[0]?.current_period_end
+                        || subscription.subscription.current_period_end) * 1000).toLocaleDateString('zh-CN')}
+                    </p>
+                  )}
+                </div>
+                <button
+                  onClick={() => navigate('/subscription')}
+                  className="text-xs text-primary hover:underline"
+                >
+                  管理订阅
+                </button>
+              </div>
+            ) : (
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-base font-semibold text-slate-900 dark:text-white">免费版</p>
+                  <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">解锁全部高级功能</p>
+                </div>
+                <button
+                  onClick={() => navigate('/subscription')}
+                  className="px-3 py-1.5 text-xs font-medium text-white rounded-lg"
+                  style={{ background: 'linear-gradient(135deg, #637FF1, #a47af6)' }}
+                >
+                  升级会员
+                </button>
+              </div>
+            )}
+          </div>
         </div>
 
         {/* Native Language Setting */}
@@ -397,7 +537,7 @@ function Profile() {
             <div className="grid grid-cols-7 gap-2">
               {getLast7Days().map(date => {
                 const checked = isDateCheckedIn(date);
-                const isToday = date === new Date().toISOString().split('T')[0];
+                const isToday = date === toLocalDateStr(new Date());
                 return (
                   <div key={date} className="flex flex-col items-center">
                     <span className="text-xs text-slate-500 mb-1">{getDayLabel(date)}</span>

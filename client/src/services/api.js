@@ -1,3 +1,4 @@
+export const __BUILD_MARKER__ = '2026-06-01-subscription-cookie-fix';
 const API_BASE_URL = process.env.REACT_APP_API_URL || '/api';
 
 const handleResponse = async (response) => {
@@ -97,6 +98,47 @@ export const authAPI = {
       headers: { 'Content-Type': 'application/json' },
       credentials: 'include',
       body: JSON.stringify({ token })
+    });
+    return handleAuthResponse(response);
+  },
+
+  // 发起密码重置（后端永远返回 200 防枚举）
+  async forgotPassword(email) {
+    const response = await fetch(`${API_BASE_URL}/users/password/forgot`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email })
+    });
+    return response.json();
+  },
+
+  // 用 token 设置新密码
+  async resetPassword(token, password) {
+    const response = await fetch(`${API_BASE_URL}/users/password/reset`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token, password })
+    });
+    return response.json();
+  },
+
+  // 发送手机验证码
+  async sendPhoneCode(phone) {
+    const response = await fetch(`${API_BASE_URL}/users/phone/send-code`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ phone })
+    });
+    return response.json();
+  },
+
+  // 手机验证码登录（成功后 cookie 已种，返回 user）
+  async phoneLogin(phone, code) {
+    const response = await fetch(`${API_BASE_URL}/users/phone/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify({ phone, code })
     });
     return handleAuthResponse(response);
   }
@@ -227,6 +269,23 @@ export const userAPI = {
     return handleResponse(response);
   },
 
+  async getSubscription() {
+    // Soft-fail: stripe routes use legacy Bearer-token middleware that doesn't
+    // recognize the cookie-based session. Returning null on auth failure keeps
+    // Profile page renderable for free users without triggering a logout redirect.
+    try {
+      const response = await fetch(`${API_BASE_URL}/stripe/subscription`, {
+        headers: getAuthHeaders(),
+        credentials: 'include'
+      });
+      if (!response.ok) return null;
+      const data = await response.json();
+      return data?.data || data;
+    } catch (err) {
+      return null;
+    }
+  },
+
   async getUserGoals() {
     const response = await fetch(`${API_BASE_URL}/users/goals`, {
       headers: getAuthHeaders(),
@@ -256,6 +315,51 @@ export const userAPI = {
 
   async getDailyQAPassStatus() {
     const response = await fetch(`${API_BASE_URL}/users/daily-qa-pass`, {
+      headers: getAuthHeaders(),
+      credentials: 'include',
+    });
+    return handleResponse(response);
+  },
+
+  // Onboarding Tour state (first-login guided tour; backend-authoritative)
+  async getOnboardingTour() {
+    const response = await fetch(`${API_BASE_URL}/users/onboarding-tour`, {
+      headers: getAuthHeaders(),
+      credentials: 'include',
+    });
+    return handleResponse(response);
+  },
+
+  async markOnboardingTourComplete() {
+    const response = await fetch(`${API_BASE_URL}/users/onboarding-tour/complete`, {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      credentials: 'include',
+    });
+    return handleResponse(response);
+  },
+
+  // Daily Recall state APIs (backend-authoritative switch count + completion)
+  async getRecallDailyState() {
+    const response = await fetch(`${API_BASE_URL}/users/recall/daily-state`, {
+      headers: getAuthHeaders(),
+      credentials: 'include',
+    });
+    return handleResponse(response);
+  },
+
+  async incrementRecallSwitch() {
+    const response = await fetch(`${API_BASE_URL}/users/recall/switch`, {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      credentials: 'include',
+    });
+    return handleResponse(response);
+  },
+
+  async markRecallComplete() {
+    const response = await fetch(`${API_BASE_URL}/users/recall/complete`, {
+      method: 'POST',
       headers: getAuthHeaders(),
       credentials: 'include',
     });

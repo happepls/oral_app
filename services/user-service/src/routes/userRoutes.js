@@ -18,6 +18,14 @@ router.post('/api/users/login', authRateLimiter, validateLogin, handleValidation
 router.post('/api/users/google', authRateLimiter, userController.googleSignIn);
 router.post('/api/users/verify', userController.verifyToken);
 
+// Password reset (rate-limited; forgot 永远返回 200 防枚举)
+router.post('/api/users/password/forgot', authRateLimiter, userController.forgotPassword);
+router.post('/api/users/password/reset', authRateLimiter, userController.resetPassword);
+
+// Phone (SMS) login — Twilio Verify
+router.post('/api/users/phone/send-code', authRateLimiter, userController.sendPhoneCode);
+router.post('/api/users/phone/login', authRateLimiter, userController.phoneLogin);
+
 // Logout and token migration routes
 router.post('/api/users/logout', userController.logout);
 router.post('/api/users/token-migrate', userController.tokenMigrate);
@@ -50,12 +58,24 @@ router.get('/api/users/checkin/stats', protect, userController.getCheckinStats);
 // Daily QA pass routes
 router.get('/api/users/daily-qa-pass', protect, userController.getDailyQAPassStatus);
 
+// Daily Recall state routes (backend-authoritative switch count + completion)
+router.get('/api/users/recall/daily-state', protect, userController.getRecallDailyState);
+router.post('/api/users/recall/switch', protect, userController.incrementRecallSwitch);
+router.post('/api/users/recall/complete', protect, userController.markRecallCompleted);
+
+// Onboarding Tour state routes (first-login guided tour completion flag)
+router.get('/api/users/onboarding-tour', protect, userController.getOnboardingTour);
+router.post('/api/users/onboarding-tour/complete', protect, userController.markOnboardingTourComplete);
+
 // Daily practice time / progress
 router.post('/api/users/practice-time', protect, userController.recordPracticeTime);
 router.get('/api/users/daily-progress', protect, userController.getDailyProgress);
 
 // Feedback
 router.post('/api/users/feedback', protect, userController.submitFeedback);
+
+// Promo code validation (server-side discount table; replaces hardcoded frontend codes)
+router.post('/api/users/promo/validate', protect, userController.validatePromoCode);
 
 // Achievements
 router.get('/api/users/achievements', protect, async (req, res) => {

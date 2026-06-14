@@ -636,6 +636,26 @@ User.findByEmail = async (email) => {
     return user;
 };
 
+// 重置/更新本地密码：bcrypt 哈希后写入 user_identities.provider_uid（provider='local'）。
+// 若该用户还没有 local 身份（纯 Google 账号），则插入一条。返回是否成功。
+User.updateLocalPassword = async (userId, newPassword) => {
+    const salt = await bcrypt.genSalt(10);
+    const hashed = await bcrypt.hash(newPassword, salt);
+    const upd = await db.query(
+        `UPDATE user_identities SET provider_uid = $1
+         WHERE user_id = $2 AND provider = 'local'`,
+        [hashed, userId]
+    );
+    if (upd.rowCount === 0) {
+        // 没有 local 身份 → 新建（让原本 Google-only 的账号也能设密码登录）
+        await db.query(
+            `INSERT INTO user_identities (user_id, provider, provider_uid) VALUES ($1, 'local', $2)`,
+            [userId, hashed]
+        );
+    }
+    return true;
+};
+
 // ===== Daily Check-in Methods =====
 
 User.checkin = async (userId) => {
@@ -814,6 +834,33 @@ User.findOrCreateFromGoogle = async ({ googleId, email, name }) => {
     console.error('Error in findOrCreateFromGoogle:', error);
     throw error;
   }
+};
+
+// 手机号验证码登录：按 phone 查；不存在则建号（phone 唯一）。返回 user。
+User.findOrCreateByPhone = async (phone) => {
+  const existing = await db.query('SELECT * FROM users WHERE phone = $1', [phone]);
+  if (existing.rows.length > 0) {
+    return existing.rows[0];
+  }
+  // 用手机号尾号派生一个默认 username，冲突则加随机后缀
+  const base = `用户${String(phone).slice(-4)}`;
+  let usernameToTry = base;
+  for (let attempt = 0; attempt < 4; attempt++) {
+    try {
+      const ins = await db.query(
+        'INSERT INTO users (username, phone) VALUES ($1, $2) RETURNING *',
+        [usernameToTry, phone]
+      );
+      return ins.rows[0];
+    } catch (err) {
+      if (err.code === '23505' && err.detail?.includes('username') && attempt < 3) {
+        usernameToTry = `${base}_${Math.floor(Math.random() * 9000 + 1000)}`;
+        continue;
+      }
+      throw err;
+    }
+  }
+  throw new Error('failed to create phone user');
 };
 
 // ===== Task Keywords Management =====
