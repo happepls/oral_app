@@ -13,6 +13,7 @@ import AudioBar from '../components/AudioBar.jsx';
 import NetworkAdaptiveManager from '../utils/network-adaptive-manager';
 import OptimizedWebSocket from '../utils/websocket-optimized';
 import { motion, AnimatePresence } from 'motion/react';
+import { useTranslation } from 'react-i18next';
 import { resolveDailyLimitModal } from './dailyLimitLogic';
 
 const MAGIC_TIPS = [
@@ -170,6 +171,7 @@ function CCRollingCaption({ isAISpeaking, text, getProgressRatio }) {
 }
 
 function DailyQAPassModal({ onClose, onReturn, isBonus }) {
+  const { t } = useTranslation();
   return (
     <div style={{
       position: 'fixed', bottom: 80, left: '50%', transform: 'translateX(-50%)',
@@ -180,10 +182,10 @@ function DailyQAPassModal({ onClose, onReturn, isBonus }) {
     }}>
       <div style={{ fontSize: 48, marginBottom: 8 }}>{isBonus ? '👏' : '✅'}</div>
       <h3 style={{ fontSize: 18, fontWeight: 700, color: '#1F2937', marginBottom: 6 }}>
-        {isBonus ? '回答完成' : '今日问答已完成'}
+        {isBonus ? t('daily_qa_pass_bonus_title') : t('daily_qa_pass_title')}
       </h3>
       <p style={{ fontSize: 13, color: '#6B7280', marginBottom: 16 }}>
-        {isBonus ? '这道题练习完成，可以继续选择其他题目。' : '很棒！继续保持每日学习的好习惯。'}
+        {isBonus ? t('daily_qa_pass_bonus_desc') : t('daily_qa_pass_desc')}
       </p>
       <button
         onClick={onReturn}
@@ -192,7 +194,7 @@ function DailyQAPassModal({ onClose, onReturn, isBonus }) {
           background: 'linear-gradient(135deg, #637FF1, #a47af6)', color: '#fff',
           fontWeight: 700, fontSize: 15, border: 'none', cursor: 'pointer', marginBottom: 8
         }}>
-        返回发现页
+        {t('daily_qa_pass_return')}
       </button>
       <button
         onClick={onClose}
@@ -200,7 +202,7 @@ function DailyQAPassModal({ onClose, onReturn, isBonus }) {
           background: 'transparent', border: 'none', color: '#9CA3AF',
           fontSize: 13, cursor: 'pointer', padding: '4px 0'
         }}>
-        继续查看对话
+        {t('daily_qa_pass_continue')}
       </button>
       <style>{`
         @keyframes slideUpBanner {
@@ -378,6 +380,7 @@ function TaskCompletionSheet({ taskReadyToComplete, tasks, completedTasks, onCon
 function Conversation() {
   const navigate = useNavigate();
   const location = useLocation();
+  const { t } = useTranslation();
   const { user, token, loading } = useAuth(); // Added loading state
   const scenarioEmoji = location.state?.emoji;
   const persona = getPersona(localStorage.getItem('ai_voice') || 'Tina');
@@ -3319,12 +3322,12 @@ function Conversation() {
               {dailyLimitModal.kind === 'paywall' ? '🔒' : '🌙'}
             </div>
             <h2 style={{ fontSize: 20, fontWeight: 700, color: '#1F2937', marginBottom: 8 }}>
-              {dailyLimitModal.kind === 'paywall' ? '今日免费对话已用完' : '今日对话已达上限'}
+              {dailyLimitModal.kind === 'paywall' ? t('daily_limit_paywall_title') : t('daily_limit_reached_title')}
             </h2>
             <p style={{ fontSize: 14, color: '#6B7280', marginBottom: 24, lineHeight: 1.55 }}>
               {dailyLimitModal.kind === 'paywall'
-                ? `免费版每日 ${dailyLimitModal.limit} 轮已用完，升级 Pro 解锁更多练习。`
-                : `已达每日 ${dailyLimitModal.limit} 轮上限，明日继续练习。`}
+                ? t('daily_limit_paywall_desc', { limit: dailyLimitModal.limit })
+                : t('daily_limit_reached_desc', { limit: dailyLimitModal.limit })}
             </p>
             <div style={{ display: 'flex', gap: 12 }}>
               <button
@@ -3334,7 +3337,7 @@ function Conversation() {
                   background: '#F3F4F6', color: '#374151', border: 'none',
                   fontWeight: 600, fontSize: 14, cursor: 'pointer',
                 }}>
-                {dailyLimitModal.kind === 'paywall' ? '取消' : '知道了'}
+                {dailyLimitModal.kind === 'paywall' ? t('daily_limit_cancel') : t('daily_limit_got_it')}
               </button>
               {dailyLimitModal.ctaToSubscription && (
                 <button
@@ -3344,7 +3347,7 @@ function Conversation() {
                     background: '#6366F1', color: '#fff', border: 'none',
                     fontWeight: 700, fontSize: 14, cursor: 'pointer',
                   }}>
-                  去升级
+                  {t('daily_limit_upgrade')}
                 </button>
               )}
             </div>

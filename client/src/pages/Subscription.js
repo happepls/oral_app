@@ -68,6 +68,7 @@ function Subscription() {
   const [promoApplied, setPromoApplied] = useState(null);
   const [portalError, setPortalError] = useState('');
   const [portalLoading, setPortalLoading] = useState(false);
+  const [checkoutError, setCheckoutError] = useState('');
 
   useEffect(() => {
     if (!searchParams.get('session_id')) return;
@@ -179,6 +180,7 @@ function Subscription() {
       return;
     }
 
+    setCheckoutError('');
     setCheckoutLoading(priceId);
     try {
       const body = { priceId };
@@ -192,16 +194,25 @@ function Subscription() {
         credentials: 'include',
         body: JSON.stringify(body)
       });
-      const data = await res.json();
-      if (data.url) {
+      // 包裹 res.json()：502 等返回 HTML 错误页时 .json() 会抛，
+      // 不包裹则与网络错误无法区分，且用户看不到任何提示。
+      let data = {};
+      try { data = await res.json(); } catch { /* non-JSON (e.g. 502 HTML) */ }
+      if (res.ok && data.url) {
         if (isAllowedRedirect(data.url)) {
           window.location.href = data.url;
-        } else {
-          console.error('Refused checkout redirect to disallowed URL:', data.url);
+          return;
         }
+        console.error('Refused checkout redirect to disallowed URL:', data.url);
+        setCheckoutError('支付页地址异常，请稍后再试或联系客服。');
+      } else {
+        // 4xx/5xx / Stripe 配置缺失等
+        console.error('Checkout failed:', res.status, data);
+        setCheckoutError('暂时无法创建支付订单，请稍后再试。如持续失败请联系客服。');
       }
     } catch (error) {
       console.error('Error creating checkout:', error);
+      setCheckoutError('网络异常，无法连接支付服务，请检查网络后重试。');
     } finally {
       setCheckoutLoading(null);
     }
@@ -412,6 +423,10 @@ function Subscription() {
             </div>
           );
         })}
+
+        {checkoutError && (
+          <p className="mt-4 text-sm text-red-600 dark:text-red-400 text-center">{checkoutError}</p>
+        )}
 
         <div className="mt-6 p-4 bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700">
           <h4 className="font-medium text-slate-900 dark:text-white mb-3">优惠码</h4>
