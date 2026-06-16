@@ -18,3 +18,27 @@ if ! gitleaks git --pre-commit --staged --verbose --config="$(git rev-parse --sh
 fi
 
 echo "gitleaks: clean."
+
+# ---- 供应链闸：package.json 改动须连带 lockfile（防幻觉包/typosquat 无锁引入）----
+ROOT="$(git rev-parse --show-toplevel)"
+staged="$(git diff --cached --name-only --diff-filter=ACM)"
+drift=0
+while IFS= read -r pj; do
+  [ -z "$pj" ] && continue
+  case "$pj" in */package.json|package.json) ;; *) continue ;; esac
+  dir="$(dirname "$pj")"
+  lock="$dir/package-lock.json"
+  if [ -f "$ROOT/$lock" ] && ! echo "$staged" | grep -qx "$lock"; then
+    echo "  ⚠ $pj 改动但 $lock 未同步暂存 —— 跑 'cd $dir && npm install' 后再提交。"
+    drift=1
+  fi
+done <<< "$staged"
+if [ "$drift" = 1 ]; then
+  echo "============================================"
+  echo "  COMMIT BLOCKED: 依赖改动缺 lockfile 同步。"
+  echo "  原因：无锁依赖无法复现/审计，AI 易引入幻觉包或 typosquat。"
+  echo "  跳过（仅确认必要时）：git commit --no-verify"
+  echo "============================================"
+  exit 1
+fi
+echo "lockfile-drift: clean."
