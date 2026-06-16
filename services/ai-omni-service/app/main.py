@@ -670,6 +670,9 @@ def _today_utc_str() -> str:
 # ── 每日对话轮次上限（成本护栏） ──
 FREE_DAILY_TURNS = int(os.getenv("FREE_DAILY_TURNS", "15"))
 PRO_DAILY_TURNS = int(os.getenv("PRO_DAILY_TURNS", "150"))
+# SECURITY: magic passcode "急急如律令" skips a task WITHOUT proficiency_scoring.
+# Default OFF so production has no scoring-bypass backdoor; opt-in for local debugging only.
+_MAGIC_PASSCODE_ENABLED = os.getenv("ENABLE_MAGIC_PASSCODE", "false").lower() == "true"
 _DAILY_TURN_TTL_SECONDS = 48 * 3600  # 容忍跨日，与 daily_qa 一致
 
 def _daily_turn_key(user_id: str) -> str:
@@ -2489,34 +2492,11 @@ class WebSocketCallback(OmniRealtimeCallback):
                     if user_transcript:
                         # Check for magic passcode "急急如律令" (support both Chinese and English punctuation)
                         clean_text = re.sub(r'[,.!?.,!?;:;:。！？；：]', '', user_transcript).strip()
-                        if clean_text == '急急如律令':
+                        # SECURITY: passcode-driven task skip bypasses proficiency_scoring entirely.
+                        # Gated behind ENABLE_MAGIC_PASSCODE (default false) — production has NO backdoor,
+                        # local debugging can opt in via env. Only triggers off trusted ASR transcript.
+                        if _MAGIC_PASSCODE_ENABLED and clean_text == '急急如律令':
                             logger.info(f"Magic passcode detected in transcript! (original: '{user_transcript}', cleaned: '{clean_text}') Auto-completing current task...")
-
-                            # Send test scenario review data to frontend
-                            test_review = {
-                                "workflow": "scenario_review",
-                                "scenario_title": self.scenario or "Test Scenario",
-                                "review_report": "# Test Review\n\n## 表现\n- 流利度：优秀\n- 词汇量：良好\n- 语法：准确\n\n## 建议\n- 继续练习复杂句型\n- 增加连接词使用",
-                                "recommendations": [
-                                    "🎉 表现出色！你的口语表达流畅自然，词汇使用准确。建议继续练习更复杂的句型结构。",
-                                    "📚 **词汇扩展**: 尝试学习更多场景相关的高级词汇",
-                                    "💬 **表达扩展**: 尝试给出更长、更详细的回答，使用'because'、'for example'等连接词",
-                                    "🗣️ **流利度**: 继续保持当前的流利度，尝试使用更多连接词如'however'、'therefore'",
-                                ],
-                                "analysis": {
-                                    "summary": "🎉 表现出色！你的口语表达流畅自然，词汇使用准确。",
-                                    "total_messages": 15,
-                                    "user_messages": 8,
-                                    "vocabulary_diversity": 0.85,
-                                    "strengths": ["流利度优秀", "词汇丰富", "语法准确"],
-                                    "weaknesses": ["可以增加复杂句型"]
-                                }
-                            }
-                            await self._safe_send({
-                                "type": "test_scenario_review",
-                                "payload": test_review
-                            })
-                            logger.info("Sent test scenario review to frontend")
 
                             # Complete current task and fetch next task
                             goal_id = self.user_context.get('active_goal', {}).get('id')
@@ -2953,57 +2933,11 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query(None), ses
                         logger.info('Welcome message muted for this session')
                     continue
 
-                # Handle user transcription - check for magic passcode "急急如律令"
-                if msg_type == 'user_transcript':
-                    text = payload.get('text', '').strip()
-                    # Remove punctuation for matching (supports Chinese and English: 。！？,.!?)
-                    clean_text = re.sub(r'[,.!?.,!?;:;:。！？；：]', '', text).strip()
-
-                    if clean_text == '急急如律令':
-                        logger.info(f"Magic passcode detected in transcript! (original: '{text}', cleaned: '{clean_text}') Auto-completing current task...")
-                        # Send test scenario review data to frontend
-                        test_review = {
-                            "workflow": "scenario_review",
-                            "scenario_title": callback.scenario or "Test Scenario",
-                            "review_report": "# Test Review\n\n## 表现\n- 流利度：优秀\n- 词汇量：良好\n- 语法：准确\n\n## 建议\n- 继续练习复杂句型\n- 增加连接词使用",
-                            "recommendations": {
-                                "overall": "🎉 表现出色！你的口语表达流畅自然，词汇使用准确。建议继续练习更复杂的句型结构。",
-                                "specific": [
-                                    "📚 **词汇扩展**: 尝试学习更多场景相关的高级词汇",
-                                    "💬 **表达扩展**: 尝试给出更长、更详细的回答，使用'because'、'for example'等连接词",
-                                    "🗣️ **流利度**: 继续保持当前的流利度，尝试使用更多连接词如'however'、'therefore'"
-                                ]
-                            },
-                            "analysis": {
-                                "summary": "🎉 表现出色！你的口语表达流畅自然，词汇使用准确。",
-                                "total_messages": 15,
-                                "user_messages": 8,
-                                "vocabulary_diversity": 0.85,
-                                "strengths": ["流利度优秀", "词汇丰富", "语法准确"],
-                                "weaknesses": ["可以增加复杂句型"]
-                            }
-                        }
-                        await websocket.send_json({
-                            "type": "test_scenario_review",
-                            "payload": test_review
-                        })
-                        logger.info("Sent test scenario review to frontend")
-                        
-                        # Also complete current task
-                        goal_id = callback.user_context.get('active_goal', {}).get('id')
-                        if goal_id:
-                            try:
-                                user_service_url = os.getenv("USER_SERVICE_URL", "http://user-service:3000")
-                                async with httpx.AsyncClient() as client:
-                                    await client.post(
-                                        f"{user_service_url}/api/users/internal/users/{callback.user_id}/tasks/complete",
-                                        json={"scenario": callback.scenario, "task": "NEXT_PENDING_TASK"},
-                                        headers={"Authorization": f"Bearer {callback.token}"}
-                                    )
-                                    logger.info("Auto-completed current task via magic passcode")
-                            except Exception as e:
-                                logger.error(f"Failed to auto-complete task: {e}")
-                    # Continue to forward transcript to frontend (don't break the flow)
+                # SECURITY: removed client-sent 'user_transcript' passcode handler.
+                # The frontend never echoes user_transcript back; this branch only existed
+                # to let a raw-WS attacker forge {"type":"user_transcript","text":"急急如律令"}
+                # and skip tasks with hardcoded fake review data. Passcode is now detected
+                # exclusively from trusted ASR (input_audio_transcription.completed).
 
                 # Handle ping from client - respond with pong
                 if msg_type == 'ping':
