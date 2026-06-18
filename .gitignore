@@ -129,3 +129,7 @@ iTerm2
 
 # JetBrains Junie AI config
 .junie/
+
+# DashScope / API key export CSVs (contain live keys)
+services/**/oral-apiKey-*.csv
+*-apiKey-*.csv

@@ -35,7 +35,7 @@
 | **C2** | **Google OAuth** | Console「已授权 JavaScript 来源」+ redirect URI 加 `https://guajiguaji.top`，否则 Google 登录报 `redirect_uri_mismatch` |
 | **C3** | **ZSend（密码重置邮件）** | DNS 已验证 ✅，生产直接可用。`ZSEND_FROM=noreply@guajiguaji.top` |
 | **C4** | **Twilio（海外手机号）** | 海外号已通 ✅。中国大陆号 error 60220 需 Twilio Support 申请白名单（或靠阿里云兜底，见 C5） |
-| **C5** | **阿里云 SMS（国内手机号）** | 已通 ✅。**建议换验证码专用签名**——当前签名「东阳市灵灵配送服务部」与验证码用途不符，易触发 `CONTENT_KEYWORD` 拦截、送达率低。新建签名（名称=App 名，场景=验证码）审核后改 `ALIYUN_SMS_SIGN_NAME` |
+| **C5** | **阿里云 SMS（国内手机号）** | 已通 ✅。——当前签名「杭州独步网络工程有限公司」 |
 | **C6** | **腾讯 COS（音频上传）** | 确认生产 `TENCENT_SECRET_*` 可用 + bucket CORS 允许生产域名 |
 | **C7** | **Tawk.to（在线客服）** | `REACT_APP_TAWK_PROPERTY_ID/WIDGET_ID` 构建期注入；登录后自动隐藏已实现 |
 

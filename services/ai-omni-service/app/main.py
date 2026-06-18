@@ -35,6 +35,19 @@ if not api_key:
 dashscope.api_key = api_key
 logger.info("Using real DashScope API with provided API key")
 
+# DashScope endpoint switching (China default vs international/Zeabur).
+# DASHSCOPE_WS_URL: realtime WSS base. Empty/None → SDK uses China default.
+#   ⚠️ When url is passed to OmniRealtimeConversation, the SDK appends
+#   "?model={model}" itself — the env value MUST NOT contain a query string.
+#   Intl value: wss://dashscope-intl.aliyuncs.com/api-ws/v1/realtime (NO ?model=)
+# DASHSCOPE_HTTP_BASE: REST base host, default China endpoint.
+_DASHSCOPE_HTTP_CHINA = "https://dashscope.aliyuncs.com"
+DASHSCOPE_HTTP_BASE = (os.getenv("DASHSCOPE_HTTP_BASE") or _DASHSCOPE_HTTP_CHINA).rstrip("/")
+# SDK-global host for MultiModalConversation.call / Generation.call (TTS/translate).
+# Only override when intl endpoint differs from China default.
+if DASHSCOPE_HTTP_BASE != _DASHSCOPE_HTTP_CHINA:
+    dashscope.base_http_api_url = f"{DASHSCOPE_HTTP_BASE}/api/v1"
+
 # 双阶段会话状态，key=f"{user_id}:{scenario}" — 每个场景独立维护状态
 # TTL-aware wrapper: 条目超过 72h 自动清理，最多保留 2000 个活跃 key（LRU）
 import time as _time
@@ -2943,7 +2956,9 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query(None), ses
     def connect_dashscope():
         try:
             logger.info(f"Connecting to DashScope for session {session_id}")
-            conversation = OmniRealtimeConversation(model=os.getenv("QWEN3_OMNI_MODEL", "qwen3-omni-flash-realtime"), callback=callback)
+            # url=None → SDK uses China default. Intl env value must NOT contain
+            # a query string; SDK appends ?model={model} itself.
+            conversation = OmniRealtimeConversation(model=os.getenv("QWEN3_OMNI_MODEL", "qwen3-omni-flash-realtime"), callback=callback, url=os.getenv("DASHSCOPE_WS_URL") or None)
             callback.conversation = conversation
             conversation.connect()
             logger.info(f"DashScope connected call initiated for session {session_id}")
@@ -3665,7 +3680,10 @@ import urllib.parse
 import urllib.request as _urllib_req
 
 # DashScope TTS audio URL 域名白名单（防止 SSRF）
-_ALLOWED_TTS_HOSTS = {"dashscope.aliyuncs.com", "oss-cn-beijing.aliyuncs.com", "oss-cn-hangzhou.aliyuncs.com", "oss-cn-shanghai.aliyuncs.com"}
+_ALLOWED_TTS_HOSTS = {"dashscope.aliyuncs.com", "oss-cn-beijing.aliyuncs.com", "oss-cn-hangzhou.aliyuncs.com", "oss-cn-shanghai.aliyuncs.com",
+                      "dashscope-intl.aliyuncs.com", "oss-ap-southeast-1.aliyuncs.com",
+                      "ws-apadg96g31j9nnwh.ap-southeast-1.maas.aliyuncs.com"}
+# ws-apadg... = 专属 intl 网关 (CSV)；oss-ap-southeast-1 = intl OSS 输出域，部署后须实跑 intl TTS 抓真实 audio URL host 确认/补全
 
 def _validated_urlopen(url: str, timeout: int = 15) -> bytes:
     """Fetch URL with domain allowlist to prevent SSRF."""
@@ -3741,7 +3759,7 @@ async def _try_wanx_image(scenario_title: str, prompt_en: str) -> str | None:
             async with httpx.AsyncClient(timeout=20) as client:
                 # DashScope image synthesis — submit task
                 submit_resp = await client.post(
-                    "https://dashscope.aliyuncs.com/api/v1/services/aigc/text2image/image-synthesis",
+                    f"{DASHSCOPE_HTTP_BASE}/api/v1/services/aigc/text2image/image-synthesis",
                     headers={
                         "Authorization": f"Bearer {dashscope_key}",
                         "X-DashScope-Async": "enable",
@@ -3764,7 +3782,7 @@ async def _try_wanx_image(scenario_title: str, prompt_en: str) -> str | None:
                 for _ in range(6):
                     await asyncio.sleep(2)
                     poll_resp = await client.get(
-                        f"https://dashscope.aliyuncs.com/api/v1/tasks/{task_id}",
+                        f"{DASHSCOPE_HTTP_BASE}/api/v1/tasks/{task_id}",
                         headers={"Authorization": f"Bearer {dashscope_key}"},
                     )
                     if poll_resp.status_code != 200:
@@ -3866,7 +3884,7 @@ async def generate_scenarios(payload: dict = Body(...)):
         import httpx as _httpx
         async with _httpx.AsyncClient(timeout=30) as client:
             resp = await client.post(
-                "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions",
+                f"{DASHSCOPE_HTTP_BASE}/compatible-mode/v1/chat/completions",
                 headers={
                     "Authorization": f"Bearer {ds_api_key}",
                     "Content-Type": "application/json"
