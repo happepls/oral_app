@@ -54,6 +54,8 @@
   "landing_cta_desc": "今すぐ登録して、AIスピーキング練習を始めましょう",
   "landing_cta_btn": "無料でアカウント作成",
   "landing_footer": "© 2026 GuaJi. All rights reserved.",
+  "privacy_title": "Privacy Policy",
+  "privacy_body": "Last updated: June 17, 2026\n\nGuaJi (the \"App\") respects and protects user privacy. This policy explains how we collect, use, and safeguard your information.\n\n1. Information We Collect: At registration we collect your nickname, email, native language, and target language. During practice we process your voice and text input for real-time speaking assessment and feedback.\n\n2. How We Use Information: Your voice/text is used solely to provide speaking-practice scoring, personalized learning plans, and conversation history review — never for other purposes.\n\n3. Third-Party Services: This App uses Alibaba Cloud DashScope for speech recognition and synthesis, Stripe to process subscription payments (we do not store your card number), and Tawk.to for live customer support. When you use the support chat, your conversation may be collected and stored by Tawk.to.\n\n4. Data Security: Account credentials are transmitted via secure httpOnly cookies, passwords are stored encrypted, and external resource access is validated against a domain allowlist.\n\n5. Your Rights: You may modify your profile or delete your account at any time via in-app settings. Associated data is removed upon account deletion.\n\n6. Contact Us: For questions about this Privacy Policy, please reach us through the in-app live support chat.",
   "welcome_subtitle": "効率的・本格的なAIスピーキング練習",
   "welcome_create": "アカウント作成",
   "welcome_login": "ログイン",

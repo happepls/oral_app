@@ -217,10 +217,6 @@ services:
       - ./services/media-processing-service/.env:/app/.env
     env_file:
       - ./services/media-processing-service/.env
-    environment:
-      # 临时绕过部署网络对腾讯云 COS 的 TLS 拦截（伪 VeriSign 证书）。
-      # ⚠️ 仅本地测试用：生产部署前必须移除并安装拦截代理的正确 root CA。
-      - NODE_TLS_REJECT_UNAUTHORIZED=0
     networks:
       - oral_app_net
 

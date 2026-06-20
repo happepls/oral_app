@@ -39,9 +39,8 @@ logs
 .env.production.local
 
 # 包管理
-package-lock.json
-yarn.lock
-pnpm-lock.yaml
+# 注意：lockfile 必须提交 —— 保证依赖可复现 + 可审计 + 防幻觉包/typosquat（用 `npm ci` 而非 `npm install`）。
+# 故意不忽略 package-lock.json / yarn.lock / pnpm-lock.yaml。
 
 # 构建输出
 build/
@@ -130,3 +129,7 @@ iTerm2
 
 # JetBrains Junie AI config
 .junie/
+
+# DashScope / API key export CSVs (contain live keys)
+services/**/oral-apiKey-*.csv
+*-apiKey-*.csv

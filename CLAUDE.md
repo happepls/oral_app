@@ -497,3 +497,18 @@ gitleaks git --staged --verbose --config .gitleaks.toml  # staged only
 - **✅ 部署陷阱已根治（Jun 8）**：此前 ai-omni 运行镜像**缺 `redis` 库** → `_get_redis_client()` 抛 `ModuleNotFoundError` → 返回 None → 每日上限**与 daily_qa Redis 缓存双双静默 fail-open，从不生效**。根因：`services/ai-omni-service/Dockerfile` 的 `apt-get install gcc g++` 层走 `deb.debian.org` 在 CN 网络抖动时 `E: Unable to locate package gcc` 失败 → 整个 build 死在此层 → pip 层（含 redis）从不执行。**根治**：删除 apt-get 层（requirements 全部依赖在 `python:3.10-slim` 上都有预编译 wheel —— pydantic-core=Rust wheel、uvicorn[standard] 的 uvloop/httptools/websockets=manylinux wheel、其余纯 python，**无需 gcc**）+ pip 层加 `--retries 5 --timeout 120` + **build 末尾 `python -c "import redis, fastapi, uvicorn, httpx, websockets"` 断言**（pip 静默漏装会让 build 当场失败，不再出坏镜像）。若将来新增需编译的依赖，Dockerfile 注释里有「改阿里云 apt 镜像源」的恢复模板。已验证：`docker compose build --no-cache ai-omni-service` 通过（`deps import OK` + `redis-5.0.1`），`docker compose up -d`（recreate）后 `redis.asyncio` 直接可用、无需热装。
 - **测试**：`services/ai-omni-service/tests/test_daily_turn_limit.py`（9 例，FakeRedis 加 incr/expire，helper 直传 fake 不 patch；**必须在容器跑**——宿主 `.venv` 是 Python 3.9，main.py 用 PEP604 `str | None`(@3578) 需 3.10+，容器是 3.10.19）。前端 `client/src/__tests__/daily-limit-logic.test.js`（3 例纯逻辑）。
 - **已验证**（Jun 8 真实运行栈 E2E，直连 ai-omni :8082 WS）：免费档超限 → `daily_limit_reached {free,15→2,2}` 计数不增；付费档 → `{pro,...}` 正确区分；redis stop → fail-open 放行 + 日志 `[DailyLimit] _get_daily_turns fail-open: Connection closed by server.`。
+
+## Agent Team（oral-app-team，Jun 2026）
+
+项目 `.claude/agents/*.md` 定义 6 个专职 subagent，会话启动**自动加载**（`.claude/agents/` 原生自动发现 + `settings.json` 已设 `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1`）。orchestrator 负责任务拆解/进度/审核，**具体实现必须委派**给对应 agent，不自己动手（除极小单行 hotfix 或 teammate 无法完成）。
+
+| agent | 职责 | 何时派 |
+|-------|------|--------|
+| `frontend` | React 19 + react-bootstrap + i18n、Conversation.js、WS 客户端、样式 | client/ 下 UI/组件/页面改动 |
+| `backend` | Node/Python 微服务、API、Docker、DB、Stripe、workflow 评分 | services/ 下实现 |
+| `debugger` | Bug 根因（WS 链路/音频/打分/Docker 陷阱），只定位不改码 | 任何 bug/测试失败/异常 |
+| `architect` | 架构设计、技术选型、成本护栏，写 docs/superpowers/specs/ | "该怎么设计/选什么" |
+| `reviewer` | 严格 diff/PR 审查，单行格式输出 | 合并前/完成功能后 |
+| `security` | 安全审计（OWASP/auth/Stripe 验签/SSRF/密钥），只审不改码 | 安全审查 |
+
+> 旧 shell 别名风格（`~/clawdbot/claude-agents-config.sh` 的 `CLAUDE_AGENTS` env + `claude-debug` 等 alias）已弃用——现代 Claude Code 用 `.claude/agents/*.md` 文件，无需 source 脚本、无需 `--agents` flag。

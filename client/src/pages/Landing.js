@@ -15,6 +15,7 @@ function Landing() {
   const { user } = useAuth();
   const { t } = useTranslation();
   const [activeTestimonial, setActiveTestimonial] = useState(0);
+  const [showPrivacy, setShowPrivacy] = useState(false);
 
   const features = useMemo(() => [
     { Icon: Mic,           title: t('feature_1_title'), desc: t('feature_1_desc') },
@@ -314,9 +315,50 @@ function Landing() {
             />
             <span className="font-bold text-slate-900 dark:text-white">GuaJi</span>
           </div>
-          <p className="text-slate-500 text-sm">{t('landing_footer')}</p>
+          <div className="flex items-center gap-4">
+            <p className="text-slate-500 text-sm">{t('landing_footer')}</p>
+            <button
+              type="button"
+              onClick={() => setShowPrivacy(true)}
+              className="text-slate-500 hover:text-slate-700 dark:hover:text-slate-300 text-sm underline"
+            >
+              {t('privacy_title')}
+            </button>
+          </div>
         </div>
       </footer>
+
+      {/* ── Privacy Policy Modal ── */}
+      {showPrivacy && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
+          onClick={() => setShowPrivacy(false)}
+        >
+          <motion.div
+            initial={{ opacity: 0, scale: 0.95 }}
+            animate={{ opacity: 1, scale: 1 }}
+            className="relative w-full max-w-2xl max-h-[80vh] overflow-y-auto rounded-2xl bg-white dark:bg-slate-900 p-6 shadow-xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <button
+              type="button"
+              onClick={() => setShowPrivacy(false)}
+              className="absolute top-4 right-4 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 text-2xl leading-none"
+              aria-label="Close"
+            >
+              ×
+            </button>
+            <h2 className="text-2xl font-bold text-slate-900 dark:text-white mb-4 pr-8">
+              {t('privacy_title')}
+            </h2>
+            {t('privacy_body').split('\n\n').map((para, i) => (
+              <p key={i} className="text-slate-600 dark:text-slate-300 text-sm leading-relaxed mb-3">
+                {para}
+              </p>
+            ))}
+          </motion.div>
+        </div>
+      )}
     </div>
   );
 }
