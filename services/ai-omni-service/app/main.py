@@ -1426,8 +1426,9 @@ def _get_redis_client():
     host = os.getenv("REDIS_HOST", "redis")
     port = int(os.getenv("REDIS_PORT", "6379"))
     db = int(os.getenv("REDIS_DB", "0"))
+    password = os.getenv("REDIS_PASSWORD") or None
     try:
-        _redis_client_singleton = _redis_async.Redis(host=host, port=port, db=db, decode_responses=True)
+        _redis_client_singleton = _redis_async.Redis(host=host, port=port, db=db, password=password, decode_responses=True)
     except Exception as e:
         logger.error(f"[DAILY_QA] failed to init redis client: {e}")
         _redis_client_singleton = None

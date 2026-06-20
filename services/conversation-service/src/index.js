@@ -10,6 +10,7 @@ const PORT = process.env.PORT || 8083;
 const redis = new Redis({
   host: process.env.REDIS_HOST || 'redis',
   port: process.env.REDIS_PORT || 6379,
+  password: process.env.REDIS_PASSWORD || undefined,
   retryDelayOnFailover: 1000,
   maxRetriesPerRequest: 3,
   lazyConnect: true
