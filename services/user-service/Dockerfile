@@ -24,4 +24,4 @@ USER appuser
 EXPOSE 3000
 
 # Define the command to run your app
-CMD [ "npm", "start" ]
+CMD [ "node", "src/index.js" ]
