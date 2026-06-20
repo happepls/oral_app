@@ -6,7 +6,9 @@ RUN mkdir -p /var/cache/nginx/client_temp /var/cache/nginx/proxy_temp /var/cache
     chmod -R 755 /var/cache/nginx /var/run
 
 # Copy nginx configuration
-COPY nginx.conf /etc/nginx/nginx.conf
+# Zeabur build uses the .zeabur.internal-hostname variant; local docker-compose
+# bind-mounts ./api-gateway/nginx.conf over this at /etc/nginx/nginx.conf.
+COPY nginx.zeabur.conf /etc/nginx/nginx.conf
 
 # Create a simple health check endpoint
 RUN echo "healthy" > /usr/share/nginx/html/health.html && \
