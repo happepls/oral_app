@@ -22,7 +22,7 @@ class StripeService {
     });
   }
 
-  async createCheckoutSession(customerId, priceId, successUrl, cancelUrl, promotionCode) {
+  async createCheckoutSession(customerId, priceId, successUrl, cancelUrl, promotionCode, userId) {
     const secretKey = await getStripeSecretKey();
     if (!secretKey) {
       throw new Error('Stripe is not configured');
@@ -37,6 +37,13 @@ class StripeService {
       success_url: successUrl,
       cancel_url: cancelUrl,
     };
+
+    // Stamp our user id onto the session so the webhook can fall back to it
+    // when the customer→user linkage isn't yet persisted (race / first checkout).
+    if (userId !== undefined && userId !== null) {
+      params.client_reference_id = String(userId);
+      params.metadata = { userId: String(userId) };
+    }
 
     if (promotionCode) {
       // Resolve the human-readable code (e.g. "SAVE20") to a promotion_code id.
@@ -219,6 +226,17 @@ class StripeService {
     const result = await pool.query(
       'SELECT * FROM users WHERE id = $1',
       [userId]
+    );
+    return result.rows[0] || null;
+  }
+
+  // Webhook fallback: resolve a user id from the checkout email when the
+  // customer→user linkage isn't persisted yet. Case-insensitive match.
+  async getUserByEmail(email) {
+    if (!email) return null;
+    const result = await pool.query(
+      'SELECT * FROM users WHERE LOWER(email) = LOWER($1) LIMIT 1',
+      [email]
     );
     return result.rows[0] || null;
   }

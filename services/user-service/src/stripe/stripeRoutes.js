@@ -135,7 +135,8 @@ router.post('/checkout', protect, async (req, res) => {
         priceId,
         `${baseUrl}/subscription/success?session_id={CHECKOUT_SESSION_ID}`,
         `${baseUrl}/subscription/cancel`,
-        promotionCode
+        promotionCode,
+        user.id
       );
 
       res.json({ url: session.url });
