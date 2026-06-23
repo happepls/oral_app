@@ -182,3 +182,58 @@
 > **测试方法说明（§10）**：iPhone 14 真实 390px 视口通过 **CDP `Emulation.setDeviceMetricsOverride`**（width=390 height=844 deviceScaleFactor=3 mobile=true）实现，而非窗口缩放——Chrome 强制最小窗口宽 ~592px，`resize_window` 无法降到 390。测试对 dev-server (`localhost:3000`，与 `:5001` prod 同源，仅 `bundle.js` vs `main.*.js` 之别) 应用仿真 + `Page.captureScreenshot` 截图取证。每条用例用 JS 遍历 `getBoundingClientRect()` 探测溢出元素（`right>clientW` 或 `left<-1`）并核对 `documentElement.scrollWidth`。截图证据见 `docs/mobile-test-screenshots/`。
 >
 > Playwright MCP 当前不可用：其 `.mcp.json` 固定 `--cdp-endpoint http://localhost:9222`，attach 到 Chrome 148 时 `/json/version` 握手返回 `Unexpected status 400`（版本兼容问题），故改用 CDP 直连 + claude-in-chrome 辅助。
+
+---
+
+## 11. Zeabur 生产上线验证（`guajiguaji.top`，Jun 2026）
+
+**测试目标**：后端全栈部署到 Zeabur（Aliyun Bangkok）后，验证生产环境特有问题（私有网络、CSP、海外 DashScope、Stripe live、构建链路）。**前置**：8 后端 + gateway + client + 3 DB 全部 RUNNING；域名 `guajiguaji.top` → client-app。
+
+### 11a. 部署链路与基础设施
+
+| # | 测试项 | 操作步骤 | 预期结果 | 通过 | 修改点 |
+|---|-------|---------|---------|------|--------|
+| 11.1 | 域名访问 | `curl -I https://guajiguaji.top/` | HTTP 200，client-app 服务 React | [☑] | |
+| 11.2 | API 全链路 | `POST /api/users/login`（错误凭据） | 401（域名→client nginx→resolver→api-gateway→user-service→postgres 全通） | [☑] | ~~502~~ 已修：nginx 静态 upstream 启动期解析 `.zeabur.internal` 崩溃 → resolver 10.43.0.20 + 变量化 proxy_pass 运行时解析 |
+| 11.3 | 私有网络 DNS | 后端互访 | `<service>.zeabur.internal:<port>` 解析正常 | [☑] | Zeabur 私有 DNS = service-name.zeabur.internal；`${VAR}` 自引用不插值，DB/redis 用 literal 值 |
+| 11.4 | DB 建表 | postgres `zeabur` 库 | init.sql + 6 migrations 全部 APPLIED | [☑] | postgres 非自动建表，`.zeabur-bin/bootstrap-db.sh` base64-pipe 经 service exec 灌入 |
+| 11.5 | client 构建 | Zeabur build client-app | 用 `client/Dockerfile`（非 .prod！root=client 自动选 Dockerfile） | [☑] | ~~CSP/Tawk 全失效~~ 已修：修复曾写进没被用的 Dockerfile.prod；对齐 client/Dockerfile + RUN grep 断言 bust 缓存 |
+
+### 11b. CSP（内容安全策略）
+
+| # | 测试项 | 操作步骤 | 预期结果 | 通过 | 修改点 |
+|---|-------|---------|---------|------|--------|
+| 11.6 | COS 音频 | 对话页 AI 语音播放 | COS mp3 加载不被 CSP 拦 | [☑] | ~~`media-src` 缺，default-src 拦~~ 已修：CSP 加 `media-src 'self' blob: data: https://*.myqcloud.com` |
+| 11.7 | blob 试听 | recall 试听合成 | blob: URL 音频可播 | [☑] | ~~blob 被拦~~ 同 11.6（media-src blob:） |
+| 11.8 | 波形/时长 | AudioBar 渲染 | 显示波形 + 时长（非仅播放按钮） | [☐] | 连带 11.6（`new Audio()` 被 media-src 拦致 loadedmetadata 不触发）；待 live 复测 |
+| 11.9 | Cloudflare beacon | 页面加载 | `static.cloudflareinsights.com/beacon.min.js` 不被拦 | [☑] | ~~script-src 拦~~ 已修：script-src 加 cloudflareinsights |
+| 11.10 | 字体加载 | Google Fonts | fonts.googleapis/gstatic 不被拦 | [☑] | connect-src 加 google fonts |
+| 11.11 | CSP header 实测 | `curl -I https://guajiguaji.top/` | header 含 media-src + cloudflareinsights | [☑] | console 无 "violates CSP" |
+
+### 11c. 海外 DashScope（新加坡专属工作区）
+
+| # | 测试项 | 操作步骤 | 预期结果 | 通过 | 修改点 |
+|---|-------|---------|---------|------|--------|
+| 11.12 | 场景生成 | `POST /api/ai/generate-scenarios` | HTTP 200，返回 10 场景 | [☑] | ~~404→403→已修~~ 路由 404=变量 proxy_pass URI 语义；403=模型名 qwen-turbo→qwen-flash + chat base maas→dashscope-intl（maas 不提供 compatible-mode chat）。3 处 chat（scenarios/daily-qa/translate）统一 httpx 直连 intl 网关 |
+| 11.13 | 文生图 | 场景配图 | wan2.2-t2i-flash 调用成功 | [☐] | model wanx2.1-t2i-turbo→wan2.2-t2i-flash；待 live 复测 |
+| 11.14 | realtime 语音 | 对话 WS `/stream` | 主对话 omni 语音正常（用 maas host） | [☐] | 主对话用 OmniRealtimeConversation；待 live 完整语音练习复测 |
+
+### 11d. Stripe live 支付
+
+| # | 测试项 | 操作步骤 | 预期结果 | 通过 | 修改点 |
+|---|-------|---------|---------|------|--------|
+| 11.15 | live 价格 | `/api/stripe/products-with-prices` | 周$4.99/年$99 真实 live 价 | [☑] | seed-products.js（live key）建 prod_Uksr*/price_1TlN5* |
+| 11.16 | live webhook | 真实付款 → webhook | subscription_status 写 active | [☑] | ~~付款成功但没写 active~~ 根因：旧 checkout 无 metadata.userId + customer 未关联 → updateByCustomerId 0 行。三级兜底：customerId→metadata.userId→email 反查 + checkout 塞 client_reference_id/userId。已付款用户(`363328084@qq.com`)手动补激活 |
+| 11.17 | 付款跳转 | Checkout 成功后 | 跳转 Profile 显示 Pro | [☐] | ~~跳转失败~~ 部分因 CSP 拦 Cloudflare/字体；待 live 复测 |
+
+### 11e. 前端 prod bug
+
+| # | 测试项 | 操作步骤 | 预期结果 | 通过 | 修改点 |
+|---|-------|---------|---------|------|--------|
+| 11.18 | 开场白 TTS | 进对话页听开场白 | TTS 播 1 次（不重复） | [☐] | ~~播 2 次（streaming+COS 双路径）~~ 已修：streamedAudioSinceCutRef 去重；待 live 复测 |
+| 11.19 | 音频不切断 | 连续多条 AI 消息 | 音频播完整，A→B 衔接顺，不中途切断 | [☐] | ~~总被切断~~ 已修：auto-play effect 删全局 stopAudioPlayback（下行已 queued 衔接）+ 提前去重置位 + 依赖收紧为 pendingAutoPlayKey；待 live 复测 |
+| 11.20 | daily-progress | Discovery 加载 | `/api/users/daily-progress` 不 500 | [☑] | ~~500~~ 缺 daily_practice_time 表 + users.daily_practice_goal 列 → 建表 migration + 软兜底 |
+| 11.21 | Google 登录 | 点 Google 登录 | client_id 正确，授权弹窗正常 | [☐] | ~~invalid_request client_id 未设~~ 已修：REACT_APP_GOOGLE_CLIENT_ID build-time 注入（之前 .env gitignored 没传给 Zeabur build）。注：Google Console 须加 `guajiguaji.top` 授权来源（origin_mismatch 另需 Console 配） |
+| 11.22 | Tawk 客服 | 页面加载 | Tawk widget 出现，无 CORS | [☑] | ~~CORS/client_id 空~~ 已修：REACT_APP_TAWK_* build-time 注入；twk-main.js 已加载 |
+
+> **生产验证方法（§11）**：`curl` 验证 HTTP/header/API（本地经 `HTTPS_PROXY=127.0.0.1:7890` 访 Zeabur API；公网 curl `guajiguaji.top` 直连）；claude-in-chrome MCP 连真实浏览器读 console 验证 CSP/资源加载（`read_console_messages` + `javascript_tool` 查 bundle hash）。Zeabur CLI 0.19.0 二进制（npm 上限 0.5.4）+ proxy。**[☐] 项需登录后真实交互复测**（录音/付款/语音）。部署细节见 [memory] `project_zeabur_backend_deploy_complete`。
