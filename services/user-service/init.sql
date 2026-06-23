@@ -12,6 +12,7 @@ CREATE TABLE IF NOT EXISTS users (
     target_language VARCHAR(50), -- Current primary target language
     interests TEXT, -- Comma separated or JSON
     points INT DEFAULT 0,
+    daily_practice_goal INTEGER DEFAULT 15,
     onboarding_tour_completed BOOLEAN NOT NULL DEFAULT FALSE,
     stripe_customer_id VARCHAR(255),
     stripe_subscription_id VARCHAR(255),
@@ -113,6 +114,14 @@ CREATE TABLE IF NOT EXISTS user_feedback (
 );
 CREATE INDEX IF NOT EXISTS idx_user_feedback_user ON user_feedback(user_id);
 CREATE INDEX IF NOT EXISTS idx_user_feedback_created ON user_feedback(created_at DESC);
+
+-- Create the daily_practice_time table (per-user per-day practice minutes)
+CREATE TABLE IF NOT EXISTS daily_practice_time (
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    practice_date DATE NOT NULL DEFAULT CURRENT_DATE,
+    minutes INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (user_id, practice_date)
+);
 
 -- Add indexes for better query performance
 CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);

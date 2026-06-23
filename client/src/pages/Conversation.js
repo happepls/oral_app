@@ -722,6 +722,15 @@ function Conversation() {
   const speechStartTimeRef = useRef(0);
   const speechTotalDurationRef = useRef(0);
   const audioQueueRef = useRef([]);
+  // Tracks whether streaming PCM chunks have actually played for the CURRENT turn,
+  // measured from the last stopAudioPlayback() cut point (which is the natural
+  // per-turn boundary: user recording start / auto-play start / magic_pass).
+  // Used to de-dupe the opening greeting (and any turn) when the streaming path
+  // already produced audible audio but the slow COS audio_url arrives AFTER the
+  // short streaming queue already drained — at which point stopAudioPlayback()
+  // stops an empty queue and the COS URL would play a SECOND time.
+  // Set true in playAudioChunk; reset to false in stopAudioPlayback.
+  const streamedAudioSinceCutRef = useRef(false);
   const isInterruptedRef = useRef(false);
   const currentUserMessageIdRef = useRef(null);
   const currentRecordingSessionIdRef = useRef(null); // Track current recording session to ignore cancelled audio
@@ -756,6 +765,8 @@ function Conversation() {
     });
     audioQueueRef.current = [];
     nextStartTimeRef.current = 0;
+    // New turn boundary: forget whether the previous turn streamed audio.
+    streamedAudioSinceCutRef.current = false;
     setIsAISpeaking(false);
     setPlayingAudioUrl(null);
   };
@@ -1309,6 +1320,14 @@ function Conversation() {
            const currentScenario = new URLSearchParams(window.location.search).get('scenario');
            const welcomeMuted = currentScenario ? localStorage.getItem(_lsScenarioKey('welcome_muted_', currentScenario)) === 'true' : false;
 
+           // De-dupe: if streaming PCM already played audible audio for this turn,
+           // suppress the COS auto-play (it would be a second playback). The COS
+           // URL is still attached so the user can manually replay; we only set
+           // audioPlayed=true to keep the auto-play useEffect from firing.
+           // Consume the flag here (read once per audio_url) so a later distinct
+           // turn that did NOT stream isn't accidentally suppressed.
+           const streamedThisTurn = streamedAudioSinceCutRef.current;
+
            if (role === 'assistant') {
                setMessages(prev => {
                    const newMessages = [...prev];
@@ -1317,11 +1336,11 @@ function Conversation() {
                    if (targetResponseId) {
                        const index = newMessages.findIndex(m => m.type === 'ai' && m.responseId === targetResponseId);
                        if (index !== -1) {
-                           console.log(`[AudioURL] Attached to message ${index} via ID ${targetResponseId}, isFinal=${newMessages[index].isFinal}`);
+                           console.log(`[AudioURL] Attached to message ${index} via ID ${targetResponseId}, isFinal=${newMessages[index].isFinal}, streamed=${streamedThisTurn}`);
                            newMessages[index] = {
                                ...newMessages[index],
                                audioUrl: url,
-                               audioPlayed: shouldSuppressAutoPlay(welcomeMuted, newMessages, index)
+                               audioPlayed: streamedThisTurn || shouldSuppressAutoPlay(welcomeMuted, newMessages, index)
                            };
                            return newMessages;
                        }
@@ -1330,11 +1349,11 @@ function Conversation() {
                    // 2. Fallback: Attach to the LAST AI message that doesn't have a URL
                    for (let i = newMessages.length - 1; i >= 0; i--) {
                        if (newMessages[i].type === 'ai' && !newMessages[i].audioUrl) {
-                           console.log(`[AudioURL] Fallback attachment to message ${i}, isFinal=${newMessages[i].isFinal}`);
+                           console.log(`[AudioURL] Fallback attachment to message ${i}, isFinal=${newMessages[i].isFinal}, streamed=${streamedThisTurn}`);
                            newMessages[i] = {
                                ...newMessages[i],
                                audioUrl: url,
-                               audioPlayed: shouldSuppressAutoPlay(welcomeMuted, newMessages, i)
+                               audioPlayed: streamedThisTurn || shouldSuppressAutoPlay(welcomeMuted, newMessages, i)
                            };
                            break;
                        }
@@ -1928,6 +1947,10 @@ function Conversation() {
 
     source.start(start);
     nextStartTimeRef.current = start + audioBuffer.duration;
+
+    // Mark that the streaming path produced audible audio for this turn.
+    // Consumed by the audio_url handler to suppress a duplicate COS playback.
+    streamedAudioSinceCutRef.current = true;
 
     // Track source for cancellation
     audioQueueRef.current.push(source);

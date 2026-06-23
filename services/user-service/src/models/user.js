@@ -1051,7 +1051,7 @@ User.getDailyPracticeTime = async (userId) => {
     `SELECT minutes FROM daily_practice_time
      WHERE user_id = $1 AND practice_date = CURRENT_DATE`,
     [userId]
-  );
+  ).catch(() => ({ rows: [] }));
   return rows[0]?.minutes || 0;
 };
 
@@ -1077,7 +1077,8 @@ User.getDailyProgress = async (userId) => {
   const practiceMinutes = await User.getDailyPracticeTime(userId);
 
   // 5. 练习目标
-  const userRes = await db.query('SELECT daily_practice_goal FROM users WHERE id = $1', [userId]);
+  const userRes = await db.query('SELECT daily_practice_goal FROM users WHERE id = $1', [userId])
+    .catch(() => ({ rows: [] }));
   const practiceGoal = userRes.rows[0]?.daily_practice_goal || 15;
 
   // 6. 打卡状态
@@ -1097,7 +1098,7 @@ User.getDailyProgress = async (userId) => {
   const totalRes = await db.query(
     'SELECT COALESCE(SUM(minutes), 0) AS total FROM daily_practice_time WHERE user_id = $1',
     [userId]
-  );
+  ).catch(() => ({ rows: [{ total: 0 }] }));
   const totalPracticeMinutes = parseInt(totalRes.rows[0]?.total) || 0;
 
   return {

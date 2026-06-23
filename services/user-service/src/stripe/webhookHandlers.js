@@ -65,10 +65,45 @@ class WebhookHandlers {
     const subscriptionId = session.subscription;
     if (!customerId) return;
 
-    await stripeService.updateUserStripeInfoByCustomerId(customerId, {
+    // Primary path: customer→user linkage already persisted at checkout time.
+    const updated = await stripeService.updateUserStripeInfoByCustomerId(customerId, {
       stripeSubscriptionId: subscriptionId || undefined,
       subscriptionStatus: 'active',
     });
+    if (updated) return;
+
+    // Fallback: no row matched stripe_customer_id (linkage not yet written —
+    // race / first checkout). Recover the user via metadata.userId, then via
+    // the checkout email, and write the linkage + status by user id.
+    const fallbackInfo = {
+      stripeCustomerId: customerId,
+      stripeSubscriptionId: subscriptionId || undefined,
+      subscriptionStatus: 'active',
+    };
+
+    const userId = session.metadata?.userId || session.client_reference_id;
+    if (userId) {
+      const byId = await stripeService.updateUserStripeInfo(userId, fallbackInfo);
+      if (byId) {
+        console.log('[StripeWebhook] checkout fallback by userId', userId);
+        return;
+      }
+    }
+
+    const email = session.customer_details?.email || session.customer_email;
+    if (email) {
+      const user = await stripeService.getUserByEmail(email);
+      if (user) {
+        await stripeService.updateUserStripeInfo(user.id, fallbackInfo);
+        console.log('[StripeWebhook] checkout fallback by email', email);
+        return;
+      }
+    }
+
+    console.warn(
+      '[StripeWebhook] checkout fallback failed: no user matched customer',
+      customerId, 'userId', userId, 'email', email
+    );
   }
 
   static async _onSubscriptionUpdated(subscription) {
