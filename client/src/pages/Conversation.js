@@ -1897,6 +1897,14 @@ function Conversation() {
   const playAudioChunk = useCallback(async (audioData) => {
     if (isInterruptedRef.current) return; // Drop audio if interrupted
 
+    // Mark that the streaming path has started producing audio for this turn —
+    // set it SYNCHRONOUSLY at entry, BEFORE the async decodeAudioData await
+    // below. If we waited until after decode (cut-off chain A), a COS audio_url
+    // arriving mid-decode would read this flag as still-false and the auto-play
+    // effect would kill the streaming we're about to schedule. Setting it here
+    // closes that race to a single synchronous tick.
+    streamedAudioSinceCutRef.current = true;
+
     initAudioContext();
     const ctx = audioContextRef.current;
 
@@ -1948,9 +1956,7 @@ function Conversation() {
     source.start(start);
     nextStartTimeRef.current = start + audioBuffer.duration;
 
-    // Mark that the streaming path produced audible audio for this turn.
-    // Consumed by the audio_url handler to suppress a duplicate COS playback.
-    streamedAudioSinceCutRef.current = true;
+    // (streamedAudioSinceCutRef already set synchronously at fn entry — see top.)
 
     // Track source for cancellation
     audioQueueRef.current.push(source);
@@ -2463,6 +2469,21 @@ function Conversation() {
     return () => clearTimeout(t);
   }, [languageGateWarning]);
 
+  // Stable signal for the auto-play effect below. Only changes when the SET of
+  // pending (audioPlayed===false && audioUrl) AI messages changes — appends of
+  // proficiency/translation/task system messages that don't add a playable
+  // bubble leave this key untouched, so the effect doesn't re-run and re-stop
+  // audio that's currently playing (cut-off chain C).
+  const pendingAutoPlayKey = React.useMemo(() => {
+    const parts = [];
+    messages.forEach((m, i) => {
+      if (m.type === 'ai' && m.audioUrl && m.audioPlayed === false) {
+        parts.push(`${i}:${m.responseId || ''}:${m.audioUrl}`);
+      }
+    });
+    return parts.join('|');
+  }, [messages]);
+
   // Auto-play AI audio when messages get audio URLs
   useEffect(() => {
     messages.forEach((message, index) => {
@@ -2476,16 +2497,18 @@ function Conversation() {
           return newMessages;
         });
 
-        // Stop any streaming PCM that may already be playing for this turn,
-        // then play the high-quality COS URL. This prevents double playback
-        // when streaming chunks did succeed.
+        // Play the high-quality COS URL via the auto-queue path: it schedules
+        // after whatever is currently playing (nextStartTimeRef) for a seamless
+        // A→B handoff. Do NOT stopAudioPlayback() here — that would wipe the
+        // queue (cut-off chains A & B). Double-playback is already prevented by
+        // streamedAudioSinceCutRef (streaming dedupe) and audioPlayed.
         console.log(`[AutoPlay] Playing AI audio for message ${index}:`, message.audioUrl);
-        stopAudioPlayback();
         isInterruptedRef.current = false;
         playFullAudio(message.audioUrl, true);
       }
     });
-  }, [messages]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pendingAutoPlayKey]);
 
   // Handle text selection for TTS
   useEffect(() => {
