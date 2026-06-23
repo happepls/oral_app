@@ -42,6 +42,12 @@ RUN rm -rf /var/cache/apk/*
 # /etc/nginx/nginx.conf (see docker-compose.override.yml) so local dev keeps the
 # docker-network (127.0.0.11 + api-gateway:80) config.
 COPY client.nginx.zeabur.conf /etc/nginx/nginx.conf
+# Assert the freshly-copied conf is the intended Zeabur version (resolver +
+# variable proxy_pass + media-src CSP). Fails the build — and busts any stale
+# COPY-layer cache — if an older client.nginx.conf snuck in.
+RUN grep -q "resolver 10.43.0.20" /etc/nginx/nginx.conf \
+    && grep -q "media-src" /etc/nginx/nginx.conf \
+    && grep -q "cloudflareinsights" /etc/nginx/nginx.conf
 COPY --from=builder /app/build /usr/share/nginx/html
 
 EXPOSE 5001
