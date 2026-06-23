@@ -19,6 +19,7 @@ router.get('/api/users/sse', protect, (req, res) => {
   const subscriber = new Redis({
     host: process.env.REDIS_HOST || 'redis',
     port: parseInt(process.env.REDIS_PORT || '6379', 10),
+    password: process.env.REDIS_PASSWORD || undefined,
     maxRetriesPerRequest: 3
   });
 
