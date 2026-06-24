@@ -9,18 +9,11 @@ import {
   User, Bell, Crown, Palette, MessageSquare,
   ChevronRight, PlusCircle, X, Info, Pencil
 } from 'lucide-react';
+// 母语下拉与 GoalSetting / Onboarding 同源（共享 29 种全集，避免选项数量不一致）。
+// 此前 Profile 仅 9 种，远少于 goal-setting 的 29 种 —— 已统一到 constants/languages.js。
+import { LANGUAGES } from '../constants/languages';
 
-const NATIVE_LANGUAGES = [
-  { value: 'Chinese',    label: '中文（普通话）', flag: '🇨🇳' },
-  { value: 'English',   label: 'English',       flag: '🇬🇧' },
-  { value: 'Japanese',  label: '日本語',          flag: '🇯🇵' },
-  { value: 'Korean',    label: '한국어',           flag: '🇰🇷' },
-  { value: 'French',    label: 'Français',       flag: '🇫🇷' },
-  { value: 'Spanish',   label: 'Español',        flag: '🇪🇸' },
-  { value: 'German',    label: 'Deutsch',        flag: '🇩🇪' },
-  { value: 'Portuguese',label: 'Português',      flag: '🇧🇷' },
-  { value: 'Russian',   label: 'Русский',        flag: '🇷🇺' },
-];
+const NATIVE_LANGUAGES = LANGUAGES;
 
 function Profile() {
   const navigate = useNavigate();

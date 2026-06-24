@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { useNavigate, useSearchParams } from 'react-router-dom';
+import { useNavigate, useSearchParams, useLocation } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 
 // Aligns with services/api.js: env var (or default) already includes the `/api`
@@ -58,6 +58,15 @@ function Subscription() {
   // Cookie mode: `token` is always null — gate auth on `user` instead.
   const { user, refreshProfile } = useAuth();
   const [searchParams] = useSearchParams();
+  const location = useLocation();
+  // Stripe 取消支付时跳回 /subscription/cancel。此态下用 navigate(-1) 会回到
+  // 历史里的 Stripe checkout 条目 → 又被推进支付页（死循环）。改为确定路由返回，
+  // 绕开 Stripe 历史。正常 /subscription（非 cancel）保持 navigate(-1) 原行为。
+  const isCancelled = location.pathname.endsWith('/cancel');
+  const handleBack = () => {
+    if (isCancelled) navigate('/discovery');
+    else navigate(-1);
+  };
   const [products, setProducts] = useState([]);
   const [loading, setLoading] = useState(true);
   const [checkoutLoading, setCheckoutLoading] = useState(null);
@@ -281,13 +290,21 @@ function Subscription() {
     <div className="min-h-screen pb-24" style={{ background: 'var(--background)' }}>
       <div className="px-4 pt-6 pb-4">
         <button
-          onClick={() => navigate(-1)}
+          onClick={handleBack}
           className="flex items-center text-slate-600 dark:text-slate-400 mb-4"
         >
           <span className="material-symbols-outlined text-xl mr-1">arrow_back</span>
           返回
         </button>
-        
+
+        {isCancelled && (
+          <div className="mb-4 p-3 bg-amber-50 dark:bg-amber-900/20 rounded-xl border border-amber-200 dark:border-amber-800">
+            <p className="text-sm text-amber-700 dark:text-amber-300">
+              已取消支付，未产生任何费用。你可以稍后再升级。
+            </p>
+          </div>
+        )}
+
         <h1 className="text-2xl font-bold text-slate-900 dark:text-white mb-2">
           升级会员
         </h1>

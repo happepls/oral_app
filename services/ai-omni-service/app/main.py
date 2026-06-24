@@ -2835,7 +2835,7 @@ import re as _re
 
 # 参数白名单：防止特殊字符注入破坏 URL/日志构造
 _SESSION_ID_RE = _re.compile(r'^[a-zA-Z0-9_\-]{1,128}$')
-_SCENARIO_RE   = _re.compile(r'^[\w\u4e00-\u9fff\s\-()（）]{0,200}$')
+_SCENARIO_RE   = _re.compile(r"^[\w\u4e00-\u9fff\s\-()（）：:，,、。.！!？?「」『』《》/&']{0,200}$")
 _VOICE_RE      = _re.compile(r'^[a-zA-Z0-9_\-]{0,64}$')
 
 @app.websocket("/stream")
