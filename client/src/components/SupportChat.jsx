@@ -30,9 +30,40 @@ import { useLocation } from 'react-router-dom';
  * 加入任何 CSP allowlist。
  */
 
-// 客服 widget 可见的页面：仅落地页与订阅页（订阅页给访客看定价）。
+// 客服 widget 可见的页面：仅公开页（落地页、登录/注册、订阅页给访客看定价）。
+// 其它所有页面（尤其登录后功能页 /discovery /conversation /recall /goals
+// /goal-setting /profile 等）一律隐藏 —— widget 会遮挡 CC/麦克风等功能组件，
+// 且 va.tawk.to/log-performance 的网络上报噪声在功能页毫无意义。
+const VISIBLE_PATHS = ['/', '/login', '/register', '/welcome'];
 function isVisiblePath(pathname) {
-  return pathname === '/' || pathname.startsWith('/subscription');
+  if (VISIBLE_PATHS.includes(pathname)) return true;
+  // 订阅页（含 /subscription/success、/subscription/cancel）给访客看定价
+  return pathname.startsWith('/subscription');
+}
+
+// 把目标显隐态应用到 Tawk widget。widget 加载是异步的，脚本注入后到
+// hideWidget/showWidget 真正可用之间有窗口期；此函数带短轮询重试，
+// 保证「进功能页要隐藏」最终一定生效（覆盖脚本晚于路由就绪的情况）。
+function applyTawkVisibility(visible, attempt = 0) {
+  const api = window.Tawk_API;
+  const ready = api && typeof api.hideWidget === 'function'
+    && typeof api.showWidget === 'function';
+  if (ready) {
+    try {
+      if (visible) api.showWidget();
+      else api.hideWidget();
+    } catch (e) {
+      console.warn('[SupportChat] applyTawkVisibility error:', e);
+    }
+    return;
+  }
+  // widget 尚未就绪：最多重试 ~3s（20 × 150ms），避免「该隐藏却没隐藏」长期残留。
+  if (attempt < 20) {
+    setTimeout(() => {
+      // 重试时读最新目标态，防止路由已再次变化时应用过期值。
+      applyTawkVisibility(window.__tawkVisible === true, attempt + 1);
+    }, 150);
+  }
 }
 
 export default function SupportChat() {
@@ -50,12 +81,11 @@ export default function SupportChat() {
     window.Tawk_API = window.Tawk_API || {};
     window.Tawk_LoadStart = new Date();
 
-    // widget 加载完成回调：按当前页面决定显隐（覆盖"脚本注入早于路由就绪"）
+    // widget 加载完成回调：按当前页面决定显隐（覆盖"脚本注入早于路由就绪"）。
+    // __tawkVisible 未初始化（脚本 onLoad 早于路由 effect）时默认隐藏，
+    // 避免在功能页短暂闪现客服球。
     window.Tawk_API.onLoad = function () {
-      try {
-        if (window.__tawkVisible) window.Tawk_API.showWidget();
-        else window.Tawk_API.hideWidget();
-      } catch (e) { console.warn('[SupportChat] onLoad error:', e); }
+      applyTawkVisibility(window.__tawkVisible === true);
     };
 
     const script = document.createElement('script');
@@ -69,18 +99,12 @@ export default function SupportChat() {
     // 不在卸载时移除脚本：Tawk widget 跨页面保持，移除会导致重复初始化抖动。
   }, [propertyId, widgetId]);
 
-  // 路由变化 → 显隐 widget（脚本已加载时立即生效；未加载时由 onLoad 兜底）
+  // 路由变化 → 显隐 widget（脚本已加载时立即生效；未加载时由 onLoad + 轮询兜底）
   useEffect(() => {
     if (!propertyId) return;
-    // 给 onLoad 回调记录目标态（onLoad 可能晚于此 effect 执行）
+    // 给 onLoad 回调与轮询重试记录最新目标态（onLoad 可能晚于此 effect 执行）
     window.__tawkVisible = visible;
-    const api = window.Tawk_API;
-    if (api && typeof api.hideWidget === 'function') {
-      try {
-        if (visible) api.showWidget();
-        else api.hideWidget();
-      } catch { /* widget 未就绪，靠 onLoad 兜底 */ }
-    }
+    applyTawkVisibility(visible);
   }, [propertyId, visible]);
 
   return null;

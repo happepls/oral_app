@@ -6,41 +6,18 @@ import { motion, AnimatePresence } from 'motion/react';
 import { Lock } from 'lucide-react';
 import { VOICE_OPTIONS, DEFAULT_VOICE } from '../config/personaConfig';
 import { GuajiMascot } from '../components/GuajiMascot';
+import { LANGUAGES as SHARED_LANGUAGES } from '../constants/languages';
 
 const TOTAL_STEPS = 5;  // Welcome + Language + Quiz + Goal/Voice + Scenarios
 
-// ── 语言选项 ──
-const LANGUAGES = [
-  { value: 'Chinese',      label: '中文（普通话）', flag: '🇨🇳' },
-  { value: 'English',      label: '英语',           flag: '🇺🇸' },
-  { value: 'Japanese',     label: '日语',           flag: '🇯🇵' },
-  { value: 'Korean',       label: '韩语',           flag: '🇰🇷' },
-  { value: 'French',       label: '法语',           flag: '🇫🇷' },
-  { value: 'Spanish',      label: '西班牙语',       flag: '🇪🇸' },
-  { value: 'German',       label: '德语',           flag: '🇩🇪' },
-  { value: 'Portuguese',   label: '葡萄牙语',       flag: '🇧🇷' },
-  { value: 'Russian',      label: '俄语',           flag: '🇷🇺' },
-  { value: 'Italian',      label: '意大利语',       flag: '🇮🇹' },
-  { value: 'Thai',         label: '泰语',           flag: '🇹🇭' },
-  { value: 'Indonesian',   label: '印度尼西亚语',   flag: '🇮🇩' },
-  { value: 'Arabic',       label: '阿拉伯语',       flag: '🇸🇦' },
-  { value: 'Vietnamese',   label: '越南语',         flag: '🇻🇳' },
-  { value: 'Turkish',      label: '土耳其语',       flag: '🇹🇷' },
-  { value: 'Finnish',      label: '芬兰语',         flag: '🇫🇮' },
-  { value: 'Polish',       label: '波兰语',         flag: '🇵🇱' },
-  { value: 'Hindi',        label: '印地语',         flag: '🇮🇳' },
-  { value: 'Dutch',        label: '荷兰语',         flag: '🇳🇱' },
-  { value: 'Czech',        label: '捷克语',         flag: '🇨🇿' },
-  { value: 'Urdu',         label: '乌尔都语',       flag: '🇵🇰' },
-  { value: 'Filipino',     label: '他加禄语',       flag: '🇵🇭' },
-  { value: 'Swedish',      label: '瑞典语',         flag: '🇸🇪' },
-  { value: 'Danish',       label: '丹麦语',         flag: '🇩🇰' },
-  { value: 'Hebrew',       label: '希伯来语',       flag: '🇮🇱' },
-  { value: 'Icelandic',    label: '冰岛语',         flag: '🇮🇸' },
-  { value: 'Malay',        label: '马来语',         flag: '🇲🇾' },
-  { value: 'Norwegian',    label: '挪威语',         flag: '🇳🇴' },
-  { value: 'Persian',      label: '波斯语',         flag: '🇮🇷' },
-];
+// ── 目标语言选项 ──
+// 与 Profile 母语 / Onboarding 母语同源（constants/languages.js，29 种全集）。
+// 此处「选择想练习的外语」用中文译名（labelZh）映射到 label，保持原中文界面 UI。
+const LANGUAGES = SHARED_LANGUAGES.map((l) => ({
+  value: l.value,
+  label: l.labelZh,
+  flag: l.flag,
+}));
 
 const LEVELS = [
   { value: 'Beginner',     label: '初级', desc: '掌握基础，建立开口信心', emoji: '🌱' },

@@ -6,39 +6,10 @@ import LanguageSwitcher from '../components/LanguageSwitcher';
 import { motion, AnimatePresence } from 'motion/react';
 import { Check, ChevronRight } from 'lucide-react';
 import { GuajiMascot } from '../components/GuajiMascot';
+import { LANGUAGES as NATIVE_LANGUAGES } from '../constants/languages';
 
-// ── 母语选项（与 GoalSetting LANGUAGES 保持一致）──
-const NATIVE_LANGUAGES = [
-  { value: 'Chinese',      label: '中文',           flag: '🇨🇳' },
-  { value: 'English',      label: 'English',        flag: '🇺🇸' },
-  { value: 'Japanese',     label: '日本語',          flag: '🇯🇵' },
-  { value: 'Korean',       label: '한국어',          flag: '🇰🇷' },
-  { value: 'French',       label: 'Français',       flag: '🇫🇷' },
-  { value: 'Spanish',      label: 'Español',        flag: '🇪🇸' },
-  { value: 'German',       label: 'Deutsch',        flag: '🇩🇪' },
-  { value: 'Portuguese',   label: 'Português',      flag: '🇧🇷' },
-  { value: 'Russian',      label: 'Русский',        flag: '🇷🇺' },
-  { value: 'Italian',      label: 'Italiano',       flag: '🇮🇹' },
-  { value: 'Thai',         label: 'ภาษาไทย',        flag: '🇹🇭' },
-  { value: 'Indonesian',   label: 'Bahasa Indonesia', flag: '🇮🇩' },
-  { value: 'Arabic',       label: 'العربية',         flag: '🇸🇦' },
-  { value: 'Vietnamese',   label: 'Tiếng Việt',     flag: '🇻🇳' },
-  { value: 'Turkish',      label: 'Türkçe',         flag: '🇹🇷' },
-  { value: 'Finnish',      label: 'Suomi',          flag: '🇫🇮' },
-  { value: 'Polish',       label: 'Polski',         flag: '🇵🇱' },
-  { value: 'Hindi',        label: 'हिन्दी',           flag: '🇮🇳' },
-  { value: 'Dutch',        label: 'Nederlands',     flag: '🇳🇱' },
-  { value: 'Czech',        label: 'Čeština',        flag: '🇨🇿' },
-  { value: 'Urdu',         label: 'اردو',            flag: '🇵🇰' },
-  { value: 'Filipino',     label: 'Tagalog',        flag: '🇵🇭' },
-  { value: 'Swedish',      label: 'Svenska',        flag: '🇸🇪' },
-  { value: 'Danish',       label: 'Dansk',          flag: '🇩🇰' },
-  { value: 'Hebrew',       label: 'עברית',           flag: '🇮🇱' },
-  { value: 'Icelandic',    label: 'Íslenska',       flag: '🇮🇸' },
-  { value: 'Malay',        label: 'Bahasa Melayu',  flag: '🇲🇾' },
-  { value: 'Norwegian',    label: 'Norsk',          flag: '🇳🇴' },
-  { value: 'Persian',      label: 'فارسی',           flag: '🇮🇷' },
-];
+// 母语选项与 GoalSetting 目标语言 / Profile 母语同源（constants/languages.js，29 种全集）。
+// 渲染用 label（本地名，如 日本語 / 한국어），与原 Onboarding UI 一致。
 
 const GENDER_OPTIONS = [
   { value: 'male',   label: '男 ♂' },
