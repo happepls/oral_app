@@ -207,5 +207,9 @@
   "daily_limit_reached_desc": "Du hast das Tageslimit von {{limit}} Runden erreicht. Komm morgen wieder, um weiterzumachen.",
   "daily_limit_cancel": "Abbrechen",
   "daily_limit_got_it": "Verstanden",
-  "daily_limit_upgrade": "Upgrade"
+  "daily_limit_upgrade": "Upgrade",
+  "ws_error_invalid_scenario": "Ungültiges Szenario. Bitte gehe zurück und wähle erneut ein Szenario.",
+  "ws_error_rejected": "Dieses Gespräch konnte nicht gestartet werden. Bitte gehe zurück und wähle erneut ein Szenario.",
+  "ws_error_back_to_discovery": "Zurück zu Entdecken",
+  "ws_status_rejected": "Getrennt"
 }

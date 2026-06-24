@@ -207,5 +207,9 @@
   "daily_limit_reached_desc": "1日{{limit}}回の上限に達しました。明日また続けましょう。",
   "daily_limit_cancel": "キャンセル",
   "daily_limit_got_it": "了解",
-  "daily_limit_upgrade": "アップグレード"
+  "daily_limit_upgrade": "アップグレード",
+  "ws_error_invalid_scenario": "シナリオが無効です。戻ってシナリオを選び直してください。",
+  "ws_error_rejected": "この会話を開始できませんでした。戻ってシナリオを選び直してください。",
+  "ws_error_back_to_discovery": "発見ページに戻る",
+  "ws_status_rejected": "切断されました"
 }

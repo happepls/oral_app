@@ -207,5 +207,9 @@
   "daily_limit_reached_desc": "Вы достигли дневного лимита в {{limit}} раундов. Возвращайтесь завтра, чтобы продолжить.",
   "daily_limit_cancel": "Отмена",
   "daily_limit_got_it": "Понятно",
-  "daily_limit_upgrade": "Обновить"
+  "daily_limit_upgrade": "Обновить",
+  "ws_error_invalid_scenario": "Недопустимый сценарий. Вернитесь и выберите сценарий заново.",
+  "ws_error_rejected": "Не удалось начать этот разговор. Вернитесь и выберите сценарий заново.",
+  "ws_error_back_to_discovery": "Назад к разделу «Обзор»",
+  "ws_status_rejected": "Отключено"
 }

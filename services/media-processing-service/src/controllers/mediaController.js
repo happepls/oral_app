@@ -108,8 +108,31 @@ const extFromContentType = (ct) => {
     return '.jpg'; // 默认/jpeg
 };
 
+// Internal-only guard: mirror user-service's internalAuthWithNetworkSkip.
+// Skip for Docker internal networks (172.x/10.x); otherwise require the shared
+// x-internal-service-key header. If INTERNAL_SERVICE_KEY is unset (dev), allow
+// but warn — never hard-fail dev. Callers: ai-omni-service _rehost_image_to_cos.
+function assertInternalCaller(req, res) {
+    const ip = req.ip || req.connection?.remoteAddress || '';
+    const clientIp = ip.replace(/^::ffff:/, '');
+    if (clientIp.startsWith('172.') || clientIp.startsWith('10.') || clientIp === '127.0.0.1' || clientIp === '::1') {
+        return true; // internal network — trusted
+    }
+    const expectedKey = process.env.INTERNAL_SERVICE_KEY;
+    if (!expectedKey) {
+        console.warn('[media] INTERNAL_SERVICE_KEY not configured — /upload-image auth disabled');
+        return true;
+    }
+    if (req.headers['x-internal-service-key'] !== expectedKey) {
+        res.status(403).json({ error: 'Forbidden: internal endpoint' });
+        return false;
+    }
+    return true;
+}
+
 exports.uploadImageFromUrl = async (req, res) => {
     try {
+        if (!assertInternalCaller(req, res)) return;
         const sourceUrl = (req.body && req.body.image_url || '').trim();
         if (!sourceUrl) {
             return res.status(400).json({ error: 'Missing image_url' });
@@ -140,11 +163,22 @@ exports.uploadImageFromUrl = async (req, res) => {
         if (!resp.ok) {
             return res.status(502).json({ error: `Fetch source failed: ${resp.status}` });
         }
+        // Size guard: reject oversized downloads to avoid buffering huge bodies into
+        // heap (OOM). Content-Length can lie, so also enforce a hard ceiling after read.
+        const MAX_IMAGE_BYTES = parseInt(process.env.MAX_IMAGE_BYTES || '10485760', 10); // 10MB default
+        const declaredLen = parseInt(resp.headers.get('content-length') || '0', 10);
+        if (declaredLen && declaredLen > MAX_IMAGE_BYTES) {
+            return res.status(413).json({ error: `Image too large: ${declaredLen} > ${MAX_IMAGE_BYTES}` });
+        }
         const contentType = resp.headers.get('content-type') || 'image/jpeg';
         const arrayBuf = await resp.arrayBuffer();
         const buffer = Buffer.from(arrayBuf);
         if (!buffer.length) {
             return res.status(502).json({ error: 'Empty image body' });
+        }
+        // Hard ceiling: Content-Length absent or lied; bound the actual bytes read.
+        if (buffer.length > MAX_IMAGE_BYTES) {
+            return res.status(413).json({ error: `Image too large: ${buffer.length} > ${MAX_IMAGE_BYTES}` });
         }
 
         // 上传到 COS：scenario-images/YYYY/M/D/<uuid>.<ext>
@@ -157,7 +191,8 @@ exports.uploadImageFromUrl = async (req, res) => {
         const region = process.env.TENCENT_REGION;
         const publicUrl = `https://${bucket}.cos.${region}.myqcloud.com/${key}`;
 
-        res.json({ success: true, data: { image_url: publicUrl, key } });
+        // Don't leak the internal COS storage key — callers only need the URL.
+        res.json({ success: true, data: { image_url: publicUrl } });
 
     } catch (error) {
         console.error('Image upload error:', error);

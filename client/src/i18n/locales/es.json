@@ -207,5 +207,9 @@
   "daily_limit_reached_desc": "Has alcanzado el límite diario de {{limit}} turnos. Vuelve mañana para continuar.",
   "daily_limit_cancel": "Cancelar",
   "daily_limit_got_it": "Entendido",
-  "daily_limit_upgrade": "Mejorar"
+  "daily_limit_upgrade": "Mejorar",
+  "ws_error_invalid_scenario": "Escenario no válido. Vuelve y elige un escenario de nuevo.",
+  "ws_error_rejected": "No se pudo iniciar esta conversación. Vuelve y elige un escenario de nuevo.",
+  "ws_error_back_to_discovery": "Volver a Descubrir",
+  "ws_status_rejected": "Desconectado"
 }

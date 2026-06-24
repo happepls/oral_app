@@ -4001,9 +4001,13 @@ async def _rehost_image_to_cos(temp_url: str) -> str | None:
     if not temp_url:
         return None
     media_url = os.getenv("MEDIA_SERVICE_URL", "http://media-processing-service:3005") + "/api/media/upload-image"
+    headers = {}
+    _isk = os.getenv("INTERNAL_SERVICE_KEY")
+    if _isk:
+        headers["x-internal-service-key"] = _isk
     try:
         async with httpx.AsyncClient() as client:
-            resp = await client.post(media_url, json={"image_url": temp_url}, timeout=30.0)
+            resp = await client.post(media_url, json={"image_url": temp_url}, headers=headers, timeout=30.0)
             if resp.status_code == 200:
                 cos_url = resp.json().get("data", {}).get("image_url")
                 if cos_url:

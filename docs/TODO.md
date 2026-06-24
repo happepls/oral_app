@@ -320,4 +320,20 @@
 - [x] [Performance] user.js User.create / User.createGoal 事务保护（BEGIN/COMMIT/ROLLBACK + client.release）
 - [x] [Performance] user.js findOrCreateFromGoogle 事务保护（与 User.create 一致的事务包裹）
 - [x] [Performance] user.js User.findById / User.findByEmail N+1 查询优化（两次 SELECT 合并为单条 LEFT JOIN user_identities）
+
+## finish-today Review LOW 项（PR #18 + #19，Jun 24 2026 — 已验证 backlog）
+
+> 来源：finish-today 工作流对 PR#18（CSP+切目标WS+文生图）的 16 文件做 find→3way-verify→synthesize。HIGH（i18n CI blocker）+ 3 MEDIUM 已在 fix/finish-today-review 修复；以下 LOW 项验证为真但低影响，记此备办。
+
+- [ ] [Correctness] ScenarioCard.jsx:30 图片加载失败留空白头部 — onError 用 DOM mutation（`e.currentTarget.style.display='none'`）而非 state 驱动，emoji fallback 永不挂载。改 `useState(imageError)` 驱动：失败时 `setImageError(true)`，emoji `<span>` 在 `(!imageUrl||imageError)` 时渲染
+- [ ] [Security] user.js:1167 updateScenarioImage 缺 user_id ownership 校验（内部端点潜在 IDOR）— 改 `WHERE id=$1 AND user_id=$2` 并透传 userId。防御纵深：路由在 internalAuthWithNetworkSkip 后，但 network-skip 信任 172.x + 非 prod 可能 INTERNAL_SERVICE_KEY 未设
+- [ ] [Security] userController.js:803 updateScenarioImageInternal 存 image_url 无 origin/domain 校验 — 持久化前加 COS/OSS 域名白名单（复用 ai-omni `_validated_urlopen` 概念），非白名单 400。该 URL 仅作 cosmetic JSONB 不服务端 fetch（无 SSRF），属硬化
+- [ ] [Correctness] user.js:1173 scenarios JSONB 非事务 read-modify-write 可丢并发更新 — 包 `SELECT...FOR UPDATE` 事务，或用单条 `jsonb_set` 表达式。低实际风险（前端串行化图请求，cosmetic 可重生成）
+- [ ] [Correctness] mediaController.js:156 publicUrl 用未校验的 `TENCENT_BUCKET`/`TENCENT_REGION` env 构造 — env 缺失/错误时拼出坏 URL。加 env 存在性校验或启动期断言
+- [ ] [Correctness] mediaController.js:160 响应泄露内部 COS `key`（存储路径）但无调用方消费 — 移除响应里的 `key` 字段，只返 image_url
+- [ ] [Security] client.nginx.zeabur.conf:75 CSP script-src 的 `cdn.jsdelivr.net` 白名单宽泛、4 块重复、无 SRI — 已知权衡（Tawk 表情需要）。后续可收窄到具体路径或加 SRI；`'unsafe-inline'` 已存在故边际风险低
+- [ ] [Testing] api.js:420 新 media/scenario 函数 + 端点零测试覆盖（generateScenarioImage / uploadImageFromUrl / uploadBuffer / putBufferOnce / updateScenarioImageInternal）
+- [ ] [Testing] ScenarioCard.jsx 无测试渲染 — imageUrl/emoji/onError/alt 未测
+- [ ] [Performance] Discovery.js:547 scenarioImages 进 enrichedScenarios useMemo deps → 10× re-map + 级联重渲染。考虑拆分 memo 或用 ref/map 缓存
+- [ ] [Performance] GoalSetting.js:250 前端 id 字段被持久化进 JSONB + spread 后冗余 title/tasks（双 spread）。清理冗余字段
 - [x] [Testing] E2E free-user 403 负面测试：test_scenario_batch_and_daily_qa.py 新增 free_user scenario（/pool + /select 返回 403，mock 模式 4/4 pass）
