@@ -396,6 +396,14 @@ function Conversation() {
   // `thinking` expression during the request→response gap (test case 6.x).
   const [isWaitingForAIResponse, setIsWaitingForAIResponse] = useState(false);
   const [webSocketError, setWebSocketError] = useState(null);
+  // Set true when the backend explicitly rejects this connection (e.g.
+  // "Invalid scenario" error frame, or a 1008/4400 close). Guards the close
+  // handler from clearing/overwriting the user-facing error and from
+  // auto-reconnecting into the same rejection loop.
+  const wsRejectedRef = useRef(false);
+  // Mirror of wsRejectedRef for render: when the connection is rejected we show
+  // a "back to Discover" exit instead of a (futile) retry button.
+  const [wsRejected, setWsRejected] = useState(false);
   const [sessionId, setSessionId] = useState(null);
   const [selection, setSelection] = useState({ text: '', x: 0, y: 0, visible: false });
   const [isSynthesizing, setIsSynthesizing] = useState(false);
@@ -1131,6 +1139,8 @@ function Conversation() {
     setIsManualDisconnect(false);
     setReconnectAttempts(0);
     setWebSocketError(null);
+    wsRejectedRef.current = false;
+    setWsRejected(false);
 
     // Reconnect with current session ID
     if (sessionId) {
@@ -1513,9 +1523,27 @@ function Conversation() {
              });
            }
            break;
-        case 'error':
-           console.error('Server Error:', data.payload);
+        case 'error': {
+           // Backend sends rejection errors at the TOP level ({type:'error', message:...}),
+           // older frames used data.payload. Accept both shapes.
+           const errMsg = data.message || data.payload?.message || data.payload || '';
+           console.error('Server Error:', errMsg);
+           const errText = String(errMsg);
+           // An explicit server-side error before any usable session means the
+           // connection is being rejected (e.g. Invalid scenario after a goal
+           // switch). Surface a readable reason instead of an endless
+           // "connecting" spinner, and stop auto-reconnect.
+           const isRejection = /invalid scenario/i.test(errText) || /scenario/i.test(errText);
+           wsRejectedRef.current = true;
+           setWsRejected(true);
+           setIsManualDisconnect(true); // prevent the close handler from auto-reconnecting
+           setWebSocketError(
+             isRejection
+               ? t('ws_error_invalid_scenario', '场景无效，请返回重新选择场景')
+               : (errText || t('ws_error_rejected', '无法开始本次对话，请返回重新选择场景'))
+           );
            break;
+        }
         case 'user_proficiency_feedback':
            // Handle proficiency feedback from workflow service
            console.log('📊 Proficiency Feedback:', data.payload);
@@ -2048,6 +2076,9 @@ function Conversation() {
     console.log('WS Open (Optimized)');
     setIsConnected(true);
     setWebSocketError(null);
+    // A successful open clears any prior rejection state.
+    wsRejectedRef.current = false;
+    setWsRejected(false);
 
     // Note: Ping/heartbeat is handled by OptimizedWebSocket internally
     // No need for manual ping interval here
@@ -2141,14 +2172,28 @@ function Conversation() {
           window.networkAdaptiveManager.stopMonitoring();
         }
 
+        // Backend rejects an invalid connection (e.g. bad scenario after a goal
+        // switch) by closing with a policy-violation code (1008) or an app code
+        // (4400). Treat these as "rejected": surface the error, do NOT silently
+        // swallow as a clean close, and do NOT auto-reconnect into the same loop.
+        const isRejectedClose = event.code === 1008 || event.code === 4400;
+
         // Don't auto-reconnect if:
         // 1. It was a clean close (code 1000)
         // 2. User manually disconnected
         // 3. Max reconnect attempts reached
+        // 4. The connection was rejected by the backend
         const isCleanClose = event.code === 1000 || event.code === 1001;
-        
-        if (isCleanClose || isManualDisconnect || reconnectAttempts >= MAX_RECONNECT_ATTEMPTS) {
-            if (!isCleanClose && !isManualDisconnect) {
+
+        if (isCleanClose || isRejectedClose || isManualDisconnect || wsRejectedRef.current || reconnectAttempts >= MAX_RECONNECT_ATTEMPTS) {
+            if (isRejectedClose || wsRejectedRef.current) {
+                // A rejection. The 'error' message frame usually arrives BEFORE this
+                // close and has already set webSocketError — only fill it in if it's
+                // still empty so we never overwrite the more specific server reason.
+                wsRejectedRef.current = true;
+                setWsRejected(true);
+                setWebSocketError(prev => prev || t('ws_error_rejected', '无法开始本次对话，请返回重新选择场景'));
+            } else if (!isCleanClose && !isManualDisconnect) {
                 setWebSocketError(`连接已关闭 (${event.code})`);
             } else if (reconnectAttempts >= MAX_RECONNECT_ATTEMPTS) {
                 setWebSocketError(`已达到最大重试次数 (${MAX_RECONNECT_ATTEMPTS})，请刷新页面或点击重试`);
@@ -2818,15 +2863,17 @@ function Conversation() {
               </div>
             )}
 
-            {/* AI 导师状态（Tour demo 态不连 WS，显"演示"而非误导的"连接中"） */}
+            {/* AI 导师状态（Tour demo 态不连 WS，显"演示"而非误导的"连接中"；
+                被后端拒绝时显红色"已断开"而非永久"连接中"） */}
             <span className={`text-xs px-2 py-0.5 rounded-full flex items-center gap-1 ${
               isTourMode ? 'bg-violet-50 text-violet-600'
+                : wsRejected ? 'bg-red-50 text-red-600'
                 : isConnected ? 'bg-emerald-50 text-emerald-600' : 'bg-amber-50 text-amber-600'
             }`}>
               <span className={`w-1.5 h-1.5 rounded-full ${
-                isTourMode ? 'bg-violet-500' : isConnected ? 'bg-emerald-500' : 'bg-amber-400'
+                isTourMode ? 'bg-violet-500' : wsRejected ? 'bg-red-500' : isConnected ? 'bg-emerald-500' : 'bg-amber-400'
               }`} />
-              {isTourMode ? '演示' : isConnected ? '在线' : '连接中'}
+              {isTourMode ? '演示' : wsRejected ? t('ws_status_rejected', '已断开') : isConnected ? '在线' : '连接中'}
             </span>
           </div>
         </div>
@@ -3295,21 +3342,33 @@ function Conversation() {
                 )}
             </div>
 
-            {/* WebSocket Error Display with Retry Button */}
+            {/* WebSocket Error Display with Retry / Back exit */}
             {webSocketError && (
                 <div className="flex items-center gap-3 w-full max-w-md">
                     <p className="text-xs text-red-500 bg-red-50 dark:bg-red-900/20 px-3 py-1.5 rounded-full flex-1">
                         {webSocketError}
                     </p>
 
-                    {/* Retry Button - show when connection fails or max attempts reached */}
-                    <button
-                        onClick={handleManualRetry}
-                        className="px-3 py-1.5 bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-300 rounded-lg text-xs font-medium flex items-center gap-1 hover:bg-red-200 dark:hover:bg-red-900/50 transition animate-pulse"
-                    >
-                        <span className="material-symbols-outlined text-sm">refresh</span>
-                        <span>重试</span>
-                    </button>
+                    {wsRejected ? (
+                        /* Backend rejected this connection (e.g. invalid scenario) —
+                           retrying loops the same rejection, so offer an exit instead. */
+                        <button
+                            onClick={() => navigate('/discovery')}
+                            className="px-3 py-1.5 bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-300 rounded-lg text-xs font-medium flex items-center gap-1 hover:bg-red-200 dark:hover:bg-red-900/50 transition"
+                        >
+                            <span className="material-symbols-outlined text-sm">arrow_back</span>
+                            <span>{t('ws_error_back_to_discovery', '返回发现页')}</span>
+                        </button>
+                    ) : (
+                        /* Retry Button - show when connection fails or max attempts reached */
+                        <button
+                            onClick={handleManualRetry}
+                            className="px-3 py-1.5 bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-300 rounded-lg text-xs font-medium flex items-center gap-1 hover:bg-red-200 dark:hover:bg-red-900/50 transition animate-pulse"
+                        >
+                            <span className="material-symbols-outlined text-sm">refresh</span>
+                            <span>重试</span>
+                        </button>
+                    )}
                 </div>
             )}
         </div>

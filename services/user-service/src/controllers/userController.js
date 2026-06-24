@@ -794,6 +794,29 @@ exports.updateTaskScoreInternal = async (req, res) => {
     }
 };
 
+// Internal: persist a scenario cover image URL into user_goals.scenarios[i].image_url.
+// Called by ai-omni after re-hosting the generated cover to COS. Internal network
+// skips JWT (internalAuthWithNetworkSkip). Idempotent + best-effort (cosmetic).
+exports.updateScenarioImageInternal = async (req, res) => {
+    try {
+        const goalId = req.params.goalId;
+        const { scenario_title, image_url } = req.body || {};
+        if (!goalId || !scenario_title || !image_url) {
+            return res.status(400).json({ success: false, message: 'goalId, scenario_title, image_url required' });
+        }
+        const updated = await User.updateScenarioImage(goalId, scenario_title, image_url);
+        if (!updated) {
+            console.log(`[User] Scenario image write-back skipped (goal=${goalId}, scenario not found)`);
+            return res.json({ success: true, updated: false });
+        }
+        console.log(`[User] Scenario image persisted: goal=${goalId}, scenario='${scenario_title}'`);
+        res.json({ success: true, updated: true });
+    } catch (error) {
+        console.error('updateScenarioImageInternal error:', error);
+        res.status(500).json({ success: false, message: 'Server Error' });
+    }
+};
+
 exports.getUserInternal = async (req, res) => {
 
     try {

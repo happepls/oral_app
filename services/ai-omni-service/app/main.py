@@ -58,6 +58,13 @@ DASHSCOPE_CHAT_BASE = (os.getenv("DASHSCOPE_CHAT_BASE") or _DASHSCOPE_CHAT_BASE_
 QWEN_TEXT_MODEL = os.getenv("QWEN_TEXT_MODEL", "qwen-turbo")   # intl: qwen-flash
 QWEN_IMAGE_MODEL = os.getenv("QWEN_IMAGE_MODEL", "wanx2.1-t2i-turbo")  # intl: wan2.2-t2i-flash
 
+# Text-to-image (Wanx) base host. wan2.2-t2i-flash is a PUBLIC model served by the
+# GENERAL gateway (dashscope[-intl].aliyuncs.com), NOT the maas dedicated workspace
+# (DASHSCOPE_HTTP_BASE → ws-...maas.aliyuncs.com, which only hosts the deployed
+# realtime omni model). Defaulting to DASHSCOPE_CHAT_BASE keeps t2i on the same
+# reliable general gateway as chat-completions. Override via DASHSCOPE_IMAGE_BASE.
+DASHSCOPE_IMAGE_BASE = (os.getenv("DASHSCOPE_IMAGE_BASE") or DASHSCOPE_CHAT_BASE).rstrip("/")
+
 # 双阶段会话状态，key=f"{user_id}:{scenario}" — 每个场景独立维护状态
 # TTL-aware wrapper: 条目超过 72h 自动清理，最多保留 2000 个活跃 key（LRU）
 import time as _time
@@ -2835,7 +2842,18 @@ import re as _re
 
 # 参数白名单：防止特殊字符注入破坏 URL/日志构造
 _SESSION_ID_RE = _re.compile(r'^[a-zA-Z0-9_\-]{1,128}$')
-_SCENARIO_RE   = _re.compile(r"^[\w\u4e00-\u9fff\s\-()（）：:，,、。.！!？?「」『』《》/&']{0,200}$")
+# scenario 在 ai-omni 内仅用作 session_phases dict key（{user_id}:{scenario}）和 prompt 文本，
+# 不拼 shell/不拼裸 URL（comms-service 用 URLSearchParams.set 已编码）。
+# 因此用黑名单净化而非脆弱白名单：拒绝控制字符（\x00-\x1f \x7f）与 prompt 注入危险字符 < >，
+# 其余（emoji、Unicode 标点 em-dash/弯引号、各种字母标点）一律放行。长度上限 200。
+_SCENARIO_BAD_RE = _re.compile(r'[\x00-\x1f\x7f<>]')
+
+def _is_valid_scenario(scenario: str) -> bool:
+    """长度上限 + 危险字符黑名单校验。空值由调用方处理（scenario and not ...）。"""
+    if len(scenario) > 200:
+        return False
+    return _SCENARIO_BAD_RE.search(scenario) is None
+
 _VOICE_RE      = _re.compile(r'^[a-zA-Z0-9_\-]{0,64}$')
 
 @app.websocket("/stream")
@@ -2856,10 +2874,11 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query(None), ses
         logger.warning(f"[ws] Rejected invalid sessionId: {repr(sessionId)}")
         await websocket.send_json({"type": "error", "payload": {"message": "Invalid sessionId"}})
         await websocket.close(); return
-    if scenario and not _SCENARIO_RE.match(scenario):
+    if scenario and not _is_valid_scenario(scenario):
         logger.warning(f"[ws] Rejected invalid scenario: {repr(scenario)}")
         await websocket.send_json({"type": "error", "payload": {"message": "Invalid scenario"}})
-        await websocket.close(); return
+        # 非 1000 close code，让前端区分"被拒"vs"正常关闭"，不再静默吞掉
+        await websocket.close(code=1008, reason="Invalid scenario"); return
     if voice and not _VOICE_RE.match(voice):
         logger.warning(f"[ws] Rejected invalid voice: {repr(voice)}")
         await websocket.send_json({"type": "error", "payload": {"message": "Invalid voice"}})
@@ -3752,11 +3771,14 @@ def _scenario_to_unsplash_keyword(scenario_title: str) -> str:
     # Fallback: use the title itself (URL-encoded)
     return urllib.parse.quote(scenario_title)
 
-async def _try_wanx_image(scenario_title: str, prompt_en: str) -> str | None:
+async def _try_wanx_image(scenario_title: str, prompt_en: str, size: str = "768*512", timeout: float = 15) -> str | None:
     """
     Attempt to generate an image via DashScope Wanx T2I.
     Returns the image URL on success, None on failure/timeout.
-    Times out after 15 s to allow fallback to Unsplash.
+    Uses DASHSCOPE_IMAGE_BASE (general gateway), NOT the maas dedicated host.
+    `size` is the requested image dimension (W*H); `timeout` is the overall budget.
+    Note: returned URL is a DashScope/OSS temporary URL (TTL ~24h) — callers that
+    need long-term persistence must re-host it (e.g. COS).
     """
     import asyncio
     dashscope_key = os.environ.get("DASHSCOPE_API_KEY") or os.environ.get("QWEN3_OMNI_API_KEY")
@@ -3768,7 +3790,7 @@ async def _try_wanx_image(scenario_title: str, prompt_en: str) -> str | None:
             async with httpx.AsyncClient(timeout=20) as client:
                 # DashScope image synthesis — submit task
                 submit_resp = await client.post(
-                    f"{DASHSCOPE_HTTP_BASE}/api/v1/services/aigc/text2image/image-synthesis",
+                    f"{DASHSCOPE_IMAGE_BASE}/api/v1/services/aigc/text2image/image-synthesis",
                     headers={
                         "Authorization": f"Bearer {dashscope_key}",
                         "X-DashScope-Async": "enable",
@@ -3777,7 +3799,7 @@ async def _try_wanx_image(scenario_title: str, prompt_en: str) -> str | None:
                     json={
                         "model": QWEN_IMAGE_MODEL,
                         "input": {"prompt": prompt_en},
-                        "parameters": {"size": "768*512", "n": 1},
+                        "parameters": {"size": size, "n": 1},
                     },
                 )
                 if submit_resp.status_code != 200:
@@ -3791,7 +3813,7 @@ async def _try_wanx_image(scenario_title: str, prompt_en: str) -> str | None:
                 for _ in range(6):
                     await asyncio.sleep(2)
                     poll_resp = await client.get(
-                        f"{DASHSCOPE_HTTP_BASE}/api/v1/tasks/{task_id}",
+                        f"{DASHSCOPE_IMAGE_BASE}/api/v1/tasks/{task_id}",
                         headers={"Authorization": f"Bearer {dashscope_key}"},
                     )
                     if poll_resp.status_code != 200:
@@ -3811,9 +3833,9 @@ async def _try_wanx_image(scenario_title: str, prompt_en: str) -> str | None:
             return None
 
     try:
-        return await asyncio.wait_for(_call_wanx(), timeout=15)
+        return await asyncio.wait_for(_call_wanx(), timeout=timeout)
     except asyncio.TimeoutError:
-        logger.warning(f"[Wanx] 15s timeout for scenario='{scenario_title}', falling back to Unsplash")
+        logger.warning(f"[Wanx] {timeout}s timeout for scenario='{scenario_title}'")
         return None
 
 
@@ -3916,6 +3938,136 @@ async def generate_scenarios(payload: dict = Body(...)):
         logger.error(f"[generate_scenarios] LLM call failed: {e}")
         from fastapi import HTTPException
         raise HTTPException(status_code=500, detail="场景生成失败，请重试")
+
+
+# ---------------------------------------------------------------------------
+# POST /generate-scenario-image  (proxied from /api/ai/generate-scenario-image)
+# ---------------------------------------------------------------------------
+# Lazy, on-demand cover image for a Discovery scenario card. Called by the
+# frontend ONLY for unlocked/in-progress cards, and the result is cached client
+# side (sessionStorage), so a free user generates ≤3 images and a Pro user ≤10
+# across a goal's lifetime — not 10 up-front on goal creation.
+#
+# The scenario title may be in the user's native language (zh/ja/...). We ask
+# qwen-turbo for a short English visual prompt first (cheap text call), then run
+# wan2.2-t2i-flash. The returned URL is a DashScope/OSS temp URL (TTL ~24h),
+# which is fine for a lazily-regenerated cover; the frontend falls back to the
+# emoji placeholder on any failure/timeout.
+
+async def _scenario_visual_prompt(scenario_title: str) -> str:
+    """Build a short English image prompt from a (possibly non-English) title."""
+    fallback = (
+        f"Flat illustration of a real-life scene: {scenario_title}. "
+        f"Soft pastel colors, friendly, no text, no letters, no words."
+    )
+    ds_api_key = os.getenv("QWEN3_OMNI_API_KEY") or os.getenv("DASHSCOPE_API_KEY")
+    if not ds_api_key:
+        return fallback
+    try:
+        import httpx as _httpx
+        async with _httpx.AsyncClient(timeout=12) as client:
+            resp = await client.post(
+                f"{DASHSCOPE_CHAT_BASE}/compatible-mode/v1/chat/completions",
+                headers={"Authorization": f"Bearer {ds_api_key}", "Content-Type": "application/json"},
+                json={
+                    "model": QWEN_TEXT_MODEL,
+                    "messages": [{
+                        "role": "user",
+                        "content": (
+                            "Translate this language-learning scenario title into a short "
+                            "English image-generation prompt (<= 20 words). Describe a warm, "
+                            "flat-illustration real-life scene. End with 'no text, no letters'. "
+                            f"Output ONLY the prompt.\nTitle: {scenario_title}"
+                        ),
+                    }],
+                    "max_tokens": 80,
+                },
+            )
+            resp.raise_for_status()
+            txt = (resp.json()["choices"][0]["message"]["content"] or "").strip()
+            return txt[:300] if txt else fallback
+    except Exception as e:
+        logger.warning(f"[ScenarioImage] prompt build failed, using fallback: {e}")
+        return fallback
+
+
+async def _rehost_image_to_cos(temp_url: str) -> str | None:
+    """Persist a DashScope/OSS temporary image URL to Tencent COS via
+    media-processing-service. Returns the permanent COS URL, or None on failure.
+
+    The DashScope T2I URL has a ~24h TTL; re-hosting makes the scenario cover
+    permanent so it survives across days and is generated/billed only once.
+    """
+    if not temp_url:
+        return None
+    media_url = os.getenv("MEDIA_SERVICE_URL", "http://media-processing-service:3005") + "/api/media/upload-image"
+    try:
+        async with httpx.AsyncClient() as client:
+            resp = await client.post(media_url, json={"image_url": temp_url}, timeout=30.0)
+            if resp.status_code == 200:
+                cos_url = resp.json().get("data", {}).get("image_url")
+                if cos_url:
+                    return cos_url
+            logger.warning(f"[ScenarioImage] COS re-host failed: {resp.status_code} {resp.text[:200]}")
+    except Exception as e:
+        logger.warning(f"[ScenarioImage] COS re-host error: {e}")
+    return None
+
+
+async def _persist_scenario_image(goal_id, scenario_title: str, image_url: str) -> None:
+    """Write the permanent cover image URL back to user_goals.scenarios[i].image_url
+    via the user-service internal endpoint (internal network skips JWT).
+    Fire-and-forget — never raises; a failed write just means the frontend will
+    re-trigger generation next time (idempotent, cosmetic).
+    """
+    if not goal_id or not scenario_title or not image_url:
+        return
+    user_svc = os.getenv("USER_SERVICE_URL", "http://user-service:3000")
+    try:
+        async with httpx.AsyncClient() as client:
+            await client.post(
+                f"{user_svc}/api/users/internal/goals/{goal_id}/scenario-image",
+                json={"scenario_title": scenario_title, "image_url": image_url},
+                timeout=5.0,
+            )
+    except Exception as e:
+        logger.warning(f"[ScenarioImage] DB write-back failed (goal={goal_id}): {e}")
+
+
+@app.post("/generate-scenario-image")
+async def generate_scenario_image(payload: dict = Body(...)):
+    """Generate a square cover image for a single Discovery scenario card.
+
+    Plan B (persistence): generate via Wanx → re-host the temp URL to COS →
+    return the permanent COS URL. If goal_id is supplied, also write the COS URL
+    back into user_goals.scenarios[i].image_url so the cover is generated/billed
+    only once and survives across sessions.
+    """
+    from fastapi import HTTPException
+
+    scenario_title = (payload.get("scenario_title") or "").strip()[:120]
+    if not scenario_title:
+        raise HTTPException(status_code=400, detail="Missing scenario_title")
+    goal_id = payload.get("goal_id")
+
+    prompt_en = await _scenario_visual_prompt(scenario_title)
+    # Square-ish card thumbnail; wan2.2-t2i-flash supports 512*512.
+    temp_url = await _try_wanx_image(scenario_title, prompt_en, size="512*512", timeout=20)
+    if temp_url:
+        logger.info(f"[ScenarioImage] Wanx succeeded for '{scenario_title}'")
+        # Re-host the temp URL to COS for permanence; fall back to temp URL if
+        # re-hosting fails (still better than emoji, just expires in ~24h).
+        cos_url = await _rehost_image_to_cos(temp_url)
+        if cos_url:
+            await _persist_scenario_image(goal_id, scenario_title, cos_url)
+            return {"image_url": cos_url, "source": "wanx_cos"}
+        logger.info(f"[ScenarioImage] COS re-host failed for '{scenario_title}' → return temp URL")
+        return {"image_url": temp_url, "source": "wanx"}
+
+    # No reliable photo fallback (source.unsplash.com was shut down) → let the
+    # frontend keep its emoji placeholder.
+    logger.info(f"[ScenarioImage] No image for '{scenario_title}' → emoji fallback")
+    return {"image_url": "", "source": "none"}
 
 # ---------------------------------------------------------------------------
 # WAV → raw PCM extractor  (for media-processing-service which expects s16le PCM)

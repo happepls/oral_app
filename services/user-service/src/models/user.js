@@ -1156,4 +1156,35 @@ User.unlockAchievement = async (userId, achievementKey) => {
   return rows[0] || null;
 };
 
+// Persist a scenario cover image URL into user_goals.scenarios[i].image_url.
+// JSONB column — we read, mutate the matching scenario by title, write back.
+// Idempotent: re-writing the same URL is harmless. Returns true if a scenario
+// matched and was updated, false otherwise.
+User.updateScenarioImage = async (goalId, scenarioTitle, imageUrl) => {
+    if (!goalId || !scenarioTitle || !imageUrl) return false;
+
+    const { rows } = await db.query(
+        `SELECT scenarios FROM user_goals WHERE id = $1`,
+        [goalId]
+    );
+    const goal = rows[0];
+    if (!goal || !Array.isArray(goal.scenarios)) return false;
+
+    let matched = false;
+    const updated = goal.scenarios.map(s => {
+        if (s && s.title === scenarioTitle) {
+            matched = true;
+            return { ...s, image_url: imageUrl };
+        }
+        return s;
+    });
+    if (!matched) return false;
+
+    await db.query(
+        `UPDATE user_goals SET scenarios = $1, updated_at = NOW() WHERE id = $2`,
+        [JSON.stringify(updated), goalId]
+    );
+    return true;
+};
+
 module.exports = User;

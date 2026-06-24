@@ -414,6 +414,29 @@ export const aiAPI = {
     return handleResponse(response);
   },
 
+  // Lazy per-card cover image. Returns { image_url, source }; image_url is ''
+  // on any backend failure/timeout so the caller keeps its emoji placeholder.
+  // Never throws (UI cosmetic only).
+  async generateScenarioImage(scenarioTitle, goalId) {
+    try {
+      const body = { scenario_title: scenarioTitle };
+      // 带上 goal_id → 后端转存 COS 后直接写回 user_goals.scenarios[i].image_url，
+      // 实现「生成一次永久有效」。
+      if (goalId != null) body.goal_id = goalId;
+      const response = await fetch(`${API_BASE_URL}/ai/generate-scenario-image`, {
+        method: 'POST',
+        headers: getAuthHeaders(),
+        credentials: 'include',
+        body: JSON.stringify(body)
+      });
+      if (!response.ok) return { image_url: '', source: 'none' };
+      const data = await response.json();
+      return data.data || data || { image_url: '', source: 'none' };
+    } catch {
+      return { image_url: '', source: 'none' };
+    }
+  },
+
   async tts(text, voice = 'Serena') {
     const body = { text, voice };
 
