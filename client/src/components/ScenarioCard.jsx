@@ -3,6 +3,7 @@ import { DiffBadge } from './DiffBadge';
 export function ScenarioCard({
   title,
   emoji = '📚',
+  imageUrl = '',
   difficulty = 'intermediate',
   progress = 0,
   state = 'default',
@@ -26,7 +27,17 @@ export function ScenarioCard({
         display: 'flex', alignItems: 'center', justifyContent: 'center',
         position: 'relative',
       }}>
-        <span style={{ fontSize: 30 }}>{emoji}</span>
+        {imageUrl ? (
+          <img
+            src={imageUrl}
+            alt={title}
+            loading="lazy"
+            style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover' }}
+            onError={(e) => { e.currentTarget.style.display = 'none'; }}
+          />
+        ) : (
+          <span style={{ fontSize: 30 }}>{emoji}</span>
+        )}
         <div style={{
           position: 'absolute', top: 8, left: 8, width: 26, height: 26,
           borderRadius: '50%', background: 'var(--primary)', display: 'flex',

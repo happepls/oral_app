@@ -207,5 +207,9 @@
   "daily_limit_reached_desc": "已达每日 {{limit}} 轮上限，明日继续练习。",
   "daily_limit_cancel": "取消",
   "daily_limit_got_it": "知道了",
-  "daily_limit_upgrade": "去升级"
+  "daily_limit_upgrade": "去升级",
+  "ws_error_invalid_scenario": "场景无效，请返回重新选择场景",
+  "ws_error_rejected": "无法开始本次对话，请返回重新选择场景",
+  "ws_error_back_to_discovery": "返回发现页",
+  "ws_status_rejected": "已断开"
 }

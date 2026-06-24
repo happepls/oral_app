@@ -27,6 +27,10 @@ const upload = multer({ storage: storage });
 
 router.post('/upload', upload.fields([{ name: 'user_audio', maxCount: 1 }, { name: 'ai_audio', maxCount: 1 }]), mediaController.uploadAndProcessAudio);
 
+// Re-host a remote image (DashScope/OSS temp URL) to COS → permanent URL.
+// Body: { image_url }. Used by ai-omni /generate-scenario-image for cover-image persistence.
+router.post('/upload-image', express.json(), mediaController.uploadImageFromUrl);
+
 // Add proxy route for COS audio files
 router.get('/proxy', proxyController.proxyAudio);
 

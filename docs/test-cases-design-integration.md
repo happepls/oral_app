@@ -1,7 +1,7 @@
 # GuaJi AI 设计系统集成 — 功能测试用例
 
 **测试目标**: 验证设计系统集成后所有页面功能正常、视觉一致、业务逻辑未受影响
-**前置条件**: 后端服务已启动 (`docker compose up -d`)，前端 dev server 运行中 (`npm start`)
+**前置条件**: Zeabur云上服务已启动 
 
 ---
 
@@ -26,9 +26,9 @@
 | # | 测试项 | 操作步骤 | 预期结果 | 通过 | 修改点                                                                                                                                                                                                         |
 |---|-------|---------|---------|------|-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
 | 2.1 | 登录表单 | 输入邮箱+密码 → 点击登录 | 成功登录 → 跳转 `/discovery` | [☑] |
-| 2.2 | 登录失败 | 输入错误密码 | 显示错误提示，不跳转 | [☑] | 提示“登录已过期，请重新登录”或Proxying API request: POST /api/users/login -> http://oral_app_api_gateway:80/api/users/login 出现服务端500错误 Server error during login，Login Error: Error: Illegal arguments: string, undefined |
-| 2.3 | Google OAuth | 点击 "Google 登录" | Google 授权弹窗打开 | [☑] | 弹出提示 禁止访问：发生了授权错误 不符合Google的OAuth2.0规范 错误400: origin_mismatch                                                                                                                                               |                                                                                                                                               |
-| 2.4 | 注册流程 | 填写表单 → 提交 | 成功注册 → 跳转 `/onboarding` | [☑] | 页面提示“Server error during registration.” ERROR:  duplicate key value violates unique constraint "users_username_key"                                                                                         |
+| 2.2 | 登录失败 | 输入错误密码 | 显示错误提示，不跳转 | [☑] | ~~500 Server error / Illegal arguments: string, undefined~~ **已修复（Jun 24 prod 实测）**：错误密码 → 401 `{"success":false,"message":"Invalid credentials."}`，无 500、无 bcrypt 报错 |
+| 2.3 | Google OAuth | 点击 "Google 登录" | Google 授权弹窗打开 | [☑] | ~~错误400: origin_mismatch~~ **已修复（Jun 24）**：client_id `318339571759-ojcd3o...` build-time 已注入；用户已在 Google Cloud Console 给该 client 添加 `https://guajiguaji.top` 授权来源 |
+| 2.4 | 注册流程 | 填写表单 → 提交 | 成功注册 → 跳转 `/onboarding` | [☑] | ~~Server error / duplicate key users_username_key~~ **已修复（Jun 24 prod 实测）**：唯一用户名注册 → `POST /api/users/register` 201 → 跳转 `/onboarding`；旧报错为复用已存在用户名所致 |
 
 ---
 
@@ -104,7 +104,7 @@
 |---|-------|---------|---------|-----|------|
 | 6.14 | 问题卡片 | 进入问答模式 | 顶部显示问题文本 + 播放按钮 + 参考答案折叠 | [☑] |
 | 6.15 | 播放问题 | 点击播放按钮 | TTS朗读问题 | [☑] |
-| 6.16 | 回答完成 | 录音回答后 | AI评价 + "今日问答已完成" 弹窗 | [ ] |用户随便说什么都会完成任务，需审查评判标准和通过阈值 |
+| 6.16 | 回答完成 | 录音回答后 | AI评价 + "今日问答已完成" 弹窗 | [ ] |用户随便说什么都会完成任务，需审查评判标准和通过阈值。**Jun 24 根因定位**：通过判定唯一依据 = AI 回复文本含褒奖词（`_check_auto_pass` @ai-omni main.py:877，白名单 `_DAILY_QA_POSITIVE_INDICATORS` good/很好/great…），LLM 对任何回答都礼貌带这些词 → 任意够长+对语种输入都通过；无 task_relevance 内容门闸；`[DAILY_QA_PASSED]` marker 路径是死代码（`_handle_daily_qa_marker` 定义未调用）；前端零二次校验。**修复方向**（backend，用户确认暂不修/记 backlog）：marker 化判定 / 接 task_relevance≥6 门闸 / 收紧 prompt rubric 输出结构化 VERDICT |
 
 ### 6c. 今日复述模式 (`/recall` 独立页面)
 
@@ -205,7 +205,7 @@
 |---|-------|---------|---------|------|--------|
 | 11.6 | COS 音频 | 对话页 AI 语音播放 | COS mp3 加载不被 CSP 拦 | [☑] | ~~`media-src` 缺，default-src 拦~~ 已修：CSP 加 `media-src 'self' blob: data: https://*.myqcloud.com` |
 | 11.7 | blob 试听 | recall 试听合成 | blob: URL 音频可播 | [☑] | ~~blob 被拦~~ 同 11.6（media-src blob:） |
-| 11.8 | 波形/时长 | AudioBar 渲染 | 显示波形 + 时长（非仅播放按钮） | [☐] | 连带 11.6（`new Audio()` 被 media-src 拦致 loadedmetadata 不触发）；待 live 复测 |
+| 11.8 | 波形/时长 | AudioBar 渲染 | 显示波形 + 时长（非仅播放按钮） | [☑] | **Jun 24 prod 实测**：对话页 AI 开场白气泡显示波形 + 时长 13.0s；daily_qa 显示 6.3s；`loadedmetadata` 正常触发，无 media-src 拦截 |
 | 11.9 | Cloudflare beacon | 页面加载 | `static.cloudflareinsights.com/beacon.min.js` 不被拦 | [☑] | ~~script-src 拦~~ 已修：script-src 加 cloudflareinsights |
 | 11.10 | 字体加载 | Google Fonts | fonts.googleapis/gstatic 不被拦 | [☑] | connect-src 加 google fonts |
 | 11.11 | CSP header 实测 | `curl -I https://guajiguaji.top/` | header 含 media-src + cloudflareinsights | [☑] | console 无 "violates CSP" |
@@ -215,8 +215,8 @@
 | # | 测试项 | 操作步骤 | 预期结果 | 通过 | 修改点 |
 |---|-------|---------|---------|------|--------|
 | 11.12 | 场景生成 | `POST /api/ai/generate-scenarios` | HTTP 200，返回 10 场景 | [☑] | ~~404→403→已修~~ 路由 404=变量 proxy_pass URI 语义；403=模型名 qwen-turbo→qwen-flash + chat base maas→dashscope-intl（maas 不提供 compatible-mode chat）。3 处 chat（scenarios/daily-qa/translate）统一 httpx 直连 intl 网关 |
-| 11.13 | 文生图 | 场景配图 | wan2.2-t2i-flash 调用成功 | [☐] | model wanx2.1-t2i-turbo→wan2.2-t2i-flash；待 live 复测 |
-| 11.14 | realtime 语音 | 对话 WS `/stream` | 主对话 omni 语音正常（用 maas host） | [☐] | 主对话用 OmniRealtimeConversation；待 live 完整语音练习复测 |
+| 11.13 | 文生图 | 场景配图 | wan2.2-t2i-flash 调用成功 | [☐] | **Jun 24 prod 复测：场景卡用 emoji 占位（🎓🎭⭐），DOM 无 AI 生成图 URL（无 myqcloud/dashscope 图片）。t2i 未接入卡片显示或当前场景生成时未调用。需 backend 接入（backlog，用户已确认暂不修）** |
+| 11.14 | realtime 语音 | 对话 WS `/stream` | 主对话 omni 语音正常（用 maas host） | [☑] | **Jun 24 prod 实测**：进场景对话 WS connected（role OralTutor），开场白 omni binary audio chunks（15360B/chunk）流式播放正常，`decodeAudioData→PCM fallback`（设计内） |
 
 ### 11d. Stripe live 支付
 
@@ -224,16 +224,31 @@
 |---|-------|---------|---------|------|--------|
 | 11.15 | live 价格 | `/api/stripe/products-with-prices` | 周$4.99/年$99 真实 live 价 | [☑] | seed-products.js（live key）建 prod_Uksr*/price_1TlN5* |
 | 11.16 | live webhook | 真实付款 → webhook | subscription_status 写 active | [☑] | ~~付款成功但没写 active~~ 根因：旧 checkout 无 metadata.userId + customer 未关联 → updateByCustomerId 0 行。三级兜底：customerId→metadata.userId→email 反查 + checkout 塞 client_reference_id/userId。已付款用户(`363328084@qq.com`)手动补激活 |
-| 11.17 | 付款跳转 | Checkout 成功后 | 跳转 Profile 显示 Pro | [☐] | ~~跳转失败~~ 部分因 CSP 拦 Cloudflare/字体；待 live 复测 |
+| 11.17 | 付款跳转 | Checkout 成功后 | 跳转 Profile 显示 Pro | [☐] | **Jun 24 部分验证**：点 立即订阅 → Stripe Checkout（`cs_live_` LIVE session）正常打开（merchant "Happepls LLC"）；CSP 已含 Cloudflare/字体不再拦。**完整"付款成功→Pro"跳转需真实付款，未测（安全：不录入卡号/不付款）** |
 
 ### 11e. 前端 prod bug
 
 | # | 测试项 | 操作步骤 | 预期结果 | 通过 | 修改点 |
 |---|-------|---------|---------|------|--------|
-| 11.18 | 开场白 TTS | 进对话页听开场白 | TTS 播 1 次（不重复） | [☐] | ~~播 2 次（streaming+COS 双路径）~~ 已修：streamedAudioSinceCutRef 去重；待 live 复测 |
-| 11.19 | 音频不切断 | 连续多条 AI 消息 | 音频播完整，A→B 衔接顺，不中途切断 | [☐] | ~~总被切断~~ 已修：auto-play effect 删全局 stopAudioPlayback（下行已 queued 衔接）+ 提前去重置位 + 依赖收紧为 pendingAutoPlayKey；待 live 复测 |
+| 11.18 | 开场白 TTS | 进对话页听开场白 | TTS 播 1 次（不重复） | [☑] | **Jun 24 prod 实测**：进场景对话开场白单条气泡 + 单次流式音频会话（console WS 日志无重复 greeting），不重复 |
+| 11.19 | 音频不切断 | 连续多条 AI 消息 | 音频播完整，A→B 衔接顺，不中途切断 | [☑] | **Jun 24 prod 实测**：开场白多 chunk 连续播放完整不切断（streaming PCM chain）；完整多轮 A→B 衔接需真实录音多轮复测，但 auto-play 链路已验证无全局 stop 打断 |
 | 11.20 | daily-progress | Discovery 加载 | `/api/users/daily-progress` 不 500 | [☑] | ~~500~~ 缺 daily_practice_time 表 + users.daily_practice_goal 列 → 建表 migration + 软兜底 |
-| 11.21 | Google 登录 | 点 Google 登录 | client_id 正确，授权弹窗正常 | [☐] | ~~invalid_request client_id 未设~~ 已修：REACT_APP_GOOGLE_CLIENT_ID build-time 注入（之前 .env gitignored 没传给 Zeabur build）。注：Google Console 须加 `guajiguaji.top` 授权来源（origin_mismatch 另需 Console 配） |
+| 11.21 | Google 登录 | 点 Google 登录 | client_id 正确，授权弹窗正常 | [☑] | **Jun 24 prod 实测**：client_id `318339571759-ojcd3o...apps.googleusercontent.com` 已注入（非空），login 页 Google 按钮 + GSI iframe 正常渲染，One-Tap 显示已记住的 Google 账号。用户已在 Console 加 `guajiguaji.top` 授权来源（解决 origin_mismatch） |
 | 11.22 | Tawk 客服 | 页面加载 | Tawk widget 出现，无 CORS | [☑] | ~~CORS/client_id 空~~ 已修：REACT_APP_TAWK_* build-time 注入；twk-main.js 已加载 |
 
 > **生产验证方法（§11）**：`curl` 验证 HTTP/header/API（本地经 `HTTPS_PROXY=127.0.0.1:7890` 访 Zeabur API；公网 curl `guajiguaji.top` 直连）；claude-in-chrome MCP 连真实浏览器读 console 验证 CSP/资源加载（`read_console_messages` + `javascript_tool` 查 bundle hash）。Zeabur CLI 0.19.0 二进制（npm 上限 0.5.4）+ proxy。**[☐] 项需登录后真实交互复测**（录音/付款/语音）。部署细节见 [memory] `project_zeabur_backend_deploy_complete`。
+
+---
+
+## 12. Jun 24 二轮遗留问题修复（5 项）
+
+| # | 问题 | 根因 | 修复 | 归属 | 状态 |
+|---|------|------|------|------|------|
+| 12.1 | /goal-setting `font-src` 拦字体 | Tawk.to widget 字体从 `*.tawk.to` 加载，CSP `font-src` 未列 | `font-src` 加 `https://*.tawk.to`（`client.nginx.zeabur.conf` + `client.nginx.conf` 各 4 处 server+location） | nginx | ✅ 已改 |
+| 12.2 | blob 点播失败（`Conversation.js:796` `fetch(blob:)` 被拦） | CSP `connect-src` 缺 `blob:` | `connect-src` 加 `blob:`（同两文件 4 处） | nginx | ✅ 已改 |
+| 12.3 | 切目标后对话卡"连接中"听不到 AI | `ai-omni main.py` `_SCENARIO_RE` 白名单过窄 → 新 LLM 场景标题（em-dash/弯引号/emoji/分号）被拒 → `close(1000)` clean close → 前端 `Conversation.js:2148` 静默吞 | 后端：删白名单→黑名单净化 `_is_valid_scenario`（长度≤200 + 拒 `\x00-\x1f`/`<>`）+ close code 1000→**1008** + error `{payload:{message}}`；前端：读 `data.payload?.message` + 识别 1008/4400 拒绝分支不重连 + `setWebSocketError` + "返回发现页"出口 + header 红色"已断开"（双保险：error 帧先到也触发） | backend+frontend | ✅ 已改（py_compile+build 通过；待 Zeabur 部署） |
+| 12.4 | Stripe webhook 远程主机连接失败（订阅状态不更新） | **Cloudflare 边缘拦 Stripe 服务器到服务器 POST**（连接层 reset）。浏览器测端点→400 正确（应用层+nginx 全对），Stripe 机器 IP 被 Bot Fight Mode/WAF 挑战 | **无代码改**。需 Cloudflare Dashboard：①WAF 加规则 `URI Path = /api/stripe/webhook` → Skip；②关 Bot Fight Mode；③SSL=Full(strict)、关 Under Attack Mode；④核对 Stripe webhook URL 精确 = `https://guajiguaji.top/api/stripe/webhook` | **Cloudflare（用户）** | ⚠️ 待用户配置 |
+| 12.5 | manifest.json `ERR_CONNECTION_CLOSED` + SSE 每 10min 警告 | Cloudflare 边缘对低优先级/长连接 same-origin 请求偶发 connection reset。配置无误 | 无代码改（边缘噪声）。关 Bot Fight Mode / 加 webhook bypass 后应一并缓解 | Cloudflare（用户） | ℹ️ 良性 |
+| 11.13 | 文生图未接入场景卡 | t2i 代码已存在但只用于 scene_theater 背景图；`generate-scenarios` 无 image 字段；且 `_try_wanx_image` 错走 maas 专属网关 | 懒加载方案：`POST /generate-scenario-image`（走通用 intl 网关，新 env `DASHSCOPE_IMAGE_BASE` 默认回退 `DASHSCOPE_CHAT_BASE`）+ Discovery 仅对已解锁场景按需生成（sessionStorage 缓存，免费3/Pro逐步10）+ ScenarioCard `imageUrl` prop（onError 回退 emoji）。**临时 URL（24h TTL，未转 COS）——若要封面长期稳定需追加 COS 转存（决策点）** | backend+frontend | ✅ 已改（待 Zeabur 验真实出图） |
+
+> **部署（Jun 24 二轮修复）**：① 前端 src 改动（Conversation/Discovery/ScenarioCard/api.js/i18n）→ `cd client && npm run build`（已 build `main.97b36ace.js`）。② CSP 在 nginx conf（不进 webpack）→ 须 **Zeabur rebuild client-app image**（Dockerfile COPY `client.nginx.zeabur.conf` + RUN grep 断言会校验 media-src/cloudflareinsights，新加的 tawk font-src/blob 不影响断言）。③ ai-omni `main.py` Python 源改动 → `docker compose build ai-omni-service`（无 --no-cache）或热补丁 `docker cp`。④ Cloudflare Dashboard 配 webhook bypass（12.4）。

@@ -202,6 +202,8 @@ function Discovery() {
   const [loading, setLoading] = useState(true);
   const [checkinStats, setCheckinStats] = useState({ currentStreak: 0, checkedInToday: false, totalCheckins: 0 });
   const [scenarios, setScenarios] = useState([]);
+  // AI 生成的场景卡配图：{ title -> imageUrl }。懒加载，仅对已解锁场景生成。
+  const [scenarioImages, setScenarioImages] = useState({});
   const [filterTab, setFilterTab] = useState('all');
   const [showAchievement, setShowAchievement] = useState(false);
   const [showGoalSwitch, setShowGoalSwitch] = useState(false);
@@ -539,8 +541,37 @@ function Discovery() {
     const pct = calcProgress(s);
     const unlocked = isScenarioUnlocked(i, unlockedCount, isPro);
     const cardState = getScenarioCardState(s, unlocked, pct);
-    return { ...s, pct, unlocked, cardState, difficulty: getDifficulty(i), emoji: getEmoji(s.title), index: i };
-  }), [scenarios, unlockedCount, isPro]);
+    // image_url 优先来自后端 scenario 数据（若曾持久化），否则用懒加载 state
+    const imageUrl = s.image_url || scenarioImages[s.title] || '';
+    return { ...s, pct, unlocked, cardState, difficulty: getDifficulty(i), emoji: getEmoji(s.title), imageUrl, index: i };
+  }), [scenarios, unlockedCount, isPro, scenarioImages]);
+
+  // 懒加载已解锁场景的 AI 配图：一次只取一张（节流），sessionStorage 跨页缓存，
+  // 失败/超时静默回退 emoji。锁定卡不生成，省文生图成本。
+  useEffect(() => {
+    const target = enrichedScenarios.find(
+      s => s.unlocked && !s.image_url && !(s.title in scenarioImages)
+    );
+    if (!target) return;
+    const cacheKey = `scenario_img:${target.title}`;
+    const cached = sessionStorage.getItem(cacheKey);
+    if (cached !== null) {
+      setScenarioImages(prev => ({ ...prev, [target.title]: cached }));
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      // 带上 activeGoal.id → 后端转存 COS 后直接写回 scenarios[i].image_url，
+      // 下次进页 getActiveGoal 直接返回 image_url，本 effect 因 !s.image_url 跳过，
+      // 不再重复扣费生成。
+      const { image_url } = await aiAPI.generateScenarioImage(target.title, activeGoal?.id);
+      if (cancelled) return;
+      const url = image_url || '';
+      try { sessionStorage.setItem(cacheKey, url); } catch {}
+      setScenarioImages(prev => ({ ...prev, [target.title]: url }));
+    })();
+    return () => { cancelled = true; };
+  }, [enrichedScenarios, scenarioImages, activeGoal]);
 
   const todayRecommended = useMemo(() => enrichedScenarios.find(s => s.unlocked && s.pct < 100), [enrichedScenarios]);
 
@@ -971,6 +1002,7 @@ function Discovery() {
                 key={s.index}
                 title={s.title}
                 emoji={s.emoji}
+                imageUrl={s.imageUrl}
                 description={
                   s.tasks?.[0]
                     ? (typeof s.tasks[0] === 'object'

@@ -245,7 +245,9 @@ export default function GoalSetting() {
         current_proficiency: proficiency,
         completion_time_days: 30,
         interests,
-        scenarios: scenarios.map(s => ({ title: s.title, tasks: s.tasks })),
+        // 保留全部字段（含 image_url 等持久化封面图）——只覆盖 title/tasks，
+        // 不要用 `{ title, tasks }` 丢弃其余字段。
+        scenarios: scenarios.map(s => ({ ...s, title: s.title, tasks: s.tasks })),
       });
       setSuccess('目标设置成功！');
       // Signal first-login Onboarding Tour to auto-start on Discovery landing.

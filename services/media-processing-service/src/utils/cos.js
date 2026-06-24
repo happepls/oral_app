@@ -26,6 +26,23 @@ const putObjectOnce = (filePath, key) => {
     });
 };
 
+// 单次 putObject（内存 Buffer 版），Promise 化。
+// Buffer 可重复消费，无需像 stream 那样每次重试新建。
+const putBufferOnce = (buffer, key, contentType) => {
+    return new Promise((resolve, reject) => {
+        cos.putObject({
+            Bucket: process.env.TENCENT_BUCKET,
+            Region: process.env.TENCENT_REGION,
+            Key: key,
+            Body: buffer,
+            ContentType: contentType || 'application/octet-stream',
+        }, function(err, data) {
+            if (err) return reject(err);
+            resolve(data);
+        });
+    });
+};
+
 // 可重试错误：连接被重置 / 超时 / DNS 等瞬时网络故障
 const isRetriableError = (err) => {
     const code = err && (err.code || err.error || '');
@@ -57,7 +74,31 @@ const uploadFile = async (filePath, key) => {
     throw lastErr;
 };
 
+// 从内存 Buffer 上传（图片转存场景：先 download 临时 URL 到 Buffer，再 putObject）。
+// 复用 uploadFile 的指数退避重试策略。
+const uploadBuffer = async (buffer, key, contentType) => {
+    if (!buffer || !buffer.length) {
+        throw new Error('Empty buffer');
+    }
+
+    let lastErr;
+    for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+        try {
+            return await putBufferOnce(buffer, key, contentType);
+        } catch (err) {
+            lastErr = err;
+            const retriable = isRetriableError(err);
+            console.error(`COS Buffer Upload Error (attempt ${attempt}/${MAX_RETRIES}, retriable=${retriable}):`, err);
+            if (!retriable || attempt === MAX_RETRIES) break;
+            const delay = BASE_DELAY_MS * Math.pow(2, attempt - 1);
+            await new Promise(r => setTimeout(r, delay));
+        }
+    }
+    throw lastErr;
+};
+
 module.exports = {
     uploadFile,
+    uploadBuffer,
     cos
 };

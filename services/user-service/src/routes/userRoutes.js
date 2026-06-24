@@ -96,6 +96,9 @@ router.post('/api/users/internal/users/:id/tasks/complete', internalAuthWithNetw
 router.post('/api/users/internal/users/:id/tasks/score', internalAuthWithNetworkSkip, userController.updateTaskScoreInternal);
 router.get('/api/users/internal/users/:id', internalAuthWithNetworkSkip, userController.getUserInternal);
 
+// Internal: persist a scenario cover image URL (called by ai-omni after COS re-host)
+router.post('/api/users/internal/goals/:goalId/scenario-image', internalAuthWithNetworkSkip, userController.updateScenarioImageInternal);
+
 // Task keywords routes (internal, protected with network skip)
 router.get('/api/users/tasks/:taskId/keywords', internalAuthWithNetworkSkip, userController.getTaskKeywords);
 router.post('/api/users/tasks/:taskId/keywords', internalAuthWithNetworkSkip, userController.generateTaskKeywords);
