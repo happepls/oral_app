@@ -5,6 +5,7 @@ on:
     branches: [ master, main, develop ]
   schedule:
     - cron: '0 2 * * 0'  # Weekly security scans
+  workflow_dispatch:       # allow manual runs (verify config without waiting for schedule)
 
 # Least-privilege token; upload-sarif needs security-events: write to push
 # results to the Security tab (default token is read-only → "Resource not
