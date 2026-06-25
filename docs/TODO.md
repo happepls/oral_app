@@ -335,4 +335,6 @@
 - [x] [Testing] 新 media/scenario 后端函数测试 — 已补纯逻辑单测：user-service `scenarioImage.test.js`（14 例：isAllowedImageUrl 白名单/后缀仿冒/scheme + updateScenarioImage 匹配，62 全绿无回归）；media-processing `uploadImageFromUrl.test.js`（27 例：isAllowedImageHost 含云元数据 169.254/后缀仿冒、extFromContentType、size cap、assertInternalCaller，补 jest 基建）
 - [x] [Testing] ScenarioCard 图片回退逻辑 — 已补：`scenariocard-guard.test.js` 加 `resolveShowImage` 4 例（imageUrl/imageError 组合，纯逻辑风格，10/10 通过）
 - [x] [Performance] GoalSetting.js:250 双 spread + id 冗余 — 已修：改 `scenarios.map(({ id, ...rest }) => rest)`，剥离前端临时 id（仅 React key 用）+ 去重复覆盖
+- [x] [CI] Security Scan CodeQL Action v3→v4 — 已升（v3 将于 2026-12 deprecated，提前升）。security.yml init/analyze/upload-sarif 三处 @v3→@v4（v4 major tag 存在，latest v4.36.2）
+- [ ] [CI] Security Scan Node 20 deprecation warning — 上游 actions（checkout@v4 / codeql-action）仍标 Node 20，GitHub runner 已强制 Node 24 运行，非阻断、非我方可控（等上游 action 更新）。仅记录，无需动作
 - [x] [Testing] E2E free-user 403 负面测试：test_scenario_batch_and_daily_qa.py 新增 free_user scenario（/pool + /select 返回 403，mock 模式 4/4 pass）
