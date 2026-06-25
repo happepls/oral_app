@@ -207,5 +207,9 @@
   "daily_limit_reached_desc": "Você atingiu o limite diário de {{limit}} rodadas. Volte amanhã para continuar.",
   "daily_limit_cancel": "Cancelar",
   "daily_limit_got_it": "Entendi",
-  "daily_limit_upgrade": "Atualizar"
+  "daily_limit_upgrade": "Atualizar",
+  "ws_error_invalid_scenario": "Cenário inválido. Volte e escolha um cenário novamente.",
+  "ws_error_rejected": "Não foi possível iniciar esta conversa. Volte e escolha um cenário novamente.",
+  "ws_error_back_to_discovery": "Voltar para Descobrir",
+  "ws_status_rejected": "Desconectado"
 }

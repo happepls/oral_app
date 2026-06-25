@@ -320,4 +320,19 @@
 - [x] [Performance] user.js User.create / User.createGoal 事务保护（BEGIN/COMMIT/ROLLBACK + client.release）
 - [x] [Performance] user.js findOrCreateFromGoogle 事务保护（与 User.create 一致的事务包裹）
 - [x] [Performance] user.js User.findById / User.findByEmail N+1 查询优化（两次 SELECT 合并为单条 LEFT JOIN user_identities）
+
+## finish-today Review LOW 项（PR #18 + #19，Jun 24 2026 — 已验证 backlog）
+
+> 来源：finish-today 工作流对 PR#18（CSP+切目标WS+文生图）的 16 文件做 find→3way-verify→synthesize。HIGH（i18n CI blocker）+ 3 MEDIUM 已在 fix/finish-today-review 修复；以下 LOW 项验证为真但低影响，记此备办。
+
+- [x] [Correctness] ScenarioCard.jsx:30 图片加载失败留空白头部 — 已修：`useState(imageError)` 驱动，`showImage = imageUrl && !imageError`，`onError` 改 `setImageError(true)`，失败回退 emoji（PR#19 后续）
+- [x] [Security] user.js:1167 updateScenarioImage 缺 ownership 校验 — 已修：新增可选 `userId` 参数，传入时 `WHERE id=$1 AND user_id=$2`
+- [x] [Security] userController.js:803 image_url 无 origin 校验 — 已修：新增 `ALLOWED_IMAGE_URL_HOSTS`（myqcloud/aliyuncs/dashscope）+ `isAllowedImageUrl`，非白名单 400
+- [x] [Correctness] user.js:1173 scenarios JSONB 非事务 read-modify-write — 已修：`db.pool.connect()` 事务 + `SELECT ... FOR UPDATE` + COMMIT/ROLLBACK/release
+- [x] [Correctness] mediaController.js:156 publicUrl 用未校验 env — 已修：上传前校验 `TENCENT_BUCKET`/`TENCENT_REGION`，缺失 500
+- [x] [Correctness] mediaController.js:160 响应泄露内部 COS `key` — 已修（PR#19）：只返 image_url
+- [x] [Security] client.nginx CSP script-src `cdn.jsdelivr.net` 宽泛 — 已收窄：→ `https://cdn.jsdelivr.net/emojione/`（路径前缀，仅 Tawk emojione 包，挡其他 jsdelivr 任意包注入）。实测确认 Tawk 仅从 jsdelivr 加 emojione.min.js（`/emojione/2.2.7/lib/js/`），收窄不误伤。两 conf 各 4 处，nginx -t 通过
+- [x] [Testing] 新 media/scenario 后端函数测试 — 已补纯逻辑单测：user-service `scenarioImage.test.js`（14 例：isAllowedImageUrl 白名单/后缀仿冒/scheme + updateScenarioImage 匹配，62 全绿无回归）；media-processing `uploadImageFromUrl.test.js`（27 例：isAllowedImageHost 含云元数据 169.254/后缀仿冒、extFromContentType、size cap、assertInternalCaller，补 jest 基建）
+- [x] [Testing] ScenarioCard 图片回退逻辑 — 已补：`scenariocard-guard.test.js` 加 `resolveShowImage` 4 例（imageUrl/imageError 组合，纯逻辑风格，10/10 通过）
+- [x] [Performance] GoalSetting.js:250 双 spread + id 冗余 — 已修：改 `scenarios.map(({ id, ...rest }) => rest)`，剥离前端临时 id（仅 React key 用）+ 去重复覆盖
 - [x] [Testing] E2E free-user 403 负面测试：test_scenario_batch_and_daily_qa.py 新增 free_user scenario（/pool + /select 返回 403，mock 模式 4/4 pass）

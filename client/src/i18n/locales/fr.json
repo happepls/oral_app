@@ -207,5 +207,9 @@
   "daily_limit_reached_desc": "Vous avez atteint la limite quotidienne de {{limit}} tours. Revenez demain pour continuer.",
   "daily_limit_cancel": "Annuler",
   "daily_limit_got_it": "Compris",
-  "daily_limit_upgrade": "Mettre à niveau"
+  "daily_limit_upgrade": "Mettre à niveau",
+  "ws_error_invalid_scenario": "Scénario invalide. Veuillez revenir en arrière et choisir un autre scénario.",
+  "ws_error_rejected": "Impossible de démarrer cette conversation. Veuillez revenir en arrière et choisir un autre scénario.",
+  "ws_error_back_to_discovery": "Retour à Découvrir",
+  "ws_status_rejected": "Déconnecté"
 }

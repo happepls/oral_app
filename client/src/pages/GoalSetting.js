@@ -245,9 +245,9 @@ export default function GoalSetting() {
         current_proficiency: proficiency,
         completion_time_days: 30,
         interests,
-        // 保留全部字段（含 image_url 等持久化封面图）——只覆盖 title/tasks，
-        // 不要用 `{ title, tasks }` 丢弃其余字段。
-        scenarios: scenarios.map(s => ({ ...s, title: s.title, tasks: s.tasks })),
+        // 保留全部业务字段（含 image_url 等持久化封面图），但剥离前端临时 id
+        // （仅用于 React key，不该进 JSONB）。`...rest` 已含 title/tasks，无需重复覆盖。
+        scenarios: scenarios.map(({ id, ...rest }) => rest),
       });
       setSuccess('目标设置成功！');
       // Signal first-login Onboarding Tour to auto-start on Discovery landing.

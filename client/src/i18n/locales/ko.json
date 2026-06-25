@@ -207,5 +207,9 @@
   "daily_limit_reached_desc": "오늘 한도인 {{limit}}회에 도달했습니다. 내일 다시 이어가세요.",
   "daily_limit_cancel": "취소",
   "daily_limit_got_it": "확인",
-  "daily_limit_upgrade": "업그레이드"
+  "daily_limit_upgrade": "업그레이드",
+  "ws_error_invalid_scenario": "유효하지 않은 시나리오입니다. 돌아가서 시나리오를 다시 선택해 주세요.",
+  "ws_error_rejected": "이 대화를 시작할 수 없습니다. 돌아가서 시나리오를 다시 선택해 주세요.",
+  "ws_error_back_to_discovery": "발견 페이지로 돌아가기",
+  "ws_status_rejected": "연결 끊김"
 }

@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { DiffBadge } from './DiffBadge';
 
 export function ScenarioCard({
@@ -11,6 +12,10 @@ export function ScenarioCard({
 }) {
   const isLocked = state === 'locked';
   const isCompleted = progress === 100;
+  // State-driven image fallback: on load error, mount the emoji instead of just
+  // hiding the <img> (DOM mutation left the header blank — emoji never showed).
+  const [imageError, setImageError] = useState(false);
+  const showImage = imageUrl && !imageError;
 
   return (
     <div
@@ -27,13 +32,13 @@ export function ScenarioCard({
         display: 'flex', alignItems: 'center', justifyContent: 'center',
         position: 'relative',
       }}>
-        {imageUrl ? (
+        {showImage ? (
           <img
             src={imageUrl}
             alt={title}
             loading="lazy"
             style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover' }}
-            onError={(e) => { e.currentTarget.style.display = 'none'; }}
+            onError={() => setImageError(true)}
           />
         ) : (
           <span style={{ fontSize: 30 }}>{emoji}</span>

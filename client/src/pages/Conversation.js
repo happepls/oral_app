@@ -417,6 +417,13 @@ function Conversation() {
   const [isManualDisconnect, setIsManualDisconnect] = useState(false); // Track if user manually disconnected
   const [reconnectAttempts, setReconnectAttempts] = useState(0); // Track reconnection attempts
   const MAX_RECONNECT_ATTEMPTS = 3; // Maximum automatic reconnect attempts before requiring manual intervention
+  // Ref mirrors of the two reconnect-control states. The close-handler's
+  // setTimeout (and connectWebSocket's useCallback, which omits these from its
+  // deps) would otherwise read stale snapshots — causing a spurious reconnect
+  // when the user manually retries during the backoff window. Read .current.
+  const isManualDisconnectRef = useRef(false);
+  const reconnectAttemptsRef = useRef(0);
+  const reconnectTimerRef = useRef(null); // pending auto-reconnect setTimeout id; cleared on manual retry / reject
 
   // Default scenario templates are hoisted to module scope (see DEFAULT_SCENARIOS above).
 
@@ -1136,8 +1143,11 @@ function Conversation() {
   // Manual retry reconnect function
   const handleManualRetry = useCallback(() => {
     console.log('Manual retry triggered');
+    if (reconnectTimerRef.current) { clearTimeout(reconnectTimerRef.current); reconnectTimerRef.current = null; }
     setIsManualDisconnect(false);
+    isManualDisconnectRef.current = false;
     setReconnectAttempts(0);
+    reconnectAttemptsRef.current = 0;
     setWebSocketError(null);
     wsRejectedRef.current = false;
     setWsRejected(false);
@@ -1537,6 +1547,8 @@ function Conversation() {
            wsRejectedRef.current = true;
            setWsRejected(true);
            setIsManualDisconnect(true); // prevent the close handler from auto-reconnecting
+           isManualDisconnectRef.current = true;
+           if (reconnectTimerRef.current) { clearTimeout(reconnectTimerRef.current); reconnectTimerRef.current = null; }
            setWebSocketError(
              isRejection
                ? t('ws_error_invalid_scenario', '场景无效，请返回重新选择场景')
@@ -2206,13 +2218,18 @@ function Conversation() {
             const attemptNum = reconnectAttempts + 1;
             console.log(`Attempting automatic reconnection ${attemptNum}/${MAX_RECONNECT_ATTEMPTS}...`);
             setReconnectAttempts(prev => prev + 1);
-            
+            reconnectAttemptsRef.current = reconnectAttempts + 1;
+
             // Exponential backoff: 1s, 2s, 4s
             const delay = Math.min(1000 * Math.pow(2, reconnectAttempts), 10000);
-            
-            setTimeout(() => {
-                // Check if we should still reconnect (not manually disconnected in the meantime)
-                if (!isManualDisconnect && reconnectAttempts < MAX_RECONNECT_ATTEMPTS) {
+
+            if (reconnectTimerRef.current) clearTimeout(reconnectTimerRef.current);
+            reconnectTimerRef.current = setTimeout(() => {
+                reconnectTimerRef.current = null;
+                // Check if we should still reconnect — read the ref .current (not the
+                // stale closure snapshot) so a manual retry during the backoff window
+                // cancels this pending reconnect instead of firing a spurious one.
+                if (!isManualDisconnectRef.current && reconnectAttemptsRef.current <= MAX_RECONNECT_ATTEMPTS) {
                     connectWebSocket(sessionId);
                 }
             }, delay);
