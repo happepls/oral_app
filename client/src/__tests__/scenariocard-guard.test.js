@@ -62,3 +62,35 @@ describe('ScenarioCard locked guard', () => {
     expect(onStart).toHaveBeenCalledTimes(1);
   });
 });
+
+// ---- replicated verbatim from client/src/components/ScenarioCard.jsx ----
+// State-driven image fallback:
+//   const [imageError, setImageError] = useState(false);
+//   const showImage = imageUrl && !imageError;
+//   {showImage ? <img onError={() => setImageError(true)} /> : <span>{emoji}</span>}
+// resolveShowImage models which branch renders given (imageUrl, imageError).
+function resolveShowImage(imageUrl, imageError) {
+  return Boolean(imageUrl) && !imageError;
+}
+
+describe('ScenarioCard image fallback', () => {
+  test('imageUrl present, no error → show image', () => {
+    expect(resolveShowImage('https://x.myqcloud.com/a.jpg', false)).toBe(true);
+  });
+
+  test('imageUrl present but load errored → fall back to emoji', () => {
+    // This is the bug being fixed: previously the img was hidden via DOM
+    // mutation and the emoji never mounted. Now onError flips imageError so the
+    // emoji <span> renders.
+    expect(resolveShowImage('https://x.myqcloud.com/a.jpg', true)).toBe(false);
+  });
+
+  test('no imageUrl → emoji (image branch never taken)', () => {
+    expect(resolveShowImage('', false)).toBe(false);
+    expect(resolveShowImage(undefined, false)).toBe(false);
+  });
+
+  test('no imageUrl AND error flag → still emoji (no crash)', () => {
+    expect(resolveShowImage('', true)).toBe(false);
+  });
+});

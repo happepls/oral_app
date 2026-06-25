@@ -1160,31 +1160,54 @@ User.unlockAchievement = async (userId, achievementKey) => {
 // JSONB column — we read, mutate the matching scenario by title, write back.
 // Idempotent: re-writing the same URL is harmless. Returns true if a scenario
 // matched and was updated, false otherwise.
-User.updateScenarioImage = async (goalId, scenarioTitle, imageUrl) => {
+// userId (optional) scopes the write to the goal's owner — defense-in-depth
+// against cross-user overwrite on the internal endpoint (IDOR). Wrapped in a
+// transaction with SELECT ... FOR UPDATE so concurrent writes to different
+// scenarios in the same goal don't clobber each other (read-modify-write race).
+User.updateScenarioImage = async (goalId, scenarioTitle, imageUrl, userId = null) => {
     if (!goalId || !scenarioTitle || !imageUrl) return false;
 
-    const { rows } = await db.query(
-        `SELECT scenarios FROM user_goals WHERE id = $1`,
-        [goalId]
-    );
-    const goal = rows[0];
-    if (!goal || !Array.isArray(goal.scenarios)) return false;
+    const client = await db.pool.connect();
+    try {
+        await client.query('BEGIN');
 
-    let matched = false;
-    const updated = goal.scenarios.map(s => {
-        if (s && s.title === scenarioTitle) {
-            matched = true;
-            return { ...s, image_url: imageUrl };
+        const where = userId ? 'WHERE id = $1 AND user_id = $2' : 'WHERE id = $1';
+        const params = userId ? [goalId, userId] : [goalId];
+        const { rows } = await client.query(
+            `SELECT scenarios FROM user_goals ${where} FOR UPDATE`,
+            params
+        );
+        const goal = rows[0];
+        if (!goal || !Array.isArray(goal.scenarios)) {
+            await client.query('ROLLBACK');
+            return false;
         }
-        return s;
-    });
-    if (!matched) return false;
 
-    await db.query(
-        `UPDATE user_goals SET scenarios = $1, updated_at = NOW() WHERE id = $2`,
-        [JSON.stringify(updated), goalId]
-    );
-    return true;
+        let matched = false;
+        const updated = goal.scenarios.map(s => {
+            if (s && s.title === scenarioTitle) {
+                matched = true;
+                return { ...s, image_url: imageUrl };
+            }
+            return s;
+        });
+        if (!matched) {
+            await client.query('ROLLBACK');
+            return false;
+        }
+
+        await client.query(
+            `UPDATE user_goals SET scenarios = $1, updated_at = NOW() WHERE id = $2`,
+            [JSON.stringify(updated), goalId]
+        );
+        await client.query('COMMIT');
+        return true;
+    } catch (e) {
+        await client.query('ROLLBACK');
+        throw e;
+    } finally {
+        client.release();
+    }
 };
 
 module.exports = User;

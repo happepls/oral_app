@@ -185,10 +185,16 @@ exports.uploadImageFromUrl = async (req, res) => {
         const ext = extFromContentType(contentType);
         const date = new Date();
         const key = `scenario-images/${date.getFullYear()}/${date.getMonth() + 1}/${date.getDate()}/${uuidv4()}${ext}`;
-        await uploadBuffer(buffer, key, contentType);
-
         const bucket = process.env.TENCENT_BUCKET;
         const region = process.env.TENCENT_REGION;
+        if (!bucket || !region) {
+            // Fail loudly instead of building "https://undefined.cos.undefined…".
+            console.error('[media] TENCENT_BUCKET / TENCENT_REGION not configured');
+            return res.status(500).json({ error: 'COS storage not configured' });
+        }
+
+        await uploadBuffer(buffer, key, contentType);
+
         const publicUrl = `https://${bucket}.cos.${region}.myqcloud.com/${key}`;
 
         // Don't leak the internal COS storage key — callers only need the URL.

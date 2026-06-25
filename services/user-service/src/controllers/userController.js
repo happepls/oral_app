@@ -797,14 +797,35 @@ exports.updateTaskScoreInternal = async (req, res) => {
 // Internal: persist a scenario cover image URL into user_goals.scenarios[i].image_url.
 // Called by ai-omni after re-hosting the generated cover to COS. Internal network
 // skips JWT (internalAuthWithNetworkSkip). Idempotent + best-effort (cosmetic).
+// Cover image URLs must originate from our own COS or the DashScope OSS that
+// the t2i pipeline uses — hardening against a compromised internal caller
+// persisting an arbitrary URL into the cosmetic scenarios JSONB.
+const ALLOWED_IMAGE_URL_HOSTS = [
+    /\.myqcloud\.com$/i,
+    /\.aliyuncs\.com$/i,
+    /(^|\.)dashscope(-intl)?\.aliyuncs\.com$/i,
+];
+function isAllowedImageUrl(url) {
+    try {
+        const u = new URL(url);
+        if (u.protocol !== 'https:' && u.protocol !== 'http:') return false;
+        return ALLOWED_IMAGE_URL_HOSTS.some((re) => re.test(u.hostname));
+    } catch {
+        return false;
+    }
+}
+
 exports.updateScenarioImageInternal = async (req, res) => {
     try {
         const goalId = req.params.goalId;
-        const { scenario_title, image_url } = req.body || {};
+        const { scenario_title, image_url, user_id } = req.body || {};
         if (!goalId || !scenario_title || !image_url) {
             return res.status(400).json({ success: false, message: 'goalId, scenario_title, image_url required' });
         }
-        const updated = await User.updateScenarioImage(goalId, scenario_title, image_url);
+        if (!isAllowedImageUrl(image_url)) {
+            return res.status(400).json({ success: false, message: 'image_url host not allowed' });
+        }
+        const updated = await User.updateScenarioImage(goalId, scenario_title, image_url, user_id || null);
         if (!updated) {
             console.log(`[User] Scenario image write-back skipped (goal=${goalId}, scenario not found)`);
             return res.json({ success: true, updated: false });
