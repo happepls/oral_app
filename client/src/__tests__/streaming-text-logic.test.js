@@ -1,5 +1,5 @@
 // client/src/__tests__/streaming-text-logic.test.js
-import { cleanStreamingText, appendDelta } from '../pages/streamingTextLogic';
+import { cleanStreamingText, appendDelta, aiBubbleRenderState } from '../pages/streamingTextLogic';
 
 describe('cleanStreamingText - closed markers', () => {
   test('strips [TASK_N_COMPLETE]', () => {
@@ -47,6 +47,40 @@ describe('cleanStreamingText - benign / edge cases', () => {
     expect(cleanStreamingText('')).toBe('');
     expect(cleanStreamingText(undefined)).toBe('');
     expect(cleanStreamingText(null)).toBe('');
+  });
+});
+
+describe('aiBubbleRenderState', () => {
+  test('streaming with text (isFinal=false, hasContent) → text, NOT dots', () => {
+    expect(aiBubbleRenderState({ isFinal: false, hasContent: true })).toBe('text');
+  });
+  test('streaming with no text yet (isFinal=false, empty) → dots', () => {
+    expect(aiBubbleRenderState({ isFinal: false, hasContent: false })).toBe('dots');
+  });
+  test('final arrived, audio not yet, but has content → text (no flash back to dots)', () => {
+    expect(aiBubbleRenderState({
+      isFinal: true, hasContent: true, audioUrl: undefined, audioPlayed: false,
+    })).toBe('text');
+  });
+  test('final, empty content, no audio yet → dots (legacy waiting state)', () => {
+    expect(aiBubbleRenderState({
+      isFinal: true, hasContent: false, audioUrl: undefined, audioPlayed: false,
+    })).toBe('dots');
+  });
+  test('normal final with content and audioUrl → text', () => {
+    expect(aiBubbleRenderState({
+      isFinal: true, hasContent: true, audioUrl: 'https://x/a.wav', audioPlayed: false,
+    })).toBe('text');
+  });
+  test('history message: audioPlayed=true, no audioUrl, has content → text', () => {
+    expect(aiBubbleRenderState({
+      isFinal: true, hasContent: true, audioUrl: undefined, audioPlayed: true,
+    })).toBe('text');
+  });
+  test('history message empty content, audioPlayed=true → text (skip loading)', () => {
+    expect(aiBubbleRenderState({
+      isFinal: true, hasContent: false, audioUrl: undefined, audioPlayed: true,
+    })).toBe('text');
   });
 });
 
