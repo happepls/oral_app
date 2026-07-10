@@ -1163,6 +1163,7 @@ exports.markOnboardingTourComplete = async (req, res) => {
 // ===== Daily Scenario Count =====
 exports.getDailyScenarioCount = async (req, res) => {
     try {
+        const db = require('../models/db');
         const userId = req.user.id;
         // Count distinct scenarios completed today (server timezone: UTC)
         const result = await db.query(
