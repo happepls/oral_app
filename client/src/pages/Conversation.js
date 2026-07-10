@@ -15,7 +15,7 @@ import OptimizedWebSocket from '../utils/websocket-optimized';
 import { motion, AnimatePresence } from 'motion/react';
 import { useTranslation } from 'react-i18next';
 import { resolveDailyLimitModal } from './dailyLimitLogic';
-import { shouldUseProgressiveAudio } from './audioPlaybackLogic';
+import { shouldUseProgressiveAudio, progressiveAudioSrc, nextProgressiveAttempt } from './audioPlaybackLogic';
 import { cleanStreamingText, appendDelta, aiBubbleRenderState } from './streamingTextLogic';
 
 const MAGIC_TIPS = [
@@ -885,47 +885,71 @@ function Conversation() {
     const proxyUrl = `/api/media/proxy?url=${encodeURIComponent(audioUrl)}`;
 
     if (shouldUseProgressiveAudio(autoQueue, nextStartTimeRef.current, audioContextRef.current?.currentTime ?? 0)) {
-      try {
-        const audio = new Audio(proxyUrl);
-        // Replace any previous progressive element so stop/overlap is clean.
-        if (htmlAudioRef.current) {
-          try { htmlAudioRef.current.pause(); } catch (_) {}
+      // Try the raw COS URL directly first (fast, ~200ms from CN, Range-capable,
+      // no proxy handshake). On error, fall back to the media proxy once. A
+      // proxy failure is terminal — nextProgressiveAttempt returns null to
+      // prevent a direct↔proxy retry loop.
+      const startProgressive = (attempt) => {
+        try {
+          const src = progressiveAudioSrc(audioUrl, attempt);
+          const audio = new Audio(src);
+          // Replace any previous progressive element so stop/overlap is clean.
+          if (htmlAudioRef.current) {
+            try { htmlAudioRef.current.pause(); } catch (_) {}
+          }
+          htmlAudioRef.current = audio;
+
+          setIsAISpeaking(true);
+          setIsWaitingForAIResponse(false);
+          setPlayingAudioUrl(audioUrl);
+
+          // Feed the CC caption progress ratio from the element itself. Once
+          // metadata is known we anchor speechStartTimeRef to the AudioContext
+          // clock so getProgressRatio (ctx.currentTime - start)/total still works.
+          audio.addEventListener('loadedmetadata', () => {
+            const ctx = audioContextRef.current;
+            if (ctx && isFinite(audio.duration)) {
+              speechStartTimeRef.current = ctx.currentTime;
+              speechTotalDurationRef.current = audio.duration;
+            }
+          });
+
+          const cleanup = () => {
+            if (htmlAudioRef.current === audio) htmlAudioRef.current = null;
+            setPlayingAudioUrl(prev => prev === audioUrl ? null : prev);
+            // Only clear speaking state if no Web Audio queue is still running.
+            const ctxNow = audioContextRef.current?.currentTime ?? 0;
+            if (audioQueueRef.current.length === 0 && nextStartTimeRef.current <= ctxNow + 0.05) {
+              setIsAISpeaking(false);
+              setIsWaitingForAIResponse(false);
+            }
+          };
+          audio.addEventListener('ended', cleanup);
+          audio.addEventListener('pause', cleanup);
+          audio.addEventListener('error', () => {
+            // Only this element still current? Otherwise a newer play superseded it.
+            if (htmlAudioRef.current !== audio) return;
+            const fallback = nextProgressiveAttempt(attempt);
+            if (fallback) {
+              try { audio.pause(); } catch (_) {}
+              startProgressive(fallback);
+            } else {
+              cleanup();
+            }
+          });
+
+          audio.play().catch(() => {
+            // play() rejection (autoplay/decode) — try the fallback path too.
+            if (htmlAudioRef.current !== audio) return;
+            const fallback = nextProgressiveAttempt(attempt);
+            if (fallback) startProgressive(fallback);
+          });
+        } catch (err) {
+          // Silently ignore playback errors - audio playback is optional
         }
-        htmlAudioRef.current = audio;
+      };
 
-        setIsAISpeaking(true);
-        setIsWaitingForAIResponse(false);
-        setPlayingAudioUrl(audioUrl);
-
-        // Feed the CC caption progress ratio from the element itself. Once
-        // metadata is known we anchor speechStartTimeRef to the AudioContext
-        // clock so getProgressRatio (ctx.currentTime - start)/total still works.
-        audio.addEventListener('loadedmetadata', () => {
-          const ctx = audioContextRef.current;
-          if (ctx && isFinite(audio.duration)) {
-            speechStartTimeRef.current = ctx.currentTime;
-            speechTotalDurationRef.current = audio.duration;
-          }
-        });
-
-        const cleanup = () => {
-          if (htmlAudioRef.current === audio) htmlAudioRef.current = null;
-          setPlayingAudioUrl(prev => prev === audioUrl ? null : prev);
-          // Only clear speaking state if no Web Audio queue is still running.
-          const ctxNow = audioContextRef.current?.currentTime ?? 0;
-          if (audioQueueRef.current.length === 0 && nextStartTimeRef.current <= ctxNow + 0.05) {
-            setIsAISpeaking(false);
-            setIsWaitingForAIResponse(false);
-          }
-        };
-        audio.addEventListener('ended', cleanup);
-        audio.addEventListener('pause', cleanup);
-        audio.addEventListener('error', cleanup);
-
-        await audio.play();
-      } catch (err) {
-        // Silently ignore playback errors - audio playback is optional
-      }
+      startProgressive('direct');
       return;
     }
 
