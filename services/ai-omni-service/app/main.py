@@ -8,6 +8,7 @@ import time
 import re
 import traceback
 import os
+import urllib.parse
 from datetime import datetime
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Query, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -1592,7 +1593,7 @@ async def call_proficiency_workflow(user_id: str, goal_id: int, task_id: int, co
 
                     # 获取下一个待完成任务
                     next_task_resp = await client.get(
-                        f"{user_service_url}/api/users/goals/next-task?scenario_title={scenario_title}",
+                        f"{user_service_url}/api/users/goals/next-task?scenario_title={urllib.parse.quote(str(scenario_title))}",
                         headers={"Authorization": f"Bearer {token}"}
                     )
 
@@ -2613,7 +2614,7 @@ class WebSocketCallback(OmniRealtimeCallback):
 
                                             # Fetch next pending task to update user_context
                                             next_task_resp = await client.get(
-                                                f"{user_service_url}/api/users/goals/next-task?scenario_title={self.scenario}",
+                                                f"{user_service_url}/api/users/goals/next-task?scenario_title={urllib.parse.quote(str(self.scenario))}",
                                                 headers={"Authorization": f"Bearer {self.token}"}
                                             )
                                             if next_task_resp.status_code == 200:
