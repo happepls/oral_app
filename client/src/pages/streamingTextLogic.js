@@ -17,13 +17,46 @@
 // identical. The authoritative full text still replaces the streamed content
 // when the final `ai_message`/`ai_response` frame arrives.
 
+// Marker content may itself contain nested brackets that the LLM generated as
+// part of the visible text — e.g. `[MAGIC_SENTENCE: use [brackets]] now`. A
+// naive `[^\]]*` character class stops at the first inner `]`, so the closing
+// bracket(s) of the marker leak into the display text (`say ] now`). The
+// `MARKER_BODY` fragment below matches a marker body that permits balanced
+// nested `[...]` / `<...>` pairs one level deep, plus any run of non-bracket
+// chars, so the match extends to the marker's true outermost closer. One level
+// of nesting covers every real case the model emits; deeper nesting is not
+// something the prompt ever produces.
+//
+// Expansion of the body (for `[ ]` variant): (?:[^\][]|\[[^\]]*\])*
+//   [^\][]        — any char that is neither `[` nor `]`
+//   \[[^\]]*\]    — a complete nested `[...]` pair
+// The `< >` variant mirrors this with angle brackets. Because both bracket
+// styles can open a marker, each pattern accepts either closer at the top level.
+
+// Body allowing one level of nested [ ] pairs; consumes up to (not including)
+// the outermost `]`.
+const SQ_BODY = '(?:[^\\][]|\\[[^\\]]*\\])*';
+// Body allowing one level of nested < > pairs.
+const NG_BODY = '(?:[^<>]|<[^>]*>)*';
+
 // Fully-closed marker patterns (order-independent; each is global).
 const CLOSED_MARKER_PATTERNS = [
-  /\[TASK_\d+_COMPLETE[^\]]*\]/gi,
-  /[[<]MAGIC_SENTENCE:[^\]>]*[\]>]/gi,
-  /\[MAGIC_PASS[^\]]*\]/gi,
+  new RegExp(`\\[TASK_\\d+_COMPLETE${SQ_BODY}\\]`, 'gi'),
+  // MAGIC_SENTENCE accepts either bracket style; match the matching closer.
+  new RegExp(`\\[MAGIC_SENTENCE:${SQ_BODY}\\]`, 'gi'),
+  new RegExp(`<MAGIC_SENTENCE:${NG_BODY}>`, 'gi'),
+  new RegExp(`\\[MAGIC_PASS${SQ_BODY}\\]`, 'gi'),
   /\[DAILY_QA_PASSED\]/gi,
-  /\[\s*NATIVE:\s*[^\]]*\]/gi,
+  new RegExp(`\\[\\s*NATIVE:\\s*${SQ_BODY}\\]`, 'gi'),
+];
+
+// Additional markers stripped in Conversation.js render/history paths. Kept
+// here so all marker regexes live in one module (single definition point).
+const EXTRA_MARKER_PATTERNS = [
+  new RegExp(`\\[TASK_COMPLET\\w*${SQ_BODY}\\]`, 'gi'),
+  new RegExp(`\\[TASK_SWITCH${SQ_BODY}\\]`, 'gi'),
+  new RegExp(`\\[TASK_READY${SQ_BODY}\\]`, 'gi'),
+  new RegExp(`\\[PHASE_START${SQ_BODY}\\]`, 'gi'),
 ];
 
 // Strip all fully-closed markers from `text`.
@@ -33,6 +66,40 @@ function stripClosedMarkers(text) {
     out = out.replace(re, '');
   }
   return out;
+}
+
+// Strip the full marker set (streaming markers + the extra TASK_*/PHASE_START
+// markers stripped in Conversation.js). Used by the shared display-cleaning
+// helper so streamed, final, history, and render text all strip identically.
+export function stripAllMarkers(text) {
+  if (!text) return text || '';
+  let out = text;
+  for (const re of CLOSED_MARKER_PATTERNS) {
+    out = out.replace(re, '');
+  }
+  for (const re of EXTRA_MARKER_PATTERNS) {
+    out = out.replace(re, '');
+  }
+  return out;
+}
+
+// Extract the MAGIC_SENTENCE body from `text` (or '' if absent). Accepts both
+// `[ ]` and `< >` bracket styles and tolerates a missing closer (streaming tail
+// / truncated marker). Uses the nested-bracket-aware body so a sentence like
+// `[MAGIC_SENTENCE: say [hi]]` yields `say [hi]`, not `say [hi`.
+const MAGIC_SENTENCE_EXTRACT = new RegExp(
+  `\\[MAGIC_SENTENCE:\\s*(${SQ_BODY})\\]|` +
+  `<MAGIC_SENTENCE:\\s*(${NG_BODY})>|` +
+  // Unclosed tail: grab everything after the colon to end of line.
+  `[[<]MAGIC_SENTENCE:\\s*([^\\]>]*)$`,
+  's'
+);
+
+export function extractMagicSentence(text) {
+  if (!text) return '';
+  const m = text.match(MAGIC_SENTENCE_EXTRACT);
+  if (!m) return '';
+  return (m[1] ?? m[2] ?? m[3] ?? '').trim();
 }
 
 // Hide a trailing, not-yet-closed marker. During streaming the tail may be a

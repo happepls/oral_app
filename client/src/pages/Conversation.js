@@ -16,7 +16,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import { useTranslation } from 'react-i18next';
 import { resolveDailyLimitModal } from './dailyLimitLogic';
 import { shouldUseProgressiveAudio, progressiveAudioSrc, nextProgressiveAttempt } from './audioPlaybackLogic';
-import { cleanStreamingText, appendDelta, aiBubbleRenderState } from './streamingTextLogic';
+import { cleanStreamingText, appendDelta, aiBubbleRenderState, stripAllMarkers, extractMagicSentence } from './streamingTextLogic';
 
 const MAGIC_TIPS = [
   '点击消息气泡右侧的喇叭图标，可重听 AI 的示范发音。',
@@ -95,10 +95,7 @@ const DEFAULT_SCENARIOS = {
 
 function stripAIMarkers(text) {
   if (!text) return text;
-  return text
-    .replace(/\[DAILY_QA_PASSED\]/gi, '')
-    .replace(/\[\s*NATIVE:\s*[^\]]*\]/gi, '')
-    .trim();
+  return stripAllMarkers(text).trim();
 }
 
 // Determine whether to suppress auto-play for a given AI message at index `idx`.
@@ -1539,18 +1536,18 @@ function Conversation() {
            // 检测文本标记（降级方案）
            let cleanContent = aiContent;
 
-           // 提取 MAGIC_SENTENCE（兼容 [ ] 和 < > 两种括号，兼容缺少结尾符的情况）
+           // 提取 MAGIC_SENTENCE（兼容 [ ] 和 < > 两种括号，兼容缺少结尾符/嵌套括号）
            if (aiContent && (aiContent.includes('[MAGIC_SENTENCE:') || aiContent.includes('<MAGIC_SENTENCE:'))) {
-               const sentenceMatch = aiContent.match(/[\[<]MAGIC_SENTENCE:\s*([^\]>]+?)(?:[\]>]|$)/s);
-               if (sentenceMatch) {
+               const raw = extractMagicSentence(aiContent);
+               if (raw) {
                    // 去掉末尾的 "Please repeat..." 等指令文字
-                   const sentence = sentenceMatch[1]
+                   const sentence = raw
                        .replace(/\.?\s*[Pp]lease\s+(repeat|say|try|recite)[\s\S]*/i, '')
                        .trim();
-                   setCurrentMagicSentence(sentence || sentenceMatch[1].trim());
+                   setCurrentMagicSentence(sentence || raw);
                }
-               // 从显示文字中移除标记（兼容 [ ] 和 < > 两种括号）
-               cleanContent = aiContent.replace(/[\[<]MAGIC_SENTENCE:[^\]>]*[\]>]?\s*/g, '').trim();
+               // 从显示文字中移除标记（共享正则，兼容嵌套括号）
+               cleanContent = stripAllMarkers(aiContent).trim();
            }
 
            if (aiContent && aiContent.includes('[MAGIC_PASS]')) {
@@ -1617,16 +1614,16 @@ function Conversation() {
            let responseText = data.text || '';
            console.log('🤖 AI Response:', responseText);
 
-           // 提取 MAGIC_SENTENCE 标记（兼容 [ ] 和 < > 两种括号，兼容缺少结尾符）
+           // 提取 MAGIC_SENTENCE 标记（兼容 [ ] 和 < > 两种括号，兼容缺少结尾符/嵌套括号）
            if (responseText.includes('[MAGIC_SENTENCE:') || responseText.includes('<MAGIC_SENTENCE:')) {
-               const sentenceMatch = responseText.match(/[\[<]MAGIC_SENTENCE:\s*([^\]>]+?)(?:[\]>]|$)/s);
-               if (sentenceMatch) {
-                   const sentence = sentenceMatch[1]
+               const raw = extractMagicSentence(responseText);
+               if (raw) {
+                   const sentence = raw
                        .replace(/\.?\s*[Pp]lease\s+(repeat|say|try|recite)[\s\S]*/i, '')
                        .trim();
-                   setCurrentMagicSentence(sentence || sentenceMatch[1].trim());
+                   setCurrentMagicSentence(sentence || raw);
                }
-               responseText = responseText.replace(/[\[<]MAGIC_SENTENCE:[^\]>]+[\]>]?\s*/g, '');
+               responseText = stripAllMarkers(responseText);
            }
 
            // 提取并移除 MAGIC_PASS 标记
@@ -2566,21 +2563,11 @@ function Conversation() {
                       const historyMessages = historyRes.messages.map(msg => {
                           let content = msg.content || '';
                           if (msg.role !== 'user') {
-                              // 提取最新的 MAGIC_SENTENCE（取最后一条）
-                              const match = content.match(/\[MAGIC_SENTENCE:\s*(.+?)\]/);
-                              if (match) lastMagicSentence = match[1].trim();
-                              // 剥离所有标记
-                              content = content
-                                  .replace(/[\[<]MAGIC_SENTENCE:[^\]>]*[\]>]?\s*/gi, '')
-                                  .replace(/\s*\[MAGIC_PASS[^\]]*\]/gi, '')
-                                  .replace(/\[TASK_\d+_COMPLETE[^\]]*\]/gi, '')
-                                  .replace(/\[TASK_COMPLET\w*[^\]]*\]/gi, '')
-                                  .replace(/\[TASK_SWITCH[^\]]*\]/gi, '')
-                                  .replace(/\[TASK_READY[^\]]*\]/gi, '')
-                                  .replace(/\[PHASE_START[^\]]*\]/gi, '')
-                                  .replace(/\[DAILY_QA_PASSED\]/gi, '')
-                                  .replace(/\[\s*NATIVE:\s*[^\]]*\]/gi, '')
-                                  .trim();
+                              // 提取最新的 MAGIC_SENTENCE（取最后一条，共享正则兼容嵌套括号）
+                              const magic = extractMagicSentence(content);
+                              if (magic) lastMagicSentence = magic;
+                              // 剥离所有标记（共享单一定义点）
+                              content = stripAllMarkers(content).trim();
                           }
                           return {
                               type: msg.role === 'user' ? 'user' : 'ai',
@@ -3341,18 +3328,7 @@ function Conversation() {
           
           const isAI = msg.type === 'ai';
           const displayContent = msg.content
-            ? msg.content
-                .replace(/```json[\s\S]*?```/g, '')
-                .replace(/\[TASK_\d+_COMPLETE[^\]]*\]/gi, '')
-                .replace(/\[TASK_COMPLET\w*[^\]]*\]/gi, '')
-                .replace(/\[TASK_SWITCH[^\]]*\]/gi, '')
-                .replace(/\[TASK_READY[^\]]*\]/gi, '')
-                .replace(/\[PHASE_START[^\]]*\]/gi, '')
-                .replace(/[\[<]MAGIC_SENTENCE:[^\]>]*[\]>]?/gi, '')
-                .replace(/\[MAGIC_PASS[^\]]*\]/gi, '')
-                .replace(/\[DAILY_QA_PASSED\]/gi, '')
-                .replace(/\[\s*NATIVE:\s*[^\]]*\]/gi, '')
-                .trim()
+            ? stripAllMarkers(msg.content.replace(/```json[\s\S]*?```/g, '')).trim()
             : '';
 
 
