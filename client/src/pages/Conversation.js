@@ -16,7 +16,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import { useTranslation } from 'react-i18next';
 import { resolveDailyLimitModal } from './dailyLimitLogic';
 import { shouldUseProgressiveAudio } from './audioPlaybackLogic';
-import { cleanStreamingText, appendDelta } from './streamingTextLogic';
+import { cleanStreamingText, appendDelta, aiBubbleRenderState } from './streamingTextLogic';
 
 const MAGIC_TIPS = [
   '点击消息气泡右侧的喇叭图标，可重听 AI 的示范发音。',
@@ -3344,7 +3344,12 @@ function Conversation() {
               <MessageBubble
                 type={isAI ? 'ai' : 'user'}
                 message={displayContent}
-                state={isAI && (!msg.isFinal || (!msg.audioUrl && msg.audioPlayed !== true)) ? 'loading' : 'default'}
+                state={isAI && aiBubbleRenderState({
+                  isFinal: msg.isFinal,
+                  hasContent: !!displayContent,
+                  audioUrl: msg.audioUrl,
+                  audioPlayed: msg.audioPlayed,
+                }) === 'dots' ? 'loading' : 'default'}
                 footer={msg.audioUrl ? (
                   <AudioBar
                     audioUrl={msg.audioUrl}

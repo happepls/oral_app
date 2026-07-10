@@ -78,3 +78,25 @@ export function cleanStreamingText(text) {
 export function appendDelta(prevContent, delta) {
   return (prevContent || '') + (delta || '');
 }
+
+// Decide the MessageBubble render state ('text' | 'dots') for an AI bubble.
+//
+// The old state machine showed the loading dots whenever `!isFinal`, and also
+// while `isFinal` but audio hadn't arrived (`!audioUrl && audioPlayed !== true`).
+// With streaming text (`ai_text_delta`), that hid the visible reply behind dots
+// for the whole streaming window, and made the text flash back to dots the
+// instant the final frame set `isFinal:true` before `audioUrl` arrived.
+//
+// New rule: content wins. As soon as there is any displayable text, show it.
+// Dots only appear while there is genuinely nothing to display yet:
+//   - streaming with no text yet (delta bubble created but first char pending),
+//   - final-but-empty waiting states.
+// `hasContent` is the already-cleaned/displayable string's non-emptiness so the
+// caller strips markers first (matching the render path).
+export function aiBubbleRenderState({ isFinal, hasContent, audioUrl, audioPlayed }) {
+  if (hasContent) return 'text';
+  // No content to show — fall back to the legacy loading conditions.
+  if (!isFinal) return 'dots';
+  if (!audioUrl && audioPlayed !== true) return 'dots';
+  return 'text';
+}
