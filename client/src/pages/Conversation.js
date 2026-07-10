@@ -15,6 +15,7 @@ import OptimizedWebSocket from '../utils/websocket-optimized';
 import { motion, AnimatePresence } from 'motion/react';
 import { useTranslation } from 'react-i18next';
 import { resolveDailyLimitModal } from './dailyLimitLogic';
+import { shouldUseProgressiveAudio } from './audioPlaybackLogic';
 
 const MAGIC_TIPS = [
   '点击消息气泡右侧的喇叭图标，可重听 AI 的示范发音。',
@@ -730,6 +731,11 @@ function Conversation() {
   // Audio context and refs
   const audioContextRef = useRef(null);
   const nextStartTimeRef = useRef(0);
+  // Progressive playback of COS replay audio uses a plain HTMLAudioElement
+  // (edge-download-and-play, first byte out) instead of Web Audio's
+  // fetch-whole-file-then-decode. Kept in a ref so stopAudioPlayback can pause
+  // and clear it, and so the CC caption can read its currentTime/duration.
+  const htmlAudioRef = useRef(null);
   // CC caption rolling: track when current AI speech started + total duration
   // at that moment, so we can compute "played ratio" and pick which sentence
   // should be on screen. Reset on each new turn (when isAISpeaking flips
@@ -779,6 +785,11 @@ function Conversation() {
       }
     });
     audioQueueRef.current = [];
+    // Also stop any progressive HTMLAudio replay in flight.
+    if (htmlAudioRef.current) {
+      try { htmlAudioRef.current.pause(); } catch (e) { /* ignore */ }
+      htmlAudioRef.current = null;
+    }
     nextStartTimeRef.current = 0;
     // New turn boundary: forget whether the previous turn streamed audio.
     streamedAudioSinceCutRef.current = false;
@@ -860,12 +871,64 @@ function Conversation() {
     }
   };
 
-  // Fetch audio via API proxy to avoid CORS issues
+  // Fetch audio via API proxy to avoid CORS issues.
+  // Two playback strategies (see shouldUseProgressiveAudio):
+  //  - Progressive HTMLAudioElement: edge-download-and-play, first byte out
+  //    immediately. Used for user replay (autoQueue=false) — the common case —
+  //    where there's no sample-accurate queue to preserve. On the production
+  //    path (CN browser → Cloudflare → Bangkok Nginx → COS Shanghai) the old
+  //    fetch-whole-WAV-then-decode added ~3s of silence before first sound.
+  //  - Web Audio buffer: retained for autoQueue=true chaining, which needs
+  //    Web Audio's sample-level scheduling that HTMLAudio can't provide.
   const fetchAudioViaProxy = async (audioUrl, autoQueue = false) => {
-    try {
-      // Use our API gateway as a proxy to fetch the audio
-      const proxyUrl = `/api/media/proxy?url=${encodeURIComponent(audioUrl)}`;
+    const proxyUrl = `/api/media/proxy?url=${encodeURIComponent(audioUrl)}`;
 
+    if (shouldUseProgressiveAudio(autoQueue, nextStartTimeRef.current, audioContextRef.current?.currentTime ?? 0)) {
+      try {
+        const audio = new Audio(proxyUrl);
+        // Replace any previous progressive element so stop/overlap is clean.
+        if (htmlAudioRef.current) {
+          try { htmlAudioRef.current.pause(); } catch (_) {}
+        }
+        htmlAudioRef.current = audio;
+
+        setIsAISpeaking(true);
+        setIsWaitingForAIResponse(false);
+        setPlayingAudioUrl(audioUrl);
+
+        // Feed the CC caption progress ratio from the element itself. Once
+        // metadata is known we anchor speechStartTimeRef to the AudioContext
+        // clock so getProgressRatio (ctx.currentTime - start)/total still works.
+        audio.addEventListener('loadedmetadata', () => {
+          const ctx = audioContextRef.current;
+          if (ctx && isFinite(audio.duration)) {
+            speechStartTimeRef.current = ctx.currentTime;
+            speechTotalDurationRef.current = audio.duration;
+          }
+        });
+
+        const cleanup = () => {
+          if (htmlAudioRef.current === audio) htmlAudioRef.current = null;
+          setPlayingAudioUrl(prev => prev === audioUrl ? null : prev);
+          // Only clear speaking state if no Web Audio queue is still running.
+          const ctxNow = audioContextRef.current?.currentTime ?? 0;
+          if (audioQueueRef.current.length === 0 && nextStartTimeRef.current <= ctxNow + 0.05) {
+            setIsAISpeaking(false);
+            setIsWaitingForAIResponse(false);
+          }
+        };
+        audio.addEventListener('ended', cleanup);
+        audio.addEventListener('pause', cleanup);
+        audio.addEventListener('error', cleanup);
+
+        await audio.play();
+      } catch (err) {
+        // Silently ignore playback errors - audio playback is optional
+      }
+      return;
+    }
+
+    try {
       const response = await fetch(proxyUrl);
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
 
@@ -2681,6 +2744,12 @@ function Conversation() {
                 const currentState = socketRef.current?.getReadyState?.() || socketRef.current?.readyState;
                 if (currentState === WebSocket.OPEN) {
                     console.log('✅ WebSocket now ready, sending user_audio_ended');
+                    // Re-enable streaming playback for the AI reply that follows.
+                    // handleRecordingStart set isInterruptedRef=true to interrupt the
+                    // previous turn; without this reset every streaming PCM chunk of
+                    // the new reply is dropped in playAudioChunk and the user only
+                    // hears the (much later) COS audio_url.
+                    isInterruptedRef.current = false;
                     socketRef.current.send(JSON.stringify({ type: 'user_audio_ended' }));
                 } else if (currentState === WebSocket.CONNECTING) {
                     // Still connecting, check again in 100ms
@@ -2707,6 +2776,9 @@ function Conversation() {
     }
 
     console.log('📤 Sending user_audio_ended');
+    // Re-enable streaming playback for the AI reply that follows. See the
+    // matching reset in the waitForConnection path above.
+    isInterruptedRef.current = false;
     socketRef.current.send(JSON.stringify({ type: 'user_audio_ended' }));
     console.log('✅ user_audio_ended sent, keeping WebSocket open for AI response');
   };
