@@ -2691,7 +2691,7 @@ function Conversation() {
     // Send interruption signal to backend
     console.log('🔇 Interruption triggered - stopping AI response and starting new turn');
     if (socketRef.current?.getReadyState?.() === WebSocket.OPEN || socketRef.current?.readyState === WebSocket.OPEN) {
-        socketRef.current.send(JSON.stringify({ type: 'user_interruption' }));
+        socketRef.current.send(JSON.stringify({ type: 'interrupt' }));
     }
   };
 
