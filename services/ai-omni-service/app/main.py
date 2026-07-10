@@ -2787,7 +2787,18 @@ class WebSocketCallback(OmniRealtimeCallback):
                     self.ai_responding = False  # AI finished responding
                     if hasattr(self, '_sent_role_for_turn'): delattr(self, '_sent_role_for_turn')
                 elif event_name == 'error':
-                    await self._safe_send({"type": "error", "payload": response})
+                    _err_msg = ''
+                    try:
+                        _err_msg = ((response or {}).get('error') or {}).get('message', '')
+                    except Exception:
+                        pass
+                    # Benign race: cancel_response landed after the response already
+                    # finished. Not a user-facing failure — swallow instead of
+                    # forwarding as a fatal Server Error.
+                    if 'none active response' in _err_msg.lower():
+                        logger.info(f"[Interrupt] Ignoring benign cancel miss: {_err_msg}")
+                    else:
+                        await self._safe_send({"type": "error", "payload": response})
             except Exception as e:
                 logger.error(f"Error processing event: {e}")
         asyncio.run_coroutine_threadsafe(process_event(), self.loop)
@@ -3231,7 +3242,11 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query(None), ses
                 elif msg_type == 'interrupt':
                     callback.interrupted_turn = True
                     if callback.current_response_id: callback.ignored_response_ids.add(callback.current_response_id)
-                    if callback.is_connected:
+                    # Only cancel when a response is actually in flight — DashScope
+                    # returns an invalid_request_error event ("Conversation has none
+                    # active response") for a cancel with nothing active, which the
+                    # frontend surfaces as a fatal Server Error.
+                    if callback.is_connected and callback.ai_responding:
                         try:
                             conversation.cancel_response()
                         except Exception as e:
