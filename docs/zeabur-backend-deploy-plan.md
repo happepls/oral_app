@@ -67,7 +67,7 @@ npx zeabur@latest deploy --create --name user-service \
 | `STRIPE_WEBHOOK_SECRET` | `whsec_...`（.env L17，live webhook 建后确认/更新） |
 | `STRIPE_ALLOWED_ORIGINS` | `https://guajiguaji.top,https://www.guajiguaji.top` |
 | `BILLING_LINK` | `https://billing.stripe.com/p/login/...`（.env L18） |
-| `ZSEND_API_KEY` / `ZSEND_FROM` | 邮件（ZSEND_FROM=noreply@guajiguaji.top） |
+| `RESEND_API_KEY` / `RESEND_FROM` | 邮件（RESEND_FROM=Guaji AI <noreply@guajiguaji.top>） |
 | `TWILIO_*` (3) | 海外短信 |
 | `ALIYUN_SMS_*` (4) | 国内短信 |
 

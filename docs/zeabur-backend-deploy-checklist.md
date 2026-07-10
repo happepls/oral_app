@@ -33,7 +33,7 @@
 |---|------|------|
 | **C1** | **Stripe** | 切 live 模式；建 webhook endpoint 指向 `https://guajiguaji.top/api/stripe/webhook` 拿生产 `whsec_`；**live 模式单独激活 Customer Portal**（test 的激活不带到 live） |
 | **C2** | **Google OAuth** | Console「已授权 JavaScript 来源」+ redirect URI 加 `https://guajiguaji.top`，否则 Google 登录报 `redirect_uri_mismatch` |
-| **C3** | **ZSend（密码重置邮件）** | DNS 已验证 ✅，生产直接可用。`ZSEND_FROM=noreply@guajiguaji.top` |
+| **C3** | **Resend（密码重置邮件）** | 需在 Resend 验证发信域名（DNS SPF/DKIM 记录），配 `RESEND_API_KEY` + `RESEND_FROM=Guaji AI <noreply@guajiguaji.top>` |
 | **C4** | **Twilio（海外手机号）** | 海外号已通 ✅。中国大陆号 error 60220 需 Twilio Support 申请白名单（或靠阿里云兜底，见 C5） |
 | **C5** | **阿里云 SMS（国内手机号）** | 已通 ✅。——当前签名「杭州独步网络工程有限公司」 |
 | **C6** | **腾讯 COS（音频上传）** | 确认生产 `TENCENT_SECRET_*` 可用 + bucket CORS 允许生产域名 |

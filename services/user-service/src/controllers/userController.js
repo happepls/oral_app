@@ -1226,8 +1226,8 @@ exports.forgotPassword = async (req, res) => {
         });
 
         if (!result.sent) {
-            // 开发期/未配置 ZSend：把链接打到日志，方便本地走通流程。
-            // 生产配好 ZSEND_API_KEY 后此分支不会触发。
+            // 开发期/未配置 Resend：把链接打到日志，方便本地走通流程。
+            // 生产配好 RESEND_API_KEY 后此分支不会触发。
             console.warn(`[forgotPassword] 邮件未发送 (${result.reason})。重置链接(仅日志): ${resetUrl}`);
         }
         return res.json(genericOk);

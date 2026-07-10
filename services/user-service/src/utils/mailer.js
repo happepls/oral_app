@@ -1,23 +1,27 @@
 /**
- * mailer.js — Zeabur ZSend 邮件发送封装
+ * mailer.js — Resend 邮件发送封装
  *
- * 通过 ZSend REST API 发信（无 SMTP 依赖）。文档：
- * https://zeabur.com/docs/zh-TW/email/quick-start
- *   POST https://api.zeabur.com/api/v1/zsend/emails
- *   Authorization: Bearer <ZSEND_API_KEY>
+ * 通过 Resend REST API 发信（无 SMTP 依赖）。文档：
+ * https://resend.com/docs/api-reference/emails/send-email
+ *   POST https://api.resend.com/emails
+ *   Authorization: Bearer <RESEND_API_KEY>
+ *   Content-Type: application/json
+ *   Body: { from, to: [...], subject, html?, text? }
+ *   成功响应 JSON: { id }
  *
  * 环境变量（services/user-service/.env）：
- *   ZSEND_API_KEY  — ZSend API key（zs_...），send_only 或 all 权限
- *   ZSEND_FROM     — 发信地址，必须是 ZSend 已验证的域名（如 noreply@guajiguaji.top）
+ *   RESEND_API_KEY — Resend API key（re_...），在 https://resend.com/api-keys 创建
+ *   RESEND_FROM    — 发信地址，必须来自 Resend 已验证的域名
+ *                    （如 "Guaji AI <noreply@guajiguaji.top>"）
  *
- * 未配置 ZSEND_API_KEY 时 sendEmail 返回 {sent:false, reason:'not_configured'}，
+ * 未配置 RESEND_API_KEY 时 sendEmail 返回 {sent:false, reason:'not_configured'}，
  * 不抛错——调用方（密码重置）据此走开发期 fallback（日志输出链接）。
  */
 
-const ZSEND_ENDPOINT = 'https://api.zeabur.com/api/v1/zsend/emails';
+const RESEND_ENDPOINT = 'https://api.resend.com/emails';
 
 function isConfigured() {
-  return Boolean(process.env.ZSEND_API_KEY && process.env.ZSEND_FROM);
+  return Boolean(process.env.RESEND_API_KEY && process.env.RESEND_FROM);
 }
 
 /**
@@ -31,7 +35,7 @@ async function sendEmail({ to, subject, html, text }) {
   }
   const recipients = Array.isArray(to) ? to : [to];
   const body = {
-    from: process.env.ZSEND_FROM,
+    from: process.env.RESEND_FROM,
     to: recipients,
     subject,
   };
@@ -40,24 +44,24 @@ async function sendEmail({ to, subject, html, text }) {
   if (!html && !text) body.text = subject;
 
   try {
-    const res = await fetch(ZSEND_ENDPOINT, {
+    const res = await fetch(RESEND_ENDPOINT, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        Authorization: `Bearer ${process.env.ZSEND_API_KEY}`,
+        Authorization: `Bearer ${process.env.RESEND_API_KEY}`,
       },
       body: JSON.stringify(body),
     });
     if (!res.ok) {
       const errText = await res.text().catch(() => '');
-      console.error(`[mailer] ZSend send failed ${res.status}: ${errText.slice(0, 300)}`);
+      console.error(`[mailer] Resend send failed ${res.status}: ${errText.slice(0, 300)}`);
       return { sent: false, reason: `http_${res.status}` };
     }
     let data = {};
     try { data = await res.json(); } catch { /* ignore */ }
-    return { sent: true, id: data.id || data.message_id };
+    return { sent: true, id: data.id };
   } catch (err) {
-    console.error('[mailer] ZSend send error:', err.message);
+    console.error('[mailer] Resend send error:', err.message);
     return { sent: false, reason: 'network_error' };
   }
 }

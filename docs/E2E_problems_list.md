@@ -19,12 +19,12 @@
 ## 密码重置功能问题描述
 - **问题**：/login页面没有密码重置功能
 - **影响**：用户无法找回密码，只能通过联系客服重置密码。
-- ✅ **已实现并验证（Zeabur ZSend 发信）**：/login 加「忘记密码?」→ 输邮箱 → 收重置邮件 → `/reset-password?token=` 设新密码。
-  - 后端：`utils/mailer.js`（ZSend REST 封装，未配置则 fail-safe 返回 not_configured）。`POST /api/users/password/forgot`（防枚举恒 200，token hash 存 Redis `pwreset:` 30min TTL，发邮件）+ `POST /api/users/password/reset`（校验 token → `User.updateLocalPassword` bcrypt 写 `user_identities.provider_uid` → 删 token）。
+- ✅ **已实现并验证（Resend 发信，Jul 2026 由 ZSend 迁来）**：/login 加「忘记密码?」→ 输邮箱 → 收重置邮件 → `/reset-password?token=` 设新密码。
+  - 后端：`utils/mailer.js`（Resend REST 封装，未配置则 fail-safe 返回 not_configured）。`POST /api/users/password/forgot`（防枚举恒 200，token hash 存 Redis `pwreset:` 30min TTL，发邮件）+ `POST /api/users/password/reset`（校验 token → `User.updateLocalPassword` bcrypt 写 `user_identities.provider_uid` → 删 token）。
   - 前端：`ForgotPassword.js` + `ResetPassword.js` + App.js 路由 + Login「忘记密码」链接 + api.js + zh/en i18n（其余语言 fallback en）。
-  - 凭证：`ZSEND_API_KEY`/`ZSEND_FROM`/`PASSWORD_RESET_BASE_URL` 在 `.env`（gitignored）。
+  - 凭证：`RESEND_API_KEY`/`RESEND_FROM`/`PASSWORD_RESET_BASE_URL` 在 `.env`（gitignored）。
   - 验证：forgot → token 生成存 Redis；reset → 新密码登录 200；token 一次性（二次用 400）。**全链路逻辑通过**。
-  - ⏸️ **剩运维**：ZSend 发信域名 `guajiguaji.top` 待 DNS 验证（加 3 条 CNAME 后真发邮件；当前 ZSend 返 400 domain not found，走日志 fallback 输出重置链接）。
+  - ⏸️ **剩运维**：Resend 注册 + 创建 API key（https://resend.com/api-keys）+ 发信域名 `guajiguaji.top` DNS 验证（SPF/DKIM 记录）；未配置前走日志 fallback 输出重置链接。生产 Zeabur user-service env 换 `RESEND_API_KEY`/`RESEND_FROM` 并删旧 ZSEND_* 变量。
 
 ## 复述功能问题描述
 - **问题1**：/recall 页面 "按住说话" 按钮冗余，考虑将"跟读练习"与"背诵练习"的音频输入按钮合并为一个。
