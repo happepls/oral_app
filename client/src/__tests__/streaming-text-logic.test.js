@@ -1,5 +1,11 @@
 // client/src/__tests__/streaming-text-logic.test.js
-import { cleanStreamingText, appendDelta, aiBubbleRenderState } from '../pages/streamingTextLogic';
+import {
+  cleanStreamingText,
+  appendDelta,
+  aiBubbleRenderState,
+  stripAllMarkers,
+  extractMagicSentence,
+} from '../pages/streamingTextLogic';
 
 describe('cleanStreamingText - closed markers', () => {
   test('strips [TASK_N_COMPLETE]', () => {
@@ -18,6 +24,63 @@ describe('cleanStreamingText - closed markers', () => {
   test('multiple markers in one string', () => {
     expect(cleanStreamingText('a [TASK_0_COMPLETE] b [MAGIC_PASS] c'))
       .toBe('a  b  c');
+  });
+});
+
+describe('nested / edge brackets inside markers (regression)', () => {
+  test('MAGIC_SENTENCE body containing nested [brackets] does not leak the inner ]', () => {
+    expect(cleanStreamingText('say [MAGIC_SENTENCE: use [brackets]] now'))
+      .toBe('say  now');
+  });
+  test('angle MAGIC_SENTENCE body containing nested <tag> does not leak', () => {
+    expect(cleanStreamingText('say <MAGIC_SENTENCE: press <enter>> now'))
+      .toBe('say  now');
+  });
+  test('marker immediately followed by ordinary [bracketed] text is not over-consumed', () => {
+    expect(cleanStreamingText('ok [MAGIC_PASS] see [note] later'))
+      .toBe('ok  see [note] later');
+  });
+  test('MAGIC_SENTENCE then a later ordinary ] in normal text is preserved', () => {
+    expect(cleanStreamingText('say [MAGIC_SENTENCE: hi] and array[0] works'))
+      .toBe('say  and array[0] works');
+  });
+  test('two markers same line, first with nested bracket', () => {
+    expect(cleanStreamingText('a [MAGIC_SENTENCE: x [y]] b [MAGIC_PASS] c'))
+      .toBe('a  b  c');
+  });
+});
+
+describe('stripAllMarkers', () => {
+  test('strips TASK_SWITCH / TASK_READY / PHASE_START / TASK_COMPLETE variants', () => {
+    expect(stripAllMarkers('a [TASK_SWITCH] b [TASK_READY] c [PHASE_START] d [TASK_COMPLETED] e'))
+      .toBe('a  b  c  d  e');
+  });
+  test('strips NATIVE with nested bracket body', () => {
+    expect(stripAllMarkers('hi [NATIVE: 你好 [world]] there')).toBe('hi  there');
+  });
+  test('falsy input safe', () => {
+    expect(stripAllMarkers('')).toBe('');
+    expect(stripAllMarkers(undefined)).toBe('');
+    expect(stripAllMarkers(null)).toBe('');
+  });
+});
+
+describe('extractMagicSentence', () => {
+  test('extracts plain [ ] body', () => {
+    expect(extractMagicSentence('say [MAGIC_SENTENCE: hello world] now')).toBe('hello world');
+  });
+  test('extracts < > body', () => {
+    expect(extractMagicSentence('say <MAGIC_SENTENCE: hola> now')).toBe('hola');
+  });
+  test('extracts body with nested [brackets] intact', () => {
+    expect(extractMagicSentence('say [MAGIC_SENTENCE: use [brackets]] now')).toBe('use [brackets]');
+  });
+  test('tolerates unclosed marker (streaming tail)', () => {
+    expect(extractMagicSentence('please say [MAGIC_SENTENCE: hel')).toBe('hel');
+  });
+  test('returns empty when absent', () => {
+    expect(extractMagicSentence('no marker here')).toBe('');
+    expect(extractMagicSentence('')).toBe('');
   });
 });
 
