@@ -495,7 +495,7 @@ JSON Format (Initial Tips - Optional):
             scenario_title = current_task.get('scenario_title', 'General Practice')
             task_description = current_task.get('task_description', 'Practice conversation')
 
-            from .persona_config import get_persona_prompt, get_persona_name
+            from persona_config import get_persona_prompt, get_persona_name
             voice = user_context.get('voice', 'Tina')
             persona_name = get_persona_name(voice)
             persona_style = get_persona_prompt(voice)
