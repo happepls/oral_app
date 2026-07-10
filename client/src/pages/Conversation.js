@@ -16,6 +16,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import { useTranslation } from 'react-i18next';
 import { resolveDailyLimitModal } from './dailyLimitLogic';
 import { shouldUseProgressiveAudio } from './audioPlaybackLogic';
+import { cleanStreamingText, appendDelta } from './streamingTextLogic';
 
 const MAGIC_TIPS = [
   '点击消息气泡右侧的喇叭图标，可重听 AI 的示范发音。',
@@ -1463,6 +1464,47 @@ function Conversation() {
            setCurrentRole(data.payload.role);
            console.log('Role switched to:', data.payload.role);
            break;
+        case 'ai_text_delta': {
+           // Streaming AI reply text — arrives ~4s before the one-shot
+           // `ai_message`/`ai_response`, roughly in sync with streaming audio.
+           // Append the raw delta to the in-progress AI message and display the
+           // marker-cleaned view. `streamRaw` holds the un-cleaned accumulation
+           // so a marker split across deltas (e.g. "[TASK_" then "1_COMPLETE]")
+           // re-closes correctly instead of staying hidden.
+           const deltaPayload = data.payload || data;
+           const delta = deltaPayload.delta || '';
+           const deltaResponseId = deltaPayload.responseId;
+           if (!delta) break;
+
+           // A text delta means the model has started replying — drop the
+           // thinking/ellipsis state so streamed text/audio can show.
+           setIsWaitingForAIResponse(false);
+
+           setMessages(prev => {
+               const last = prev[prev.length - 1];
+               if (last && last.type === 'ai' && !last.isFinal) {
+                   const rawNext = appendDelta(last.streamRaw ?? last.content, delta);
+                   return [
+                       ...prev.slice(0, -1),
+                       {
+                           ...last,
+                           streamRaw: rawNext,
+                           content: cleanStreamingText(rawNext),
+                           responseId: last.responseId || deltaResponseId
+                       }
+                   ];
+               }
+               const rawNext = appendDelta('', delta);
+               return [...prev, {
+                   type: 'ai',
+                   streamRaw: rawNext,
+                   content: cleanStreamingText(rawNext),
+                   isFinal: false,
+                   responseId: deltaResponseId
+               }];
+           });
+           break;
+        }
         case 'ai_message':
            // Handle AI message from comms-service (contains text content in payload)
            console.log('🤖 AI Message:', data);
@@ -1531,6 +1573,19 @@ function Conversation() {
                        responseId: responseId
                    }];
                });
+           } else {
+               // Pure-marker reply (e.g. only [MAGIC_PASS]) strips to empty.
+               // The streaming ai_text_delta path may have already created an
+               // in-progress AI bubble — without finalizing it, it spins forever
+               // (render state ties loading to !isFinal). An empty bubble has no
+               // display value, so drop it rather than leave a blank loading row.
+               setMessages(prev => {
+                   const last = prev[prev.length - 1];
+                   if (last && last.type === 'ai' && !last.isFinal) {
+                       return prev.slice(0, -1);
+                   }
+                   return prev;
+               });
            }
            break;
         case 'ai_response': {
@@ -1567,7 +1622,16 @@ function Conversation() {
            setMessages(prev => {
                const last = prev[prev.length - 1];
                if (last && last.type === 'ai' && !last.isFinal) {
+                   // Pure-marker reply strips to empty: drop the in-progress
+                   // (streaming) bubble instead of leaving it spinning forever.
+                   if (!finalText) {
+                       return prev.slice(0, -1);
+                   }
                    return [...prev.slice(0, -1), { ...last, content: finalText, isFinal: true }];
+               }
+               // No in-progress bubble to finalize; only append when non-empty.
+               if (!finalText) {
+                   return prev;
                }
                return [...prev, { type: 'ai', content: finalText, isFinal: true }];
            });
