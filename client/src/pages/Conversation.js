@@ -1573,6 +1573,19 @@ function Conversation() {
                        responseId: responseId
                    }];
                });
+           } else {
+               // Pure-marker reply (e.g. only [MAGIC_PASS]) strips to empty.
+               // The streaming ai_text_delta path may have already created an
+               // in-progress AI bubble — without finalizing it, it spins forever
+               // (render state ties loading to !isFinal). An empty bubble has no
+               // display value, so drop it rather than leave a blank loading row.
+               setMessages(prev => {
+                   const last = prev[prev.length - 1];
+                   if (last && last.type === 'ai' && !last.isFinal) {
+                       return prev.slice(0, -1);
+                   }
+                   return prev;
+               });
            }
            break;
         case 'ai_response': {
@@ -1609,7 +1622,16 @@ function Conversation() {
            setMessages(prev => {
                const last = prev[prev.length - 1];
                if (last && last.type === 'ai' && !last.isFinal) {
+                   // Pure-marker reply strips to empty: drop the in-progress
+                   // (streaming) bubble instead of leaving it spinning forever.
+                   if (!finalText) {
+                       return prev.slice(0, -1);
+                   }
                    return [...prev.slice(0, -1), { ...last, content: finalText, isFinal: true }];
+               }
+               // No in-progress bubble to finalize; only append when non-empty.
+               if (!finalText) {
+                   return prev;
                }
                return [...prev, { type: 'ai', content: finalText, isFinal: true }];
            });
