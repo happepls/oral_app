@@ -3119,6 +3119,10 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query(None), ses
                         logger.info(f"[DailyLimit] blocked(audio) user={callback.user_id} {_info}")
                         continue
                     callback.counts_against_quota = True  # 本轮是真用户练习输入 → 记入额度
+                    # New user turn: the previous turn's interruption is over —
+                    # without this reset the delta gate at on-event drops ALL
+                    # audio/text deltas of every response after the first interrupt.
+                    callback.interrupted_turn = False
                     if callback.user_audio_buffer:
                         if callback.is_connected:
                             try:
@@ -3149,6 +3153,7 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query(None), ses
                             logger.info(f"[DailyLimit] blocked(text) user={callback.user_id} {_info}")
                             continue
                         callback.counts_against_quota = True
+                        callback.interrupted_turn = False  # new user turn ends the interruption
                         callback.messages.append({"role": "user", "content": text, "timestamp": datetime.utcnow().isoformat()})
                         if callback.is_connected:
                             try:
