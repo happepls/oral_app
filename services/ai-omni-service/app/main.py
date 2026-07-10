@@ -2112,7 +2112,9 @@ class WebSocketCallback(OmniRealtimeCallback):
                             # Send role switch signal once
                             await self._safe_send({"type": "role_switch", "payload": {"role": self.role}})
                             self._sent_role_for_turn = True
-                        # Don't send text chunks - wait for complete message
+                        # Stream text chunks so frontend text appears in sync with streaming audio;
+                        # transcript.done still sends the authoritative ai_message for final replacement.
+                        await self._safe_send({"type": "ai_text_delta", "payload": {"delta": text, "responseId": self.current_response_id}})
                 elif event_name == 'response.audio.done':
                     if self.ai_audio_buffer:
                         data = bytes(self.ai_audio_buffer)
