@@ -44,6 +44,7 @@ export default function LanguageSwitcher({ className = '', variant = 'light' }) 
       onChange={handleChange}
       className={`appearance-none rounded-lg border px-3 py-1.5 text-sm cursor-pointer focus:outline-none focus:ring-2 focus:ring-indigo-500/40 transition ${colorClass} ${className}`}
       title="Switch language / 切换语言"
+      aria-label="Switch language / 切换语言"
     >
       {LANGUAGES.map(l => (
         <option key={l.code} value={l.code}>

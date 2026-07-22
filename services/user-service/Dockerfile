@@ -8,11 +8,9 @@ WORKDIR /usr/src/app
 # Copy package.json and package-lock.json to the working directory
 COPY package*.json ./
 
-# Install dependencies (cloud CI builds don't have host node_modules)
-RUN npm ci --omit=dev
-
-# Copy the rest of the application's source code from the host to the image's filesystem
-COPY . .
+# Dependencies are prepared on the host before image rebuilds.
+COPY node_modules ./node_modules
+COPY src ./src
 
 # Change ownership of the app directory to the appuser
 RUN chown -R appuser:appuser /usr/src/app

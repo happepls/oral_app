@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { BrowserRouter as Router, Route, Routes, Navigate } from 'react-router-dom';
 import { GoogleOAuthProvider } from '@react-oauth/google';
-import { AuthProvider, useAuth } from './contexts/AuthContext';
+import { AuthProvider } from './contexts/AuthContext';
 import { NotificationProvider } from './contexts/NotificationContext';
 import { TourProvider } from './contexts/TourContext';
 import Welcome from './pages/Welcome';
@@ -20,6 +20,8 @@ import Checkin from './pages/Checkin';
 import Goals from './pages/Goals';
 import Subscription from './pages/Subscription';
 import Achievements from './pages/Achievements';
+import History from './pages/History';
+import DeveloperAuthorization from './pages/DeveloperAuthorization';
 import SplashScreen from './components/SplashScreen';
 import SupportChat from './components/SupportChat';
 import './App.css';
@@ -44,9 +46,12 @@ const AppRoutes = () => {
             <Route path="/checkin" element={<Checkin />} />
             <Route path="/goals" element={<Goals />} />
             <Route path="/achievements" element={<Achievements />} />
+            <Route path="/history" element={<History />} />
+            <Route path="/history/:sessionId" element={<History />} />
             <Route path="/subscription" element={<Subscription />} />
             <Route path="/subscription/success" element={<Subscription />} />
             <Route path="/subscription/cancel" element={<Subscription />} />
+            <Route path="/developer/authorize" element={<DeveloperAuthorization />} />
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
         </div>
@@ -76,7 +81,7 @@ function App() {
               <SplashScreen onComplete={() => setShowSplash(false)} />
             ) : (
               <TourProvider>
-                <div className="min-h-screen bg-gray-50 dark:bg-gray-900 transition-colors duration-300">
+                <div className="app-viewport bg-gray-50 dark:bg-gray-900 transition-colors duration-300">
                   <SupportChat />
                   <AppRoutes />
                 </div>

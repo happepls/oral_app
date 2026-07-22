@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { DiffBadge } from './DiffBadge';
+import { useTranslation } from 'react-i18next';
 
 export function ScenarioCard({
   title,
@@ -10,6 +11,7 @@ export function ScenarioCard({
   state = 'default',
   onStart,
 }) {
+  const { t } = useTranslation();
   const isLocked = state === 'locked';
   const isCompleted = progress === 100;
   // State-driven image fallback: on load error, mount the emoji instead of just
@@ -62,7 +64,7 @@ export function ScenarioCard({
         {progress > 0 && progress < 100 && (
           <div style={{ marginBottom: 6 }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 9, color: 'var(--foreground-subtle)', marginBottom: 3 }}>
-              <span>进度</span><span>{progress}%</span>
+              <span>{t('qa_ui.scenario_progress')}</span><span>{progress}%</span>
             </div>
             <div style={{ height: 3, background: '#F3F4F6', borderRadius: 3, overflow: 'hidden' }}>
               <div style={{ width: `${progress}%`, height: '100%', background: 'var(--primary)', borderRadius: 3 }} />
@@ -80,7 +82,7 @@ export function ScenarioCard({
             fontFamily: 'Lexend, sans-serif',
           }}
         >
-          {isLocked ? '已锁定' : isCompleted ? '已完成 ✅' : '开始练习'}
+          {isLocked ? t('qa_ui.scenario_locked') : isCompleted ? t('qa_ui.scenario_done') : t('qa_ui.scenario_start')}
         </button>
       </div>
 

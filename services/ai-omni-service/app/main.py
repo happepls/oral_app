@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import os
 import json
 import base64
@@ -2912,7 +2914,10 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query(None), ses
     history_messages = []
     try:
         async with httpx.AsyncClient() as client:
-            resp = await client.get(f"{os.getenv('CONVERSATION_SERVICE_URL', 'http://localhost:8000')}/history/{session_id}")
+            resp = await client.get(
+                f"{os.getenv('CONVERSATION_SERVICE_URL', 'http://localhost:8000')}/history/{session_id}",
+                headers={"Authorization": f"Bearer {token}"},
+            )
             if resp.status_code == 200: 
                 data = resp.json()
                 history_messages = data.get('data', {}).get('messages', [])

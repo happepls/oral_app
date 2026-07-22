@@ -1,13 +1,16 @@
 name: Deploy to Production
 
 on:
-  push:
-    tags:
-      - 'v*.*.*'  # Triggers on version tags
+  workflow_dispatch:
+    inputs:
+      image_tag:
+        description: Published immutable tag (sha-<commit> or release version)
+        required: true
 
 env:
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository }}
+  IMAGE_TAG: ${{ inputs.image_tag }}
 
 jobs:
   deploy:
@@ -31,52 +34,68 @@ jobs:
         username: ${{ github.actor }}
         password: ${{ secrets.GITHUB_TOKEN }}
 
+    - name: Validate image tag
+      run: |
+        if [[ ! "$IMAGE_TAG" =~ ^(sha-[0-9a-f]{7,40}|v?[0-9]+\.[0-9]+\.[0-9]+([.-][A-Za-z0-9_.-]+)?)$ ]]; then
+          echo "Use a published immutable sha-<commit> or release-version tag" >&2
+          exit 1
+        fi
+
     - name: Pull latest images
       run: |
-        docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/client:latest
-        docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/user-service:latest
-        docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/comms-service:latest
-        docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/ai-omni-service:latest
-        docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/history-analytics-service:latest
-        docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/conversation-service:latest
-        docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/media-processing-service:latest
-        docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/api-gateway:latest
+        docker pull "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/client:$IMAGE_TAG"
+        docker pull "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/user-service:$IMAGE_TAG"
+        docker pull "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/comms-service:$IMAGE_TAG"
+        docker pull "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/ai-omni-service:$IMAGE_TAG"
+        docker pull "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/history-analytics-service:$IMAGE_TAG"
+        docker pull "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/conversation-service:$IMAGE_TAG"
+        docker pull "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/media-processing-service:$IMAGE_TAG"
+        docker pull "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/api-gateway:$IMAGE_TAG"
+        docker pull "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/developer-api-service:$IMAGE_TAG"
+        docker pull "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/workflow-service:$IMAGE_TAG"
 
     - name: Render Docker Compose template
       run: |
         # Replace image tags in docker-compose.yml with tagged versions
-        sed -i "s|image: .*client:.*|image: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/client:${{ github.ref_name }}|g" docker-compose.prod.yml
-        sed -i "s|image: .*user-service:.*|image: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/user-service:${{ github.ref_name }}|g" docker-compose.prod.yml
-        sed -i "s|image: .*comms-service:.*|image: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/comms-service:${{ github.ref_name }}|g" docker-compose.prod.yml
-        sed -i "s|image: .*ai-omni-service:.*|image: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/ai-omni-service:${{ github.ref_name }}|g" docker-compose.prod.yml
-        sed -i "s|image: .*history-analytics-service:.*|image: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/history-analytics-service:${{ github.ref_name }}|g" docker-compose.prod.yml
-        sed -i "s|image: .*conversation-service:.*|image: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/conversation-service:${{ github.ref_name }}|g" docker-compose.prod.yml
-        sed -i "s|image: .*media-processing-service:.*|image: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/media-processing-service:${{ github.ref_name }}|g" docker-compose.prod.yml
-        sed -i "s|image: .*api-gateway:.*|image: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/api-gateway:${{ github.ref_name }}|g" docker-compose.prod.yml
+        for service in client user-service comms-service ai-omni-service history-analytics-service conversation-service media-processing-service api-gateway developer-api-service workflow-service; do
+          sed -i "s|image: .*${service}:.*|image: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/${service}:$IMAGE_TAG|g" docker-compose.prod.yml
+        done
 
     - name: Deploy to production server
       run: |
         # Copy files to production server
         echo "${{ secrets.SSH_PRIVATE_KEY }}" > ssh_key
         chmod 600 ssh_key
+        ssh -i ssh_key -o StrictHostKeyChecking=no \
+          ${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }} \
+          'mkdir -p services/user-service'
+        scp -i ssh_key -o StrictHostKeyChecking=no docker-compose.prod.yml \
+          ${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}:docker-compose.prod.yml
+        scp -i ssh_key -o StrictHostKeyChecking=no services/user-service/init.sql \
+          ${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}:services/user-service/init.sql
         
         # SSH to production server and deploy
         ssh -i ssh_key -o StrictHostKeyChecking=no ${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }} << 'EOF'
-          # Pull latest images
-          docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/client:${{ github.ref_name }}
-          docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/user-service:${{ github.ref_name }}
-          docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/comms-service:${{ github.ref_name }}
-          docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/ai-omni-service:${{ github.ref_name }}
-          docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/history-analytics-service:${{ github.ref_name }}
-          docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/conversation-service:${{ github.ref_name }}
-          docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/media-processing-service:${{ github.ref_name }}
-          docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/api-gateway:${{ github.ref_name }}
+          # Pull exactly the images pinned in the rendered compose file.
+          docker-compose -f docker-compose.prod.yml pull
           
           # Stop existing containers
           docker-compose -f docker-compose.prod.yml down
           
           # Start new containers
           docker-compose -f docker-compose.prod.yml up -d
+
+          # Do not report success until the scoring dependency is healthy.
+          for attempt in $(seq 1 30); do
+            if curl -fsS http://localhost:3006/health | grep -Eq '"status"[[:space:]]*:[[:space:]]*"healthy"'; then
+              break
+            fi
+            if [ "$attempt" -eq 30 ]; then
+              docker-compose -f docker-compose.prod.yml logs workflow-service
+              exit 1
+            fi
+            sleep 2
+          done
           
           # Cleanup unused images
           docker image prune -f

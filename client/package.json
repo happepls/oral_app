@@ -14,6 +14,9 @@
     "start": "HOST=0.0.0.0 react-app-rewired start",
     "build": "react-app-rewired build",
     "test": "react-app-rewired test",
+    "lint": "../node_modules/.bin/eslint src",
+    "test:e2e": "playwright test",
+    "test:e2e:update-candidates": "UPDATE_UI_CANDIDATES=1 playwright test",
     "eject": "react-scripts eject"
   },
   "eslintConfig": {
@@ -35,6 +38,8 @@
     ]
   },
   "devDependencies": {
+    "@axe-core/playwright": "^4.10.2",
+    "@playwright/test": "^1.55.1",
     "@react-oauth/google": "^0.12.2",
     "@tailwindcss/forms": "^0.5.10",
     "@testing-library/dom": "^10.4.1",

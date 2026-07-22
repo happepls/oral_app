@@ -16,6 +16,7 @@ services:
       - ai-omni-service
       - conversation-service
       - history-analytics-service
+      - developer-api-service
     networks:
       - oral_app_net
     extra_hosts:
@@ -32,6 +33,8 @@ services:
     environment:
       - PORT=3004
       - MONGO_URI=mongodb://root:password@mongo:27017/oral_app_history?authSource=admin
+      - JWT_SECRET=${JWT_SECRET:?Set JWT_SECRET in the root .env}
+      - INTERNAL_AUTH_SECRET=${INTERNAL_AUTH_SECRET:?Set INTERNAL_AUTH_SECRET in the root .env}
     env_file:
       - ./services/history-analytics-service/.env
     depends_on:
@@ -121,7 +124,7 @@ services:
       - DB_DATABASE=oral_app
       - DB_PORT=5432
       - DATABASE_URL=postgresql://user:password@postgres:5432/oral_app
-      - JWT_SECRET=your_jwt_secret_key_change_in_production
+      - JWT_SECRET=${JWT_SECRET:?Set JWT_SECRET in the root .env}
       # Stripe keys come from ./services/user-service/.env (env_file) to avoid
       # empty host-shell vars overriding them. Do NOT re-add ${STRIPE_*:-} here.
       - HTTPS_PROXY=http://host.docker.internal:7890
@@ -142,6 +145,25 @@ services:
     networks:
       - oral_app_net
 
+  developer-api-service:
+    build: ./services/developer-api-service
+    container_name: oral_app_developer_api_service
+    restart: unless-stopped
+    ports:
+      - "3010:3010"
+    environment:
+      - PORT=3010
+      - DATABASE_URL=postgresql://user:password@postgres:5432/oral_app
+      - DELEGATED_JWT_SECRET=${DELEGATED_JWT_SECRET:?Set DELEGATED_JWT_SECRET in the root .env}
+      - JWT_SECRET=${JWT_SECRET:?Set JWT_SECRET in the root .env}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      user-service:
+        condition: service_started
+    networks:
+      - oral_app_net
+
   comms-service:
     build: ./services/comms-service
     container_name: oral_app_comms_service
@@ -154,7 +176,7 @@ services:
       - PORT=8080
       - REDIS_HOST=redis
       - REDIS_PORT=6379
-      - JWT_SECRET=your_jwt_secret_key_change_in_production
+      - JWT_SECRET=${JWT_SECRET:?Set JWT_SECRET in the root .env}
       - AI_SERVICE_WS_URL=ws://ai-omni-service:8082/stream
     env_file:
       - ./services/comms-service/.env
@@ -197,6 +219,8 @@ services:
       - DB_PASSWORD=password
       - DB_DATABASE=oral_app
       - DB_PORT=5432
+      - INTERNAL_AUTH_SECRET=${INTERNAL_AUTH_SECRET:?Set INTERNAL_AUTH_SECRET in the root .env}
+      - JWT_SECRET=${JWT_SECRET:?Set JWT_SECRET in the root .env}
     env_file:
       - ./.env
       - ./services/conversation-service/.env

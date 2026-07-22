@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate, useSearchParams, useLocation } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
+import { useTranslation } from 'react-i18next';
 
 // Aligns with services/api.js: env var (or default) already includes the `/api`
 // prefix. Append only the resource path here — never re-prepend `/api/`, that
@@ -24,36 +25,8 @@ function isAllowedRedirect(url) {
   }
 }
 
-// Static fallback used when Stripe is not yet configured (empty products from API).
-// Prices mirror Landing.js Pricing section: $2.90/wk, $89.90/yr.
-const FALLBACK_PRODUCTS = [
-  {
-    id: 'weekly-fallback',
-    name: '周付会员',
-    description: '解锁全部高级功能',
-    metadata: { tier: 'weekly' },
-    prices: [{
-      id: null,
-      unit_amount: 499,
-      currency: 'usd',
-      recurring: { interval: 'week' }
-    }]
-  },
-  {
-    id: 'annual-fallback',
-    name: '年付会员',
-    description: '最划算选项，节省62%',
-    metadata: { tier: 'annual' },
-    prices: [{
-      id: null,
-      unit_amount: 9900,
-      currency: 'usd',
-      recurring: { interval: 'year' }
-    }]
-  }
-];
-
 function Subscription() {
+  const { t } = useTranslation();
   const navigate = useNavigate();
   // Cookie mode: `token` is always null — gate auth on `user` instead.
   const { user, refreshProfile } = useAuth();
@@ -119,13 +92,11 @@ function Subscription() {
     try {
       const res = await fetch(`${API_BASE}/stripe/products-with-prices`);
       const data = await res.json();
-      const list = Array.isArray(data?.data) && data.data.length > 0
-        ? data.data
-        : FALLBACK_PRODUCTS;
+      const list = Array.isArray(data?.data) ? data.data : [];
       setProducts(list);
     } catch (error) {
       console.error('Error fetching products:', error);
-      setProducts(FALLBACK_PRODUCTS);
+      setProducts([]);
     } finally {
       setLoading(false);
     }
@@ -280,21 +251,21 @@ function Subscription() {
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-background-light dark:bg-background-dark flex items-center justify-center">
+      <div className="min-h-[100dvh] bg-background-light dark:bg-background-dark flex items-center justify-center">
         <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen pb-24" style={{ background: 'var(--background)' }}>
+    <div className="mx-auto min-h-[100dvh] w-full max-w-lg pb-24" style={{ background: 'var(--background)' }}>
       <div className="px-4 pt-6 pb-4">
         <button
           onClick={handleBack}
-          className="flex items-center text-slate-600 dark:text-slate-400 mb-4"
+          className="mb-4 flex min-h-[44px] items-center rounded-xl border border-slate-200 bg-white px-3 text-slate-600 shadow-sm transition-colors hover:border-primary/40 hover:text-primary dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300"
         >
           <span className="material-symbols-outlined text-xl mr-1">arrow_back</span>
-          返回
+          {t('qa_ui.subscription_back')}
         </button>
 
         {isCancelled && (
@@ -306,10 +277,10 @@ function Subscription() {
         )}
 
         <h1 className="text-2xl font-bold text-slate-900 dark:text-white mb-2">
-          升级会员
+          {t('qa_ui.subscription_title')}
         </h1>
         <p className="text-slate-600 dark:text-slate-400">
-          解锁全部功能，提升口语水平
+          {t('qa_ui.subscription_subtitle')}
         </p>
       </div>
 
@@ -354,21 +325,21 @@ function Subscription() {
       <div className="px-4 space-y-4">
         <div className="p-4 bg-slate-100 dark:bg-slate-800/50 rounded-xl border border-slate-200 dark:border-slate-700">
           <div className="flex items-center justify-between mb-3">
-            <h3 className="font-semibold text-slate-900 dark:text-white">免费版</h3>
-            <span className="text-slate-600 dark:text-slate-400">免费</span>
+            <h3 className="font-semibold text-slate-900 dark:text-white">{t('qa_ui.subscription_free')}</h3>
+            <span className="text-slate-600 dark:text-slate-400">{t('qa_ui.subscription_free_price')}</span>
           </div>
           <ul className="space-y-2 text-sm text-slate-600 dark:text-slate-400">
             <li className="flex items-center">
               <span className="text-slate-400 mr-2">•</span>
-              每日3次AI对话
+              {t('qa_ui.subscription_free_conversations')}
             </li>
             <li className="flex items-center">
               <span className="text-slate-400 mr-2">•</span>
-              基础练习场景
+              {t('qa_ui.subscription_basic_scenarios')}
             </li>
             <li className="flex items-center">
               <span className="text-slate-400 mr-2">•</span>
-              每日打卡
+              {t('qa_ui.subscription_daily_checkin')}
             </li>
           </ul>
         </div>
@@ -441,25 +412,31 @@ function Subscription() {
           );
         })}
 
+        {products.length === 0 && (
+          <div className="rounded-xl border border-slate-200 bg-white p-5 text-center text-sm text-slate-500 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-400">
+            {t('qa_ui.subscription_prices_unavailable')}
+          </div>
+        )}
+
         {checkoutError && (
           <p className="mt-4 text-sm text-red-600 dark:text-red-400 text-center">{checkoutError}</p>
         )}
 
         <div className="mt-6 p-4 bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700">
-          <h4 className="font-medium text-slate-900 dark:text-white mb-3">优惠码</h4>
+          <h4 className="font-medium text-slate-900 dark:text-white mb-3">{t('qa_ui.subscription_promo')}</h4>
           <div className="flex gap-2">
             <input
               type="text"
               value={promoCode}
               onChange={(e) => setPromoCode(e.target.value)}
-              placeholder="输入优惠码"
+              placeholder={t('qa_ui.subscription_promo_placeholder')}
               className="flex-1 px-4 py-2 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-700 text-slate-900 dark:text-white focus:border-indigo-500 focus:outline-none"
             />
             <button
               onClick={handleApplyPromo}
               className="px-4 py-2 bg-indigo-600 text-white rounded-lg font-medium hover:bg-indigo-700"
             >
-              应用
+              {t('qa_ui.subscription_apply')}
             </button>
           </div>
           {promoError && (
@@ -473,16 +450,16 @@ function Subscription() {
             </div>
           )}
           <p className="text-xs text-slate-500 mt-2">
-            输入优惠码即可享受专属折扣
+            {t('qa_ui.subscription_promo_hint')}
           </p>
         </div>
       </div>
 
       <div className="px-4 mt-8">
-        <p className="text-xs text-center text-slate-500 dark:text-slate-500">
-          订阅将自动续费。您可以随时在设置中取消订阅。
+        <p className="text-xs text-center text-slate-600 dark:text-slate-400">
+          {t('qa_ui.subscription_renewal')}
           <br />
-          付款由 Stripe 安全处理。
+          {t('qa_ui.subscription_stripe')}
         </p>
       </div>
     </div>

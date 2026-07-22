@@ -8,7 +8,7 @@
 // ---- replicated verbatim from client/src/components/DiffBadge.jsx ----
 
 const DIFF_MAP = {
-  beginner: ['#10B981', '初级'],
+  beginner: ['#047857', '初级'],
   intermediate: ['#F6B443', '中级'],
   advanced: ['#FB7250', '高级'],
 };
@@ -23,7 +23,7 @@ function resolveDiff(diff) {
 
 describe('DiffBadge DIFF_MAP', () => {
   test('beginner → green + 初级', () => {
-    expect(resolveDiff('beginner')).toEqual({ bg: '#10B981', label: '初级' });
+    expect(resolveDiff('beginner')).toEqual({ bg: '#047857', label: '初级' });
   });
 
   test('intermediate → amber + 中级', () => {

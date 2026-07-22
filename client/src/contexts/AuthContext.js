@@ -170,7 +170,7 @@ export const AuthProvider = ({ children }) => {
     try {
       setLoading(true);
       const response = await userAPI.updateProfile(updates);
-      const updatedUser = response.user;
+      const updatedUser = response.user || response;
       localStorage.setItem('user', JSON.stringify(updatedUser));
       setUser(updatedUser);
       return { success: true };
@@ -207,7 +207,7 @@ export const AuthProvider = ({ children }) => {
       const response = await userAPI.getProfile();
       // The API response is now standardized with success/data format
       // handleResponse in api.js extracts the data part for successful responses
-      const userData = response.user;
+      const userData = response.user || response;
       localStorage.setItem('user', JSON.stringify(userData));
       setUser(userData);
       return userData; // callers (e.g. Subscription success poll) read fresh status

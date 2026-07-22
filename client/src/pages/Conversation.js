@@ -2161,7 +2161,8 @@ function Conversation() {
   }, [handleJsonMessage]);
 
   // --- WebSocket Logic ---
-  const connectWebSocket = useCallback((explicitSessionId = null) => {
+  const connectWebSocket = useCallback(async (explicitSessionId = null, options = {}) => {
+    const { signal } = options;
     const effectiveSessionId = explicitSessionId || sessionId;
     // Cookie-based auth: check user instead of token
     if (!user || !effectiveSessionId) {
@@ -2198,7 +2199,6 @@ function Conversation() {
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     const searchParams = new URLSearchParams(window.location.search);
     const scenario = searchParams.get('scenario');
-    const topic = searchParams.get('topic');
     const voice = localStorage.getItem('ai_voice') || 'Tina';
     const persona = getPersona(voice);
     
@@ -2212,9 +2212,18 @@ function Conversation() {
       wsHost = window.location.host;
     }
     
-    // Cookie-based auth: token is now in httpOnly cookie, no need to pass in URL
     const mode = searchParams.get('mode');
-    wsUrl = `${protocol}//${wsHost}/api/ws/?sessionId=${encodeURIComponent(effectiveSessionId)}${scenario ? `&scenario=${encodeURIComponent(scenario)}` : ''}${topic ? `&topic=${encodeURIComponent(topic)}` : ''}&voice=${encodeURIComponent(voice)}${mode ? `&mode=${encodeURIComponent(mode)}` : ''}`;
+    let realtime;
+    try {
+      realtime = await conversationAPI.createRealtimeTicket({ signal });
+    } catch (error) {
+      if (error.name === 'AbortError' || signal?.aborted) return;
+      console.error('Failed to create realtime ticket:', error);
+      setWebSocketError('无法建立安全连接，请稍后重试');
+      return;
+    }
+    if (signal?.aborted) return;
+    wsUrl = `${protocol}//${wsHost}/api/v1/realtime?ticket=${encodeURIComponent(realtime.ticket)}&sessionId=${encodeURIComponent(effectiveSessionId)}${scenario ? `&scenario=${encodeURIComponent(scenario)}` : ''}&voice=${encodeURIComponent(voice)}${mode ? `&mode=${encodeURIComponent(mode)}` : ''}`;
 
     // Create optimized WebSocket connection
     socketRef.current = new OptimizedWebSocket(wsUrl, {
@@ -2617,7 +2626,7 @@ function Conversation() {
       }
 
       // Connect WebSocket with the effective session ID (state may not be updated yet)
-      connectWebSocket(effectiveSessionId);
+      connectWebSocket(effectiveSessionId, { signal: abortController.signal });
     };
 
     init();
@@ -3001,7 +3010,7 @@ function Conversation() {
               <span className="material-symbols-outlined" style={{ fontSize: '16px' }}>close</span>
             </button>
             <p className="text-gray-900 font-semibold text-sm leading-tight truncate">
-              {isDailyQAMode ? '今日问答' : (currentScenarioTitle || 'AI 口语导师')}
+              {isDailyQAMode ? t('qa_ui.conversation_daily_qa') : (currentScenarioTitle || t('qa_ui.conversation_tutor'))}
             </p>
           </div>
 
@@ -3037,7 +3046,7 @@ function Conversation() {
               <span className={`w-1.5 h-1.5 rounded-full ${
                 isTourMode ? 'bg-violet-500' : wsRejected ? 'bg-red-500' : isConnected ? 'bg-emerald-500' : 'bg-amber-400'
               }`} />
-              {isTourMode ? '演示' : wsRejected ? t('ws_status_rejected', '已断开') : isConnected ? '在线' : '连接中'}
+              {isTourMode ? t('qa_ui.conversation_demo') : wsRejected ? t('ws_status_rejected', '已断开') : isConnected ? t('qa_ui.conversation_online') : t('qa_ui.conversation_connecting')}
             </span>
           </div>
         </div>
@@ -3064,7 +3073,7 @@ function Conversation() {
               <button
                 onClick={() => navigate('/discovery')}
                 className="text-xs text-indigo-600 hover:text-indigo-700 font-medium">
-                返回发现
+                {t('qa_ui.conversation_back')}
               </button>
             </div>
           ) : dailyQAQuestion ? (
@@ -3144,7 +3153,7 @@ function Conversation() {
           {showTasks && (
             <ul className="bg-[#637FF1] px-5 pb-4 pt-2 space-y-3 border-t border-indigo-400/30">
               {tasksLoading ? (
-                <li className="text-xs text-white/80 py-1">Loading tasks...</li>
+                <li className="text-xs text-white/80 py-1">{t('conversation_tasks_loading', '任务加载中…')}</li>
               ) : (() => {
                 // determine which is the current in-progress task (first incomplete)
                 const firstIncompleteIdx = tasks.findIndex(t => {

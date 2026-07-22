@@ -18,7 +18,8 @@ const server = http.createServer((req, res) => {
 
 const wss = new WebSocketServer({ server });
 
-const JWT_SECRET = process.env.JWT_SECRET || 'your_jwt_secret_key_change_in_production';
+const JWT_SECRET = process.env.JWT_SECRET;
+if (!JWT_SECRET) throw new Error('JWT_SECRET is required');
 
 const AI_SERVICE_URL = process.env.AI_SERVICE_WS_URL || 'ws://ai-omni-service:8082/stream';
 
@@ -31,11 +32,11 @@ wss.on('connection', async function connection(clientWs, req) {
 
   try {
     const queryObject = url.parse(req.url, true).query;
-    let token = queryObject.token;
-
-    console.log(`[DEBUG] Full URL: ${req.url}`);
-    console.log(`[DEBUG] Query object:`, queryObject);
-    console.log(`[DEBUG] Token from query: ${token ? token.substring(0, 20) + '...' : 'none'}`);
+    // Browser partner clients cannot attach custom headers during WebSocket
+    // upgrade. Developer API therefore issues a 60-second `ticket`; first-party
+    // clients continue to use the existing token/cookie paths.
+    const usesRealtimeTicket = Boolean(queryObject.ticket);
+    let token = queryObject.token || queryObject.ticket;
 
     if (!token && req.headers.authorization) {
       const parts = req.headers.authorization.split(' ');
@@ -66,6 +67,24 @@ wss.on('connection', async function connection(clientWs, req) {
       clientWs.close(1008, 'Invalid or expired authorization token.');
       return;
     }
+
+    if (usesRealtimeTicket && decoded.type !== 'realtime_ticket') {
+      console.log('Connection rejected: token is not a realtime ticket.');
+      clientWs.close(1008, 'Invalid realtime ticket.');
+      return;
+    }
+
+    // The browser-facing ticket is deliberately accepted only by comms. AI
+    // still calls user/conversation services, which accept access tokens, so
+    // mint a short-lived internal token instead of forwarding the ticket.
+    const aiToken = usesRealtimeTicket
+      ? jwt.sign({ id: decoded.id, type: 'access' }, JWT_SECRET, {
+          algorithm: 'HS256',
+          issuer: 'oral-app',
+          audience: 'oral-app-users',
+          expiresIn: '2m',
+        })
+      : token;
 
     const userId = decoded.id;
     const sessionId = queryObject.sessionId;
@@ -117,6 +136,16 @@ wss.on('connection', async function connection(clientWs, req) {
         try {
           const messageStr = message.toString();
           const parsedMessage = JSON.parse(messageStr);
+          if (parsedMessage.type === 'session_start') {
+            parsedMessage.userId = userId;
+            delete parsedMessage.token;
+            if (parsedMessage.payload && typeof parsedMessage.payload === 'object') {
+              parsedMessage.payload.userId = userId;
+              delete parsedMessage.payload.token;
+            }
+            aiServiceWs.send(JSON.stringify(parsedMessage));
+            return;
+          }
           
           // Check if this is an audio_stream message with the new format
           if (parsedMessage.type === 'audio_stream' && parsedMessage.payload && typeof parsedMessage.payload === 'object') {
@@ -155,7 +184,7 @@ wss.on('connection', async function connection(clientWs, req) {
       const wsOptions = {
         headers: {
           'User-Agent': 'Oral-AI-Comms-Service/1.0',
-          'Authorization': `Bearer ${token}`,
+          'Authorization': `Bearer ${aiToken}`,
         }
       };
 

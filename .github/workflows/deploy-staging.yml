@@ -1,8 +1,7 @@
 name: Deploy to Staging
 
 on:
-  push:
-    branches: [ develop ]
+  workflow_dispatch:
 
 env:
   REGISTRY: ghcr.io
@@ -19,6 +18,8 @@ jobs:
     steps:
     - name: Checkout repository
       uses: actions/checkout@v4
+      with:
+        ref: develop
 
     - name: Set up Docker
       uses: docker/setup-docker-action@v3
@@ -40,12 +41,27 @@ jobs:
         docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/conversation-service:develop
         docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/media-processing-service:develop
         docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/api-gateway:develop
+        docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/developer-api-service:develop
+        docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/workflow-service:develop
+
+    - name: Render Docker Compose template
+      run: |
+        for service in client user-service comms-service ai-omni-service history-analytics-service conversation-service media-processing-service api-gateway developer-api-service workflow-service; do
+          sed -i "s|image: .*${service}:.*|image: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/${service}:develop|g" docker-compose.staging.yml
+        done
 
     - name: Deploy to staging server
       run: |
         # Copy files to staging server
         echo "${{ secrets.STAGING_SSH_PRIVATE_KEY }}" > ssh_key
         chmod 600 ssh_key
+        ssh -i ssh_key -o StrictHostKeyChecking=no \
+          ${{ secrets.STAGING_DEPLOY_USER }}@${{ secrets.STAGING_DEPLOY_HOST }} \
+          'mkdir -p services/user-service'
+        scp -i ssh_key -o StrictHostKeyChecking=no docker-compose.staging.yml \
+          ${{ secrets.STAGING_DEPLOY_USER }}@${{ secrets.STAGING_DEPLOY_HOST }}:docker-compose.staging.yml
+        scp -i ssh_key -o StrictHostKeyChecking=no services/user-service/init.sql \
+          ${{ secrets.STAGING_DEPLOY_USER }}@${{ secrets.STAGING_DEPLOY_HOST }}:services/user-service/init.sql
         
         # SSH to staging server and deploy
         ssh -i ssh_key -o StrictHostKeyChecking=no ${{ secrets.STAGING_DEPLOY_USER }}@${{ secrets.STAGING_DEPLOY_HOST }} << 'EOF'
@@ -58,12 +74,25 @@ jobs:
           docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/conversation-service:develop
           docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/media-processing-service:develop
           docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/api-gateway:develop
+          docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/developer-api-service:develop
+          docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/workflow-service:develop
           
           # Stop existing containers
           docker-compose -f docker-compose.staging.yml down
           
           # Start new containers
           docker-compose -f docker-compose.staging.yml up -d
+
+          for attempt in $(seq 1 30); do
+            if curl -fsS http://localhost:3006/health | grep -Eq '"status"[[:space:]]*:[[:space:]]*"healthy"'; then
+              break
+            fi
+            if [ "$attempt" -eq 30 ]; then
+              docker-compose -f docker-compose.staging.yml logs workflow-service
+              exit 1
+            fi
+            sleep 2
+          done
           
           # Run integration tests against staging
           docker-compose -f docker-compose.staging.yml exec -T user-service npm test

@@ -11,6 +11,8 @@ import { StatCard } from '../components/StatCard';
 import { GuajiAvatar } from '../components/GuajiAvatar';
 import { motion, AnimatePresence } from 'motion/react';
 import { Trophy } from 'lucide-react';
+import { useTranslation } from 'react-i18next';
+import { getScenarioDisplayTitle } from '../utils/scenarioDisplay';
 
 // --- Scenario emoji 映射（按关键词） ---
 const SCENARIO_EMOJIS = [
@@ -123,10 +125,10 @@ function getScenarioCardState(scenario, unlocked, pct) {
 
 // Filter tab 配置
 const FILTER_TABS = [
-  { id: 'all',         label: '全部' },
-  { id: 'in-progress', label: '进行中' },
-  { id: 'completed',   label: '已完成' },
-  { id: 'not-started', label: '未开始' },
+  { id: 'all',         labelKey: 'qa_ui.filter_all' },
+  { id: 'in-progress', labelKey: 'qa_ui.filter_active' },
+  { id: 'completed',   labelKey: 'qa_ui.filter_completed' },
+  { id: 'not-started', labelKey: 'qa_ui.filter_new' },
 ];
 
 function DailyQAPaywallModal({ onClose, onUpgrade }) {
@@ -177,6 +179,8 @@ function DailyQAPaywallModal({ onClose, onUpgrade }) {
 }
 
 function Discovery() {
+  const { t } = useTranslation();
+  const { i18n } = useTranslation();
   const navigate = useNavigate();
   const location = useLocation();
   const { user } = useAuth();
@@ -543,8 +547,9 @@ function Discovery() {
     const cardState = getScenarioCardState(s, unlocked, pct);
     // image_url 优先来自后端 scenario 数据（若曾持久化），否则用懒加载 state
     const imageUrl = s.image_url || scenarioImages[s.title] || '';
-    return { ...s, pct, unlocked, cardState, difficulty: getDifficulty(i), emoji: getEmoji(s.title), imageUrl, index: i };
-  }), [scenarios, unlockedCount, isPro, scenarioImages]);
+    const displayTitle = getScenarioDisplayTitle(s.title, i, i18n.resolvedLanguage || i18n.language);
+    return { ...s, displayTitle, pct, unlocked, cardState, difficulty: getDifficulty(i), emoji: getEmoji(s.title), imageUrl, index: i };
+  }), [scenarios, unlockedCount, isPro, scenarioImages, i18n.resolvedLanguage, i18n.language]);
 
   // 懒加载已解锁场景的 AI 配图：一次只取一张（节流），sessionStorage 跨页缓存，
   // 失败/超时静默回退 emoji。锁定卡不生成，省文生图成本。
@@ -593,13 +598,13 @@ function Discovery() {
     return true;
   }), [enrichedScenarios, filterTab]);
 
-  const userName = user?.username || user?.name || '学习者';
+  const userName = user?.username || user?.name || t('qa_ui.learner');
   const greeting = useMemo(() => {
     const h = new Date().getHours();
-    if (h < 12) return '早上好';
-    if (h < 18) return '下午好';
-    return '晚上好';
-  }, []);
+    if (h < 12) return t('qa_ui.greeting_morning');
+    if (h < 18) return t('qa_ui.greeting_afternoon');
+    return t('qa_ui.greeting_evening');
+  }, [t]);
 
   if (loading) {
     return (
@@ -623,7 +628,7 @@ function Discovery() {
             className="bg-white dark:bg-slate-800 rounded-3xl p-8 max-w-sm w-full text-center shadow-brand-lg">
             <div className="text-7xl mb-3">🏆</div>
             <h2 className="text-2xl font-bold text-slate-900 dark:text-white mb-1">目标全部完成！</h2>
-            <p className="text-sm text-primary font-semibold mb-2">Achievement Unlocked</p>
+            <p className="text-sm text-primary font-semibold mb-2">成就已解锁</p>
             <p className="text-slate-500 text-sm mb-6">
               太棒了！你已完成所有 {scenarios.length} 个场景，成功达到{' '}
               <span className="font-bold text-primary">{activeGoal?.target_level}</span> 水平目标！
@@ -692,7 +697,7 @@ function Discovery() {
             transition={{ type: 'spring', stiffness: 380, damping: 28 }}
             style={{
               position: 'fixed', top: 16, left: '50%', transform: 'translateX(-50%)',
-              background: 'linear-gradient(135deg, #10B981, #059669)', color: '#fff',
+              background: 'linear-gradient(135deg, #047857, #065F46)', color: '#fff',
               padding: '12px 20px', borderRadius: 14, boxShadow: '0 10px 30px rgba(16,185,129,0.35)',
               zIndex: 400, fontSize: 14, fontWeight: 600, display: 'flex', alignItems: 'center', gap: 10,
               maxWidth: '90%',
@@ -790,7 +795,7 @@ function Discovery() {
       {/* ── Header ── */}
       <header className="flex items-center justify-between px-5 pt-5 pb-2">
         <div>
-          <p className="text-sm text-slate-500 dark:text-slate-400">{greeting}，</p>
+          <p className="text-sm text-slate-500 dark:text-slate-400">{greeting}</p>
           <h1 className="text-xl font-bold text-slate-900 dark:text-white leading-tight">
             {userName} {isPro && <span className="text-xs align-middle bg-yellow-100 text-yellow-600 px-1.5 py-0.5 rounded-full font-semibold ml-1">Pro</span>}
           </h1>
@@ -800,14 +805,14 @@ function Discovery() {
               <div className="h-full rounded-full bg-primary transition-all duration-500"
                 style={{ width: `${overallProgress}%` }} />
             </div>
-            <span className="text-xs text-slate-400">{overallProgress}% 完成</span>
+            <span className="text-xs text-slate-400">{t('qa_ui.complete_pct', { value: overallProgress })}</span>
           </div>
         </div>
         <div className="flex items-center gap-2">
           {hasOtherGoals && (
             <button onClick={handleOpenSwitch}
               className="text-xs text-slate-500 hover:text-primary transition px-2 py-1 rounded-lg bg-slate-100 dark:bg-slate-800">
-              ⇄ 切换目标
+              {t('qa_ui.switch_goal')}
             </button>
           )}
           <div className="w-10 h-10 rounded-full flex items-center justify-center text-white font-bold text-sm flex-shrink-0"
@@ -827,7 +832,7 @@ function Discovery() {
               <div className="flex items-center justify-between mb-4 pb-4 border-b border-slate-200 dark:border-slate-700">
                 <div className="flex items-center gap-2">
                   <GuajiAvatar size={28} />
-                  <h3 className="text-sm font-semibold text-slate-900 dark:text-white">今日任务</h3>
+                  <h3 className="text-sm font-semibold text-slate-900 dark:text-white">{t('qa_ui.today_tasks')}</h3>
                 </div>
                 <span className="text-xs text-slate-500">
                   {(dailyProgress.recallCompleted ? 1 : 0) + (dailyProgress.qaCompleted ? 1 : 0) + (dailyProgress.scenarioCompleted ? 1 : 0)}/3
@@ -844,8 +849,7 @@ function Discovery() {
                     // Recall page loads today's scenario itself via getActiveGoal.
                     navigate('/recall');
                   }}
-                  className="flex flex-col items-center gap-2 flex-1"
-                  style={{ opacity: dailyProgress.recallCompleted ? 1 : 0.6 }}>
+                  className="flex flex-col items-center gap-2 flex-1">
                   <div
                     className="w-14 h-14 rounded-full flex items-center justify-center text-xl transition-all"
                     style={{
@@ -856,7 +860,7 @@ function Discovery() {
                     }}>
                     {dailyProgress.recallCompleted ? '✓' : '🔁'}
                   </div>
-                  <span className="text-xs font-medium text-slate-700 dark:text-slate-300">复述</span>
+                  <span className="text-xs font-medium text-slate-700 dark:text-slate-300">{t('qa_ui.recall')}</span>
                 </motion.button>
 
                 {/* 问答任务 */}
@@ -870,8 +874,7 @@ function Discovery() {
                       navigate('/conversation?mode=daily_qa');
                     }
                   }}
-                  className="flex flex-col items-center gap-2 flex-1"
-                  style={{ opacity: dailyProgress.qaCompleted ? 1 : 0.6 }}>
+                  className="flex flex-col items-center gap-2 flex-1">
                   <div
                     className="w-14 h-14 rounded-full flex items-center justify-center text-xl transition-all"
                     style={{
@@ -882,7 +885,7 @@ function Discovery() {
                     }}>
                     {dailyProgress.qaCompleted ? '✓' : '❓'}
                   </div>
-                  <span className="text-xs font-medium text-slate-700 dark:text-slate-300">问答</span>
+                  <span className="text-xs font-medium text-slate-700 dark:text-slate-300">{t('qa_ui.qa')}</span>
                 </motion.button>
 
                 {/* 练习任务 */}
@@ -896,8 +899,7 @@ function Discovery() {
                       );
                     }
                   }}
-                  className="flex flex-col items-center gap-2 flex-1"
-                  style={{ opacity: dailyProgress.scenarioCompleted ? 1 : 0.6 }}>
+                  className="flex flex-col items-center gap-2 flex-1">
                   <div
                     className="w-14 h-14 rounded-full flex items-center justify-center text-xl transition-all"
                     style={{
@@ -908,16 +910,16 @@ function Discovery() {
                     }}>
                     {dailyProgress.scenarioCompleted ? '✓' : '🎯'}
                   </div>
-                  <span className="text-xs font-medium text-slate-700 dark:text-slate-300">练习</span>
+                  <span className="text-xs font-medium text-slate-700 dark:text-slate-300">{t('qa_ui.practice')}</span>
                 </motion.button>
               </div>
 
               {/* 今日练习时长进度条 */}
               <div>
                 <div className="flex items-center justify-between mb-2">
-                  <span className="text-xs text-slate-500">今日练习</span>
+                  <span className="text-xs text-slate-500">{t('qa_ui.today_practice')}</span>
                   <span className="text-xs font-semibold text-slate-700 dark:text-slate-300">
-                    {dailyProgress.practiceMinutes || 0}/{dailyProgress.practiceGoal || 15} 分钟
+                    {t('qa_ui.minutes_progress', { current: dailyProgress.practiceMinutes || 0, goal: dailyProgress.practiceGoal || 15 })}
                   </span>
                 </div>
                 <div className="h-2 rounded-full bg-slate-200 dark:bg-slate-700 overflow-hidden">
@@ -947,10 +949,10 @@ function Discovery() {
         {/* ── 4格统计 ── */}
         <section data-tour="stats">
           <div style={{ display: 'flex', gap: 8 }}>
-            <StatCard emoji="📚" value={stats?.totalSessions || activeSessions?.length || 0} label="总对话" />
-            <StatCard emoji="📅" value={stats?.learningDays || checkinStats.totalCheckins || 0} label="学习天" />
-            <StatCard emoji="✅" value={`${enrichedScenarios.filter(s => s.pct === 100).length}/${scenarios.length}`} label="场景完成" />
-            <StatCard emoji="🎯" value={`${overallProgress}%`} label="总进度" />
+            <StatCard emoji="📚" value={stats?.totalSessions || activeSessions?.length || 0} label={t('qa_ui.total_conversations')} />
+            <StatCard emoji="📅" value={stats?.learningDays || checkinStats.totalCheckins || 0} label={t('qa_ui.learning_days')} />
+            <StatCard emoji="✅" value={`${enrichedScenarios.filter(s => s.pct === 100).length}/${scenarios.length}`} label={t('qa_ui.scenarios_completed')} />
+            <StatCard emoji="🎯" value={`${overallProgress}%`} label={t('qa_ui.total_progress')} />
           </div>
         </section>
 
@@ -961,8 +963,8 @@ function Discovery() {
             style={{ background: 'rgba(251,191,36,0.08)' }}>
             <Trophy className="w-7 h-7 text-yellow-500 flex-shrink-0" />
             <div className="flex-1">
-              <p className="font-bold text-slate-800 dark:text-slate-100 text-sm">所有场景已完成！</p>
-              <p className="text-xs text-slate-500">点击制定下一阶段新目标 →</p>
+              <p className="font-bold text-slate-800 dark:text-slate-100 text-sm">{t('qa_ui.all_scenarios_done')}</p>
+              <p className="text-xs text-slate-500">{t('qa_ui.new_goal_cta')}</p>
             </div>
           </motion.div>
         )}
@@ -971,26 +973,26 @@ function Discovery() {
         <section>
           <div className="flex items-center justify-between mb-3">
             <div>
-              <h2 className="text-lg font-bold text-slate-900 dark:text-white">场景练习</h2>
+              <h2 className="text-lg font-bold text-slate-900 dark:text-white">{t('qa_ui.scenario_practice')}</h2>
               {activeGoal && (
                 <p className="text-xs text-slate-400">{activeGoal.target_language} · {activeGoal.target_level}</p>
               )}
             </div>
             <span className="text-xs text-slate-400 bg-slate-100 dark:bg-slate-800 px-2 py-1 rounded-lg">
-              {scenarios.length} 个场景
+              {t('qa_ui.scenario_count', { count: scenarios.length })}
             </span>
           </div>
 
           {/* Filter chips */}
-          <div className="flex gap-2 overflow-x-auto pb-1 mb-3 scrollbar-hide">
+          <div className="flex flex-wrap gap-2 pb-1 mb-3">
             {FILTER_TABS.map(tab => (
               <button key={tab.id} onClick={() => setFilterTab(tab.id)}
                 className="flex-shrink-0 px-3 py-1 rounded-full text-xs font-medium transition-all"
                 style={{
-                  background: filterTab === tab.id ? '#637FF1' : '#F3F4F6',
-                  color: filterTab === tab.id ? '#fff' : '#6B7280',
+                  background: filterTab === tab.id ? '#2d44ca' : '#F3F4F6',
+                  color: filterTab === tab.id ? '#fff' : '#374151',
                 }}>
-                {tab.label}
+                {t(tab.labelKey)}
               </button>
             ))}
           </div>
@@ -1000,7 +1002,7 @@ function Discovery() {
             {filteredScenarios.map((s) => (
               <ScenarioCard
                 key={s.index}
-                title={s.title}
+                title={s.displayTitle}
                 emoji={s.emoji}
                 imageUrl={s.imageUrl}
                 description={
@@ -1020,8 +1022,8 @@ function Discovery() {
 
           {filteredScenarios.length === 0 && (
             <p className="text-center text-sm text-slate-400 py-6">
-              {filterTab === 'in-progress' ? '暂无进行中的场景' :
-               filterTab === 'completed' ? '还没有完成的场景，加油！' : '暂无符合条件的场景'}
+              {filterTab === 'in-progress' ? t('qa_ui.no_active_scenarios') :
+               filterTab === 'completed' ? t('qa_ui.no_completed_scenarios') : t('qa_ui.no_matching_scenarios')}
             </p>
           )}
         </section>

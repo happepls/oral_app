@@ -6,6 +6,7 @@ import BottomNav from '../components/BottomNav';
 import { useAuth } from '../contexts/AuthContext';
 import { userAPI } from '../services/api';
 import { PERSONA_MAP } from '../config/personaConfig';
+import { useTranslation } from 'react-i18next';
 
 const VOICE_OPTIONS = Object.values(PERSONA_MAP).map(p => ({
   id: p.name, name: p.name, description: p.desc, subtitle: p.subtitle,
@@ -22,6 +23,7 @@ function getGoalProgress(goal) {
 }
 
 function GoalCard({ goal, isActive, onPractice, index }) {
+  const { t } = useTranslation();
   const { completed, total, pct } = getGoalProgress(goal);
   const [expanded, setExpanded] = useState(false);
   const visibleScenarios = expanded ? goal.scenarios : (goal.scenarios || []).slice(0, 3);
@@ -52,7 +54,7 @@ function GoalCard({ goal, isActive, onPractice, index }) {
                   : 'bg-emerald-50 dark:bg-emerald-900/20 text-emerald-600 dark:text-emerald-400'
               }`}
             >
-              {goal.status === 'active' ? '进行中' : goal.status === 'paused' ? '已暂停' : '已完成'}
+              {goal.status === 'active' ? t('qa_ui.status_active') : goal.status === 'paused' ? t('qa_ui.status_paused') : t('qa_ui.status_completed')}
             </span>
           </div>
         </div>
@@ -101,9 +103,9 @@ function GoalCard({ goal, isActive, onPractice, index }) {
               className="flex items-center gap-1 text-xs text-primary mt-1 hover:text-primary/80 transition-colors"
             >
               {expanded ? (
-                <><ChevronUp className="w-3 h-3" /> 收起</>
+                <><ChevronUp className="w-3 h-3" /> {t('qa_ui.show_less')}</>
               ) : (
-                <><ChevronDown className="w-3 h-3" /> 查看全部 {goal.scenarios.length} 个场景</>
+                <><ChevronDown className="w-3 h-3" /> {t('qa_ui.show_all_scenarios', { count: goal.scenarios.length })}</>
               )}
             </button>
           )}
@@ -117,7 +119,7 @@ function GoalCard({ goal, isActive, onPractice, index }) {
           className="w-full py-2.5 rounded-xl text-sm font-semibold text-white transition-opacity hover:opacity-90 active:opacity-80"
           style={{ background: 'linear-gradient(135deg, #637FF1, #a47af6)' }}
         >
-          {goal.status === 'active' ? '继续练习 →' : '切换并练习 →'}
+          {goal.status === 'active' ? t('qa_ui.continue_practice') : t('qa_ui.switch_practice')}
         </button>
       )}
     </motion.div>
@@ -125,6 +127,7 @@ function GoalCard({ goal, isActive, onPractice, index }) {
 }
 
 function Goals() {
+  const { t } = useTranslation();
   const navigate = useNavigate();
   const { user } = useAuth();
   const [allGoals, setAllGoals] = useState([]);
@@ -187,10 +190,10 @@ function Goals() {
   // Summary stats contain JSX icons — memoize so the array (and its
   // <Target/> etc. elements) isn't rebuilt on every render.
   const summaryStats = useMemo(() => [
-    { label: '进行中', value: activeGoals.length, icon: <Target className="w-4 h-4" />, color: 'text-primary', bg: 'bg-primary/10' },
-    { label: '已完成场景', value: totalCompletedScenes, icon: <CheckCircle className="w-4 h-4" />, color: 'text-emerald-500', bg: 'bg-emerald-50 dark:bg-emerald-900/20' },
-    { label: '连续天数', value: streak, icon: <Flame className="w-4 h-4" />, color: 'text-amber-500', bg: 'bg-amber-50 dark:bg-amber-900/20' },
-  ], [activeGoals.length, totalCompletedScenes, streak]);
+    { label: t('qa_ui.status_active'), value: activeGoals.length, icon: <Target className="w-4 h-4" />, color: 'text-primary', bg: 'bg-primary/10' },
+    { label: t('qa_ui.scenarios_completed_stat'), value: totalCompletedScenes, icon: <CheckCircle className="w-4 h-4" />, color: 'text-emerald-500', bg: 'bg-emerald-50 dark:bg-emerald-900/20' },
+    { label: t('qa_ui.streak_days'), value: streak, icon: <Flame className="w-4 h-4" />, color: 'text-amber-500', bg: 'bg-amber-50 dark:bg-amber-900/20' },
+  ], [activeGoals.length, totalCompletedScenes, streak, t]);
 
   if (loading) {
     return (
@@ -204,13 +207,13 @@ function Goals() {
     <div className="relative flex flex-col min-h-screen w-full bg-background-light dark:bg-background-dark">
       {/* Header */}
       <div className="flex items-center bg-white dark:bg-slate-800 px-4 py-3 justify-between sticky top-0 z-10 border-b border-slate-100 dark:border-slate-700 shadow-sm">
-        <h1 className="text-lg font-bold text-slate-900 dark:text-white">学习目标</h1>
+        <h1 className="text-lg font-bold text-slate-900 dark:text-white">{t('qa_ui.goals_title')}</h1>
         <button
           onClick={() => navigate('/goal-setting')}
           className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-sm font-medium text-primary border border-primary/30 hover:bg-primary/5 transition-colors"
         >
           <Plus className="w-4 h-4" />
-          新目标
+          {t('qa_ui.new_goal')}
         </button>
       </div>
 
@@ -240,7 +243,7 @@ function Goals() {
           {/* Active Goals */}
           {activeGoals.length > 0 ? (
             <>
-              <p className="text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wide mb-3">进行中</p>
+              <p className="text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wide mb-3">{t('qa_ui.status_active')}</p>
               {activeGoals.map((g, i) => (
                 <GoalCard
                   key={g.id}
@@ -268,19 +271,19 @@ function Goals() {
               className="bg-white dark:bg-slate-800 rounded-2xl shadow-brand border border-slate-100 dark:border-slate-700 p-8 text-center mb-4"
             >
               <div className="text-4xl mb-3">🎯</div>
-              <p className="text-slate-500 dark:text-slate-400 text-sm mb-4">还没有进行中的目标</p>
+              <p className="text-slate-500 dark:text-slate-400 text-sm mb-4">{t('qa_ui.no_active_goals')}</p>
               <button
                 onClick={() => navigate('/goal-setting')}
                 className="px-6 py-2.5 rounded-xl text-sm font-semibold text-white transition-opacity hover:opacity-90"
                 style={{ background: 'linear-gradient(135deg, #637FF1, #a47af6)' }}
               >
-                设定新目标
+                {t('qa_ui.set_new_goal')}
               </button>
             </motion.div>
           )}
 
           {/* AI Voice Selection */}
-          <p className="text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wide mb-3 mt-2">AI 导师音色</p>
+          <p className="text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wide mb-3 mt-2">{t('qa_ui.voice_title')}</p>
           <motion.div
             initial={{ opacity: 0, y: 8 }}
             animate={{ opacity: 1, y: 0 }}
@@ -296,7 +299,7 @@ function Goals() {
                     key={v.id}
                     onClick={() => !locked && handleVoiceChange(v.id)}
                     className={`relative flex items-center gap-2.5 p-3 rounded-xl border transition-all text-left ${
-                      locked ? 'opacity-50 cursor-not-allowed' : ''
+                      locked ? 'cursor-not-allowed' : ''
                     } ${
                       selectedVoice === v.id
                         ? 'border-primary bg-primary/5 dark:bg-primary/10'
@@ -311,7 +314,7 @@ function Goals() {
                       <p className={`text-sm font-semibold ${selectedVoice === v.id ? 'text-primary' : 'text-slate-800 dark:text-slate-200'}`}>
                         {v.name}
                       </p>
-                      <p className="text-xs text-slate-400 dark:text-slate-500">{v.description}</p>
+                      <p className="text-xs text-slate-400 dark:text-slate-500">{t(`qa_ui.voice_${v.id.toLowerCase()}`)}</p>
                     </div>
                     {locked && (
                       <Lock className="absolute top-2 right-2 w-3.5 h-3.5 text-slate-400" />
@@ -323,7 +326,7 @@ function Goals() {
           </motion.div>
 
           {/* Practice Goal Setting */}
-          <p className="text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wide mb-3 mt-2">每日练习目标</p>
+          <p className="text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wide mb-3 mt-2">{t('qa_ui.daily_practice_goal')}</p>
           <motion.div
             initial={{ opacity: 0, y: 8 }}
             animate={{ opacity: 1, y: 0 }}
@@ -341,7 +344,7 @@ function Goals() {
                       : 'bg-slate-50 dark:bg-slate-700/50 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700 hover:border-primary/30'
                   }`}
                 >
-                  {m}分钟
+                  {t('qa_ui.minutes', { count: m })}
                 </button>
               ))}
             </div>
@@ -350,7 +353,7 @@ function Goals() {
           {/* Completed Goals */}
           {completedGoals.length > 0 && (
             <>
-              <p className="text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wide mb-3 mt-2">已完成</p>
+              <p className="text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wide mb-3 mt-2">{t('qa_ui.status_completed')}</p>
               {completedGoals.map((g, i) => (
                 <GoalCard
                   key={g.id}

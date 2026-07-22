@@ -1,6 +1,7 @@
 import React, { useState, useRef, useEffect, useImperativeHandle, forwardRef } from 'react';
 import { Mic, WifiOff, X, Send } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
+import { useTranslation } from 'react-i18next';
 
 const BAR_COUNT = 32;
 
@@ -34,6 +35,7 @@ const RealTimeRecorder = forwardRef(({
   enableCompression = true,
   enableMetrics = false
 }, ref) => {
+  const { t } = useTranslation();
   const [isRecording, setIsRecording] = useState(false);
   const [recordingTime, setRecordingTime] = useState(0);
   const [audioLevel, setAudioLevel] = useState(0);
@@ -337,7 +339,7 @@ const RealTimeRecorder = forwardRef(({
               ) : (
                 <WifiOff className="w-5 h-5" />
               )}
-              <span className="text-sm">{isConnected ? '点击说话' : '连接中...'}</span>
+              <span className="text-sm">{isConnected ? t('qa_ui.tap_to_speak', 'Tap to speak') : t('qa_ui.conversation_connecting')}</span>
             </div>
           </motion.button>
         )}

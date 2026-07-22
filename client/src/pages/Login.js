@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { GoogleLogin } from '@react-oauth/google';
 import { useAuth } from '../contexts/AuthContext';
@@ -11,6 +11,11 @@ import { ArrowLeft, Eye, EyeOff } from 'lucide-react';
 
 function Login() {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const requestedReturn = searchParams.get('return_to') || '';
+  const loginDestination = requestedReturn.startsWith('/') && !requestedReturn.startsWith('//')
+    ? requestedReturn
+    : '/discovery';
   const { login, loginWithGoogle, loginWithPhone, loading } = useAuth();
   const { t } = useTranslation();
   const [mode, setMode] = useState('email'); // 'email' | 'phone'
@@ -32,7 +37,7 @@ function Login() {
   const handleGoogleSuccess = async (credentialResponse) => {
     const result = await loginWithGoogle(credentialResponse.credential);
     if (result.success) {
-      navigate('/discovery');
+      navigate(loginDestination);
     } else {
       setError(result.message || t('login_google_fail'));
     }
@@ -43,7 +48,7 @@ function Login() {
     setError('');
     const result = await login({ email, password });
     if (result.success) {
-      navigate('/discovery');
+      navigate(loginDestination);
     } else if (result.code === 'invalid_credentials') {
       setError(t('login_invalid_credentials'));
     } else {
@@ -96,20 +101,17 @@ function Login() {
     setError('');
     const result = await loginWithPhone(buildE164(), smsCode.trim());
     if (result.success) {
-      navigate('/discovery');
+      navigate(loginDestination);
     } else {
       setError(result.message || t('phone_login_fail'));
     }
   };
 
   return (
-    <div className="relative flex min-h-screen w-full flex-col items-center bg-background-light dark:bg-background-dark p-4">
+    <div className="relative flex min-h-[100dvh] w-full flex-col items-center bg-background-light dark:bg-background-dark p-4">
       {/* Logo top */}
       <div className="w-full max-w-md flex justify-center pt-10 pb-6">
-        <div
-          className="w-12 h-12 rounded-2xl"
-          style={{ background: 'linear-gradient(135deg, #637FF1, #a47af6)' }}
-        />
+        <img src="/guaji-logo.svg" alt="GuaJi" className="h-16 w-16" />
       </div>
 
       <motion.div
@@ -122,7 +124,7 @@ function Login() {
           {/* Header row */}
           <div className="flex items-center justify-between mb-6">
             <button
-              onClick={() => navigate('/')}
+              onClick={() => navigate('/welcome')}
               className="flex items-center gap-1.5 text-slate-500 hover:text-primary transition-colors"
             >
               <ArrowLeft className="w-4 h-4" />
@@ -139,14 +141,14 @@ function Login() {
             <button
               type="button"
               onClick={() => { setMode('email'); setError(''); }}
-              className={`flex-1 py-2 rounded-lg text-sm font-medium transition ${mode === 'email' ? 'bg-white dark:bg-slate-800 text-primary shadow-sm' : 'text-slate-500'}`}
+              className={`flex-1 py-2 rounded-lg text-sm font-medium transition ${mode === 'email' ? 'bg-white dark:bg-slate-800 text-primary-dark dark:text-primary-light shadow-sm' : 'text-slate-600 dark:text-slate-300'}`}
             >
               {t('login_tab_email')}
             </button>
             <button
               type="button"
               onClick={() => { setMode('phone'); setError(''); }}
-              className={`flex-1 py-2 rounded-lg text-sm font-medium transition ${mode === 'phone' ? 'bg-white dark:bg-slate-800 text-primary shadow-sm' : 'text-slate-500'}`}
+              className={`flex-1 py-2 rounded-lg text-sm font-medium transition ${mode === 'phone' ? 'bg-white dark:bg-slate-800 text-primary-dark dark:text-primary-light shadow-sm' : 'text-slate-600 dark:text-slate-300'}`}
             >
               {t('login_tab_phone')}
             </button>
@@ -203,7 +205,7 @@ function Login() {
                   <button
                     type="button"
                     onClick={() => navigate('/forgot-password')}
-                    className="text-xs text-primary hover:underline"
+                    className="text-xs text-primary-dark dark:text-primary-light hover:underline"
                   >
                     {t('login_forgot_password')}
                   </button>
@@ -245,7 +247,7 @@ function Login() {
                     placeholder={t('phone_local_placeholder')}
                   />
                 </div>
-                <p className="mt-1 text-xs text-slate-400">{t('phone_hint')}</p>
+                <p className="mt-1 text-xs text-slate-600 dark:text-slate-300">{t('phone_hint')}</p>
               </div>
 
               <div>
@@ -290,7 +292,7 @@ function Login() {
           <div className="mt-6">
             <div className="flex items-center gap-3 mb-4">
               <hr className="flex-1 border-slate-200 dark:border-slate-700" />
-              <span className="text-xs text-slate-400">{t('or_divider')}</span>
+              <span className="text-xs text-slate-600 dark:text-slate-300">{t('or_divider')}</span>
               <hr className="flex-1 border-slate-200 dark:border-slate-700" />
             </div>
             <div className="flex justify-center">
@@ -307,7 +309,7 @@ function Login() {
             {t('login_no_account')}{' '}
             <button
               onClick={() => navigate('/register')}
-              className="text-primary font-semibold hover:underline"
+              className="text-primary-dark dark:text-primary-light font-semibold hover:underline"
             >
               {t('login_register_link')}
             </button>

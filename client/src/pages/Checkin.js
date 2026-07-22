@@ -4,8 +4,11 @@ import { useAuth } from '../contexts/AuthContext';
 import { userAPI } from '../services/api';
 import { motion, AnimatePresence } from 'motion/react';
 import { ArrowLeft, Flame, Check, CheckCircle, PlusCircle, Info } from 'lucide-react';
+import BottomNav from '../components/BottomNav';
+import { useTranslation } from 'react-i18next';
 
 function Checkin() {
+  const { t, i18n } = useTranslation();
   const navigate = useNavigate();
   const { user, loading } = useAuth();
 
@@ -73,8 +76,8 @@ function Checkin() {
   const getDayLabel = (dateStr) => {
     const date = new Date(dateStr);
     const today = new Date().toISOString().split('T')[0];
-    if (dateStr === today) return '今';
-    return ['日', '一', '二', '三', '四', '五', '六'][date.getDay()];
+    if (dateStr === today) return t('qa_ui.today_short');
+    return new Intl.DateTimeFormat(i18n.language, { weekday: 'narrow' }).format(date);
   };
 
   const getDateNum = (dateStr) => new Date(dateStr).getDate();
@@ -92,13 +95,14 @@ function Checkin() {
       {/* Header */}
       <header className="bg-white dark:bg-slate-800 border-b border-slate-100 dark:border-slate-700 px-4 py-3">
         <div className="max-w-lg mx-auto flex items-center justify-between">
-          <button
-            onClick={() => navigate('/discovery')}
+        <button
+          aria-label={t('qa_ui.back_profile')}
+            onClick={() => navigate('/profile')}
             className="p-2 -ml-2 text-slate-600 dark:text-slate-400 hover:text-primary transition-colors"
           >
             <ArrowLeft className="w-5 h-5" />
           </button>
-          <h1 className="font-bold text-lg text-slate-900 dark:text-white">每日打卡</h1>
+          <h1 className="font-bold text-lg text-slate-900 dark:text-white">{t('qa_ui.daily_checkin').replace(/^🔥\s*/, '')}</h1>
           <div className="w-9" />
         </div>
       </header>
@@ -113,8 +117,8 @@ function Checkin() {
         >
           <div className="flex items-center justify-between mb-4">
             <div>
-              <p className="text-white/70 text-sm">当前连续打卡</p>
-              <p className="text-4xl font-bold">{stats?.currentStreak || 0} <span className="text-lg font-normal">天</span></p>
+              <p className="text-white/70 text-sm">{t('qa_ui.current_streak')}</p>
+              <p className="text-4xl font-bold">{t('qa_ui.day_count', { count: stats?.currentStreak || 0 })}</p>
             </div>
             <div className="w-16 h-16 bg-white/20 rounded-full flex items-center justify-center">
               <Flame className="w-8 h-8 text-white" />
@@ -122,11 +126,11 @@ function Checkin() {
           </div>
           <div className="flex justify-between text-sm">
             <div>
-              <p className="text-white/70">累计打卡</p>
-              <p className="font-semibold">{stats?.totalCheckins || 0} 天</p>
+              <p className="text-white/70">{t('qa_ui.total_checkins')}</p>
+              <p className="font-semibold">{t('qa_ui.day_count', { count: stats?.totalCheckins || 0 })}</p>
             </div>
             <div>
-              <p className="text-white/70">获得积分</p>
+              <p className="text-white/70">{t('qa_ui.points_earned')}</p>
               <p className="font-semibold">{stats?.totalPointsFromCheckins || 0}</p>
             </div>
           </div>
@@ -139,7 +143,7 @@ function Checkin() {
           transition={{ delay: 0.1 }}
           className="bg-white dark:bg-slate-800 rounded-2xl p-4 shadow-brand border border-slate-100 dark:border-slate-700"
         >
-          <h3 className="font-medium text-slate-900 dark:text-white mb-4">本周打卡</h3>
+          <h3 className="font-medium text-slate-900 dark:text-white mb-4">{t('qa_ui.this_week')}</h3>
           <div className="grid grid-cols-7 gap-2">
             {getLast7Days().map(date => {
               const checked = isDateCheckedIn(date);
@@ -186,12 +190,12 @@ function Checkin() {
           ) : stats?.checkedInToday ? (
             <>
               <CheckCircle className="w-5 h-5" />
-              今日已打卡
+              {t('qa_ui.checked_in_today')}
             </>
           ) : (
             <>
               <PlusCircle className="w-5 h-5" />
-              立即打卡
+              {t('qa_ui.checkin_now')}
             </>
           )}
         </motion.button>
@@ -203,19 +207,19 @@ function Checkin() {
           transition={{ delay: 0.2 }}
           className="bg-white dark:bg-slate-800 rounded-2xl p-4 shadow-brand border border-slate-100 dark:border-slate-700"
         >
-          <h3 className="font-medium text-slate-900 dark:text-white mb-3">打卡规则</h3>
+          <h3 className="font-medium text-slate-900 dark:text-white mb-3">{t('qa_ui.checkin_rules')}</h3>
           <ul className="space-y-2 text-sm text-slate-600 dark:text-slate-400">
             <li className="flex items-start gap-2">
               <Check className="w-4 h-4 text-success mt-0.5 flex-shrink-0" />
-              每日打卡基础奖励 10 积分
+              {t('qa_ui.checkin_rule_base')}
             </li>
             <li className="flex items-start gap-2">
               <Check className="w-4 h-4 text-success mt-0.5 flex-shrink-0" />
-              连续打卡每天额外 +2 积分（最高 +40）
+              {t('qa_ui.checkin_rule_streak')}
             </li>
             <li className="flex items-start gap-2">
               <Info className="w-4 h-4 text-warning mt-0.5 flex-shrink-0" />
-              中断打卡后连续天数将重置
+              {t('qa_ui.checkin_rule_reset')}
             </li>
           </ul>
         </motion.div>
@@ -229,7 +233,7 @@ function Checkin() {
             className="bg-white dark:bg-slate-800 rounded-2xl p-4 shadow-brand border border-slate-100 dark:border-slate-700"
           >
             <h3 className="font-medium text-slate-900 dark:text-white mb-3">打卡记录</h3>
-            <div className="space-y-2 max-h-48 overflow-y-auto">
+            <div className="space-y-2 max-h-80 overflow-y-auto">
               {history.slice(0, 10).map((record, idx) => (
                 <div key={idx} className="flex items-center justify-between py-2 border-b border-slate-100 dark:border-slate-700 last:border-0">
                   <div className="flex items-center gap-3">
@@ -287,6 +291,7 @@ function Checkin() {
           </motion.div>
         )}
       </AnimatePresence>
+      <BottomNav currentPage="profile" />
     </div>
   );
 }

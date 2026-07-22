@@ -2,9 +2,14 @@
 
 ## In Progress
 
-
+[ ]移动web端 适配，当前未进行UI验证和优化
+[ ]对话场景实测，包括每日问答、复述和场景对话
+[ ] [Bug] 本地 GoalSetting 场景生成失败：`POST /generate-scenarios` 返回 500；已确认国内端点与 China backup key 正确加载，但 AI 容器直连 DashScope 仍出现 `ConnectTimeout`。后续需排查 Docker Desktop/TUN/防火墙出站链路，并让异常日志输出异常类型与 `repr`，避免 `LLM call failed:` 空日志。
+[ ]DB 备份 cron（退订 Zeabur Dev 前必做，叫我随时写）、欢迎语 ~15s 准备链、COS 上传 buffer 化、18 条 CSP/头部加固 LOW。
 ## Backlog
 
+- [ ] [Quality] `scripts/quality/audit-tracker.mjs`：数量相等时仍报告 mismatch。
+- [ ] [Reliability] `client/src/components/SupportChat.jsx`：Tawk 首次加载失败后没有重试入口。
 
 ## Done
 
@@ -17,6 +22,7 @@
 - [x] [Feature] 今日复述切换记录后端持久化：新建 recall_daily_state 表(UUID FK) + 3 端点(/recall/daily-state·switch·complete) + api.js + Recall.js 对接（localStorage 降级为离线 fallback）；recallState.test.js 8 + recall-switch-limit.test.js 5
 - [x] [Commercialization] 订阅分层模型 + 单位经济文档：docs/Pricing_Unit_Economics.md（量化门控矩阵贴代码 + per-minute 成本模型 + LTV/CAC + 标出 Free 缺时长门控最大漏点）
 - [x] [Feature] App 后台 Live Activity 规划文档：docs/Live_Activity_Background.md（澄清 Web/PWA 做不了真 iOS Live Activity，按平台分 A/B/C 档 + 增量路线 + 阻塞决策清单）
+
 
 ### 已知预存项（非本批引入，待后续单独处理）
 - [x] [Bug] update_db.sql user_checkins.user_id 声明为 INT 但 users.id 实为 UUID（迁移脚本类型不一致；init.sql 正确，仅 update_db.sql 漂移）→ 已改 UUID（2026-06-08）

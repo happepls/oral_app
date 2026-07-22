@@ -2,9 +2,15 @@ const express = require('express');
 const { v4: uuidv4 } = require('uuid');
 const Redis = require('ioredis');
 const fetch = require('node-fetch');
+const { createRequireUser } = require('./auth');
 
 const app = express();
 const PORT = process.env.PORT || 8083;
+const INTERNAL_AUTH_SECRET = process.env.INTERNAL_AUTH_SECRET;
+if (!INTERNAL_AUTH_SECRET) throw new Error('INTERNAL_AUTH_SECRET is required');
+const JWT_SECRET = process.env.JWT_SECRET;
+const requireUser = createRequireUser(JWT_SECRET);
+const historyWriteHeaders = { 'Content-Type': 'application/json', 'X-Guaji-Internal-Auth': INTERNAL_AUTH_SECRET };
 
 // Connect to Redis
 const redis = new Redis({
@@ -63,12 +69,9 @@ app.get('/', (req, res) => {
   res.status(200).send('Conversation Service is running.');
 });
 
-app.post('/start', async (req, res) => {
-  const { userId, goalId, forceNew } = req.body;
-
-  if (!userId) {
-    return res.status(400).json({ message: 'userId is required.' });
-  }
+app.post('/start', requireUser, async (req, res) => {
+  const { goalId, forceNew } = req.body;
+  const userId = req.authUserId;
 
   const effectiveGoalId = goalId || 'general';
   const sessionListKey = `user:${userId}:goal:${effectiveGoalId}:sessions`;
@@ -111,9 +114,9 @@ app.post('/start', async (req, res) => {
 
     // Initialize conversation in history-analytics-service
     try {
-      const initResponse = await fetch(`http://history-analytics-service:3004/conversation`, {
+      const initResponse = await fetch(`http://history-analytics-service:3004/api/history/conversation`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: historyWriteHeaders,
         body: JSON.stringify({
           sessionId,
           userId,
@@ -177,7 +180,7 @@ app.get('/sessions', async (req, res) => {
   }
 });
 
-app.get('/history/:sessionId', async (req, res) => {
+app.get('/history/:sessionId', requireUser, async (req, res) => {
   const { sessionId } = req.params;
 
   try {
@@ -185,7 +188,7 @@ app.get('/history/:sessionId', async (req, res) => {
     try {
       const historyResponse = await fetch(`http://history-analytics-service:3004/api/history/session/${sessionId}`, {
         method: 'GET',
-        headers: { 'Content-Type': 'application/json' }
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${req.authToken}` }
       });
 
       if (historyResponse.ok) {
@@ -194,7 +197,6 @@ app.get('/history/:sessionId', async (req, res) => {
         console.log(`History data structure:`, JSON.stringify(historyData, null, 2));
         console.log(`Messages count:`, historyData.data?.messages?.length || 0);
         if (historyData.data?.messages) {
-          console.log(`Last few messages:`, historyData.data.messages.slice(-3).map(m => ({role: m.role, content: m.content?.substring(0, 50)})));
         }
         return res.status(200).json({
           success: true,
@@ -205,20 +207,17 @@ app.get('/history/:sessionId', async (req, res) => {
       console.log(`Failed to fetch from history-analytics-service, using fallback: ${fetchError.message}`);
     }
 
-    // Fallback: Return empty history if history-analytics-service is not available
-    res.status(200).json({
-      success: true,
-      data: { messages: [] }
-    });
+    res.status(502).json({ message: 'History service is unavailable.' });
   } catch (error) {
     console.error(`Failed to retrieve history for session ${sessionId}:`, error);
     res.status(500).json({ message: 'Internal server error.' });
   }
 });
 
-app.post('/history/:sessionId', async (req, res) => {
+app.post('/history/:sessionId', requireUser, async (req, res) => {
   const { sessionId } = req.params;
-  const { role, content, audioUrl, userId, messages } = req.body;
+  const { role, content, audioUrl, messages } = req.body;
+  const userId = req.authUserId;
 
   console.log(`POST /history/${sessionId} received request`);
   console.log(`Request body keys: ${Object.keys(req.body)}`);
@@ -244,7 +243,7 @@ app.post('/history/:sessionId', async (req, res) => {
 
       historyResponse = await fetch(conversationUrl, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: historyWriteHeaders,
         body: JSON.stringify({
           sessionId,
           userId,
@@ -265,7 +264,7 @@ app.post('/history/:sessionId', async (req, res) => {
 
         const fallbackResponse = await fetch(sessionMessagesUrl, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: historyWriteHeaders,
           body: JSON.stringify({
             userId,
             messages
@@ -297,7 +296,7 @@ app.post('/history/:sessionId', async (req, res) => {
       // First try the conversation endpoint
       historyResponse = await fetch(`http://history-analytics-service:3004/api/history/conversation`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: historyWriteHeaders,
         body: JSON.stringify({
           sessionId,
           userId,
@@ -314,7 +313,7 @@ app.post('/history/:sessionId', async (req, res) => {
         // Try fallback to the history session endpoint
         const fallbackResponse = await fetch(`http://history-analytics-service:3004/api/history/session/${sessionId}`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: historyWriteHeaders,
           body: JSON.stringify({
             userId,
             messages: [{ role, content, audioUrl }]

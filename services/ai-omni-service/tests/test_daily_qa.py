@@ -160,16 +160,40 @@ def today_iso():
     return datetime.now(timezone.utc).strftime("%Y-%m-%d")
 
 
-def _fake_dashscope_response(payload: str):
-    resp = MagicMock()
-    resp.status_code = 200
-    resp.output = MagicMock()
-    resp.output.text = payload
-    choice = MagicMock()
-    choice.message = MagicMock()
-    choice.message.content = payload
-    resp.output.choices = [choice]
-    return resp
+class _FakeHttpResponse:
+    def __init__(self, payload: str):
+        self.payload = payload
+
+    def raise_for_status(self):
+        return None
+
+    def json(self):
+        return {"choices": [{"message": {"content": self.payload}}]}
+
+
+class _FakeAsyncClient:
+    def __init__(self, payload: str = "", error: Exception = None, *args, **kwargs):
+        self.payload = payload
+        self.error = error
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *args):
+        return False
+
+    async def post(self, *args, **kwargs):
+        if self.error:
+            raise self.error
+        return _FakeHttpResponse(self.payload)
+
+
+def _mock_llm(payload: str = "", error: Exception = None):
+    return patch.object(
+        _main_module.httpx,
+        "AsyncClient",
+        side_effect=lambda *args, **kwargs: _FakeAsyncClient(payload, error, *args, **kwargs),
+    )
 
 
 # =========================================================================
@@ -186,8 +210,7 @@ class TestGenerateDailyQuestionPool:
             {"question_text": "Describe your morning routine.", "lang": "en"},
             {"question_text": "What's one goal for today?", "lang": "en"},
         ]
-        resp = _fake_dashscope_response(json.dumps(pool))
-        with patch("dashscope.Generation.call", return_value=resp):
+        with _mock_llm(json.dumps(pool)):
             result = await _maybe_await(_generate_pool(
                 target_language="English", native_language="Chinese", count=3,
             ))
@@ -201,8 +224,7 @@ class TestGenerateDailyQuestionPool:
     async def test_markdown_wrapped_json_parses(self):
         pool = [{"question_text": "Q1", "lang": "en"}]
         wrapped = f"```json\n{json.dumps(pool)}\n```"
-        with patch("dashscope.Generation.call",
-                   return_value=_fake_dashscope_response(wrapped)):
+        with _mock_llm(wrapped):
             result = await _maybe_await(_generate_pool(
                 target_language="English", native_language="Chinese", count=1,
             ))
@@ -211,7 +233,7 @@ class TestGenerateDailyQuestionPool:
 
     @pytest.mark.asyncio
     async def test_llm_failure_falls_back_to_hardcoded_pool(self):
-        with patch("dashscope.Generation.call", side_effect=RuntimeError("boom")):
+        with _mock_llm(error=RuntimeError("boom")):
             result = await _maybe_await(_generate_pool(
                 target_language="English", native_language="Chinese", count=3,
             ))
@@ -222,8 +244,7 @@ class TestGenerateDailyQuestionPool:
 
     @pytest.mark.asyncio
     async def test_malformed_llm_output_falls_back(self):
-        with patch("dashscope.Generation.call",
-                   return_value=_fake_dashscope_response("<<not json>>")):
+        with _mock_llm("<<not json>>"):
             result = await _maybe_await(_generate_pool(
                 target_language="English", native_language="Chinese", count=3,
             ))
@@ -243,7 +264,7 @@ class TestGenerateDailyQuestionPool:
 class TestDailyQuestionRedisLifecycle:
     """
     Contract (design): on GET /daily-question
-      - If redis has `daily_qa_pool:{user_id}:{date}` → return cached pool
+      - If redis has `daily_qa_pool:{user_id}:{lang}:{date}` → return cached pool
       - Else → call _generate_daily_question_pool() → SETEX with ~48h TTL → return pool
 
     These are contract-level tests: we exercise the pool-generation call and the
@@ -258,17 +279,13 @@ class TestDailyQuestionRedisLifecycle:
             pytest.skip("handle_daily_question() not yet exposed")
 
         pool = [{"question_text": "Q1", "lang": "en"}]
-        with patch("dashscope.Generation.call",
-                   return_value=_fake_dashscope_response(json.dumps(pool))):
+        with _mock_llm(json.dumps(pool)):
             result = await _maybe_await(handler(redis=fake_redis, user_id=user_id,
                                                 target_language="English",
                                                 native_language="Chinese"))
 
         # Cache was populated
-        key_candidates = [
-            f"daily_qa_pool:{user_id}:{today_iso}",
-            f"daily_qa:{user_id}:{today_iso}",
-        ]
+        key_candidates = [f"daily_qa_pool:{user_id}:english:{today_iso}"]
         assert any(k in fake_redis._store for k in key_candidates), \
             f"expected one of {key_candidates} in redis; have {list(fake_redis._store)}"
         assert isinstance(result, (list, dict))
@@ -280,11 +297,11 @@ class TestDailyQuestionRedisLifecycle:
             pytest.skip("handle_daily_question() not yet exposed")
 
         cached = [{"question_text": "cached Q", "lang": "en"}]
-        await fake_redis.setex(f"daily_qa_pool:{user_id}:{today_iso}",
+        await fake_redis.setex(f"daily_qa_pool:{user_id}:english:{today_iso}",
                                48 * 3600, json.dumps(cached))
 
         call_spy = MagicMock(side_effect=AssertionError("LLM must NOT be called on cache hit"))
-        with patch("dashscope.Generation.call", call_spy):
+        with patch.object(_main_module.httpx, "AsyncClient", call_spy):
             result = await _maybe_await(handler(redis=fake_redis, user_id=user_id,
                                                 target_language="English",
                                                 native_language="Chinese"))
@@ -411,7 +428,7 @@ class TestDailyQaReAnswerHelpers:
             {"question_text": "Q2", "lang": "en"},
             {"question_text": "Q3", "lang": "en"},
         ]
-        cache_key = f"daily_qa_pool:{user_id}:{today_iso}"
+        cache_key = f"daily_qa_pool:{user_id}:english:{today_iso}"
         await fake_redis.setex(
             cache_key, 48 * 3600,
             json.dumps({"pool": pool, "index": 0, "picked": pool[0]}),
@@ -444,7 +461,7 @@ class TestDailyQaReAnswerHelpers:
             {"question_text": "Q1", "lang": "en"},
             {"question_text": "Q2", "lang": "en"},
         ]
-        cache_key = f"daily_qa_pool:{user_id}:{today_iso}"
+        cache_key = f"daily_qa_pool:{user_id}:english:{today_iso}"
         # Seed at last index (1); next advance should wrap back to 0
         await fake_redis.setex(
             cache_key, 48 * 3600,
@@ -466,7 +483,7 @@ class TestDailyQaReAnswerHelpers:
         if advance is None:
             pytest.skip("_advance_daily_qa_pool() not yet exposed")
 
-        cache_key = f"daily_qa_pool:{user_id}:{today_iso}"
+        cache_key = f"daily_qa_pool:{user_id}:english:{today_iso}"
         # Legacy shape — single picked dict
         legacy = {"question_text": "legacy Q", "lang": "en"}
         await fake_redis.setex(cache_key, 48 * 3600, json.dumps(legacy))
@@ -477,8 +494,7 @@ class TestDailyQaReAnswerHelpers:
             {"question_text": "fresh Q2", "lang": "en"},
             {"question_text": "fresh Q3", "lang": "en"},
         ]
-        with patch("dashscope.Generation.call",
-                   return_value=_fake_dashscope_response(json.dumps(fresh_pool))):
+        with _mock_llm(json.dumps(fresh_pool)):
             picked = await _maybe_await(advance(
                 fake_redis, user_id, today_iso,
                 target_language="English", native_language="Chinese",
@@ -554,12 +570,12 @@ class TestGetDailyQuestionPool:
             {"question_text": "Q2", "lang": "en", "reference_answer": "A2"},
             {"question_text": "Q3", "lang": "en", "reference_answer": "A3"},
         ]
-        cache_key = f"daily_qa_pool:{user_id}:{today_iso}"
+        cache_key = f"daily_qa_pool:{user_id}:english:{today_iso}"
         await fake_redis.setex(cache_key, 48 * 3600,
                                json.dumps({"pool": pool, "index": 0, "picked": pool[0]}))
 
         call_spy = MagicMock(side_effect=AssertionError("LLM should not be called"))
-        with patch("dashscope.Generation.call", call_spy):
+        with patch.object(_main_module.httpx, "AsyncClient", call_spy):
             result = await _maybe_await(get_pool(
                 redis=fake_redis, user_id=user_id,
                 target_language="English", native_language="Chinese", count=3,
@@ -577,7 +593,7 @@ class TestGetDailyQuestionPool:
             pytest.skip("get_daily_question_pool() not yet exposed")
 
         pool = [{"question_text": "Q1", "lang": "en", "reference_answer": "A1"}]
-        cache_key = f"daily_qa_pool:{user_id}:{today_iso}"
+        cache_key = f"daily_qa_pool:{user_id}:english:{today_iso}"
         await fake_redis.setex(cache_key, 48 * 3600,
                                json.dumps({"pool": pool, "index": 0, "picked": pool[0]}))
 
@@ -603,7 +619,7 @@ class TestGetDailyQuestionPool:
             {"question_text": f"Q{i}", "lang": "en", "reference_answer": f"A{i}"}
             for i in range(10)
         ]
-        cache_key = f"daily_qa_pool:{user_id}:{today_iso}"
+        cache_key = f"daily_qa_pool:{user_id}:english:{today_iso}"
         await fake_redis.setex(cache_key, 48 * 3600,
                                json.dumps({"pool": pool, "index": 0, "picked": pool[0]}))
 
@@ -667,7 +683,7 @@ class TestDailyQuestionSelectEndpoint:
             pytest.skip("daily_question_select_endpoint not yet exposed")
 
         user_id = self.PRO_USER["id"]
-        cache_key = f"daily_qa_pool:{user_id}:{today_iso}"
+        cache_key = f"daily_qa_pool:{user_id}:english:{today_iso}"
         pool = [
             {"question_text": f"Q{i}", "lang": "en", "reference_answer": f"A{i}"}
             for i in range(3)
@@ -701,7 +717,7 @@ class TestDailyQuestionSelectEndpoint:
         from fastapi import HTTPException
 
         user_id = self.PRO_USER["id"]
-        cache_key = f"daily_qa_pool:{user_id}:{today_iso}"
+        cache_key = f"daily_qa_pool:{user_id}:english:{today_iso}"
         pool = [{"question_text": "only", "lang": "en", "reference_answer": ""}]
         await fake_redis.setex(
             cache_key, 48 * 3600,

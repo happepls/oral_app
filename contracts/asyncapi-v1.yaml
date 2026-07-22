@@ -1,0 +1,49 @@
+asyncapi: 3.0.0
+info:
+  title: Guaji Realtime Conversation API
+  version: 1.0.0
+  description: Obtain a 60-second ticket from POST /api/v1/realtime/tickets, then connect with the ticket query parameter.
+servers:
+  local:
+    host: localhost:8081
+    protocol: ws
+channels:
+  realtime:
+    address: /api/v1/realtime
+    parameters:
+      ticket: { description: Short-lived realtime ticket }
+      sessionId: { description: Conversation session UUID }
+      scenario: { description: URL-encoded scenario title }
+      voice: { description: One of Tina, Serena, Evan, Arda }
+      mode: { description: Normalized learning mode }
+    messages:
+      clientAudio: { $ref: '#/components/messages/ClientAudio' }
+      clientControl: { $ref: '#/components/messages/ClientControl' }
+      serverEvent: { $ref: '#/components/messages/ServerEvent' }
+operations:
+  sendAudio:
+    action: send
+    channel: { $ref: '#/channels/realtime' }
+    messages: [{ $ref: '#/channels/realtime/messages/clientAudio' }, { $ref: '#/channels/realtime/messages/clientControl' }]
+  receiveEvents:
+    action: receive
+    channel: { $ref: '#/channels/realtime' }
+    messages: [{ $ref: '#/channels/realtime/messages/serverEvent' }]
+components:
+  messages:
+    ClientAudio:
+      payload: { type: string, contentEncoding: binary }
+    ClientControl:
+      payload:
+        type: object
+        required: [type]
+        properties:
+          type: { enum: [session_start, user_audio_ended, task_confirmation, resend_magic_sentence, ping] }
+          payload: { type: object }
+    ServerEvent:
+      payload:
+        type: object
+        required: [type]
+        properties:
+          type: { enum: [connection_established, text_response, audio_response, proficiency_update, task_completed, scenario_completed, connection_closed, error] }
+          payload: {}

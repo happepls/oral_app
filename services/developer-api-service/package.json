@@ -1,0 +1,17 @@
+{
+  "name": "guaji-developer-api-service",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "start": "node src/index.js",
+    "test": "node --test test/*.test.js",
+    "seed:local": "node scripts/seed-local-client.js"
+  },
+  "dependencies": {
+    "dotenv": "^17.2.2",
+    "express": "^4.21.2",
+    "jsonwebtoken": "^9.0.2",
+    "node-fetch": "2.7.0",
+    "pg": "^8.16.3"
+  }
+}

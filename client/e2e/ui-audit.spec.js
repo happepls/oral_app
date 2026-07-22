@@ -1,0 +1,106 @@
+const { test, expect } = require('@playwright/test');
+const AxeBuilder = require('@axe-core/playwright').default;
+const path = require('node:path');
+
+const pages = [
+  ['landing', '/'], ['welcome', '/welcome'], ['login', '/login'], ['register', '/register'],
+  ['onboarding', '/onboarding'], ['goal-setting', '/goal-setting'], ['discovery', '/discovery'],
+  ['goals', '/goals'], ['profile', '/profile'], ['checkin', '/checkin'],
+  ['conversation', '/conversation?mode=tour'], ['history', '/history'], ['subscription', '/subscription'],
+];
+const user = { id: '00000000-0000-4000-8000-000000000001', username: 'quality_user', nickname: 'Quality User', native_language: 'zh', target_language: 'en', onboarding_tour_completed: true };
+const activeGoal = { id: 1, target_language: 'en', target_level: 'Beginner', current_proficiency: 10, status: 'active', scenarios: [{ title: 'Airport Check-in', tasks: [{ id: 1, text: 'Ask where the counter is', status: 'pending', score: 0 }] }] };
+
+test.beforeEach(async ({ page }, testInfo) => {
+  const isPublic = /\b(landing|welcome|login|register)\b/.test(testInfo.title);
+  const darkEnglish = testInfo.project.name.endsWith('-dark-en');
+  await page.addInitScript(({ seededUser, publicPage, useDarkEnglish }) => {
+    if (!publicPage) localStorage.setItem('user', JSON.stringify(seededUser));
+    localStorage.setItem('ui_language', useDarkEnglish ? 'en' : 'zh');
+    localStorage.setItem('theme', useDarkEnglish ? 'dark' : 'light');
+    document.documentElement.classList.toggle('dark', useDarkEnglish);
+    localStorage.setItem('onboardingTourCompleted', 'true');
+    sessionStorage.setItem('hasSeenSplash', 'true');
+  }, { seededUser: user, publicPage: isPublic, useDarkEnglish: darkEnglish });
+  await page.route(/tawk\.to|stripe\.com|dashscope|myqcloud|google/i, (route) => route.abort('blockedbyclient'));
+  await page.route('**/api/**', async (route) => {
+    const url = route.request().url();
+    let data = {};
+    if (url.includes('/v1/profile')) data = user;
+    else if (url.includes('/v1/goals')) data = [activeGoal];
+    else if (url.includes('/v1/tasks')) data = [];
+    else if (url.includes('/v1/conversations')) data = [];
+    else if (url.includes('/v1/realtime/tickets')) data = { ticket: 'test-ticket', websocket_url: '/api/v1/realtime' };
+    else if (url.includes('/v1/oauth/authorize')) data = { client: { id: 'partner', name: 'Local Partner' }, redirect_uri: 'http://localhost:4173/callback', scopes: ['profile:read'], state: 'test-state' };
+    else if (url.includes('/users/profile') && isPublic) return route.fulfill({ status: 401, contentType: 'application/json', body: JSON.stringify({ message: 'No local session' }) });
+    else if (url.includes('/users/profile')) data = { user };
+    else if (url.includes('/goals/active')) data = { goal: activeGoal };
+    else if (url.endsWith('/users/goals')) data = { goals: [activeGoal] };
+    else if (url.includes('/checkin/history')) data = [];
+    else if (url.includes('/checkin/stats')) data = { streak: 0, total: 0 };
+    else if (url.includes('/history/')) data = [];
+    else if (url.includes('/stripe/products')) data = { products: [] };
+    await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ success: true, data }) });
+  });
+  await page.route('**/api/users/sse', (route) => route.fulfill({ status: 200, contentType: 'text/event-stream', body: 'event: ping\ndata: {}\n\n' }));
+});
+
+for (const [name, url] of pages) {
+  test(`${name} has no overflow, serious a11y violations, or clipped controls`, async ({ page }, testInfo) => {
+    const consoleErrors = [];
+    page.on('console', (message) => { if (message.type() === 'error' && !message.text().includes('ERR_BLOCKED_BY_CLIENT')) consoleErrors.push(message.text()); });
+    await page.goto(url);
+    const darkEnglish = testInfo.project.name.endsWith('-dark-en');
+    await page.evaluate((useDark) => document.documentElement.classList.toggle('dark', useDark), darkEnglish);
+    await expect(page.locator('html')).toHaveClass(darkEnglish ? /\bdark\b/ : /^(?!.*\bdark\b)/);
+    await page.evaluate(() => document.fonts?.ready);
+    await expect(page.locator('body')).toBeVisible();
+    const target = path.resolve(testInfo.config.rootDir, '../../quality/artifacts/ui-candidates', testInfo.project.name, `${name}.png`);
+    await page.screenshot({ path: target, fullPage: true, animations: 'disabled' });
+    await expect(page).toHaveScreenshot(`${name}.png`, {
+      animations: 'disabled',
+      fullPage: true,
+      maxDiffPixelRatio: 0.03,
+    });
+    const overflow = await page.evaluate(() => ({ width: document.documentElement.scrollWidth, viewport: window.innerWidth }));
+    expect(overflow.width, `${name} horizontal overflow`).toBeLessThanOrEqual(overflow.viewport + 1);
+    const clipped = await page.locator('button:visible, a:visible, input:visible, select:visible').evaluateAll((nodes) => nodes.filter((node) => {
+      const rect = node.getBoundingClientRect();
+      return rect.width > 0 && rect.height > 0 && (rect.left < -1 || rect.right > innerWidth + 1);
+    }).map((node) => node.outerHTML.slice(0, 120)));
+    expect(clipped).toEqual([]);
+    const undersized = await page.locator('button:visible, a:visible, input:visible, select:visible').evaluateAll((nodes) => nodes.filter((node) => {
+      if (node.matches('[data-compact-target="true"]')) return false;
+      const rect = node.getBoundingClientRect();
+      // Layout engines can report a nominal 44px box as 43.999px.
+      return rect.width > 0 && rect.height > 0 && (rect.width < 43.5 || rect.height < 43.5);
+    }).map((node) => ({ tag: node.tagName, label: node.getAttribute('aria-label') || node.textContent?.trim().slice(0, 40), rect: node.getBoundingClientRect().toJSON() })));
+    expect(undersized, `${name} has interactive targets below 44x44`).toEqual([]);
+    const results = await new AxeBuilder({ page }).analyze();
+    expect(results.violations.filter((item) => ['critical', 'serious'].includes(item.impact))).toEqual([]);
+    if (darkEnglish) {
+      const nativeLanguageNames = new Set(['🇨🇳 中文', '🇯🇵 日本語', '中文', '日本語']);
+      const untranslated = await page.locator('body').innerText().then((text) => [...new Set(text.split('\n').map((line) => line.trim()).filter((line) => /[\u3400-\u9fff]/u.test(line) && !nativeLanguageNames.has(line)))]);
+      expect(untranslated, `${name} contains untranslated UI in the English locale`).toEqual([]);
+    }
+    expect(consoleErrors).toEqual([]);
+  });
+}
+
+test('@critical login remains usable with a keyboard-sized viewport', async ({ page }, testInfo) => {
+  await page.setViewportSize({ width: 390, height: 500 });
+  await page.goto('/login');
+  await page.evaluate((useDark) => document.documentElement.classList.toggle('dark', useDark), testInfo.project.name.endsWith('-dark-en'));
+  // The submission action must remain reachable when the final form field has
+  // focus and the visual viewport is reduced to approximate a soft keyboard.
+  await page.locator('input[type="password"]').focus();
+  await expect(page.getByRole('button', { name: /登录|sign in/i }).first()).toBeInViewport();
+});
+
+test('@critical developer authorization shows verified client and scopes', async ({ page }, testInfo) => {
+  await page.goto('/developer/authorize?client_id=partner&redirect_uri=http%3A%2F%2Flocalhost%3A4173%2Fcallback&scope=profile%3Aread&state=test-state');
+  await page.evaluate((useDark) => document.documentElement.classList.toggle('dark', useDark), testInfo.project.name.endsWith('-dark-en'));
+  await expect(page.getByText('Local Partner')).toBeVisible();
+  await expect(page.getByRole('button', { name: /允许|allow/i })).toBeVisible();
+  await expect(page.getByRole('button', { name: /拒绝|deny/i })).toBeVisible();
+});

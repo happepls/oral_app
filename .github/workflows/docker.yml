@@ -2,7 +2,7 @@ name: Docker Build and Push
 
 on:
   push:
-    branches: [ main, develop ]
+    branches: [ master, develop ]
     tags: [ 'v*.*.*' ]
 
 env:
@@ -29,6 +29,15 @@ jobs:
         registry: ${{ env.REGISTRY }}
         username: ${{ github.actor }}
         password: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: Prepare Node service dependencies on host
+      run: |
+        npm ci --prefix services/user-service
+        npm ci --prefix services/comms-service
+        npm ci --prefix services/history-analytics-service
+        npm ci --prefix services/conversation-service
+        npm ci --prefix services/media-processing-service
+        npm ci --prefix services/developer-api-service
 
     - name: Extract metadata for client
       id: meta-client
@@ -126,6 +135,30 @@ jobs:
           type=semver,pattern={{major}}.{{minor}}
           type=sha,prefix=
 
+    - name: Extract metadata for developer-api-service
+      id: meta-developer-api-service
+      uses: docker/metadata-action@v5
+      with:
+        images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/developer-api-service
+        tags: |
+          type=ref,event=branch
+          type=ref,event=pr
+          type=semver,pattern={{version}}
+          type=semver,pattern={{major}}.{{minor}}
+          type=sha,prefix=
+
+    - name: Extract metadata for workflow-service
+      id: meta-workflow-service
+      uses: docker/metadata-action@v5
+      with:
+        images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/workflow-service
+        tags: |
+          type=ref,event=branch
+          type=ref,event=pr
+          type=semver,pattern={{version}}
+          type=semver,pattern={{major}}.{{minor}}
+          type=sha,prefix=
+
     - name: Build and push client
       uses: docker/build-push-action@v5
       with:
@@ -190,3 +223,19 @@ jobs:
         push: true
         tags: ${{ steps.meta-api-gateway.outputs.tags }}
         labels: ${{ steps.meta-api-gateway.outputs.labels }}
+
+    - name: Build and push developer-api-service
+      uses: docker/build-push-action@v5
+      with:
+        context: ./services/developer-api-service
+        push: true
+        tags: ${{ steps.meta-developer-api-service.outputs.tags }}
+        labels: ${{ steps.meta-developer-api-service.outputs.labels }}
+
+    - name: Build and push workflow-service
+      uses: docker/build-push-action@v5
+      with:
+        context: ./services/workflow-service
+        push: true
+        tags: ${{ steps.meta-workflow-service.outputs.tags }}
+        labels: ${{ steps.meta-workflow-service.outputs.labels }}

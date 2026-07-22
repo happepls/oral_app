@@ -5,22 +5,25 @@ import { useAuth } from '../contexts/AuthContext';
 import { historyAPI, feedbackAPI, userAPI } from '../services/api';
 import { motion, AnimatePresence } from 'motion/react';
 import {
-  ArrowLeft, Settings, Flame, Check, CheckCircle, LogOut,
-  User, Bell, Crown, Palette, MessageSquare,
-  ChevronRight, PlusCircle, X, Info, Pencil
+  Settings, Flame, Check, CheckCircle, LogOut,
+  Crown, Palette, MessageSquare, History as HistoryIcon,
+  ChevronRight, PlusCircle, X, Pencil
 } from 'lucide-react';
 // 母语下拉与 GoalSetting / Onboarding 同源（共享 29 种全集，避免选项数量不一致）。
 // 此前 Profile 仅 9 种，远少于 goal-setting 的 29 种 —— 已统一到 constants/languages.js。
 import { LANGUAGES } from '../constants/languages';
+import { useTranslation } from 'react-i18next';
 
 const NATIVE_LANGUAGES = LANGUAGES;
 
 function Profile() {
+  const { t, i18n } = useTranslation();
   const navigate = useNavigate();
   const { user, logout, refreshProfile } = useAuth();
 
-  const [stats, setStats] = useState({ sessions: '0 次', practiceTime: '0 小时', totalSessions: 0 });
+  const [stats, setStats] = useState({ sessions: t('qa_ui.session_count', { count: 0 }), practiceTime: t('qa_ui.no_data'), totalSessions: 0 });
   const [loading, setLoading] = useState(true);
+  const [achievements, setAchievements] = useState([]);
 
   // Checkin state
   const [checkinStats, setCheckinStats] = useState(null);
@@ -50,16 +53,15 @@ function Profile() {
     const trimmed = nameValue.trim();
     if (!trimmed) { setNameSaveError('用户名不能为空'); return; }
     if (trimmed.length > 30) { setNameSaveError('用户名不超过 30 字'); return; }
-    if (trimmed === user?.username) { setEditingName(false); return; }
+    if (trimmed === (user?.nickname || user?.username)) { setEditingName(false); return; }
     setSavingName(true);
     setNameSaveError('');
     try {
-      await userAPI.updateProfile({ username: trimmed });
+      await userAPI.updateProfile({ nickname: trimmed });
       if (refreshProfile) await refreshProfile();
       setEditingName(false);
     } catch (err) {
-      // username UNIQUE 冲突 → 后端 409/500，提示换一个
-      setNameSaveError(/exist|unique|已被|占用|409/i.test(err.message || '') ? '该用户名已被占用，请换一个' : '保存失败，请重试');
+      setNameSaveError('保存失败，请重试');
     } finally {
       setSavingName(false);
     }
@@ -72,7 +74,7 @@ function Profile() {
       await userAPI.updateProfile({ native_language: value });
       if (refreshProfile) await refreshProfile();
       setEditingLang(false);
-    } catch (err) {
+    } catch {
       setLangSaveError('保存失败，请重试');
     } finally {
       setSavingLang(false);
@@ -101,17 +103,18 @@ function Profile() {
           historyAPI.getStats(user.id).then(d => {
             if (signal.aborted) return;
             const total = d?.totalSessions || 0;
-            const hours = (total * 15 / 60).toFixed(1);
+            const minutes = Number(d?.totalDurationMinutes || 0);
             setStats({
-              sessions: `${total} 次`,
-              practiceTime: `${hours} 小时`,
+              sessions: t('qa_ui.session_count', { count: total }),
+              practiceTime: minutes > 0 ? t('qa_ui.practice_hours', { count: (minutes / 60).toFixed(1) }) : t('qa_ui.no_data'),
               totalSessions: total
             });
           }),
           userAPI.getCheckinStats().then(d => { if (!signal.aborted) setCheckinStats(d); }).catch(() => {}),
           userAPI.getCheckinHistory(30).then(d => { if (!signal.aborted) setCheckinHistory(Array.isArray(d) ? d : []); }).catch(() => {}),
           userAPI.getActiveGoal().then(d => { if (!signal.aborted) setActiveGoal(d?.goal || d); }).catch(() => {}),
-          userAPI.getSubscription().then(d => { if (!signal.aborted) setSubscription(d); }).catch(() => {})
+          userAPI.getSubscription().then(d => { if (!signal.aborted) setSubscription(d); }).catch(() => {}),
+          userAPI.achievements().then(d => { if (!signal.aborted) setAchievements(Array.isArray(d?.achievements) ? d.achievements : []); }).catch(() => { if (!signal.aborted) setAchievements([]); })
         ]);
       } finally {
         // ALWAYS clear loading — even if this run was aborted (a newer run, or
@@ -127,25 +130,12 @@ function Profile() {
     return () => controller.abort();
   }, [user]);
 
-  // Derive mastered scenarios from activeGoal (needed for achievements)
+  // Derive mastered scenarios from activeGoal.
   const masteredScenarios = activeGoal?.scenarios
     ? activeGoal.scenarios.filter(s =>
         s.tasks && s.tasks.length > 0 && s.tasks.every(t => t.status === 'completed')
       )
     : [];
-
-  // Data-driven achievements — computed after all state is loaded
-  const totalCheckins = checkinStats?.totalCheckins || 0;
-  const currentStreak = checkinStats?.currentStreak || 0;
-  const achievements = [
-    { name: '打卡新手', icon: '🔥', desc: '完成首次打卡', unlocked: totalCheckins >= 1 },
-    { name: '坚持一周', icon: '📅', desc: '连续打卡7天', unlocked: currentStreak >= 7 },
-    { name: '坚持一月', icon: '🗓️', desc: '连续打卡30天', unlocked: currentStreak >= 30 },
-    { name: '对话达人', icon: '💬', desc: '累计完成50次对话', unlocked: stats.totalSessions >= 50 },
-    { name: '场景初探', icon: '🎯', desc: '完成首个场景全部任务', unlocked: masteredScenarios.length >= 1 },
-    { name: '练习大师', icon: '🏆', desc: '100%完成3个以上学习目标', unlocked: false },
-    { name: '多语言Master', icon: '🌍', desc: '掌握3种以上目标语言练习闭环', unlocked: false }
-  ];
 
   const [isDarkMode, setIsDarkMode] = useState(() => document.documentElement.classList.contains('dark'));
   const toggleTheme = () => {
@@ -156,9 +146,10 @@ function Profile() {
   };
 
   const menuItems = [
-    { icon: Crown, label: '订阅', path: '/subscription' },
-    { icon: Palette, label: '主题', value: isDarkMode ? '深色' : '浅色', onPress: toggleTheme },
-    { icon: MessageSquare, label: '意见反馈', onPress: () => setShowFeedbackModal(true) }
+    { icon: HistoryIcon, label: t('qa_ui.menu_history'), path: '/history' },
+    { icon: Crown, label: t('qa_ui.menu_subscription'), path: '/subscription' },
+    { icon: Palette, label: t('qa_ui.menu_theme'), value: isDarkMode ? t('qa_ui.theme_dark') : t('qa_ui.theme_light'), onPress: toggleTheme },
+    { icon: MessageSquare, label: t('qa_ui.menu_feedback'), onPress: () => setShowFeedbackModal(true) }
   ];
 
   const FEEDBACK_CATEGORIES = ['功能建议', '问题反馈', '其他'];
@@ -171,7 +162,7 @@ function Profile() {
     try {
       await feedbackAPI.submit({ category: feedbackCategory, message: feedbackText.trim() });
       setFeedbackSubmitted(true);
-    } catch (err) {
+    } catch {
       setFeedbackError('提交失败，请稍后重试');
     } finally {
       setFeedbackSubmitting(false);
@@ -234,8 +225,8 @@ function Profile() {
   const getDayLabel = (dateStr) => {
     const date = parseLocalDate(dateStr);
     const today = toLocalDateStr(new Date());
-    if (dateStr === today) return '今';
-    return ['日', '一', '二', '三', '四', '五', '六'][date.getDay()];
+    if (dateStr === today) return t('qa_ui.today_short');
+    return new Intl.DateTimeFormat(i18n.language, { weekday: 'narrow' }).format(date);
   };
 
   const getDateNum = (dateStr) => parseLocalDate(dateStr).getDate();
@@ -267,14 +258,9 @@ function Profile() {
     <div className="relative flex flex-col min-h-screen w-full" style={{ background: 'var(--background)' }}>
       {/* Top App Bar */}
       <div className="flex items-center bg-white dark:bg-slate-800 px-4 py-3 justify-between sticky top-0 z-10 border-b border-slate-100 dark:border-slate-700 shadow-sm">
-        <button
-          onClick={() => navigate('/discovery')}
-          className="flex items-center justify-center p-2 -ml-1 text-slate-600 dark:text-slate-400 hover:text-primary transition-colors"
-        >
-          <ArrowLeft className="w-5 h-5" />
-        </button>
-        <h1 className="text-lg font-bold text-slate-900 dark:text-white">我的账户</h1>
-        <button className="flex items-center justify-center p-2 -mr-1 invisible">
+        <div className="w-9" aria-hidden="true" />
+        <h1 className="text-lg font-bold text-slate-900 dark:text-white">{t('qa_ui.profile_title')}</h1>
+        <button aria-hidden="true" tabIndex={-1} className="flex items-center justify-center p-2 -mr-1 invisible">
           <Settings className="w-5 h-5" />
         </button>
       </div>
@@ -317,7 +303,7 @@ function Profile() {
                 className="w-24 h-24 rounded-full flex items-center justify-center text-3xl text-white font-bold ring-4 ring-primary/30"
                 style={{ background: 'linear-gradient(135deg, #637FF1, #a47af6)' }}
               >
-                {user?.username?.[0]?.toUpperCase() || 'U'}
+                {(user?.nickname || user?.username)?.[0]?.toUpperCase() || 'U'}
               </div>
             )}
             <div className="flex flex-col items-center gap-1">
@@ -353,11 +339,11 @@ function Profile() {
                 </div>
               ) : (
                 <button
-                  onClick={() => { setNameValue(user?.username || ''); setEditingName(true); setNameSaveError(''); }}
+                  onClick={() => { setNameValue(user?.nickname || user?.username || ''); setEditingName(true); setNameSaveError(''); }}
                   className="flex items-center gap-1.5 group"
                   title="点击修改用户名"
                 >
-                  <span className="text-2xl font-bold text-slate-900 dark:text-white">{user?.username || '用户'}</span>
+                  <span className="text-2xl font-bold text-slate-900 dark:text-white">{user?.nickname || user?.username || '用户'}</span>
                   <Pencil className="w-4 h-4 text-slate-400 group-hover:text-primary transition-colors" />
                 </button>
               )}
@@ -369,8 +355,8 @@ function Profile() {
         {/* Stats Overview */}
         <div className="flex gap-3 px-4 mb-2">
           {[
-            { label: '对话次数', value: stats.sessions },
-            { label: '总练习时长', value: stats.practiceTime }
+            { label: t('qa_ui.sessions_label'), value: stats.sessions },
+            { label: t('qa_ui.practice_time_label'), value: stats.practiceTime }
           ].map((s, i) => (
             <motion.div
               key={s.label}
@@ -387,7 +373,7 @@ function Profile() {
 
         {/* My Subscription */}
         <div className="px-4 pt-4 pb-4">
-          <h2 className="text-base font-bold text-slate-900 dark:text-white pb-3">💎 我的订阅</h2>
+          <h2 className="text-base font-bold text-slate-900 dark:text-white pb-3">{t('qa_ui.my_subscription')}</h2>
           <div className="bg-white dark:bg-slate-800 rounded-2xl p-4 shadow-brand border border-slate-100 dark:border-slate-700">
             {/* Pro 判定以 user.subscription_status 为权威，与顶部「会员已激活」banner 一致，
                 避免 getSubscription() soft-fail / 形状不符时这里误显「免费版」造成前后矛盾。
@@ -421,15 +407,15 @@ function Profile() {
             ) : (
               <div className="flex items-center justify-between">
                 <div>
-                  <p className="text-base font-semibold text-slate-900 dark:text-white">免费版</p>
-                  <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">解锁全部高级功能</p>
+                  <p className="text-base font-semibold text-slate-900 dark:text-white">{t('qa_ui.subscription_free')}</p>
+                  <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">{t('qa_ui.unlock_features')}</p>
                 </div>
                 <button
                   onClick={() => navigate('/subscription')}
                   className="px-3 py-1.5 text-xs font-medium text-white rounded-lg"
                   style={{ background: 'linear-gradient(135deg, #637FF1, #a47af6)' }}
                 >
-                  升级会员
+                  {t('qa_ui.upgrade')}
                 </button>
               </div>
             )}
@@ -438,11 +424,11 @@ function Profile() {
 
         {/* Native Language Setting */}
         <div className="px-4 pb-4">
-          <h2 className="text-base font-bold text-slate-900 dark:text-white pb-3">🌐 语言设置</h2>
+          <h2 className="text-base font-bold text-slate-900 dark:text-white pb-3">{t('qa_ui.language_settings')}</h2>
           <div className="bg-white dark:bg-slate-800 rounded-2xl p-4 shadow-brand border border-slate-100 dark:border-slate-700">
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-xs text-slate-500 dark:text-slate-400 mb-1">母语（翻译目标语言）</p>
+                <p className="text-xs text-slate-500 dark:text-slate-400 mb-1">{t('qa_ui.native_language_translation')}</p>
                 {editingLang ? (
                   <select
                     autoFocus
@@ -467,8 +453,8 @@ function Profile() {
                       return found
                         ? `${found.flag} ${found.label}`
                         : user?.native_language
-                          ? <span className="text-amber-500">⚠️ {user.native_language}（未识别）</span>
-                          : <span className="text-slate-400">未设置</span>;
+                          ? <span className="text-amber-800 dark:text-amber-300">{t('qa_ui.native_unknown', { value: user.native_language })}</span>
+                          : <span className="text-slate-400">{t('qa_ui.not_set')}</span>;
                     })()}
                   </p>
                 )}
@@ -479,7 +465,7 @@ function Profile() {
                   onClick={() => { setEditingLang(true); setLangSaveError(''); }}
                   className="flex items-center gap-1 px-3 py-1.5 text-xs font-medium text-primary bg-primary/10 hover:bg-primary/20 rounded-lg transition"
                 >
-                  <Pencil className="w-3 h-3" /> 修改
+                  <Pencil className="w-3 h-3" /> {t('qa_ui.edit')}
                 </button>
               )}
               {editingLang && !savingLang && (
@@ -487,26 +473,26 @@ function Profile() {
                   onClick={() => setEditingLang(false)}
                   className="text-xs text-slate-400 hover:text-slate-600 px-2 py-1 rounded transition"
                 >
-                  取消
+                  {t('qa_ui.cancel')}
                 </button>
               )}
             </div>
             <p className="text-xs text-slate-400 dark:text-slate-500 mt-2">
-              母语用于 AI 对话翻译功能，请确保设置正确
+              {t('qa_ui.native_hint')}
             </p>
           </div>
         </div>
 
         {/* Daily Checkin Section */}
         <div id="checkin-section" className="px-4 py-4 space-y-4">
-          <h2 className="text-base font-bold text-slate-900 dark:text-white pt-2">🔥 每日打卡</h2>
+          <h2 className="text-base font-bold text-slate-900 dark:text-white pt-2">{t('qa_ui.daily_checkin')}</h2>
 
           {/* Checkin Stats Card */}
           <div className="rounded-2xl p-6 text-white shadow-brand-lg" style={{ background: 'linear-gradient(135deg, #637FF1, #a47af6)' }}>
             <div className="flex items-center justify-between mb-4">
               <div>
-                <p className="text-white/70 text-sm">当前连续打卡</p>
-                <p className="text-4xl font-bold">{checkinStats?.currentStreak || 0} <span className="text-lg font-normal">天</span></p>
+                <p className="text-white/70 text-sm">{t('qa_ui.current_streak')}</p>
+                <p className="text-4xl font-bold">{t('qa_ui.day_count', { count: checkinStats?.currentStreak || 0 })}</p>
               </div>
               <div className="w-16 h-16 bg-white/20 rounded-full flex items-center justify-center">
                 <Flame className="w-8 h-8 text-white" />
@@ -514,11 +500,11 @@ function Profile() {
             </div>
             <div className="flex justify-between text-sm">
               <div>
-                <p className="text-white/70">累计打卡</p>
-                <p className="font-semibold">{checkinStats?.totalCheckins || 0} 天</p>
+                <p className="text-white/70">{t('qa_ui.total_checkins')}</p>
+                <p className="font-semibold">{t('qa_ui.day_count', { count: checkinStats?.totalCheckins || 0 })}</p>
               </div>
               <div>
-                <p className="text-white/70">获得积分</p>
+                <p className="text-white/70">{t('qa_ui.points_earned')}</p>
                 <p className="font-semibold">{checkinStats?.totalPointsFromCheckins || 0}</p>
               </div>
             </div>
@@ -526,7 +512,7 @@ function Profile() {
 
           {/* Week Calendar */}
           <div className="bg-white dark:bg-slate-800 rounded-2xl p-4 shadow-brand border border-slate-100 dark:border-slate-700">
-            <h3 className="font-medium text-slate-900 dark:text-white mb-4">本周打卡</h3>
+            <h3 className="font-medium text-slate-900 dark:text-white mb-4">{t('qa_ui.this_week')}</h3>
             <div className="grid grid-cols-7 gap-2">
               {getLast7Days().map(date => {
                 const checked = isDateCheckedIn(date);
@@ -568,12 +554,12 @@ function Profile() {
             ) : checkinStats?.checkedInToday ? (
               <>
                 <CheckCircle className="w-5 h-5" />
-                今日已打卡
+                {t('qa_ui.checked_in_today')}
               </>
             ) : (
               <>
                 <PlusCircle className="w-5 h-5" />
-                立即打卡
+                {t('qa_ui.checkin_now')}
               </>
             )}
           </motion.button>
@@ -606,17 +592,17 @@ function Profile() {
 
         {/* Learning Goal Milestone */}
         <div className="px-4 pb-4">
-          <h2 className="text-base font-bold text-slate-900 dark:text-white pb-3">🎯 当前学习目标里程碑</h2>
+          <h2 className="text-base font-bold text-slate-900 dark:text-white pb-3">{t('qa_ui.current_goal_milestone')}</h2>
           {activeGoal ? (
             <div className="bg-white dark:bg-slate-800 rounded-2xl p-5 shadow-brand border border-slate-100 dark:border-slate-700">
-              <p className="text-base font-semibold text-slate-900 dark:text-white mb-1">{activeGoal.description || '当前学习目标'}</p>
+              <p className="text-base font-semibold text-slate-900 dark:text-white mb-1">{activeGoal.description || t('qa_ui.current_goal')}</p>
               {(activeGoal.target_language || activeGoal.target_level) && (
                 <p className="text-sm text-slate-500 dark:text-slate-400 mb-3">
                   {activeGoal.target_language}{activeGoal.target_level ? ` · ${activeGoal.target_level}` : ''}
                 </p>
               )}
               <div className="flex items-center justify-between mb-2">
-                <span className="text-sm text-slate-600 dark:text-slate-400">任务进度</span>
+                <span className="text-sm text-slate-600 dark:text-slate-400">{t('qa_ui.task_progress')}</span>
                 <span className="text-sm font-semibold text-slate-900 dark:text-white">{goalCompletedTasks} / {goalTotalTasks}</span>
               </div>
               <div className="w-full bg-slate-100 dark:bg-slate-700 rounded-full h-2.5">
@@ -625,7 +611,7 @@ function Profile() {
                   style={{ width: `${goalProgress}%`, background: 'linear-gradient(135deg, #637FF1, #a47af6)' }}
                 />
               </div>
-              <p className="text-xs text-slate-500 mt-2 text-right">{goalProgress}% 完成</p>
+              <p className="text-xs text-slate-500 mt-2 text-right">{t('qa_ui.complete_pct', { value: goalProgress })}</p>
             </div>
           ) : (
             <div className="bg-white dark:bg-slate-800 rounded-2xl p-5 shadow-brand border border-slate-100 dark:border-slate-700 flex items-center justify-between">
@@ -656,14 +642,16 @@ function Profile() {
         )}
 
         {/* Achievements */}
-        <h2 className="text-base font-bold px-4 pb-3 pt-2 text-slate-900 dark:text-white">🏆 成就徽章</h2>
-        <div className="flex gap-3 px-4 overflow-x-auto pb-4">
-          {achievements.map((achievement, index) => (
-            <div key={index} className="flex flex-col items-center gap-2 flex-shrink-0 w-20">
+        <h2 className="text-base font-bold px-4 pb-3 pt-2 text-slate-900 dark:text-white">{t('qa_ui.achievements')}</h2>
+        {achievements.length === 0 ? (
+          <p className="mx-4 mb-4 rounded-xl bg-slate-100 p-4 text-sm text-slate-500 dark:bg-slate-800 dark:text-slate-400">{t('qa_ui.achievements_empty')}</p>
+        ) : <div className="flex gap-3 px-4 overflow-x-auto pb-4">
+          {achievements.map((achievement) => (
+            <div key={achievement.key} className="flex flex-col items-center gap-2 flex-shrink-0 w-20">
               <div className={`flex items-center justify-center w-16 h-16 rounded-full text-3xl ${
                 achievement.unlocked ? 'bg-primary/10' : 'bg-slate-100 dark:bg-slate-700 grayscale opacity-50'
               }`}>
-                {achievement.icon}
+                {achievement.icon || '🏅'}
               </div>
               <p className={`text-xs font-medium text-center leading-tight ${
                 achievement.unlocked ? 'text-slate-900 dark:text-white' : 'text-slate-400 dark:text-slate-500'
@@ -675,7 +663,7 @@ function Profile() {
               </p>
             </div>
           ))}
-        </div>
+        </div>}
 
         {/* Menu Items */}
         <div className="p-4 flex flex-col gap-2">
@@ -704,10 +692,10 @@ function Profile() {
           <motion.button
             whileTap={{ scale: 0.98 }}
             onClick={handleLogout}
-            className="w-full flex items-center justify-center gap-2 rounded-2xl bg-white dark:bg-slate-800 p-4 font-bold text-red-500 shadow-brand border border-slate-100 dark:border-slate-700 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors"
+            className="w-full flex items-center justify-center gap-2 rounded-2xl bg-white dark:bg-slate-800 p-4 font-bold text-red-700 dark:text-red-300 shadow-brand border border-slate-100 dark:border-slate-700 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors"
           >
             <LogOut className="w-5 h-5" />
-            退出登录
+            {t('qa_ui.logout')}
           </motion.button>
         </div>
       </main>

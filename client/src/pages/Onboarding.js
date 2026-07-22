@@ -4,7 +4,7 @@ import { useTranslation } from 'react-i18next';
 import { useAuth } from '../contexts/AuthContext';
 import LanguageSwitcher from '../components/LanguageSwitcher';
 import { motion, AnimatePresence } from 'motion/react';
-import { Check, ChevronRight } from 'lucide-react';
+import { ArrowLeft, Check, ChevronRight } from 'lucide-react';
 import { GuajiMascot } from '../components/GuajiMascot';
 import { LANGUAGES as NATIVE_LANGUAGES } from '../constants/languages';
 
@@ -16,13 +16,11 @@ const GENDER_OPTIONS = [
   { value: 'female', label: '女 ♀' },
 ];
 
-// ── 步骤配置 ──
-const STEPS = ['基础信息'];
-
 export default function Onboarding() {
   const navigate = useNavigate();
   const { user, updateProfile } = useAuth();
   const { t } = useTranslation();
+  const steps = [t('onboarding_step_basic')];
 
   // Step 0: 基础信息
   const [nickname, setNickname] = useState(user?.nickname || '');
@@ -31,7 +29,7 @@ export default function Onboarding() {
   const [error, setError] = useState('');
 
   // 流程
-  const [step, setStep] = useState(0);
+  const [step] = useState(0);
   const [saving, setSaving] = useState(false);
 
   // ── 提交整体数据 ──
@@ -68,11 +66,12 @@ export default function Onboarding() {
   };
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-50 to-white dark:from-slate-900 dark:to-slate-800 flex flex-col items-center px-4 py-8">
+    <div className="min-h-[100dvh] bg-gradient-to-br from-slate-50 to-white dark:from-slate-900 dark:to-slate-800 flex flex-col items-center px-4 py-8">
 
       {/* Top bar */}
       <div className="w-full max-w-lg flex items-center justify-between mb-6">
         <div className="flex items-center gap-2">
+          <button type="button" aria-label={t('back')} onClick={() => navigate('/welcome')} className="flex min-h-[44px] min-w-[44px] items-center justify-center rounded-xl text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-700"><ArrowLeft size={20} /></button>
           <img src="/guaji-logo.svg" alt="GuaJi" className="w-8 h-8" />
           <span className="font-bold text-slate-800 dark:text-white text-lg">GuaJi</span>
         </div>
@@ -82,7 +81,7 @@ export default function Onboarding() {
       {/* 进度指示 */}
       <div className="w-full max-w-lg mb-6">
         <div className="flex items-center justify-between mb-2">
-          {STEPS.map((s, i) => (
+          {steps.map((s, i) => (
             <div key={i} className="flex items-center gap-1.5 text-xs">
               <div className={`w-5 h-5 rounded-full flex items-center justify-center font-bold text-xs transition-all ${
                 i < step ? 'text-white' : i === step ? 'text-white' : 'text-slate-400 bg-slate-100 dark:bg-slate-700'
@@ -141,7 +140,7 @@ export default function Onboarding() {
                         className={`flex-1 py-2.5 rounded-xl text-sm font-medium border-2 transition ${
                           gender === value ? 'text-white border-transparent' : 'border-slate-200 text-slate-600'}`}
                         style={gender === value ? { background: 'linear-gradient(135deg, #637FF1, #a47af6)' } : {}}>
-                        {label}
+                        {value === 'male' ? t('qa_ui.gender_male') : t('qa_ui.gender_female')}
                       </button>
                     ))}
                   </div>
@@ -176,9 +175,9 @@ export default function Onboarding() {
                   className="w-full py-3.5 flex items-center justify-center gap-2 rounded-xl text-white font-bold text-base shadow-brand disabled:opacity-40 disabled:cursor-not-allowed transition"
                   style={{ background: saving ? '#94A3B8' : 'linear-gradient(135deg, #637FF1, #a47af6)' }}>
                   {saving ? (
-                    <><div className="w-4 h-4 rounded-full border-2 border-white/40 border-t-white animate-spin" />保存中…</>
+                    <><div className="w-4 h-4 rounded-full border-2 border-white/40 border-t-white animate-spin" />{t('qa_ui.saving')}</>
                   ) : (
-                    <>开始设置学习目标 <ChevronRight className="w-5 h-5" /></>
+                    <>{t('qa_ui.onboarding_start')} <ChevronRight className="w-5 h-5" /></>
                   )}
                 </motion.button>
               </div>

@@ -3,7 +3,6 @@ const Conversation = require('../models/Conversation');
 exports.saveConversation = async (req, res) => {
   try {
     console.log('saveConversation endpoint called');
-    console.log('Request body:', JSON.stringify(req.body, null, 2));
 
     const { sessionId, userId, messages, topic, metrics, startTime, endTime } = req.body;
 
@@ -29,6 +28,7 @@ exports.saveConversation = async (req, res) => {
     let conversation = await Conversation.findOne({ sessionId });
 
     if (conversation) {
+      if (String(conversation.userId) !== String(userId)) return res.status(403).json({ success: false, message: 'Forbidden' });
       // APPEND new messages to existing conversation (not replace!)
       if (validMessages.length > 0) {
         // Get the last message from existing conversation to check for duplicates
@@ -80,7 +80,6 @@ exports.saveSessionMessages = async (req, res) => {
   try {
     console.log('saveSessionMessages endpoint called');
     console.log('Request params:', JSON.stringify(req.params, null, 2));
-    console.log('Request body:', JSON.stringify(req.body, null, 2));
     
     const { sessionId } = req.params;
     const { userId, messages } = req.body;
@@ -111,6 +110,7 @@ exports.saveSessionMessages = async (req, res) => {
     let conversation = await Conversation.findOne({ sessionId });
 
     if (conversation) {
+      if (String(conversation.userId) !== String(userId)) return res.status(403).json({ success: false, message: 'Forbidden' });
       // Append new messages to existing conversation
       conversation.messages.push(...validMessages);
       conversation.endTime = new Date();
@@ -149,6 +149,7 @@ exports.saveSessionMessages = async (req, res) => {
 exports.getUserHistory = async (req, res) => {
   try {
     const { userId } = req.params;
+    if (String(userId) !== req.authUserId) return res.status(403).json({ success: false, message: 'Forbidden' });
     const { page = 1, limit = 20 } = req.query;
 
     const conversations = await Conversation.find({ userId })
@@ -175,19 +176,12 @@ exports.getConversationDetail = async (req, res) => {
   try {
     const { sessionId } = req.params;
     console.log(`Looking for conversation with sessionId: ${sessionId}`);
-    const conversation = await Conversation.findOne({ sessionId: sessionId });
+    const conversation = await Conversation.findOne({ sessionId, userId: req.authUserId });
 
     if (!conversation) {
       console.log(`Conversation not found for sessionId: ${sessionId}, returning empty conversation object`);
       // Return an empty conversation object instead of creating one with null userId
-      return res.status(200).json({
-        success: true,
-        data: {
-          sessionId,
-          messages: [],
-          startTime: new Date()
-        }
-      });
+      return res.status(404).json({ success: false, message: 'Conversation not found' });
     }
 
     console.log(`Found conversation with ${conversation.messages ? conversation.messages.length : 0} messages`);
@@ -202,28 +196,13 @@ exports.getSessionHistory = async (req, res) => {
   try {
     const { sessionId } = req.params;
     console.log(`Looking for session history with sessionId: ${sessionId}`);
-    const conversation = await Conversation.findOne({ sessionId: sessionId });
+    const conversation = await Conversation.findOne({ sessionId, userId: req.authUserId });
 
     if (!conversation) {
-      console.log(`No conversation found for sessionId: ${sessionId}, creating new empty conversation`);
-      // Create a new conversation record with empty messages
-      const newConversation = new Conversation({
-        sessionId,
-        userId: null, // userId might not be available at this point
-        messages: [],
-        startTime: new Date()
-      });
-      await newConversation.save();
-      
-      console.log(`Created new conversation record for session ${sessionId}`);
-      return res.status(200).json({
-        success: true,
-        data: { messages: [] }
-      });
+      return res.status(404).json({ success: false, message: 'Conversation not found' });
     }
 
     console.log(`Found conversation with ${conversation.messages ? conversation.messages.length : 0} messages for session ${sessionId}`);
-    console.log(`First few messages:`, conversation.messages ? conversation.messages.slice(0, 3).map(m => ({role: m.role, content: m.content?.substring(0, 50)})) : 'No messages');
     res.status(200).json({ success: true, data: { messages: conversation.messages || [] } });
   } catch (error) {
     console.error('Get Session History Error:', error);
@@ -259,6 +238,9 @@ exports.saveSummary = async (req, res) => {
     let conversation = await Conversation.findOne({ sessionId });
 
     if (conversation) {
+      if (!userId || String(conversation.userId) !== String(userId)) {
+        return res.status(403).json({ success: false, message: 'Session does not belong to this user' });
+      }
       conversation.summary = summary || conversation.summary;
       if (goalId) conversation.goalId = goalId;
       
@@ -307,6 +289,7 @@ exports.getStats = async (req, res) => {
     if (!userId) {
         return res.status(400).json({ success: false, message: 'UserId is required' });
     }
+    if (String(userId) !== req.authUserId) return res.status(403).json({ success: false, message: 'Forbidden' });
 
     const totalSessions = await Conversation.countDocuments({ userId });
     
@@ -376,7 +359,6 @@ exports.saveProficiencyMetrics = async (req, res) => {
     if (!userId) {
       return res.status(400).json({ success: false, message: 'UserId is required' });
     }
-
     // Validate metrics
     if (typeof language_accuracy !== 'number' || typeof complexity_score !== 'number') {
       return res.status(400).json({ success: false, message: 'Invalid metrics format' });
@@ -432,6 +414,7 @@ exports.getProficiencyMetrics = async (req, res) => {
     if (!userId) {
       return res.status(400).json({ success: false, message: 'UserId is required' });
     }
+    if (String(userId) !== req.authUserId) return res.status(403).json({ success: false, message: 'Forbidden' });
 
     const ProficiencyMetrics = require('../models/ProficiencyMetrics');
 

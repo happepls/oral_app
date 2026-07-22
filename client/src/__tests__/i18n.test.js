@@ -154,9 +154,28 @@ describe('i18n Language Detection', () => {
     SUPPORTED_LANGS.forEach((lang) => {
       Object.entries(LOCALES[lang]).forEach(([key, value]) => {
         expect(value).toBeDefined();
+        if (key === 'qa_ui') {
+          expect(typeof value).toBe('object');
+          return;
+        }
         expect(typeof value).toBe('string');
         expect(value.length).toBeGreaterThan(0);
       });
+    });
+  });
+
+  test('should keep the qa_ui namespace complete in zh/en and fall back safely elsewhere', () => {
+    const enKeys = Object.keys(en.qa_ui).sort();
+    expect(enKeys.length).toBeGreaterThan(0);
+    expect(Object.keys(zh.qa_ui).sort()).toEqual(enKeys);
+    [en, zh].forEach((locale) => {
+      Object.values(locale.qa_ui).forEach((value) => {
+        expect(typeof value).toBe('string');
+        expect(value.length).toBeGreaterThan(0);
+      });
+    });
+    ['ja', 'es', 'fr', 'ko', 'de', 'pt', 'ru'].forEach((lang) => {
+      expect(i18n.getFixedT(lang)('qa_ui.profile_title')).toBe(en.qa_ui.profile_title);
     });
   });
 });

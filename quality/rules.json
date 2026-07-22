@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "thresholds": { "pass": 90, "auto_fix": 75, "max_auto_fix_rounds": 3 },
+  "domains": {
+    "frontend": { "functional": 30, "responsive": 25, "visual": 15, "accessibility": 15, "build_test": 10, "console_performance": 5 },
+    "backend": { "contract": 30, "functional_integration": 25, "auth_security": 20, "reliability": 15, "test_static": 10 },
+    "integration": { "client_contract": 40, "e2e": 40, "failure_compatibility": 20 }
+  },
+  "hard_blockers": ["test_failure", "critical_occlusion", "horizontal_overflow", "contract_break", "authorization_bypass", "secret_leak", "payment_regression", "auth_regression"],
+  "exit_codes": { "pass": 0, "auto_fix": 2, "manual": 3, "hard_failure": 4 }
+}

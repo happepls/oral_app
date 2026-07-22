@@ -1,5 +1,7 @@
 export const __BUILD_MARKER__ = '2026-06-01-subscription-cookie-fix';
 const API_BASE_URL = process.env.REACT_APP_API_URL || '/api';
+const V1_BASE_URL = `${API_BASE_URL}/v1`;
+const idempotencyKey = () => window.crypto?.randomUUID?.() || `guaji-${Date.now()}-${Math.random().toString(16).slice(2)}`;
 
 const handleResponse = async (response) => {
   let data;
@@ -39,7 +41,7 @@ const handleResponse = async (response) => {
   }
 
   if (!response.ok) {
-    throw new Error(data.message || `请求失败 (状态码: ${response.status})`);
+    throw new Error(data.error?.message || data.message || `请求失败 (状态码: ${response.status})`);
   }
   
   // Extract data from the new response format
@@ -144,9 +146,30 @@ export const authAPI = {
   }
 };
 
+export const developerAPI = {
+  async getAuthorizationRequest(params) {
+    const query = new URLSearchParams(params);
+    const response = await fetch(`${V1_BASE_URL}/oauth/authorize?${query}`, {
+      headers: getAuthHeaders(),
+      credentials: 'include'
+    });
+    return handleResponse(response);
+  },
+
+  async decideAuthorization(request, approved) {
+    const response = await fetch(`${V1_BASE_URL}/oauth/authorize`, {
+      method: 'POST',
+      headers: { ...getAuthHeaders(), 'Idempotency-Key': idempotencyKey() },
+      credentials: 'include',
+      body: JSON.stringify({ ...request, approved })
+    });
+    return handleResponse(response);
+  }
+};
+
 export const userAPI = {
   async getProfile() {
-    const response = await fetch(`${API_BASE_URL}/users/profile`, {
+    const response = await fetch(`${V1_BASE_URL}/profile`, {
       headers: getAuthHeaders(),
       credentials: 'include'
     });
@@ -154,8 +177,8 @@ export const userAPI = {
   },
 
   async updateProfile(updates) {
-    const response = await fetch(`${API_BASE_URL}/users/profile`, {
-      method: 'PUT',
+    const response = await fetch(`${V1_BASE_URL}/profile`, {
+      method: 'PATCH',
       headers: getAuthHeaders(),
       credentials: 'include',
       body: JSON.stringify(updates)
@@ -164,9 +187,9 @@ export const userAPI = {
   },
 
   async createGoal(goalData) {
-    const response = await fetch(`${API_BASE_URL}/users/goals`, {
+    const response = await fetch(`${V1_BASE_URL}/goals`, {
       method: 'POST',
-      headers: getAuthHeaders(),
+      headers: { ...getAuthHeaders(), 'Idempotency-Key': idempotencyKey() },
       credentials: 'include',
       body: JSON.stringify(goalData)
     });
@@ -175,20 +198,50 @@ export const userAPI = {
 
   async getActiveGoal(options = {}) {
     const { signal } = options;
-    const response = await fetch(`${API_BASE_URL}/users/goals/active`, {
+    const requestOptions = {
       headers: getAuthHeaders(),
       credentials: 'include',
       ...(signal && { signal })
-    });
-    return handleResponse(response);
+    };
+    const [goalsResponse, tasksResponse] = await Promise.all([
+      fetch(`${V1_BASE_URL}/goals?limit=100`, requestOptions),
+      fetch(`${V1_BASE_URL}/tasks?limit=100`, requestOptions),
+    ]);
+    const [goals, tasks] = await Promise.all([handleResponse(goalsResponse), handleResponse(tasksResponse)]);
+    const goal = (Array.isArray(goals) ? goals : []).find((item) => item.status === 'active') || null;
+    if (!goal || !Array.isArray(goal.scenarios)) return { goal };
+
+    const currentTasks = (Array.isArray(tasks) ? tasks : []).filter((task) => String(task.goal_id) === String(goal.id));
+    return {
+      goal: {
+        ...goal,
+        scenarios: goal.scenarios.map((scenario) => ({
+          ...scenario,
+          tasks: (Array.isArray(scenario.tasks) ? scenario.tasks : []).map((task) => {
+            const text = typeof task === 'string' ? task : task.text;
+            const current = currentTasks.find((candidate) => candidate.scenario_title === scenario.title && candidate.task_description === text);
+            const score = current?.score || 0;
+            return {
+              ...(typeof task === 'object' ? task : {}),
+              id: current?.id ?? null,
+              text,
+              status: current?.status || 'pending',
+              score,
+              progress: Math.min(100, Math.round((score / 9) * 100)),
+            };
+          }),
+        })),
+      },
+    };
   },
 
   async getCurrentTask() {
-    const response = await fetch(`${API_BASE_URL}/users/goals/current-task`, {
+    const response = await fetch(`${V1_BASE_URL}/tasks?limit=100`, {
       headers: getAuthHeaders(),
       credentials: 'include'
     });
-    return handleResponse(response);
+    const tasks = await handleResponse(response);
+    return { task: (Array.isArray(tasks) ? tasks : []).find((task) => task.status !== 'completed') || null };
   },
 
   async resetTask(taskId, scenarioTitle) {
@@ -287,11 +340,11 @@ export const userAPI = {
   },
 
   async getUserGoals() {
-    const response = await fetch(`${API_BASE_URL}/users/goals`, {
+    const response = await fetch(`${V1_BASE_URL}/goals?limit=100`, {
       headers: getAuthHeaders(),
       credentials: 'include'
     });
-    return handleResponse(response);
+    return { goals: await handleResponse(response) };
   },
 
   async switchGoal(goalId) {
@@ -405,9 +458,9 @@ export const aiAPI = {
   },
 
   async generateScenarios(goalParams) {
-    const response = await fetch(`${API_BASE_URL}/ai/generate-scenarios`, {
+    const response = await fetch(`${V1_BASE_URL}/ai/scenarios`, {
       method: 'POST',
-      headers: getAuthHeaders(),
+      headers: { ...getAuthHeaders(), 'Idempotency-Key': idempotencyKey() },
       credentials: 'include',
       body: JSON.stringify(goalParams)
     });
@@ -440,9 +493,9 @@ export const aiAPI = {
   async tts(text, voice = 'Serena') {
     const body = { text, voice };
 
-    const response = await fetch(`${API_BASE_URL}/ai/tts`, {
+    const response = await fetch(`${V1_BASE_URL}/ai/tts`, {
       method: 'POST',
-      headers: getAuthHeaders(),
+      headers: { ...getAuthHeaders(), 'Idempotency-Key': idempotencyKey() },
       credentials: 'include',
       body: JSON.stringify(body)
     });
@@ -588,11 +641,21 @@ export const aiAPI = {
 
 export const conversationAPI = {
   async startSession(data) {
-    const response = await fetch(`${API_BASE_URL}/conversation/start`, {
+    const response = await fetch(`${V1_BASE_URL}/conversations`, {
       method: 'POST',
-      headers: getAuthHeaders(),
+      headers: { ...getAuthHeaders(), 'Idempotency-Key': idempotencyKey() },
       credentials: 'include',
-      body: JSON.stringify(data)
+      body: JSON.stringify({ goal_id: data?.goalId ?? data?.goal_id, force_new: data?.forceNew ?? data?.force_new })
+    });
+    return handleResponse(response);
+  },
+
+  async createRealtimeTicket(options = {}) {
+    const response = await fetch(`${V1_BASE_URL}/realtime/tickets`, {
+      method: 'POST',
+      headers: { ...getAuthHeaders(), 'Idempotency-Key': idempotencyKey() },
+      credentials: 'include',
+      ...(options.signal && { signal: options.signal })
     });
     return handleResponse(response);
   },
@@ -640,7 +703,7 @@ export const conversationAPI = {
 
 export const historyAPI = {
   async getUserHistory(userId) {
-    const response = await fetch(`${API_BASE_URL}/history/user/${userId}`, {
+    const response = await fetch(`${V1_BASE_URL}/conversations?limit=100`, {
       headers: getAuthHeaders(),
       credentials: 'include'
     });
@@ -648,7 +711,7 @@ export const historyAPI = {
   },
 
   async getConversationDetail(sessionId) {
-    const response = await fetch(`${API_BASE_URL}/history/session/${sessionId}/messages`, {
+    const response = await fetch(`${V1_BASE_URL}/conversations/${encodeURIComponent(sessionId)}`, {
       headers: getAuthHeaders(),
       credentials: 'include'
     });

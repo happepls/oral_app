@@ -17,6 +17,8 @@ services:
       - ai-omni-service
       - conversation-service
       - history-analytics-service
+      - developer-api-service
+      - workflow-service
     networks:
       - oral_app_net
     environment:
@@ -33,8 +35,26 @@ services:
       - PORT=3004
       - MONGO_URI=mongodb://root:${MONGO_PASSWORD}@mongo:27017/oral_app_history?authSource=admin
       - NODE_ENV=staging
+      - JWT_SECRET=${JWT_SECRET:?JWT_SECRET is required}
+      - INTERNAL_AUTH_SECRET=${INTERNAL_AUTH_SECRET:?INTERNAL_AUTH_SECRET is required}
     depends_on:
       - mongo
+    networks:
+      - oral_app_net
+
+  developer-api-service:
+    image: ghcr.io/sjx1943/oral_app/developer-api-service:develop
+    container_name: oral_app_developer_api_service_staging
+    restart: unless-stopped
+    environment:
+      - PORT=3010
+      - DATABASE_URL=postgresql://user:${POSTGRES_PASSWORD}@postgres:5432/oral_app_staging
+      - DELEGATED_JWT_SECRET=${DELEGATED_JWT_SECRET:?DELEGATED_JWT_SECRET is required}
+      - JWT_SECRET=${JWT_SECRET:?JWT_SECRET is required}
+      - NODE_ENV=staging
+    depends_on:
+      - postgres
+      - user-service
     networks:
       - oral_app_net
 
@@ -124,7 +144,7 @@ services:
       - REDIS_HOST=redis
       - REDIS_PORT=6379
       - JWT_SECRET=${JWT_SECRET}
-      - AI_SERVICE_WS_URL=ws://ai-omni-service:8008/stream
+      - AI_SERVICE_WS_URL=ws://ai-omni-service:8082/stream
       - NODE_ENV=staging
     depends_on:
       - redis
@@ -143,7 +163,10 @@ services:
       - USER_SERVICE_URL=http://user-service:3000
       - CONVERSATION_SERVICE_URL=http://conversation-service:8083
       - MEDIA_SERVICE_URL=http://media-processing-service:3005
+      - WORKFLOW_SERVICE_URL=http://workflow-service:3006
       - NODE_ENV=staging
+    depends_on:
+      - workflow-service
     networks:
       - oral_app_net
 
@@ -162,6 +185,8 @@ services:
       - DB_PASSWORD=${POSTGRES_PASSWORD}
       - DB_DATABASE=oral_app_staging
       - DB_PORT=5432
+      - INTERNAL_AUTH_SECRET=${INTERNAL_AUTH_SECRET:?INTERNAL_AUTH_SECRET is required}
+      - JWT_SECRET=${JWT_SECRET:?JWT_SECRET is required}
       - NODE_ENV=staging
     depends_on:
       - redis
@@ -178,6 +203,27 @@ services:
     environment:
       - PORT=3005
       - NODE_ENV=staging
+    networks:
+      - oral_app_net
+
+  workflow-service:
+    image: ghcr.io/sjx1943/oral_app/workflow-service:develop
+    container_name: oral_app_workflow_service_staging
+    restart: always
+    ports:
+      - "3006:3006"
+    environment:
+      - POSTGRES_HOST=postgres
+      - POSTGRES_PORT=5432
+      - POSTGRES_USER=user
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - POSTGRES_DB=oral_app_staging
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - REDIS_DB=0
+    depends_on:
+      - postgres
+      - redis
     networks:
       - oral_app_net
 
