@@ -300,6 +300,10 @@ function Login() {
                 onSuccess={handleGoogleSuccess}
                 onError={() => setError(t('login_google_fail'))}
                 useOneTap={false}
+                text="signin_with"
+                shape="rectangular"
+                logo_alignment="left"
+                locale="zh-CN"
                 width="360"
               />
             </div>
