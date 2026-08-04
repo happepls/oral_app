@@ -62,6 +62,7 @@ CREATE TABLE IF NOT EXISTS user_tasks (
     score INT DEFAULT 0, -- 0-100 quality score for this specific task
     interaction_count INT DEFAULT 0, -- Number of dialogue turns for this task
     feedback TEXT, -- AI feedback regarding this task
+    mode VARCHAR(32), -- Conversation mode: scene_theater, daily_qa, recall, tour, etc.
     completed_at TIMESTAMPTZ,
     created_at TIMESTAMPTZ DEFAULT NOW(),
     updated_at TIMESTAMPTZ DEFAULT NOW()

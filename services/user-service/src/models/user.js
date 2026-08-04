@@ -33,7 +33,9 @@ function achievementKeysForStats(stats) {
   if (stats.max_score >= 8) keys.push('conversation_starter');
   if (stats.max_score >= 10) keys.push('perfect_score');
   if (stats.practiced_languages >= 3) keys.push('polyglot');
-  if (stats.completed_scenarios >= 1) keys.push('actor');
+  // Actor: only unlocks when user has completed at least one task in scene_theater mode.
+  // Previously used completed_scenarios >= 1, which incorrectly unlocked for any scenario.
+  if (stats.scene_theater_sessions >= 1) keys.push('actor');
   return keys;
 }
 
@@ -246,7 +248,7 @@ User.getActiveGoal = async (userId) => {
     return goal;
 };
 
-User.completeTask = async (userId, scenarioTitle, taskText) => {
+User.completeTask = async (userId, scenarioTitle, taskText, mode = null) => {
     // 1. Get active goal ID
     const goalQuery = `SELECT id FROM user_goals WHERE user_id = $1 AND status = 'active' ORDER BY created_at DESC LIMIT 1`;
     const goalRes = await db.query(goalQuery, [userId]);
@@ -301,23 +303,25 @@ User.completeTask = async (userId, scenarioTitle, taskText) => {
     // We fuzzy match scenario_title slightly or exact match
     // Using ILIKE for scenario title to be safe against minor differences
     const updateQuery = `
-        UPDATE user_tasks 
+        UPDATE user_tasks
         SET status = 'completed',
             completed_at = NOW(),
             score = GREATEST(COALESCE(score, 0), 9),
-            interaction_count = GREATEST(COALESCE(interaction_count, 0), 3)
-        WHERE goal_id = $1 
+            interaction_count = GREATEST(COALESCE(interaction_count, 0), 3),
+            mode = COALESCE($6, mode)
+        WHERE goal_id = $1
           AND user_id = $2
           AND (task_description ILIKE $3 OR task_description ILIKE '%' || $3 || '%' OR $3 ILIKE '%' || task_description || '%')
           AND (scenario_title = $4 OR scenario_title ILIKE $5)
         RETURNING *
     `;
     const { rows: updatedTasks } = await db.query(updateQuery, [
-        goalId, 
-        userId, 
-        targetTaskDescription, 
+        goalId,
+        userId,
+        targetTaskDescription,
         scenarioTitle,
-        `%${scenarioTitle}%`
+        `%${scenarioTitle}%`,
+        mode || null
     ]);
 
     if (updatedTasks.length === 0) {
@@ -359,7 +363,7 @@ User.completeTask = async (userId, scenarioTitle, taskText) => {
     return await User.getActiveGoal(userId);
 };
 
-User.confirmCompleteTaskById = async (userId, taskId) => {
+User.confirmCompleteTaskById = async (userId, taskId, mode = null) => {
     // 1. Load task — require ownership + score >= 9 (ready_to_complete gate)
     const taskRes = await db.query(
         `SELECT id, user_id, goal_id, scenario_title, task_description, score, status, feedback
@@ -372,13 +376,14 @@ User.confirmCompleteTaskById = async (userId, taskId) => {
     if (task.status === 'completed') return { error: 'already_completed', task };
     if ((task.score || 0) < 9) return { error: 'not_ready', task };
 
-    // 2. Mark completed
+    // 2. Mark completed (preserve existing mode if caller doesn't supply one)
     const completedRes = await db.query(
         `UPDATE user_tasks
-         SET status = 'completed', completed_at = NOW()
+         SET status = 'completed', completed_at = NOW(),
+             mode = COALESCE($2, mode)
          WHERE id = $1
          RETURNING *`,
-        [taskId]
+        [taskId, mode || null]
     );
     const completedTask = completedRes.rows[0];
 
@@ -1298,7 +1303,8 @@ User.evaluateAchievements = async (userId) => {
         FROM user_goals g
         JOIN user_tasks t ON t.goal_id = g.id AND t.user_id = g.user_id
         WHERE g.user_id = $1 AND t.status = 'completed' AND NULLIF(g.target_language, '') IS NOT NULL
-       ) AS practiced_languages`,
+       ) AS practiced_languages,
+       (SELECT COUNT(*)::int FROM user_tasks WHERE user_id = $1 AND status = 'completed' AND mode = 'scene_theater') AS scene_theater_sessions`,
     [userId]
   );
   const stats = rows[0] || {};

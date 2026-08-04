@@ -339,7 +339,8 @@ async def execute_action_with_response(action_name: str, params: dict, token: st
                     "scenario": scenario_title,
                     "task": params.get('task', 'NEXT_PENDING_TASK'),
                     "scoreDelta": params.get('scoreDelta', 10),
-                    "feedback": params.get('feedback', '')
+                    "feedback": params.get('feedback', ''),
+                    "mode": context.get('mode') if context else None,
                 }
 
                 # Use correct internal API path: /api/users/internal/users/:id/tasks/complete
@@ -2083,7 +2084,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from prompt_manager import prompt_manager
 
 class WebSocketCallback(OmniRealtimeCallback):
-    def __init__(self, websocket: WebSocket, loop: asyncio.AbstractEventLoop, user_context: dict, token: str, user_id: str, session_id: str, history_messages: list = [], scenario: str = None):
+    def __init__(self, websocket: WebSocket, loop: asyncio.AbstractEventLoop, user_context: dict, token: str, user_id: str, session_id: str, history_messages: list = [], scenario: str = None, mode: str = None):
         self.websocket = websocket
         self.loop = loop
         self.user_context = user_context
@@ -2091,6 +2092,7 @@ class WebSocketCallback(OmniRealtimeCallback):
         self.user_id = user_id
         self.session_id = session_id
         self.scenario = scenario
+        self.mode = mode
         self.phase_key = f"{user_id}:{scenario or ''}"  # 每个场景独立的 phase key
         self._latency_started_at = time.monotonic()
         self._latency_stages = set()
@@ -2140,6 +2142,15 @@ class WebSocketCallback(OmniRealtimeCallback):
         # on task switch (otherwise the AI keeps hearing prior-task transcripts).
         self.item_ids = []
         self._mark_latency_stage("ws_accepted")
+
+    def task_completion_mode(self):
+        """Return the actual learning mode at the moment a task completes."""
+        if self.is_daily_qa_mode:
+            return "daily_qa"
+        phase = session_phases.get(self.phase_key, {}).get("phase")
+        if phase == "scene_theater":
+            return "scene_theater"
+        return self.mode or phase or None
 
     def _mark_latency_stage(self, stage: str) -> None:
         if stage in self._latency_stages:
@@ -3045,11 +3056,12 @@ class WebSocketCallback(OmniRealtimeCallback):
                             if goal_id:
                                 try:
                                     user_service_url = os.getenv("USER_SERVICE_URL", "http://user-service:3000")
+                                    _task_mode = self.task_completion_mode()
                                     async with httpx.AsyncClient() as client:
                                         # Complete current task
                                         complete_resp = await client.post(
                                             f"{user_service_url}/api/users/internal/users/{self.user_id}/tasks/complete",
-                                            json={"scenario": self.scenario, "task": "NEXT_PENDING_TASK"},
+                                            json={"scenario": self.scenario, "task": "NEXT_PENDING_TASK", "mode": _task_mode},
                                             headers={"X-Guaji-Internal-Auth": os.getenv("INTERNAL_AUTH_SECRET", "")}
                                         )
                                         if complete_resp.status_code == 200:
@@ -3402,7 +3414,7 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query(None), ses
         logger.error(f"Error details: {str(e)}")
     loop = asyncio.get_running_loop()
     
-    callback = WebSocketCallback(websocket, loop, user_context, token, user_id, session_id, history_messages, scenario)
+    callback = WebSocketCallback(websocket, loop, user_context, token, user_id, session_id, history_messages, scenario, mode)
     phase_key = callback.phase_key  # f"{user_id}:{scenario or ''}" — 每个场景独立
 
     # ── Daily Q&A mode bootstrap (Feature 2) ──
@@ -3797,11 +3809,12 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query(None), ses
                             continue
 
                         user_service_url = os.getenv("USER_SERVICE_URL", "http://user-service:3000")
+                        _confirm_mode = callback.task_completion_mode()
                         async with httpx.AsyncClient() as client:
                             confirm_resp = await client.post(
                                 f"{user_service_url}/api/users/tasks/{confirm_task_id}/confirm-complete",
                                 headers={"Authorization": f"Bearer {callback.token}"},
-                                json={},
+                                json={"mode": _confirm_mode},
                                 timeout=5.0,
                             )
                             if confirm_resp.status_code != 200:

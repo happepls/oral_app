@@ -747,12 +747,13 @@ exports.confirmCompleteTask = async (req, res) => {
     try {
         const userId = req.user?.id;
         const taskId = req.params.id;
+        const { mode } = req.body || {};
         if (!userId) return res.status(401).json({ success: false, message: 'Unauthorized' });
         if (!taskId) return res.status(400).json({ success: false, message: 'task id required' });
 
-        console.log(`[User] Confirm-Complete Task: User=${userId}, Task=${taskId}`);
+        console.log(`[User] Confirm-Complete Task: User=${userId}, Task=${taskId}, Mode=${mode || 'default'}`);
 
-        const result = await User.confirmCompleteTaskById(userId, taskId);
+        const result = await User.confirmCompleteTaskById(userId, taskId, mode || null);
         if (result.error === 'not_found') {
             return res.status(404).json({ success: false, message: 'Task not found' });
         }
@@ -789,15 +790,15 @@ exports.confirmCompleteTask = async (req, res) => {
 exports.completeTaskInternal = async (req, res) => {
     try {
         const userId = req.params.id;
-        const { scenario, task } = req.body;
+        const { scenario, task, mode } = req.body;
 
-        console.log(`[User] Internal Complete Task: User=${userId}, Scenario=${scenario}, Task=${task}`);
+        console.log(`[User] Internal Complete Task: User=${userId}, Scenario=${scenario}, Task=${task}, Mode=${mode || 'default'}`);
 
         if (!scenario || !task) {
             return res.status(400).json({ success: false, message: 'Scenario and Task required' });
         }
 
-        const updatedGoal = await User.completeTask(userId, scenario, task);
+        const updatedGoal = await User.completeTask(userId, scenario, task, mode || null);
 
         if (!updatedGoal) {
             console.log('[User] Task completion skipped (not found or no active goal)');
