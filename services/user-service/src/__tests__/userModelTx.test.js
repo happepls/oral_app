@@ -102,3 +102,64 @@ describe('User.createGoal – transaction rollback', () => {
     updateSpy.mockRestore();
   });
 });
+
+describe('goal lifecycle transactions', () => {
+  afterEach(() => jest.clearAllMocks());
+
+  test('archiving the active goal activates the latest paused goal atomically', async () => {
+    const client = makeClient();
+    db.pool.connect.mockResolvedValue(client);
+    client.query
+      .mockResolvedValueOnce({}) // BEGIN
+      .mockResolvedValueOnce({ rows: [{ id: 7, status: 'active' }] }) // owned goal
+      .mockResolvedValueOnce({ rows: [{ id: 7, status: 'archived' }] }) // archive
+      .mockResolvedValueOnce({ rows: [] }) // no remaining active goal
+      .mockResolvedValueOnce({ rows: [{ id: 6 }] }) // activate paused fallback
+      .mockResolvedValueOnce({}); // COMMIT
+
+    await expect(User.archiveGoal('u1', 7)).resolves.toEqual({
+      goal: { id: 7, status: 'archived' },
+      active_goal_id: 6,
+    });
+
+    const sql = client.query.mock.calls.map(call => call[0]).join('\n');
+    expect(sql).toContain("SET status = 'archived'");
+    expect(sql).toContain("status = 'paused'");
+    expect(client.query).toHaveBeenLastCalledWith('COMMIT');
+    expect(client.release).toHaveBeenCalledTimes(1);
+  });
+
+  test('switch refuses completed and archived goals without pausing the current goal', async () => {
+    const client = makeClient();
+    db.pool.connect.mockResolvedValue(client);
+    client.query
+      .mockResolvedValueOnce({}) // BEGIN
+      .mockResolvedValueOnce({ rows: [] }) // target status is not active/paused
+      .mockResolvedValueOnce({}); // ROLLBACK
+
+    await expect(User.switchActiveGoal('u1', 9)).resolves.toBeNull();
+    const sql = client.query.mock.calls.map(call => call[0]).join('\n');
+    expect(sql).toContain("status IN ('active', 'paused')");
+    expect(sql).not.toContain("SET status = 'paused'");
+    expect(client.release).toHaveBeenCalledTimes(1);
+  });
+
+  test('deleting an active goal cascades in PostgreSQL and selects a fallback', async () => {
+    const client = makeClient();
+    db.pool.connect.mockResolvedValue(client);
+    client.query
+      .mockResolvedValueOnce({}) // BEGIN
+      .mockResolvedValueOnce({ rows: [{ id: 7, status: 'active' }] })
+      .mockResolvedValueOnce({ rows: [] }) // DELETE
+      .mockResolvedValueOnce({ rows: [] }) // active lookup
+      .mockResolvedValueOnce({ rows: [{ id: 5 }] }) // fallback
+      .mockResolvedValueOnce({}); // COMMIT
+
+    await expect(User.deleteGoal('u1', 7)).resolves.toEqual({
+      deleted_goal_id: 7,
+      active_goal_id: 5,
+    });
+    expect(client.query.mock.calls.some(call => String(call[0]).includes('DELETE FROM user_goals'))).toBe(true);
+    expect(client.query).toHaveBeenLastCalledWith('COMMIT');
+  });
+});

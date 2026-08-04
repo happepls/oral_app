@@ -41,7 +41,9 @@ const handleResponse = async (response) => {
   }
 
   if (!response.ok) {
-    throw new Error(data.error?.message || data.message || `请求失败 (状态码: ${response.status})`);
+    const error = new Error(data.error?.message || data.message || `请求失败 (状态码: ${response.status})`);
+    error.status = response.status;
+    throw error;
   }
   
   // Extract data from the new response format
@@ -227,6 +229,9 @@ export const userAPI = {
               text,
               status: current?.status || 'pending',
               score,
+              interaction_count: current?.interaction_count || 0,
+              feedback: current?.feedback || null,
+              completed_at: current?.completed_at || null,
               progress: Math.min(100, Math.round((score / 9) * 100)),
             };
           }),
@@ -323,20 +328,20 @@ export const userAPI = {
   },
 
   async getSubscription() {
-    // Soft-fail: stripe routes use legacy Bearer-token middleware that doesn't
-    // recognize the cookie-based session. Returning null on auth failure keeps
-    // Profile page renderable for free users without triggering a logout redirect.
-    try {
-      const response = await fetch(`${API_BASE_URL}/stripe/subscription`, {
-        headers: getAuthHeaders(),
-        credentials: 'include'
-      });
-      if (!response.ok) return null;
-      const data = await response.json();
-      return data?.data || data;
-    } catch (err) {
-      return null;
+    // Do not route subscription errors through handleResponse: an upstream auth
+    // problem must not trigger a global logout. Callers still need a rejected
+    // promise so they can distinguish an unavailable service from a free plan.
+    const response = await fetch(`${API_BASE_URL}/stripe/subscription`, {
+      headers: getAuthHeaders(),
+      credentials: 'include'
+    });
+    if (!response.ok) {
+      const error = new Error(`Subscription request failed (${response.status})`);
+      error.status = response.status;
+      throw error;
     }
+    const data = await response.json();
+    return data?.data || data;
   },
 
   async getUserGoals() {
@@ -350,6 +355,33 @@ export const userAPI = {
   async switchGoal(goalId) {
     const response = await fetch(`${API_BASE_URL}/users/goals/${goalId}/activate`, {
       method: 'PUT',
+      headers: getAuthHeaders(),
+      credentials: 'include'
+    });
+    return handleResponse(response);
+  },
+
+  async archiveGoal(goalId) {
+    const response = await fetch(`${V1_BASE_URL}/goals/${goalId}/archive`, {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      credentials: 'include'
+    });
+    return handleResponse(response);
+  },
+
+  async restoreGoal(goalId) {
+    const response = await fetch(`${V1_BASE_URL}/goals/${goalId}/restore`, {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      credentials: 'include'
+    });
+    return handleResponse(response);
+  },
+
+  async deleteGoal(goalId) {
+    const response = await fetch(`${V1_BASE_URL}/goals/${goalId}`, {
+      method: 'DELETE',
       headers: getAuthHeaders(),
       credentials: 'include'
     });
@@ -582,6 +614,19 @@ export const aiAPI = {
     return handleResponse(response);
   },
 
+  async getDailyRecall(variant = 0, options = {}) {
+    const { signal } = options;
+    const response = await fetch(
+      `${API_BASE_URL}/ai/daily-recall?variant=${encodeURIComponent(variant)}`,
+      {
+        headers: getAuthHeaders(),
+        credentials: 'include',
+        ...(signal && { signal })
+      }
+    );
+    return handleResponse(response);
+  },
+
   async reAnswerDaily() {
     const response = await fetch(`${API_BASE_URL}/ai/daily-question/re-answer`, {
       method: 'POST',
@@ -670,15 +715,17 @@ export const conversationAPI = {
     return handleResponse(response);
   },
 
-  async saveHistory(sessionId, messages, userId) {
+  async saveHistory(sessionId, messages, userId, options = {}) {
     // Use conversation-service for saving history (history-analytics-service is for GET only)
     const response = await fetch(`${API_BASE_URL}/conversation/history/${sessionId}`, {
       method: 'POST',
       headers: getAuthHeaders(),
       credentials: 'include',
+      ...(options.keepalive ? { keepalive: true } : {}),
       body: JSON.stringify({ messages, userId })
     });
-    return handleResponse(response);
+    const data = await handleResponse(response);
+    return { success: true, data };
   },
 
   async getHistory(sessionId, options = {}) {
@@ -688,7 +735,22 @@ export const conversationAPI = {
       credentials: 'include',
       ...(signal && { signal })
     });
-    return handleResponse(response);
+    if (response.status === 404) {
+      let data = {};
+      try {
+        data = await response.json();
+      } catch {
+        data = {};
+      }
+      return {
+        success: false,
+        status: 404,
+        message: data.message || '资源未找到 (404)',
+        data: data.data || null,
+      };
+    }
+    const data = await handleResponse(response);
+    return { success: true, ...data, data };
   },
 
   async getActiveSessions(userId, goalId) {

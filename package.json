@@ -1,9 +1,10 @@
 {
   "scripts": {
     "lint": "eslint scripts quality services/user-service/src services/media-processing-service/src services/history-analytics-service/src services/history-analytics-service/test services/conversation-service/src services/conversation-service/test services/comms-service/src services/comms-service/test services/developer-api-service/src services/developer-api-service/test",
-    "test": "npm run test:contracts && npm run test:score",
+    "test": "npm run test:contracts && npm run test:score && npm run test:audit",
     "test:contracts": "node --test quality/tests/contracts.test.mjs",
     "test:score": "node --test quality/tests/scoring.test.mjs",
+    "test:audit": "node --test quality/tests/audit-tracker.test.mjs",
     "verify": "node scripts/quality/verify.mjs",
     "verify:report": "node scripts/quality/score.mjs",
     "verify:ui": "npm --prefix client run test:e2e",

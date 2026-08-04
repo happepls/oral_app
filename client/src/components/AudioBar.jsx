@@ -41,13 +41,13 @@ const AudioBar = ({ duration: propDuration, onClick, isActive = false, audioUrl,
   const numBars = Math.min(Math.ceil(displayDuration / 0.5), 50); // Limit to 50 bars max
   // Memoize heights so waveform doesn't flicker on every re-render
   const barHeights = useMemo(
-    () => Array.from({ length: numBars }, () => 20 + Math.random() * 20),
+    () => Array.from({ length: numBars }, (_, index) => 20 + ((index * 17 + numBars * 7) % 21)),
     [numBars]
   );
 
   // Styles based on ownership
   const barColor = isOwnMessage ? 'bg-white/80' : 'bg-blue-400';
-  const timeColor = isOwnMessage ? 'text-blue-100' : 'text-gray-500';
+  const timeColor = isOwnMessage ? 'text-white' : 'text-gray-700';
   const btnBg = isOwnMessage
     ? 'bg-white/20 hover:bg-white/35 text-white'
     : 'bg-blue-500 hover:bg-blue-600 text-white';
@@ -63,14 +63,14 @@ const AudioBar = ({ duration: propDuration, onClick, isActive = false, audioUrl,
         }}
         aria-label={isActive ? '暂停' : '播放'}
       >
-        <span className="material-symbols-outlined text-base leading-none">
+        <span aria-hidden="true" className="material-symbols-outlined text-base leading-none">
           {isActive ? 'pause' : 'play_arrow'}
         </span>
       </button>
       {/* Waveform bars */}
       <div
-        className={`flex items-center gap-0.5 flex-grow h-8 cursor-pointer ${isActive ? 'opacity-75' : ''}`}
-        onClick={onClick}
+        aria-hidden="true"
+        className={`flex items-center gap-0.5 flex-grow h-8 ${isActive ? 'opacity-75' : ''}`}
       >
         {barHeights.map((height, bar) => (
           <div

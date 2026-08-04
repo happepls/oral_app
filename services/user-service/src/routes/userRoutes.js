@@ -42,6 +42,9 @@ router.get('/api/users/goals/current-task', protect, userController.getCurrentTa
 router.get('/api/users/goals/next-task', protect, userController.getNextPendingTask);
 router.put('/api/users/goals/:id/complete', protect, userController.completeGoal);
 router.put('/api/users/goals/:id/activate', protect, userController.switchGoal);
+router.post('/api/users/goals/:id/archive', protect, userController.archiveGoal);
+router.post('/api/users/goals/:id/restore', protect, userController.restoreGoal);
+router.delete('/api/users/goals/:id', protect, userController.deleteGoal);
 router.post('/api/users/goals/reset-task', protect, userController.resetTask);
 
 // Daily scenario count (for enforcing per-day scenario limits)

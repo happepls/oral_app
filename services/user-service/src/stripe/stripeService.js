@@ -31,7 +31,6 @@ class StripeService {
     const stripe = await getUncachableStripeClient();
     const params = {
       customer: customerId,
-      payment_method_types: ['card'],
       line_items: [{ price: priceId, quantity: 1 }],
       mode: 'subscription',
       success_url: successUrl,
@@ -46,19 +45,49 @@ class StripeService {
     }
 
     if (promotionCode) {
-      // Resolve the human-readable code (e.g. "SAVE20") to a promotion_code id.
-      const promos = await stripe.promotionCodes.list({ code: promotionCode, active: true, limit: 1 });
-      if (promos.data.length > 0) {
-        params.discounts = [{ promotion_code: promos.data[0].id }];
-      } else {
-        // Unknown/inactive code → let the user enter one on the Checkout page.
-        params.allow_promotion_codes = true;
+      const promo = await this.validatePromotionCode(promotionCode);
+      if (!promo) {
+        const error = new Error('Promotion code is invalid or expired');
+        error.code = 'INVALID_PROMOTION_CODE';
+        throw error;
       }
+      params.discounts = [{ promotion_code: promo.id }];
     } else {
       params.allow_promotion_codes = true;
     }
 
     return await stripe.checkout.sessions.create(params);
+  }
+
+  async validatePromotionCode(rawCode) {
+    if (typeof rawCode !== 'string' || !rawCode.trim()) return null;
+    const stripe = await getUncachableStripeClient();
+    const code = rawCode.trim().toUpperCase();
+    const promos = await stripe.promotionCodes.list({ code, active: true, limit: 1 });
+    const promotionCode = promos.data[0];
+    if (!promotionCode) return null;
+    if (promotionCode.expires_at && promotionCode.expires_at <= Math.floor(Date.now() / 1000)) return null;
+    if (
+      promotionCode.max_redemptions !== null
+      && promotionCode.times_redeemed >= promotionCode.max_redemptions
+    ) return null;
+
+    let coupon = promotionCode.coupon || promotionCode.promotion?.coupon;
+    if (typeof coupon === 'string') coupon = await stripe.coupons.retrieve(coupon);
+    if (!coupon || coupon.valid === false) return null;
+
+    const percentOff = coupon.percent_off ?? null;
+    const amountOff = coupon.amount_off ?? null;
+    const description = coupon.name
+      || (percentOff !== null ? `${percentOff}% off` : `${amountOff || 0} ${String(coupon.currency || '').toUpperCase()} off`);
+    return {
+      id: promotionCode.id,
+      code: promotionCode.code,
+      percent_off: percentOff,
+      amount_off: amountOff,
+      currency: coupon.currency || null,
+      description,
+    };
   }
 
   async createCustomerPortalSession(customerId, returnUrl) {

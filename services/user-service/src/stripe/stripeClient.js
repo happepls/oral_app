@@ -24,7 +24,7 @@ async function getUncachableStripeClient() {
   }
   if (!stripeClient) {
     stripeClient = new Stripe(secretKey, {
-      apiVersion: '2025-08-27.basil',
+      apiVersion: '2026-05-27.dahlia',
     });
   }
   return stripeClient;

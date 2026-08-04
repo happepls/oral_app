@@ -11,6 +11,7 @@ import re
 import traceback
 import os
 import urllib.parse
+import uuid
 from datetime import datetime
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Query, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -22,6 +23,10 @@ from dashscope.audio.qwen_omni import (
     AudioFormat
 )
 import dashscope
+try:
+    from .dashscope_config import classify_connection_error, resolve_dashscope_config
+except ImportError:  # tests and direct `python app/main.py` load it as a module
+    from dashscope_config import classify_connection_error, resolve_dashscope_config
 
 # --- Configuration & Logging ---
 logging.basicConfig(level=logging.INFO)
@@ -30,13 +35,16 @@ logger = logging.getLogger("app.main")
 # Workflow Service URL
 WORKFLOW_SERVICE_URL = os.getenv("WORKFLOW_SERVICE_URL", "http://workflow-service:3006")
 
-# DashScope API Key
-api_key = os.getenv("QWEN3_OMNI_API_KEY") or os.getenv("DASHSCOPE_API_KEY")
-if not api_key:
-    logger.error("QWEN3_OMNI_API_KEY not found in environment")
-    raise ValueError("QWEN3_OMNI_API_KEY environment variable is required")
+# Resolve the credential and endpoint as one immutable startup configuration.
+# This prevents a local key from ever being sent to a production MaaS workspace.
+DASHSCOPE_CONFIG = resolve_dashscope_config(os.environ)
+api_key = DASHSCOPE_CONFIG.api_key
 dashscope.api_key = api_key
-logger.info("Using real DashScope API with provided API key")
+logger.info(
+    "DashScope configured: credential=%s endpoint_family=%s",
+    DASHSCOPE_CONFIG.credential_source,
+    "dedicated" if DASHSCOPE_CONFIG.dedicated else "public",
+)
 
 # DashScope endpoint switching (China default vs international/Zeabur).
 # DASHSCOPE_WS_URL: realtime WSS base. Empty/None → SDK uses China default.
@@ -45,7 +53,7 @@ logger.info("Using real DashScope API with provided API key")
 #   Intl value: wss://dashscope-intl.aliyuncs.com/api-ws/v1/realtime (NO ?model=)
 # DASHSCOPE_HTTP_BASE: REST base host, default China endpoint.
 _DASHSCOPE_HTTP_CHINA = "https://dashscope.aliyuncs.com"
-DASHSCOPE_HTTP_BASE = (os.getenv("DASHSCOPE_HTTP_BASE") or _DASHSCOPE_HTTP_CHINA).rstrip("/")
+DASHSCOPE_HTTP_BASE = DASHSCOPE_CONFIG.http_base
 # SDK-global host for MultiModalConversation.call / Generation.call (TTS/translate).
 # Only override when intl endpoint differs from China default.
 if DASHSCOPE_HTTP_BASE != _DASHSCOPE_HTTP_CHINA:
@@ -56,7 +64,7 @@ if DASHSCOPE_HTTP_BASE != _DASHSCOPE_HTTP_CHINA:
 # image synthesis via /api/v1). The dedicated maas host returns 403 for
 # /compatible-mode/v1/chat/completions.
 _DASHSCOPE_CHAT_BASE_CHINA = "https://dashscope.aliyuncs.com"
-DASHSCOPE_CHAT_BASE = (os.getenv("DASHSCOPE_CHAT_BASE") or _DASHSCOPE_CHAT_BASE_CHINA).rstrip("/")
+DASHSCOPE_CHAT_BASE = DASHSCOPE_CONFIG.chat_base
 # Model names differ between China and the Singapore dedicated workspace.
 QWEN_TEXT_MODEL = os.getenv("QWEN_TEXT_MODEL", "qwen-turbo")   # intl: qwen-flash
 QWEN_IMAGE_MODEL = os.getenv("QWEN_IMAGE_MODEL", "wanx2.1-t2i-turbo")  # intl: wan2.2-t2i-flash
@@ -66,7 +74,7 @@ QWEN_IMAGE_MODEL = os.getenv("QWEN_IMAGE_MODEL", "wanx2.1-t2i-turbo")  # intl: w
 # (DASHSCOPE_HTTP_BASE → ws-...maas.aliyuncs.com, which only hosts the deployed
 # realtime omni model). Defaulting to DASHSCOPE_CHAT_BASE keeps t2i on the same
 # reliable general gateway as chat-completions. Override via DASHSCOPE_IMAGE_BASE.
-DASHSCOPE_IMAGE_BASE = (os.getenv("DASHSCOPE_IMAGE_BASE") or DASHSCOPE_CHAT_BASE).rstrip("/")
+DASHSCOPE_IMAGE_BASE = DASHSCOPE_CONFIG.image_base
 
 # 双阶段会话状态，key=f"{user_id}:{scenario}" — 每个场景独立维护状态
 # TTL-aware wrapper: 条目超过 72h 自动清理，最多保留 2000 个活跃 key（LRU）
@@ -253,28 +261,50 @@ async def get_user_context(token: str, scenario: str = None):
         logger.error(f"Error fetching user context: {e}")
         return None
 
-async def save_single_message(session_id: str, user_id: str, role: str, content: str, audio_url: str = None):
-    """Saves a single message to conversation-service."""
+async def save_single_message(
+    session_id: str,
+    user_id: str,
+    role: str,
+    content: str,
+    audio_url: str = None,
+    message_id: str = None,
+    timestamp: str = None,
+):
+    """Idempotently upsert one realtime message through the internal API."""
     conv_service_url = os.getenv("CONVERSATION_SERVICE_URL", "http://localhost:8083")
+    internal_secret = os.getenv("INTERNAL_AUTH_SECRET")
+    if not internal_secret:
+        logger.error("History persistence disabled: INTERNAL_AUTH_SECRET is missing")
+        return False
     payload = {
-        "role": role,
-        "content": content,
-        "userId": user_id,  # Keep as string since user IDs are UUIDs
-        "audioUrl": audio_url
+        "userId": user_id,
+        "messages": [{
+            "id": message_id or str(uuid.uuid4()),
+            "role": role,
+            "content": content,
+            "audioUrl": audio_url,
+            "timestamp": timestamp or datetime.utcnow().isoformat(),
+        }],
     }
-    try:
-        async with httpx.AsyncClient() as client:
-            resp = await client.post(
-                f"{conv_service_url}/history/{session_id}",
-                json=payload,
-                timeout=5.0
-            )
-            if resp.status_code not in [200, 201]:
-                logger.error(f"Failed to save message: {resp.status_code} {resp.text}")
-            else:
-                logger.info(f"Saved {role} message to session {session_id}")
-    except Exception as e:
-        logger.error(f"Error saving message: {e}")
+    headers = {"X-Guaji-Internal-Auth": internal_secret}
+    for attempt in range(3):
+        try:
+            async with httpx.AsyncClient() as client:
+                resp = await client.post(
+                    f"{conv_service_url}/internal/history/{urllib.parse.quote(session_id, safe='')}/messages",
+                    json=payload,
+                    headers=headers,
+                    timeout=5.0,
+                )
+            if resp.status_code in (200, 201):
+                logger.info("Saved %s message id=%s session=%s", role, payload["messages"][0]["id"], session_id)
+                return True
+            logger.error("History write failed: status=%s attempt=%s", resp.status_code, attempt + 1)
+        except Exception as exc:
+            logger.error("History write error: type=%s detail=%r attempt=%s", type(exc).__name__, exc, attempt + 1)
+        if attempt < 2:
+            await asyncio.sleep(0.15 * (2 ** attempt))
+    return False
 
 async def execute_action_with_response(action_name: str, params: dict, token: str, user_id: str, session_id: str, context: dict = None):
     """Executes a system action (like updating goals) by calling the appropriate microservice."""
@@ -317,7 +347,7 @@ async def execute_action_with_response(action_name: str, params: dict, token: st
                     resp = await client.post(
                         f"{user_service_url}/api/users/internal/users/{user_id}/tasks/complete",
                         json=payload,
-                        headers={"Authorization": f"Bearer {token}"}
+                        headers={"X-Guaji-Internal-Auth": os.getenv("INTERNAL_AUTH_SECRET", "")}
                     )
                     if resp.status_code == 200:
                         logger.info(f"Task scored for user {user_id}: {payload}")
@@ -586,6 +616,96 @@ async def _handle_turn_with_accumulator(
     }
 
 
+async def _evaluate_scene_turn_progress(
+    callback,
+    goal_id,
+    task_id,
+    latest_ai_text: str,
+):
+    """Run scene scoring independently from audio persistence.
+
+    Audio/COS is an optional message attachment. A media outage must never
+    suppress proficiency updates or task progress writes.
+    """
+    phase_info = session_phases.get(callback.phase_key, {})
+    user_messages = [m for m in callback.messages if m.get("role") == "user"]
+    if not goal_id or not task_id or not user_messages:
+        logger.info(
+            "[BATCH_EVAL] skip: goal_id=%s task_id=%s user_messages=%s",
+            goal_id,
+            task_id,
+            len(user_messages),
+        )
+        return None
+    if phase_info.get("phase") == "magic_repetition":
+        return None
+
+    active_goal = (callback.user_context or {}).get("active_goal") or {}
+    current = active_goal.get("current_task") or {}
+    resolved_task_id = task_id or current.get("id") or 0
+    scenario_title = (
+        current.get("scenario_title")
+        or callback.scenario
+        or callback.user_context.get("custom_topic")
+        or "General Practice"
+    )
+    task_description = (
+        current.get("task_description")
+        or current.get("text")
+        or callback.user_context.get("current_task_text")
+        or scenario_title
+    )
+    current_task = {
+        "id": resolved_task_id,
+        "task_description": task_description,
+        "scenario_title": scenario_title,
+        "target_language": active_goal.get("target_language", "English"),
+    }
+    native_language = (
+        callback.user_context.get("native_language")
+        or active_goal.get("native_language")
+        or "中文"
+    )
+    latest_user = next(
+        ((m.get("content") or "") for m in reversed(user_messages)),
+        "",
+    )
+    result = await _handle_turn_with_accumulator(
+        callback,
+        callback.conversation,
+        callback.websocket,
+        callback.user_id,
+        goal_id,
+        resolved_task_id,
+        latest_user,
+        latest_ai_text,
+        current_task,
+        native_language,
+        callback.token,
+    )
+    if not result:
+        return None
+
+    logger.info(
+        "[BATCH_EVAL] media-independent result: task_id=%s score=%s ready=%s",
+        result.get("task_id"),
+        result.get("task_score"),
+        result.get("task_ready_to_complete"),
+    )
+    if result.get("task_ready_to_complete") and not result.get("task_completed"):
+        await callback._safe_send({
+            "type": "task_ready_to_complete",
+            "payload": {
+                "task_id": result.get("task_id"),
+                "task_title": result.get("task_title", "Task"),
+                "scenario_title": scenario_title,
+                "score": result.get("task_score", 0),
+                "message": result.get("message", "You have mastered this task!"),
+            },
+        })
+    return result
+
+
 # ---------------------------------------------------------------------------
 # Daily Q&A Helpers (Feature 2 — 今日问答)
 # ---------------------------------------------------------------------------
@@ -597,6 +717,9 @@ _DAILY_QA_POOL_TTL_SECONDS = 30 * 24 * 3600  # 30d per design
 _DAILY_QA_POOL_CAP = 10
 _DAILY_QA_HISTORY_CAP = 20          # how many recently-seen questions to remember per user
 _DAILY_QA_HISTORY_TTL_SECONDS = 30 * 24 * 3600  # 30d — recent-question memory for cross-day dedup
+_DAILY_RECALL_SENTENCE_COUNT = 3
+_DAILY_RECALL_HISTORY_CAP = 30
+_daily_recall_generation_backoff_until = 0.0
 
 _DAILY_QA_FALLBACK = {
     "English": [
@@ -696,8 +819,19 @@ _DAILY_QA_FALLBACK_POOL = _fallback_by_language("English")
 
 
 def _today_utc_str() -> str:
+    """Return the product's current calendar date.
+
+    The historical name is kept for compatibility, but daily learning content
+    must rotate at the learner-facing day boundary rather than 08:00 in China.
+    Deployments can override APP_TIMEZONE; local/default product time is China.
+    """
     from datetime import datetime, timezone
-    return datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    try:
+        from zoneinfo import ZoneInfo
+        tz = ZoneInfo(os.getenv("APP_TIMEZONE", "Asia/Shanghai"))
+    except Exception:
+        tz = timezone.utc
+    return datetime.now(tz).strftime("%Y-%m-%d")
 
 
 # ── 每日对话轮次上限（成本护栏） ──
@@ -705,7 +839,11 @@ FREE_DAILY_TURNS = int(os.getenv("FREE_DAILY_TURNS", "15"))
 PRO_DAILY_TURNS = int(os.getenv("PRO_DAILY_TURNS", "150"))
 # SECURITY: magic passcode "急急如律令" skips a task WITHOUT proficiency_scoring.
 # Default OFF so production has no scoring-bypass backdoor; opt-in for local debugging only.
-_MAGIC_PASSCODE_ENABLED = os.getenv("ENABLE_MAGIC_PASSCODE", "false").lower() == "true"
+_MAGIC_PASSCODE_ENABLED = os.getenv("ENABLE_MAGIC_PASSCODE", "true").lower() == "true"
+
+def is_magic_passcode_transcript(text: str) -> bool:
+    """Only an exact trusted ASR transcript may activate the task-completion command."""
+    return re.sub(r"[\s,，.。!！?？;；:：]+", "", text or "") == "急急如律令"
 _DAILY_TURN_TTL_SECONDS = 48 * 3600  # 容忍跨日，与 daily_qa 一致
 
 def _daily_turn_key(user_id: str) -> str:
@@ -973,7 +1111,8 @@ def _parse_daily_qa_pool_text(text: str) -> list:
 
 async def _generate_daily_question_pool(target_language: str, native_language: str, count: int = 10,
                                         goal_type: str = "", interests: str = "",
-                                        goal_description: str = "", avoid_questions: list = None) -> list:
+                                        goal_description: str = "", avoid_questions: list = None,
+                                        progress_context: str = "") -> list:
     """Call qwen-turbo to generate a pool of daily practice questions with reference answers.
 
     Single-call generation: questions in target_language + reference answers in native_language
@@ -987,6 +1126,7 @@ async def _generate_daily_question_pool(target_language: str, native_language: s
     goal_type = (goal_type or "").strip()[:60]
     interests = (interests or "").strip()[:200]
     goal_description = (goal_description or "").strip()[:200]
+    progress_context = (progress_context or "").strip()[:1200]
 
     # Personalization block — only include lines we actually have.
     personal_lines = []
@@ -1001,6 +1141,12 @@ async def _generate_daily_question_pool(target_language: str, native_language: s
         personal_block = (
             "Tailor the questions to THIS learner's profile — prefer topics tied to their "
             "goal and interests over generic small talk:\n" + "\n".join(personal_lines) + "\n\n"
+        )
+    if progress_context:
+        personal_block += (
+            "Use the learner's CURRENT practice progress to choose a useful next topic. "
+            "Prefer unfinished or weak areas while varying the concrete situation:\n"
+            f"{progress_context}\n\n"
         )
 
     # Avoid-list block — keep it bounded so the prompt doesn't balloon.
@@ -1080,6 +1226,47 @@ def _extract_goal_qa_ctx(user_context: dict) -> tuple:
     return goal_type, interests, goal_description
 
 
+def _build_learning_progress_context(user_context: dict) -> str:
+    """Compact active-goal progress for daily material generation."""
+    goal = (user_context or {}).get("active_goal") or {}
+    completed = []
+    pending = []
+    for scenario in (goal.get("scenarios") or [])[:12]:
+        scenario_title = str(scenario.get("title") or "").strip()
+        for task in (scenario.get("tasks") or [])[:6]:
+            if isinstance(task, dict):
+                text = task.get("text") or task.get("description") or task.get("title") or ""
+                done = task.get("status") == "completed"
+                score = task.get("score")
+            else:
+                text, done, score = str(task or ""), False, None
+            text = str(text).strip()
+            if not text:
+                continue
+            item = f"{scenario_title}: {text}" if scenario_title else text
+            if score is not None:
+                item += f" (score {score})"
+            (completed if done else pending).append(item)
+    parts = [
+        f"Target level: {goal.get('target_level') or 'Intermediate'}",
+        f"Current proficiency: {goal.get('current_proficiency') or 0}",
+    ]
+    if pending:
+        parts.append("Pending practice: " + "; ".join(pending[:8]))
+    if completed:
+        parts.append("Recently mastered: " + "; ".join(completed[-5:]))
+    return "\n".join(parts)
+
+
+def _daily_seeded_index(user_id: str, date_str: str, goal_key: str, size: int) -> int:
+    """Stable within a day, varied across users/days/goals."""
+    if size <= 1:
+        return 0
+    import hashlib
+    seed = f"{user_id}|{date_str}|{goal_key}".encode("utf-8")
+    return int(hashlib.sha256(seed).hexdigest()[:12], 16) % size
+
+
 async def _get_daily_qa_history(redis, user_id: str) -> list:
     """Recently-seen daily-QA question texts for this user (cross-day dedup memory).
 
@@ -1128,7 +1315,8 @@ async def _add_daily_qa_history(redis, user_id: str, question_texts) -> None:
 async def handle_daily_question(redis, user_id: str, target_language: str = "English",
                                 native_language: str = "Chinese",
                                 goal_type: str = "", interests: str = "",
-                                goal_description: str = "") -> dict:
+                                goal_description: str = "",
+                                progress_context: str = "") -> dict:
     """Return today's daily question for the user, hitting Redis cache first.
 
     Redis keys:
@@ -1189,7 +1377,7 @@ async def handle_daily_question(redis, user_id: str, target_language: str = "Eng
     pool = await _generate_daily_question_pool(
         target_language, native_language, count=_DAILY_QA_POOL_CAP,
         goal_type=goal_type, interests=interests, goal_description=goal_description,
-        avoid_questions=recent,
+        avoid_questions=recent, progress_context=progress_context,
     )
     if not pool:
         pool = _fallback_by_language(target_language)
@@ -1200,8 +1388,11 @@ async def handle_daily_question(redis, user_id: str, target_language: str = "Eng
         deduped = [q for q in pool if (q.get("question_text", "").strip().lower()) not in _recent_norm]
         if deduped:
             pool = deduped
-    picked = pool[0]
-    payload = {"pool": pool, "index": 0, "picked": picked}
+    picked_index = _daily_seeded_index(
+        user_id, date_str, f"{lang_slug}|{goal_type}|{goal_description}", len(pool)
+    )
+    picked = pool[picked_index]
+    payload = {"pool": pool, "index": picked_index, "picked": picked}
     try:
         await redis.setex(cache_key, _DAILY_QA_TTL_SECONDS, json.dumps(payload, ensure_ascii=False))
     except Exception as e:
@@ -1219,7 +1410,8 @@ async def handle_daily_question(redis, user_id: str, target_language: str = "Eng
 
 
 async def get_daily_question_pool(redis, user_id: str, target_language: str = "English",
-                                  native_language: str = "Chinese", count: int = 3) -> list:
+                                  native_language: str = "Chinese", count: int = 3,
+                                  progress_context: str = "") -> list:
     """Return up to `count` questions from today's pool for Pro user selection."""
     if not user_id:
         raise ValueError("user_id required")
@@ -1240,7 +1432,10 @@ async def get_daily_question_pool(redis, user_id: str, target_language: str = "E
             pool = data
 
     if not pool:
-        pool = await _generate_daily_question_pool(target_language, native_language, count=_DAILY_QA_POOL_CAP)
+        pool = await _generate_daily_question_pool(
+            target_language, native_language, count=_DAILY_QA_POOL_CAP,
+            progress_context=progress_context,
+        )
         if not pool:
             pool = _fallback_by_language(target_language)
         picked = pool[0]
@@ -1280,11 +1475,13 @@ async def _persist_daily_qa_pass(user_id: str, ai_text: str) -> None:
     try:
         _user_svc = os.getenv("USER_SERVICE_URL", "http://user-service:3000")
         async with httpx.AsyncClient() as _cli:
-            await _cli.post(
+            response = await _cli.post(
                 f"{_user_svc}/api/users/internal/users/{user_id}/daily-qa-pass",
                 json={"question_text": (ai_text or "")[:500]},
+                headers={"X-Guaji-Internal-Auth": os.getenv("INTERNAL_AUTH_SECRET", "")},
                 timeout=3.0,
             )
+            response.raise_for_status()
     except Exception as _e:
         logger.warning(f"[DAILY_QA] failed to persist pass to DB: {_e}")
 
@@ -1316,8 +1513,12 @@ async def _finalize_daily_qa_pass(redis, user_id: str, websocket, ai_text: str,
         except Exception as e:
             logger.warning(f"[DAILY_QA] failed to write passed key: {e}")
 
-    if not is_bonus:
-        await _persist_daily_qa_pass(user_id, ai_text)
+    # Always attempt the idempotent DB write, including bonus/re-answer flows.
+    # Redis can say "passed" while the original DB callback was unavailable;
+    # skipping bonus writes would then leave Discovery permanently incomplete.
+    # user-service uses ON CONFLICT (user_id, pass_date) DO NOTHING, so this is
+    # safe for users whose authoritative daily pass row already exists.
+    await _persist_daily_qa_pass(user_id, ai_text)
 
     await _send_daily_qa_completed_ws(websocket, date_str, is_bonus=is_bonus)
     logger.info(
@@ -1342,7 +1543,8 @@ async def _handle_daily_qa_marker(redis, user_id: str, websocket, ai_text: str) 
 async def _advance_daily_qa_pool(redis, user_id: str, date_str: str, *,
                                  target_language: str, native_language: str,
                                  goal_type: str = "", interests: str = "",
-                                 goal_description: str = "") -> dict:
+                                 goal_description: str = "",
+                                 progress_context: str = "") -> dict:
     """Advance the user's daily-QA pool index and return the new picked question.
 
     Handles both new-shape (`{pool, index, picked}`) and legacy-shape cache values.
@@ -1386,7 +1588,7 @@ async def _advance_daily_qa_pool(redis, user_id: str, date_str: str, *,
             fresh = await _generate_daily_question_pool(
                 target_language, native_language, count=_DAILY_QA_POOL_CAP,
                 goal_type=goal_type, interests=interests, goal_description=goal_description,
-                avoid_questions=_recent,
+                avoid_questions=_recent, progress_context=progress_context,
             )
         except Exception as e:
             logger.warning(f"[DAILY_QA] advance: pool regeneration failed: {e}")
@@ -1414,6 +1616,193 @@ async def _advance_daily_qa_pool(redis, user_id: str, date_str: str, *,
 
     logger.info(f"[DAILY_QA] advanced pool for user={user_id}: index {index} → {new_index} (pool_size={len(pool)})")
     return picked
+
+
+def _parse_daily_recall_text(text: str) -> dict:
+    if not text:
+        return {}
+    stripped = text.strip()
+    fence = re.match(r"^```(?:json)?\s*(.*?)\s*```$", stripped, flags=re.DOTALL | re.IGNORECASE)
+    if fence:
+        stripped = fence.group(1).strip()
+    try:
+        parsed = json.loads(stripped)
+    except Exception:
+        return {}
+    if not isinstance(parsed, dict):
+        return {}
+    sentences = []
+    for item in parsed.get("sentences") or []:
+        sentence = str(item or "").strip()
+        if sentence and sentence not in sentences:
+            sentences.append(sentence)
+    if not sentences:
+        return {}
+    return {
+        "topic": str(parsed.get("topic") or "").strip(),
+        "sentences": sentences[:5],
+    }
+
+
+async def _get_daily_recall_history(redis, user_id: str) -> list:
+    if redis is None or not user_id:
+        return []
+    try:
+        items = await redis.lrange(
+            f"daily_recall_history:{user_id}", 0, _DAILY_RECALL_HISTORY_CAP - 1
+        )
+        return [
+            item.decode("utf-8") if isinstance(item, (bytes, bytearray)) else str(item)
+            for item in (items or []) if item
+        ]
+    except Exception as e:
+        logger.warning(f"[DAILY_RECALL] history read fail-open: {e}")
+        return []
+
+
+async def _add_daily_recall_history(redis, user_id: str, sentences: list) -> None:
+    if redis is None or not user_id or not sentences:
+        return
+    try:
+        key = f"daily_recall_history:{user_id}"
+        for sentence in reversed([s for s in sentences if s]):
+            await redis.lpush(key, sentence)
+        await redis.ltrim(key, 0, _DAILY_RECALL_HISTORY_CAP - 1)
+        await redis.expire(key, _DAILY_QA_HISTORY_TTL_SECONDS)
+    except Exception as e:
+        logger.warning(f"[DAILY_RECALL] history write fail-open: {e}")
+
+
+async def _generate_daily_recall_material(
+    target_language: str,
+    target_level: str,
+    progress_context: str,
+    avoid_texts: list,
+) -> dict:
+    """Generate a short coherent recall script grounded in current progress."""
+    global _daily_recall_generation_backoff_until
+    if time.monotonic() < _daily_recall_generation_backoff_until:
+        return {}
+    avoid_texts = [str(x).strip() for x in (avoid_texts or []) if str(x).strip()]
+    avoid_block = ""
+    if avoid_texts:
+        avoid_block = (
+            "Do not repeat, answer, or closely paraphrase any of these recent materials:\n"
+            + "\n".join(f"- {x}" for x in avoid_texts[:_DAILY_RECALL_HISTORY_CAP])
+            + "\n\n"
+        )
+    prompt = (
+        f"Create one fresh oral recall mini-dialogue for a {target_level or 'Intermediate'} "
+        f"learner of {target_language}. Generate exactly {_DAILY_RECALL_SENTENCE_COUNT} "
+        f"short first-person sentences the learner can say in sequence. The sentences must "
+        "form one coherent real-life response, progress naturally, and practise the learner's "
+        "unfinished or weaker skills without copying their task descriptions.\n\n"
+        f"Current learning progress:\n{(progress_context or 'No progress data')[:1200]}\n\n"
+        f"{avoid_block}"
+        f"Every sentence and the topic must be written entirely in {target_language}. "
+        "Keep each sentence suitable for speaking and memorisation. "
+        "Return ONLY valid JSON:\n"
+        '{"topic":"short topic","sentences":["sentence 1","sentence 2","sentence 3"]}'
+    )
+    api_key = os.getenv("DASHSCOPE_API_KEY") or os.getenv("QWEN3_OMNI_API_KEY")
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            response = await client.post(
+                f"{DASHSCOPE_CHAT_BASE}/compatible-mode/v1/chat/completions",
+                headers={
+                    "Authorization": f"Bearer {api_key}",
+                    "Content-Type": "application/json",
+                },
+                json={
+                    "model": os.getenv("DAILY_RECALL_MODEL", QWEN_TEXT_MODEL),
+                    "messages": [{"role": "user", "content": prompt}],
+                    "max_tokens": 768,
+                    "response_format": {"type": "json_object"},
+                },
+            )
+            response.raise_for_status()
+            content = response.json()["choices"][0]["message"]["content"]
+    except Exception as e:
+        _daily_recall_generation_backoff_until = time.monotonic() + 60
+        logger.warning(f"[DAILY_RECALL] generation failed: {type(e).__name__}: {e}")
+        return {}
+    parsed = _parse_daily_recall_text(content)
+    if len(parsed.get("sentences") or []) < _DAILY_RECALL_SENTENCE_COUNT:
+        logger.warning(f"[DAILY_RECALL] malformed/short generation: {str(content)[:200]}")
+        return {}
+    return parsed
+
+
+async def _get_cached_daily_question_text(
+    redis, user_id: str, target_language: str, date_str: str
+) -> str:
+    """Read today's QA selection without triggering another model request."""
+    cache_key = (
+        f"daily_qa_pool:{user_id}:{_lang_cache_slug(target_language)}:{date_str}"
+    )
+    try:
+        raw = await redis.get(cache_key)
+        if raw:
+            data = json.loads(raw if isinstance(raw, str) else raw.decode("utf-8"))
+            if isinstance(data, dict) and isinstance(data.get("picked"), dict):
+                return str(data["picked"].get("question_text") or "")
+            if isinstance(data, dict):
+                return str(data.get("question_text") or "")
+            if isinstance(data, list) and data:
+                first = data[0]
+                return str(first.get("question_text") if isinstance(first, dict) else first)
+    except Exception as e:
+        logger.warning(f"[DAILY_RECALL] QA cache read fail-open: {e}")
+    fallback = _fallback_by_language(target_language)
+    index = _daily_seeded_index(user_id, date_str, target_language, len(fallback))
+    return str(fallback[index].get("question_text") or "") if fallback else ""
+
+
+async def handle_daily_recall(redis, user_context: dict, variant: int = 0) -> dict:
+    """Return stable-per-day recall material; variants support explicit switching."""
+    user_id = str((user_context or {}).get("id") or "")
+    if not user_id:
+        raise ValueError("user_id required")
+    goal = (user_context or {}).get("active_goal") or {}
+    goal_id = str(goal.get("id") or "no-goal")
+    target_language = goal.get("target_language") or user_context.get("target_language") or "English"
+    target_level = goal.get("target_level") or "Intermediate"
+    date_str = _today_utc_str()
+    variant = max(0, min(int(variant or 0), 20))
+    cache_key = (
+        f"daily_recall:{user_id}:{goal_id}:{_lang_cache_slug(target_language)}:"
+        f"{date_str}:{variant}"
+    )
+
+    cached = await redis.get(cache_key)
+    if cached:
+        try:
+            data = json.loads(cached if isinstance(cached, str) else cached.decode("utf-8"))
+        except Exception:
+            data = None
+        if isinstance(data, dict) and data.get("sentences"):
+            return data
+
+    progress_context = _build_learning_progress_context(user_context)
+    qa_text = await _get_cached_daily_question_text(
+        redis, user_id, target_language, date_str
+    )
+    recent = await _get_daily_recall_history(redis, user_id)
+    avoid = [qa_text] + recent
+    material = await _generate_daily_recall_material(
+        target_language, target_level, progress_context, avoid
+    )
+    if not material:
+        return {}
+    payload = {
+        **material,
+        "recall_date": date_str,
+        "variant": variant,
+        "source": "generated",
+    }
+    await redis.setex(cache_key, _DAILY_QA_TTL_SECONDS, json.dumps(payload, ensure_ascii=False))
+    await _add_daily_recall_history(redis, user_id, payload["sentences"])
+    return payload
 
 
 def _assert_pro(user_ctx: dict) -> None:
@@ -1703,6 +2092,8 @@ class WebSocketCallback(OmniRealtimeCallback):
         self.session_id = session_id
         self.scenario = scenario
         self.phase_key = f"{user_id}:{scenario or ''}"  # 每个场景独立的 phase key
+        self._latency_started_at = time.monotonic()
+        self._latency_stages = set()
         self.conversation = None
         self.full_response_text = ""
         # If scenario is provided, always use OralTutor role for practice
@@ -1728,6 +2119,7 @@ class WebSocketCallback(OmniRealtimeCallback):
         self.ai_responding = False  # Track if AI is currently responding
         self.connection_established_sent = False  # Track if we've sent connection_established
         self.last_detected_language = None  # Language detected by DashScope for last user utterance
+        self.processed_magic_transcription_ids = set()
         self.just_switched_task = False  # True immediately after a task completes; cleared after prompt update
         self._reconnect_failures = 0   # Count of "opened then closed quickly" events
         self._last_open_time = 0       # Timestamp of last on_open
@@ -1747,6 +2139,19 @@ class WebSocketCallback(OmniRealtimeCallback):
         # Track DashScope server-side conversation items so we can delete them
         # on task switch (otherwise the AI keeps hearing prior-task transcripts).
         self.item_ids = []
+        self._mark_latency_stage("ws_accepted")
+
+    def _mark_latency_stage(self, stage: str) -> None:
+        if stage in self._latency_stages:
+            return
+        self._latency_stages.add(stage)
+        elapsed_ms = round((time.monotonic() - self._latency_started_at) * 1000)
+        logger.info(
+            "[WelcomeLatency] session=%s stage=%s elapsed_ms=%d",
+            self.session_id,
+            stage,
+            elapsed_ms,
+        )
 
     async def _safe_send(self, message: dict):
         """Safely send a WebSocket message, ignoring errors if client is disconnected."""
@@ -1790,6 +2195,7 @@ class WebSocketCallback(OmniRealtimeCallback):
 
     def on_open(self) -> None:
         logger.info("DashScope Connection Open")
+        self._mark_latency_stage("dashscope_open")
         self.is_connected = True
         self._last_open_time = time.time()
         logger.info(f"on_open called, connection_established_sent={self.connection_established_sent}")
@@ -2049,7 +2455,12 @@ class WebSocketCallback(OmniRealtimeCallback):
         files = {audio_type: (filename, audio_data, 'application/octet-stream')}
         async with httpx.AsyncClient() as client:
             try:
-                resp = await client.post(url, files=files, timeout=30.0)
+                resp = await client.post(
+                    url,
+                    files=files,
+                    headers={"X-Guaji-Internal-Auth": os.getenv("INTERNAL_AUTH_SECRET", "")},
+                    timeout=30.0,
+                )
                 if resp.status_code == 200:
                     return resp.json().get('data', {}).get(f'{audio_type}Url')
                 logger.error(f"Failed to upload audio: {resp.status_code} {resp.text}")
@@ -2085,13 +2496,13 @@ class WebSocketCallback(OmniRealtimeCallback):
             logger.info(f"Detailed Event Data: {json.dumps(response)[:3000]}")
 
         if event_name == 'session.created':
+            self._mark_latency_stage("session_created")
             self.session_ready = True
             if not self.messages and not self.welcome_sent and not getattr(self, "welcome_muted", False):
-                def delayed_trigger():
-                    time.sleep(0.5)
-                    self._trigger_welcome_message()
                 import threading
-                threading.Thread(target=delayed_trigger, daemon=True).start()
+                welcome_timer = threading.Timer(0.5, self._trigger_welcome_message)
+                welcome_timer.daemon = True
+                welcome_timer.start()
         # Always update current_response_id if we have a new one
         if rid and rid not in self.ignored_response_ids:
             self.current_response_id = rid
@@ -2102,12 +2513,14 @@ class WebSocketCallback(OmniRealtimeCallback):
                 elif event_name == 'response.audio.delta':
                     audio_data = response.get('delta')
                     if audio_data:
+                        self._mark_latency_stage("first_audio")
                         try: self.ai_audio_buffer.extend(base64.b64decode(audio_data))
                         except: pass
                         await self._safe_send({"type": "audio_response", "payload": audio_data, "role": self.role, "responseId": self.current_response_id})
                 elif event_name == 'response.audio_transcript.delta':
                     text = response.get('delta')
                     if text:
+                        self._mark_latency_stage("first_text")
                         # Accumulate text internally, don't send chunks to frontend
                         self.ai_responding = True  # Mark AI as actively responding
                         self.full_response_text += text
@@ -2263,6 +2676,7 @@ class WebSocketCallback(OmniRealtimeCallback):
 
                             url = await self.upload_audio_to_cos(audio_data, 'ai_audio')
                             if url:
+                                self._mark_latency_stage("cos_complete")
                                 await self._safe_send({"type": "audio_url", "payload": {"url": url, "role": "assistant"}, "responseId": r})
                                 # Store audio URL by response ID to ensure correct pairing
                                 if not hasattr(self, 'audio_urls_by_response'):
@@ -2275,7 +2689,15 @@ class WebSocketCallback(OmniRealtimeCallback):
                                 for msg in reversed(self.messages):
                                     if msg.get('role') == 'assistant' and not msg.get('audioUrl'):
                                         msg['audioUrl'] = url
-                                        await save_single_message(self.session_id, self.user_id, "assistant", msg.get('content', ''), url)
+                                        await save_single_message(
+                                            self.session_id,
+                                            self.user_id,
+                                            "assistant",
+                                            msg.get('content', ''),
+                                            url,
+                                            message_id=msg.get("id") or msg.get("responseId"),
+                                            timestamp=msg.get("timestamp"),
+                                        )
                                         logger.info(f"Saved AI message with audio URL to history: {msg.get('content', '')[:50]}...")
                                         break
                                 
@@ -2473,9 +2895,19 @@ class WebSocketCallback(OmniRealtimeCallback):
                                     _active_goal = self.user_context.get('active_goal') or {}
                                     _target_language = _active_goal.get('target_language', 'English')
                                     _native_language = self.user_context.get('native_language') or _active_goal.get('native_language') or '中文'
-                                    _custom_topic = self.user_context.get('custom_topic') or 'General Practice'
-                                    _scenario_title = (_custom_topic.split(" (")[0]).strip()
-                                    _task_description = self.user_context.get('current_task_text') or _custom_topic
+                                    _current_task_record = _active_goal.get('current_task') or {}
+                                    _custom_topic = self.user_context.get('custom_topic') or self.scenario or 'General Practice'
+                                    _scenario_title = (
+                                        _current_task_record.get('scenario_title')
+                                        or self.scenario
+                                        or (_custom_topic.split(" (")[0]).strip()
+                                    )
+                                    _task_description = (
+                                        _current_task_record.get('task_description')
+                                        or _current_task_record.get('text')
+                                        or self.user_context.get('current_task_text')
+                                        or _custom_topic
+                                    )
                                     _current_task_ctx = {
                                         "id": task_id or 0,
                                         "task_description": _task_description,
@@ -2524,7 +2956,7 @@ class WebSocketCallback(OmniRealtimeCallback):
                                                 "payload": {
                                                     "task_id": workflow_result.get('task_id'),
                                                     "task_title": task_title,
-                                                    "scenario_title": self.user_context.get('custom_topic', 'General Practice').split(" (Tasks:")[0].strip(),
+                                                    "scenario_title": _scenario_title,
                                                     "score": task_score,
                                                     "message": workflow_result.get('message', 'You have mastered this task!'),
                                                 }
@@ -2559,7 +2991,14 @@ class WebSocketCallback(OmniRealtimeCallback):
                                                 logger.info("[TASK_READY] Injected confirmation-ask directive to AI")
                                             except Exception as _ask_err:
                                                 logger.warning(f"[TASK_READY] Failed to inject confirmation directive: {_ask_err}")
-                                        
+                                # Scoring must not depend on COS/media success. The
+                                # successful-upload branch above keeps its existing
+                                # evaluation flow; this fallback covers upload errors.
+                                if not url:
+                                    await _evaluate_scene_turn_progress(
+                                        self, goal_id, task_id, latest_ai_text
+                                    )
+
                         asyncio.create_task(upload_ai_task(data, self.current_response_id))
 
                     # Send response.audio.done to client so it knows AI finished speaking
@@ -2588,12 +3027,18 @@ class WebSocketCallback(OmniRealtimeCallback):
                         logger.info(f"Detected input language: {self.last_detected_language}")
                     if user_transcript:
                         # Check for magic passcode "急急如律令" (support both Chinese and English punctuation)
-                        clean_text = re.sub(r'[,.!?.,!?;:;:。！？；：]', '', user_transcript).strip()
-                        # SECURITY: passcode-driven task skip bypasses proficiency_scoring entirely.
-                        # Gated behind ENABLE_MAGIC_PASSCODE (default false) — production has NO backdoor,
-                        # local debugging can opt in via env. Only triggers off trusted ASR transcript.
-                        if _MAGIC_PASSCODE_ENABLED and clean_text == '急急如律令':
-                            logger.info(f"Magic passcode detected in transcript! (original: '{user_transcript}', cleaned: '{clean_text}') Auto-completing current task...")
+                        transcription_id = str(response.get("item_id") or response.get("id") or "")
+                        # SECURITY: this learning-flow shortcut bypasses proficiency_scoring.
+                        # It only triggers from a trusted final ASR transcript; browser text frames
+                        # cannot reach this branch.
+                        if (
+                            _MAGIC_PASSCODE_ENABLED
+                            and is_magic_passcode_transcript(user_transcript)
+                            and (not transcription_id or transcription_id not in self.processed_magic_transcription_ids)
+                        ):
+                            if transcription_id:
+                                self.processed_magic_transcription_ids.add(transcription_id)
+                            logger.info("Magic passcode detected from trusted ASR; auto-completing the current task")
 
                             # Complete current task and fetch next task
                             goal_id = self.user_context.get('active_goal', {}).get('id')
@@ -2605,7 +3050,7 @@ class WebSocketCallback(OmniRealtimeCallback):
                                         complete_resp = await client.post(
                                             f"{user_service_url}/api/users/internal/users/{self.user_id}/tasks/complete",
                                             json={"scenario": self.scenario, "task": "NEXT_PENDING_TASK"},
-                                            headers={"Authorization": f"Bearer {self.token}"}
+                                            headers={"X-Guaji-Internal-Auth": os.getenv("INTERNAL_AUTH_SECRET", "")}
                                         )
                                         if complete_resp.status_code == 200:
                                             logger.info("Auto-completed current task via magic passcode")
@@ -2754,10 +3199,23 @@ class WebSocketCallback(OmniRealtimeCallback):
                         else:
                             # Normal input (not magic passcode) - send transcript and add to history
                             await self._safe_send({"type": "user_transcript", "payload": {"text": user_transcript}})
-                            msg = {"role": "user", "content": user_transcript, "timestamp": datetime.utcnow().isoformat()}
+                            msg = {
+                                "id": transcription_id or str(uuid.uuid4()),
+                                "role": "user",
+                                "content": user_transcript,
+                                "timestamp": datetime.utcnow().isoformat(),
+                            }
                             if self.last_user_audio_url: msg['audioUrl'] = self.last_user_audio_url; self.last_user_audio_url = None
                             self.messages.append(msg)
-                            await save_single_message(self.session_id, self.user_id, "user", user_transcript, msg.get('audioUrl'))
+                            await save_single_message(
+                                self.session_id,
+                                self.user_id,
+                                "user",
+                                user_transcript,
+                                msg.get("audioUrl"),
+                                message_id=msg["id"],
+                                timestamp=msg["timestamp"],
+                            )
                 elif event_name in ['response.audio_transcript.done', 'response.text.done']:
                     if not self.full_response_text:
                         transcript = response.get('transcript') or response.get('text')
@@ -2769,10 +3227,25 @@ class WebSocketCallback(OmniRealtimeCallback):
                     # Send complete message to frontend in one go
                     # Note: Don't save to conversation service here - wait for audio.done to save with audioUrl
                     if self.full_response_text:
-                        msg = {"role": "assistant", "content": self.full_response_text, "timestamp": datetime.utcnow().isoformat(), "responseId": self.current_response_id or f"ai-{int(time.time() * 1000)}"}
+                        response_id = self.current_response_id or f"ai-{int(time.time() * 1000)}"
+                        msg = {
+                            "id": response_id,
+                            "role": "assistant",
+                            "content": self.full_response_text,
+                            "timestamp": datetime.utcnow().isoformat(),
+                            "responseId": response_id,
+                        }
                         if self.last_ai_audio_url: msg['audioUrl'] = self.last_ai_audio_url; self.last_ai_audio_url = None
                         self.messages.append(msg)
-                        # Removed: await save_single_message(...) - now saved in response.audio.done after audioUrl is generated
+                        asyncio.create_task(save_single_message(
+                            self.session_id,
+                            self.user_id,
+                            "assistant",
+                            msg["content"],
+                            msg.get("audioUrl"),
+                            message_id=msg["id"],
+                            timestamp=msg["timestamp"],
+                        ))
 
                         # Send complete message to frontend with responseId
                         await self._safe_send({
@@ -2946,6 +3419,7 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query(None), ses
                 _qa_payload = await handle_daily_question(
                     _rc, user_id, target_language=target_language, native_language=native_language,
                     goal_type=_gt, interests=_int, goal_description=_gd,
+                    progress_context=_build_learning_progress_context(user_context),
                 )
             except Exception as _qe:
                 logger.warning(f"[DAILY_QA] handle_daily_question failed: {_qe}")
@@ -3005,7 +3479,12 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query(None), ses
             logger.info(f"Connecting to DashScope for session {session_id}")
             # url=None → SDK uses China default. Intl env value must NOT contain
             # a query string; SDK appends ?model={model} itself.
-            conversation = OmniRealtimeConversation(model=os.getenv("QWEN3_OMNI_MODEL", "qwen3-omni-flash-realtime"), callback=callback, url=os.getenv("DASHSCOPE_WS_URL") or None)
+            conversation = OmniRealtimeConversation(
+                model=os.getenv("QWEN3_OMNI_MODEL", "qwen3.5-omni-flash-realtime"),
+                callback=callback,
+                url=DASHSCOPE_CONFIG.ws_url,
+                api_key=DASHSCOPE_CONFIG.api_key,
+            )
             callback.conversation = conversation
             conversation.connect()
             logger.info(f"DashScope connected call initiated for session {session_id}")
@@ -3030,15 +3509,45 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query(None), ses
             except: break
 
     heartbeat_task = None
+    welcome_readiness_task = None
     conversation = None
     try:
         try:
             conversation = connect_dashscope()
         except Exception as e:
-            await websocket.send_json({"type": "error", "payload": {"error": str(e)}})
-            await websocket.close(); return
+            public_error = classify_connection_error(e)
+            await websocket.send_json({"type": "error", "payload": public_error})
+            await websocket.close(
+                code=1011 if public_error["retryable"] else 1008,
+                reason=public_error["code"],
+            )
+            return
 
         heartbeat_task = asyncio.create_task(heartbeat())
+        expects_welcome = not history_messages
+
+        async def welcome_readiness_timeout():
+            await asyncio.sleep(15)
+            if (
+                expects_welcome
+                and not callback.welcome_muted
+                and "first_audio" not in callback._latency_stages
+            ):
+                logger.warning(
+                    "[WelcomeLatency] session=%s stage=timeout elapsed_ms=%d",
+                    session_id,
+                    round((time.monotonic() - callback._latency_started_at) * 1000),
+                )
+                await callback._safe_send({
+                    "type": "error",
+                    "payload": {
+                        "code": "WELCOME_TIMEOUT",
+                        "message": "AI is taking too long to prepare. Please retry.",
+                        "retryable": True,
+                    },
+                })
+
+        welcome_readiness_task = asyncio.create_task(welcome_readiness_timeout())
 
         while True:
             try:
@@ -3162,7 +3671,21 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query(None), ses
                             continue
                         callback.counts_against_quota = True
                         callback.interrupted_turn = False  # new user turn ends the interruption
-                        callback.messages.append({"role": "user", "content": text, "timestamp": datetime.utcnow().isoformat()})
+                        text_message = {
+                            "id": str(uuid.uuid4()),
+                            "role": "user",
+                            "content": text,
+                            "timestamp": datetime.utcnow().isoformat(),
+                        }
+                        callback.messages.append(text_message)
+                        asyncio.create_task(save_single_message(
+                            callback.session_id,
+                            callback.user_id,
+                            "user",
+                            text,
+                            message_id=text_message["id"],
+                            timestamp=text_message["timestamp"],
+                        ))
                         if callback.is_connected:
                             try:
                                 conversation.send_raw(json.dumps({"type": "conversation.item.create", "item": {"type": "message", "role": "user", "content": [{"type": "input_text", "text": text}]}}))
@@ -3371,6 +3894,7 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query(None), ses
                 break
     finally:
         if heartbeat_task: heartbeat_task.cancel()
+        if welcome_readiness_task: welcome_readiness_task.cancel()
         if conversation:
             try: conversation.close()
             except: pass
@@ -3392,6 +3916,31 @@ async def health_check():
 # GET /daily-question - Feature 2: 今日问答
 # ---------------------------------------------------------------------------
 from fastapi import Request as _FastAPIRequest
+
+
+@app.get("/daily-recall")
+async def daily_recall_endpoint(request: _FastAPIRequest, variant: int = 0):
+    """Generate/cache today's progress-aware recall script for this learner."""
+    token = request.cookies.get("accessToken")
+    if not token:
+        auth_header = request.headers.get("Authorization", "")
+        if auth_header.startswith("Bearer "):
+            token = auth_header[7:]
+    if not token:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+    user_ctx = await get_user_context(token)
+    if not user_ctx or not user_ctx.get("id"):
+        raise HTTPException(status_code=401, detail="Invalid token")
+    redis_client = _get_redis_client()
+    if redis_client is None:
+        return {"data": {"sentences": [], "source": "fallback"}}
+    try:
+        payload = await handle_daily_recall(redis_client, user_ctx, variant=variant)
+    except Exception as e:
+        logger.error(f"[DAILY_RECALL] endpoint error: {e}")
+        return {"data": {"sentences": [], "source": "fallback"}}
+    return {"data": payload or {"sentences": [], "source": "fallback"}}
 
 
 @app.get("/daily-question")
@@ -3438,6 +3987,7 @@ async def daily_question_endpoint(request: _FastAPIRequest):
             target_language=target_language,
             native_language=native_language,
             goal_type=_gt, interests=_int, goal_description=_gd,
+            progress_context=_build_learning_progress_context(user_ctx),
         )
     except Exception as e:
         logger.error(f"[DAILY_QA] /daily-question handler error: {e}")
@@ -3483,6 +4033,7 @@ async def daily_question_re_answer(request: _FastAPIRequest):
             target_language=target_language,
             native_language=native_language,
             goal_type=_gt, interests=_int, goal_description=_gd,
+            progress_context=_build_learning_progress_context(user_ctx),
         )
     except Exception as e:
         logger.error(f"[DAILY_QA] re-answer: handle_daily_question error: {e}")
@@ -3533,6 +4084,7 @@ async def daily_question_change_question(request: _FastAPIRequest):
             target_language=target_language,
             native_language=native_language,
             goal_type=_gt, interests=_int, goal_description=_gd,
+            progress_context=_build_learning_progress_context(user_ctx),
         )
     except Exception as e:
         logger.error(f"[DAILY_QA] change-question: advance failed: {e}")
@@ -3582,6 +4134,7 @@ async def daily_question_pool_endpoint(request: _FastAPIRequest):
             target_language=target_language,
             native_language=native_language,
             count=3,
+            progress_context=_build_learning_progress_context(user_ctx),
         )
     except Exception as e:
         logger.error(f"[DAILY_QA] /daily-question/pool error: {e}")
@@ -3738,10 +4291,11 @@ import urllib.request as _urllib_req
 # DashScope TTS audio URL 域名白名单（防止 SSRF）
 _ALLOWED_TTS_HOSTS = {"dashscope.aliyuncs.com", "oss-cn-beijing.aliyuncs.com", "oss-cn-hangzhou.aliyuncs.com", "oss-cn-shanghai.aliyuncs.com",
                       "dashscope-intl.aliyuncs.com", "oss-ap-southeast-1.aliyuncs.com",
+                      "dashscope-5859.oss-cn-wulanchabu-acdr-1.aliyuncs.com",
                       "ws-apadg96g31j9nnwh.ap-southeast-1.maas.aliyuncs.com"}
 # ws-apadg... = 专属 intl 网关 (CSV)；oss-ap-southeast-1 = intl OSS 输出域，部署后须实跑 intl TTS 抓真实 audio URL host 确认/补全
 
-def _validated_urlopen(url: str, timeout: int = 15) -> bytes:
+def _validated_urlopen(url: str, timeout: int = 15, include_content_type: bool = False):
     """Fetch URL with domain allowlist to prevent SSRF."""
     parsed = urllib.parse.urlparse(url)
     host = parsed.hostname or ""
@@ -3750,7 +4304,11 @@ def _validated_urlopen(url: str, timeout: int = 15) -> bytes:
     if parsed.scheme not in ("http", "https"):
         raise RuntimeError(f"TTS URL scheme not allowed: {parsed.scheme}")
     with _urllib_req.urlopen(url, timeout=timeout) as f:
-        return f.read()
+        content = f.read()
+        if include_content_type:
+            content_type = f.headers.get_content_type() if f.headers else "application/octet-stream"
+            return content, content_type
+        return content
 
 # Mapping of common scenario keywords → Unsplash search terms
 _SCENE_KEYWORD_MAP = {
@@ -4029,10 +4587,7 @@ async def _rehost_image_to_cos(temp_url: str) -> str | None:
     if not temp_url:
         return None
     media_url = os.getenv("MEDIA_SERVICE_URL", "http://media-processing-service:3005") + "/api/media/upload-image"
-    headers = {}
-    _isk = os.getenv("INTERNAL_SERVICE_KEY")
-    if _isk:
-        headers["x-internal-service-key"] = _isk
+    headers = {"X-Guaji-Internal-Auth": os.getenv("INTERNAL_AUTH_SECRET", "")}
     try:
         async with httpx.AsyncClient() as client:
             resp = await client.post(media_url, json={"image_url": temp_url}, headers=headers, timeout=30.0)
@@ -4060,6 +4615,7 @@ async def _persist_scenario_image(goal_id, scenario_title: str, image_url: str) 
             await client.post(
                 f"{user_svc}/api/users/internal/goals/{goal_id}/scenario-image",
                 json={"scenario_title": scenario_title, "image_url": image_url},
+                headers={"X-Guaji-Internal-Auth": os.getenv("INTERNAL_AUTH_SECRET", "")},
                 timeout=5.0,
             )
     except Exception as e:
@@ -4174,15 +4730,10 @@ async def text_to_speech(payload: dict = Body(...)):
         logger.warning(f"[tts] Rejected invalid voice: {repr(voice)}")
         raise HTTPException(status_code=400, detail="Invalid voice")
 
-    ds_api_key = os.getenv("QWEN3_OMNI_API_KEY") or os.getenv("DASHSCOPE_API_KEY")
-    if not ds_api_key:
-        from fastapi import HTTPException
-        raise HTTPException(status_code=503, detail="AI service not configured")
-
     try:
         def _synth():
-            dashscope.api_key = ds_api_key
             response = dashscope.MultiModalConversation.call(
+                api_key=DASHSCOPE_CONFIG.api_key,
                 model="qwen3-tts-flash",
                 text=text,
                 voice=voice,
@@ -4192,16 +4743,17 @@ async def text_to_speech(payload: dict = Body(...)):
             audio_url = response.output.get("audio", {}).get("url")
             if not audio_url:
                 raise RuntimeError("No audio URL in response")
-            return _validated_urlopen(audio_url, timeout=15)
+            return _validated_urlopen(audio_url, timeout=15, include_content_type=True)
 
         loop = asyncio.get_event_loop()
-        audio_bytes = await loop.run_in_executor(None, _synth)
-        audio_bytes = _trim_wav_onset(audio_bytes)
-        return FastAPIResponse(content=audio_bytes, media_type="audio/wav")
+        audio_bytes, content_type = await loop.run_in_executor(None, _synth)
+        return FastAPIResponse(content=audio_bytes, media_type=content_type)
     except Exception as e:
-        logger.error(f"[tts] synthesis failed: {e}")
+        public_error = classify_connection_error(e)
+        logger.error("[tts] synthesis failed: %s", public_error["code"])
         from fastapi import HTTPException
-        raise HTTPException(status_code=500, detail="语音合成失败")
+        status = 503 if public_error["retryable"] else 502
+        raise HTTPException(status_code=status, detail=public_error)
 
 
 _LANG_CODE_MAP = {

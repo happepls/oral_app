@@ -2,14 +2,20 @@
 
 ## In Progress
 
-[ ]移动web端 适配，当前未进行UI验证和优化
+- 配置生产 INTERNAL_AUTH_SECRET 并重建/滚动部署受影响服务。
+- 在 Stripe test/live Dashboard 配置 Promotion Codes、Portal、Webhook，并完成最小真实交易。
+- 在 Tawk 配置 Ticketing、AI Assist 和人工转接 Shortcut。
+- 提供 COS 凭据、设置 30 日/12 月 Lifecycle，执行真实上传与隔离恢复演练。
+- 完成三类真实会话、DashScope 出站网络、首音频 ≤5 秒及 CSP 剩余项验收。
+- 部署后观察 24 小时错误率、历史保存、Webhook、备份和 DashScope 超时。
 [ ]对话场景实测，包括每日问答、复述和场景对话
-[ ] [Bug] 本地 GoalSetting 场景生成失败：`POST /generate-scenarios` 返回 500；已确认国内端点与 China backup key 正确加载，但 AI 容器直连 DashScope 仍出现 `ConnectTimeout`。后续需排查 Docker Desktop/TUN/防火墙出站链路，并让异常日志输出异常类型与 `repr`，避免 `LLM call failed:` 空日志。
-[ ]DB 备份 cron（退订 Zeabur Dev 前必做，叫我随时写）、欢迎语 ~15s 准备链、COS 上传 buffer 化、18 条 CSP/头部加固 LOW。
+[ ] [Release] 在独立私有腾讯 COS 配置 Lifecycle（daily 30 天、monthly 12 个月），执行一次真实上传和隔离数据库恢复演练。脚本与 02:30 cron 见 `services/backup-service/`、`docs/backup-restore-runbook.md`。
+[ ] [Performance] 欢迎语链已记录 ws_accepted、dashscope_open、session_created、first_text、first_audio、cos_complete 阶段耗时，移除阻塞 sleep，并在 15 秒无首音频时返回可重试错误；首音频 ≤5 秒目标仍需真实网络压测。
+[ ] [Security] 余下 CSP/响应头 LOW 项逐条复核。
 ## Backlog
 
-- [ ] [Quality] `scripts/quality/audit-tracker.mjs`：数量相等时仍报告 mismatch。
-- [ ] [Reliability] `client/src/components/SupportChat.jsx`：Tawk 首次加载失败后没有重试入口。
+- [x] [Quality] `scripts/quality/audit-tracker.mjs`：数量相等输出 count verified，仅不等时输出 mismatch，并有双分支测试。
+- [x] [Reliability] `client/src/components/SupportChat.jsx`：Tawk 改为点击加载，首次失败/超时显示重试入口。
 
 ## Done
 

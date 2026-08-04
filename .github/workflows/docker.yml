@@ -159,6 +159,18 @@ jobs:
           type=semver,pattern={{major}}.{{minor}}
           type=sha,prefix=
 
+    - name: Extract metadata for backup-service
+      id: meta-backup-service
+      uses: docker/metadata-action@v5
+      with:
+        images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/backup-service
+        tags: |
+          type=ref,event=branch
+          type=ref,event=pr
+          type=semver,pattern={{version}}
+          type=semver,pattern={{major}}.{{minor}}
+          type=sha,prefix=
+
     - name: Build and push client
       uses: docker/build-push-action@v5
       with:
@@ -239,3 +251,11 @@ jobs:
         push: true
         tags: ${{ steps.meta-workflow-service.outputs.tags }}
         labels: ${{ steps.meta-workflow-service.outputs.labels }}
+
+    - name: Build and push backup-service
+      uses: docker/build-push-action@v5
+      with:
+        context: ./services/backup-service
+        push: true
+        tags: ${{ steps.meta-backup-service.outputs.tags }}
+        labels: ${{ steps.meta-backup-service.outputs.labels }}

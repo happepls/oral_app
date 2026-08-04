@@ -2,6 +2,7 @@ const express = require('express');
 const { v4: uuidv4 } = require('uuid');
 const Redis = require('ioredis');
 const fetch = require('node-fetch');
+const crypto = require('crypto');
 const { createRequireUser } = require('./auth');
 
 const app = express();
@@ -11,6 +12,17 @@ if (!INTERNAL_AUTH_SECRET) throw new Error('INTERNAL_AUTH_SECRET is required');
 const JWT_SECRET = process.env.JWT_SECRET;
 const requireUser = createRequireUser(JWT_SECRET);
 const historyWriteHeaders = { 'Content-Type': 'application/json', 'X-Guaji-Internal-Auth': INTERNAL_AUTH_SECRET };
+
+function requireInternalService(req, res, next) {
+  const supplied = req.get('X-Guaji-Internal-Auth');
+  if (!supplied) return res.status(401).json({ message: 'Internal authentication required.' });
+  const expected = Buffer.from(INTERNAL_AUTH_SECRET);
+  const actual = Buffer.from(supplied);
+  if (expected.length !== actual.length || !crypto.timingSafeEqual(expected, actual)) {
+    return res.status(401).json({ message: 'Invalid internal authentication.' });
+  }
+  next();
+}
 
 // Connect to Redis
 const redis = new Redis({
@@ -120,6 +132,7 @@ app.post('/start', requireUser, async (req, res) => {
         body: JSON.stringify({
           sessionId,
           userId,
+          goalId: effectiveGoalId === 'general' ? undefined : String(effectiveGoalId),
           messages: [],
           startTime: new Date().toISOString()
         })
@@ -149,12 +162,20 @@ app.post('/start', requireUser, async (req, res) => {
   }
 });
 
-app.get('/sessions', async (req, res) => {
-  const { userId, goalId } = req.query;
-
-  if (!userId) {
-    return res.status(400).json({ message: 'userId is required.' });
+app.delete('/internal/users/:userId/goals/:goalId/sessions', requireInternalService, async (req, res) => {
+  try {
+    const key = `user:${req.params.userId}:goal:${req.params.goalId}:sessions`;
+    const deleted = await redis.del(key);
+    res.json({ deleted_session_index_count: deleted });
+  } catch (error) {
+    console.error('Failed to delete goal session index:', error.message);
+    res.status(500).json({ message: 'Internal server error.' });
   }
+});
+
+app.get('/sessions', requireUser, async (req, res) => {
+  const { goalId } = req.query;
+  const userId = req.authUserId;
 
   const effectiveGoalId = goalId || 'general';
   const sessionListKey = `user:${userId}:goal:${effectiveGoalId}:sessions`;
@@ -194,10 +215,7 @@ app.get('/history/:sessionId', requireUser, async (req, res) => {
       if (historyResponse.ok) {
         const historyData = await historyResponse.json();
         console.log(`Retrieved history for session ${sessionId} from history-analytics-service`);
-        console.log(`History data structure:`, JSON.stringify(historyData, null, 2));
         console.log(`Messages count:`, historyData.data?.messages?.length || 0);
-        if (historyData.data?.messages) {
-        }
         return res.status(200).json({
           success: true,
           data: historyData.data || { messages: [] }
@@ -214,6 +232,39 @@ app.get('/history/:sessionId', requireUser, async (req, res) => {
   }
 });
 
+async function forwardMessages(sessionId, userId, messages) {
+  const historyResponse = await fetch(
+    `http://history-analytics-service:3004/api/history/session/${encodeURIComponent(sessionId)}/messages`,
+    {
+      method: 'POST',
+      headers: historyWriteHeaders,
+      body: JSON.stringify({ userId, messages })
+    }
+  );
+  if (!historyResponse.ok) {
+    const detail = await historyResponse.text();
+    const error = new Error(`History write failed (${historyResponse.status})`);
+    error.status = historyResponse.status;
+    error.detail = detail.slice(0, 300);
+    throw error;
+  }
+}
+
+app.post('/internal/history/:sessionId/messages', requireInternalService, async (req, res) => {
+  const { sessionId } = req.params;
+  const { userId, messages } = req.body;
+  if (!userId || !Array.isArray(messages)) {
+    return res.status(400).json({ message: 'userId and messages are required.' });
+  }
+  try {
+    await forwardMessages(sessionId, String(userId), messages);
+    res.status(201).json({ message: 'Messages saved successfully.' });
+  } catch (error) {
+    console.error(`Internal history write failed for ${sessionId}:`, error.message);
+    res.status(error.status === 403 ? 403 : 502).json({ message: 'History service write failed.' });
+  }
+});
+
 app.post('/history/:sessionId', requireUser, async (req, res) => {
   const { sessionId } = req.params;
   const { role, content, audioUrl, messages } = req.body;
@@ -224,118 +275,20 @@ app.post('/history/:sessionId', requireUser, async (req, res) => {
   console.log(`Has messages array: ${messages && Array.isArray(messages)}`);
   console.log(`Has userId: ${userId}`);
 
-  // Handle both single message and array of messages
-  if (messages && Array.isArray(messages)) {
-    // Process array of messages
-    if (!userId) {
-      console.log(`Error: userId is required when saving messages array.`);
-      return res.status(400).json({ message: 'userId is required when saving messages array.' });
-    }
-
-    try {
-      // Forward to history-analytics-service - try different endpoint paths
-      let historyResponse;
-
-      // First try the conversation endpoint
-      const conversationUrl = `http://history-analytics-service:3004/api/history/conversation`;
-      console.log(`Attempting to save messages via conversation endpoint: ${conversationUrl}`);
-      console.log(`Request body:`, { sessionId, userId, messagesCount: messages.length });
-
-      historyResponse = await fetch(conversationUrl, {
-        method: 'POST',
-        headers: historyWriteHeaders,
-        body: JSON.stringify({
-          sessionId,
-          userId,
-          messages
-        })
-      });
-
-      if (historyResponse.ok) {
-        console.log(`Saved ${messages.length} messages to session ${sessionId} via history-analytics-service conversation endpoint`);
-        return res.status(201).json({ message: 'Messages saved successfully.' });
-      } else {
-        console.error(`Failed to save messages via history-analytics-service conversation endpoint: ${historyResponse.status}`);
-
-        // Try fallback to the session messages endpoint
-        const sessionMessagesUrl = `http://history-analytics-service:3004/api/history/session/${sessionId}/messages`;
-        console.log(`Attempting to save messages via session messages endpoint: ${sessionMessagesUrl}`);
-        console.log(`Request body:`, { userId, messagesCount: messages.length });
-
-        const fallbackResponse = await fetch(sessionMessagesUrl, {
-          method: 'POST',
-          headers: historyWriteHeaders,
-          body: JSON.stringify({
-            userId,
-            messages
-          })
-        });
-
-        if (fallbackResponse.ok) {
-          console.log(`Saved ${messages.length} messages to session ${sessionId} via history-analytics-service history endpoint`);
-          return res.status(201).json({ message: 'Messages saved successfully.' });
-        } else {
-          console.error(`Failed to save messages via history-analytics-service history endpoint: ${fallbackResponse.status}`);
-          return res.status(500).json({ message: 'Failed to save messages via any endpoint.' });
-        }
-      }
-    } catch (error) {
-      console.error(`Error saving messages to history-analytics-service: ${error}`);
-      return res.status(500).json({ message: 'Internal server error.' });
-    }
-  } else {
-    // Handle single message (legacy format)
-    if (!role || !content) {
-      return res.status(400).json({ message: 'role and content are required.' });
-    }
-
-    try {
-      // Forward single message to history-analytics-service - try different endpoint paths
-      let historyResponse;
-
-      // First try the conversation endpoint
-      historyResponse = await fetch(`http://history-analytics-service:3004/api/history/conversation`, {
-        method: 'POST',
-        headers: historyWriteHeaders,
-        body: JSON.stringify({
-          sessionId,
-          userId,
-          messages: [{ role, content, audioUrl }]
-        })
-      });
-
-      if (historyResponse.ok) {
-        console.log(`Saved single message to session ${sessionId} via history-analytics-service conversation endpoint`);
-        return res.status(201).json({ message: 'Message saved successfully.' });
-      } else {
-        console.error(`Failed to save message via history-analytics-service conversation endpoint: ${historyResponse.status}`);
-
-        // Try fallback to the history session endpoint
-        const fallbackResponse = await fetch(`http://history-analytics-service:3004/api/history/session/${sessionId}`, {
-          method: 'POST',
-          headers: historyWriteHeaders,
-          body: JSON.stringify({
-            userId,
-            messages: [{ role, content, audioUrl }]
-          })
-        });
-
-        if (fallbackResponse.ok) {
-          console.log(`Saved single message to session ${sessionId} via history-analytics-service history endpoint`);
-          return res.status(201).json({ message: 'Message saved successfully.' });
-        } else {
-          console.error(`Failed to save message via history-analytics-service history endpoint: ${fallbackResponse.status}`);
-          return res.status(500).json({ message: 'Failed to save message via any endpoint.' });
-        }
-      }
-    } catch (error) {
-      console.error(`Error saving message to history-analytics-service: ${error}`);
-      return res.status(500).json({ message: 'Internal server error.' });
-    }
+  const normalized = Array.isArray(messages) ? messages : [{ role, content, audioUrl, id: req.body.id, timestamp: req.body.timestamp }];
+  if (!normalized.length || normalized.some(message => !message.role || (!message.content && !message.audioUrl))) {
+    return res.status(400).json({ message: 'Each message requires role and content or audioUrl.' });
+  }
+  try {
+    await forwardMessages(sessionId, userId, normalized);
+    return res.status(201).json({ message: 'Messages saved successfully.' });
+  } catch (error) {
+    console.error(`History write failed for ${sessionId}:`, error.message);
+    return res.status(error.status === 403 ? 403 : 502).json({ message: 'History service write failed.' });
   }
 });
 
-app.put('/history/:sessionId/message', async (req, res) => {
+app.put('/history/:sessionId/message', requireUser, async (req, res) => {
   const { sessionId } = req.params;
   const { role, content, audioUrl, userId } = req.body;
 
@@ -352,8 +305,9 @@ app.put('/history/:sessionId/message', async (req, res) => {
   }
 });
 
-app.get('/history/user/:userId', async (req, res) => {
+app.get('/history/user/:userId', requireUser, async (req, res) => {
   const { userId } = req.params;
+  if (String(userId) !== req.authUserId) return res.status(403).json({ message: 'Forbidden.' });
 
   try {
     // For now, return an empty history since conversation history is handled by history-analytics-service
@@ -373,7 +327,7 @@ app.get('/history/user/:userId', async (req, res) => {
 // ---------------------------------------------------------------------------
 const PHASE_TTL_S = 86400; // 24 hours
 
-app.post('/phase', async (req, res) => {
+app.post('/phase', requireInternalService, async (req, res) => {
   const { userId, sessionId, phase, taskIndex, imageUrl } = req.body;
   if (!userId || !sessionId || !phase) {
     return res.status(400).json({ message: 'userId, sessionId and phase are required.' });
@@ -389,21 +343,23 @@ app.post('/phase', async (req, res) => {
   }
 });
 
-app.get('/phase/:sessionId', async (req, res) => {
+app.get('/phase/:sessionId', requireUser, async (req, res) => {
   const { sessionId } = req.params;
   try {
     const raw = await redis.get(`phase:${sessionId}`);
     if (!raw) {
       return res.status(404).json({ success: false, message: 'Phase state not found.' });
     }
-    res.status(200).json({ success: true, data: JSON.parse(raw) });
+    const data = JSON.parse(raw);
+    if (String(data.userId) !== req.authUserId) return res.status(403).json({ message: 'Forbidden.' });
+    res.status(200).json({ success: true, data });
   } catch (err) {
     console.error('[Phase] Failed to get phase state:', err);
     res.status(500).json({ message: 'Internal server error.' });
   }
 });
 
-app.delete('/phase/:sessionId', async (req, res) => {
+app.delete('/phase/:sessionId', requireInternalService, async (req, res) => {
   const { sessionId } = req.params;
   try {
     await redis.del(`phase:${sessionId}`);
@@ -414,8 +370,9 @@ app.delete('/phase/:sessionId', async (req, res) => {
   }
 });
 
-app.get('/history/stats/:userId', async (req, res) => {
+app.get('/history/stats/:userId', requireUser, async (req, res) => {
   const { userId } = req.params;
+  if (String(userId) !== req.authUserId) return res.status(403).json({ message: 'Forbidden.' });
 
   try {
     // For now, return zero stats since conversation history is handled by history-analytics-service

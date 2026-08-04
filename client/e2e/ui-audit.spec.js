@@ -14,6 +14,8 @@ const activeGoal = { id: 1, target_language: 'en', target_level: 'Beginner', cur
 test.beforeEach(async ({ page }, testInfo) => {
   const isPublic = /\b(landing|welcome|login|register)\b/.test(testInfo.title);
   const darkEnglish = testInfo.project.name.endsWith('-dark-en');
+  // Visual baselines must not drift when calendar widgets render today's date.
+  await page.clock.setFixedTime(new Date('2026-07-22T12:00:00+08:00'));
   await page.addInitScript(({ seededUser, publicPage, useDarkEnglish }) => {
     if (!publicPage) localStorage.setItem('user', JSON.stringify(seededUser));
     localStorage.setItem('ui_language', useDarkEnglish ? 'en' : 'zh');
@@ -103,4 +105,96 @@ test('@critical developer authorization shows verified client and scopes', async
   await expect(page.getByText('Local Partner')).toBeVisible();
   await expect(page.getByRole('button', { name: /允许|allow/i })).toBeVisible();
   await expect(page.getByRole('button', { name: /拒绝|deny/i })).toBeVisible();
+});
+
+test('@critical discovery keeps primary tasks visible and exposes semantic states on partial failure', async ({ page }, testInfo) => {
+  await page.route('**/api/users/daily-progress', (route) => route.abort('failed'));
+  await page.route('**/api/ai/daily-question', (route) => route.abort('failed'));
+  await page.goto('/discovery');
+  await page.evaluate((useDark) => document.documentElement.classList.toggle('dark', useDark), testInfo.project.name.endsWith('-dark-en'));
+
+  await expect(page.getByRole('heading', { name: /today's tasks|今日任务/i })).toBeVisible();
+  await expect(page.getByRole('alert').filter({ hasText: /progress|进度/i })).toBeVisible();
+  await expect(page.getByRole('button', { name: /recall|复述/i })).toHaveAttribute('data-completed', 'false');
+  await expect(page.getByRole('progressbar', { name: /overall|总进度/i })).toHaveAttribute('aria-valuenow');
+
+  const completedFilter = page.getByRole('button', { name: /completed|已完成/i }).last();
+  await completedFilter.click();
+  await expect(completedFilter).toHaveAttribute('aria-pressed', 'true');
+
+  const shellWidth = await page.locator('main').evaluate((element) => element.parentElement.getBoundingClientRect().width);
+  expect(shellWidth).toBeLessThanOrEqual(Math.min(720, await page.evaluate(() => innerWidth)) + 1);
+});
+
+test('@critical discovery recovers after a transient dashboard request failure', async ({ page }) => {
+  let goalRequests = 0;
+  await page.route('**/api/v1/goals?limit=100', async (route) => {
+    goalRequests += 1;
+    if (goalRequests === 1) return route.abort('failed');
+    return route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({ success: true, data: [activeGoal] }),
+    });
+  });
+
+  await page.goto('/discovery');
+  await expect(page.getByRole('alert').filter({ hasText: /not fully loaded|未完全加载/i })).toBeVisible();
+  await expect(page.getByRole('heading', { name: /today's tasks|今日任务/i })).toBeVisible({ timeout: 7000 });
+  await expect(page.getByRole('alert').filter({ hasText: /not fully loaded|未完全加载/i })).toHaveCount(0);
+  expect(goalRequests).toBeGreaterThanOrEqual(2);
+});
+
+test('@critical discovery locked scenario opens a keyboard-safe localized dialog', async ({ page }, testInfo) => {
+  const lockedGoal = {
+    ...activeGoal,
+    scenarios: [
+      { title: 'Airport Check-in', tasks: ['Ask where the counter is'] },
+      { title: 'Hotel Booking', tasks: ['Request a quiet room'] },
+      { title: 'Ordering Coffee', tasks: ['Order a coffee'] },
+      { title: 'Job Interview', tasks: ['Introduce your experience'] },
+    ],
+  };
+  await page.route('**/api/v1/goals?limit=100', (route) => route.fulfill({
+    status: 200,
+    contentType: 'application/json',
+    body: JSON.stringify({ success: true, data: [lockedGoal] }),
+  }));
+  await page.goto('/discovery');
+  await page.evaluate((useDark) => document.documentElement.classList.toggle('dark', useDark), testInfo.project.name.endsWith('-dark-en'));
+
+  const unlock = page.getByRole('button', { name: /view unlock options|查看解锁方式/i });
+  await unlock.click();
+  const dialog = page.getByRole('dialog', { name: /upgrade to pro|升级 pro/i });
+  await expect(dialog).toBeVisible();
+  await expect(page.getByRole('button', { name: /close dialog|关闭对话框/i })).toBeFocused();
+  await page.keyboard.press('Escape');
+  await expect(dialog).toBeHidden();
+  await expect(unlock).toBeFocused();
+});
+
+test('@critical discovery completion banner is keyboard actionable', async ({ page }) => {
+  await page.addInitScript(() => localStorage.setItem('goal_all_completed_1', 'true'));
+  await page.route('**/api/v1/tasks?limit=100', (route) => route.fulfill({
+    status: 200,
+    contentType: 'application/json',
+    body: JSON.stringify({
+      success: true,
+      data: [{
+        id: 10,
+        goal_id: 1,
+        scenario_title: 'Airport Check-in',
+        task_description: 'Ask where the counter is',
+        status: 'completed',
+        score: 9,
+        interaction_count: 3,
+      }],
+    }),
+  }));
+  await page.goto('/discovery');
+
+  const completion = page.getByRole('button', { name: /all scenarios completed|所有场景已完成/i });
+  await completion.focus();
+  await page.keyboard.press('Enter');
+  await expect(page).toHaveURL(/\/goal-setting$/);
 });

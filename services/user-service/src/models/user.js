@@ -20,6 +20,23 @@ const ACHIEVEMENTS = {
   actor:          { category: 'skills',  icon: '🎭', name: 'Actor',          description: 'Complete a Scene Theater session' },
 };
 
+function achievementKeysForStats(stats) {
+  const keys = [];
+  if (stats.completed_tasks >= 1) keys.push('first_steps');
+  if (stats.completed_scenarios >= 10) keys.push('bookworm');
+  if (stats.completed_scenarios >= 50) keys.push('scholar');
+  if (stats.completed_goals >= 1) keys.push('master');
+  if (stats.max_streak >= 3) keys.push('getting_started');
+  if (stats.max_streak >= 7) keys.push('dedicated');
+  if (stats.max_streak >= 30) keys.push('unstoppable');
+  if (stats.max_streak >= 100) keys.push('legend');
+  if (stats.max_score >= 8) keys.push('conversation_starter');
+  if (stats.max_score >= 10) keys.push('perfect_score');
+  if (stats.practiced_languages >= 3) keys.push('polyglot');
+  if (stats.completed_scenarios >= 1) keys.push('actor');
+  return keys;
+}
+
 const User = {};
 
 User.create = async (username, email, password) => {
@@ -111,9 +128,10 @@ User.createGoal = async (userId, goalData) => {
     try {
         await client.query('BEGIN');
 
-        // Deactivate previous active goals for this user
+        // A user may have only one current goal. Keep the previous goal
+        // recoverable instead of treating creation as abandonment.
         await client.query(
-            "UPDATE user_goals SET status = 'abandoned', completed_at = NOW() WHERE user_id = $1 AND status = 'active'",
+            "UPDATE user_goals SET status = 'paused', completed_at = NULL WHERE user_id = $1 AND status = 'active'",
             [userId]
         );
 
@@ -284,7 +302,10 @@ User.completeTask = async (userId, scenarioTitle, taskText) => {
     // Using ILIKE for scenario title to be safe against minor differences
     const updateQuery = `
         UPDATE user_tasks 
-        SET status = 'completed', completed_at = NOW(), score = 100 
+        SET status = 'completed',
+            completed_at = NOW(),
+            score = GREATEST(COALESCE(score, 0), 9),
+            interaction_count = GREATEST(COALESCE(interaction_count, 0), 3)
         WHERE goal_id = $1 
           AND user_id = $2
           AND (task_description ILIKE $3 OR task_description ILIKE '%' || $3 || '%' OR $3 ILIKE '%' || task_description || '%')
@@ -478,20 +499,140 @@ User.getUserGoals = async (userId) => {
 };
 
 User.switchActiveGoal = async (userId, goalId) => {
-    // Current active → paused (not abandoned, so user can switch back)
-    await db.query(
-        `UPDATE user_goals SET status = 'paused'
-         WHERE user_id = $1 AND status = 'active'`,
+    const client = await db.pool.connect();
+    try {
+        await client.query('BEGIN');
+        const target = (await client.query(
+            `SELECT id FROM user_goals
+             WHERE id = $1 AND user_id = $2 AND status IN ('active', 'paused')
+             FOR UPDATE`,
+            [goalId, userId]
+        )).rows[0];
+        if (!target) {
+            await client.query('ROLLBACK');
+            return null;
+        }
+        await client.query(
+            `UPDATE user_goals SET status = 'paused', completed_at = NULL
+             WHERE user_id = $1 AND status = 'active' AND id <> $2`,
+            [userId, goalId]
+        );
+        const goal = (await client.query(
+            `UPDATE user_goals SET status = 'active', completed_at = NULL, updated_at = NOW()
+             WHERE id = $1 AND user_id = $2 RETURNING *`,
+            [goalId, userId]
+        )).rows[0];
+        await client.query('COMMIT');
+        return goal;
+    } catch (error) {
+        await client.query('ROLLBACK');
+        throw error;
+    } finally {
+        client.release();
+    }
+};
+
+async function activateLatestPaused(client, userId) {
+    return (await client.query(
+        `UPDATE user_goals SET status = 'active', completed_at = NULL, updated_at = NOW()
+         WHERE id = (
+           SELECT id FROM user_goals
+           WHERE user_id = $1 AND status = 'paused'
+           ORDER BY updated_at DESC NULLS LAST, created_at DESC, id DESC
+           LIMIT 1 FOR UPDATE
+         )
+         RETURNING id`,
         [userId]
-    );
-    // Target goal → active
+    )).rows[0]?.id || null;
+}
+
+User.archiveGoal = async (userId, goalId) => {
+    const client = await db.pool.connect();
+    try {
+        await client.query('BEGIN');
+        const current = (await client.query(
+            `SELECT * FROM user_goals WHERE id = $1 AND user_id = $2 FOR UPDATE`,
+            [goalId, userId]
+        )).rows[0];
+        if (!current) {
+            await client.query('ROLLBACK');
+            return null;
+        }
+        let goal = current;
+        if (!['archived', 'abandoned'].includes(current.status)) {
+            goal = (await client.query(
+                `UPDATE user_goals
+                 SET status = 'archived', completed_at = NULL, updated_at = NOW()
+                 WHERE id = $1 RETURNING *`,
+                [goalId]
+            )).rows[0];
+        }
+        let activeGoalId = (await client.query(
+            `SELECT id FROM user_goals WHERE user_id = $1 AND status = 'active'
+             ORDER BY created_at DESC, id DESC LIMIT 1`,
+            [userId]
+        )).rows[0]?.id || null;
+        if (current.status === 'active') activeGoalId = await activateLatestPaused(client, userId);
+        await client.query('COMMIT');
+        return { goal, active_goal_id: activeGoalId };
+    } catch (error) {
+        await client.query('ROLLBACK');
+        throw error;
+    } finally {
+        client.release();
+    }
+};
+
+User.restoreGoal = async (userId, goalId) => {
     const { rows } = await db.query(
-        `UPDATE user_goals SET status = 'active', completed_at = NULL
-         WHERE id = $1 AND user_id = $2
+        `UPDATE user_goals SET status = 'paused', completed_at = NULL, updated_at = NOW()
+         WHERE id = $1 AND user_id = $2 AND status IN ('archived', 'abandoned')
          RETURNING *`,
         [goalId, userId]
     );
-    return rows[0];
+    if (!rows[0]) {
+        const existing = (await db.query(
+            `SELECT * FROM user_goals WHERE id = $1 AND user_id = $2 AND status = 'paused'`,
+            [goalId, userId]
+        )).rows[0];
+        if (!existing) return null;
+        rows[0] = existing;
+    }
+    const activeGoalId = (await db.query(
+        `SELECT id FROM user_goals WHERE user_id = $1 AND status = 'active'
+         ORDER BY created_at DESC, id DESC LIMIT 1`,
+        [userId]
+    )).rows[0]?.id || null;
+    return { goal: rows[0], active_goal_id: activeGoalId };
+};
+
+User.deleteGoal = async (userId, goalId) => {
+    const client = await db.pool.connect();
+    try {
+        await client.query('BEGIN');
+        const goal = (await client.query(
+            `SELECT id, status FROM user_goals WHERE id = $1 AND user_id = $2 FOR UPDATE`,
+            [goalId, userId]
+        )).rows[0];
+        if (!goal) {
+            await client.query('ROLLBACK');
+            return null;
+        }
+        await client.query(`DELETE FROM user_goals WHERE id = $1 AND user_id = $2`, [goalId, userId]);
+        let activeGoalId = (await client.query(
+            `SELECT id FROM user_goals WHERE user_id = $1 AND status = 'active'
+             ORDER BY created_at DESC, id DESC LIMIT 1`,
+            [userId]
+        )).rows[0]?.id || null;
+        if (goal.status === 'active') activeGoalId = await activateLatestPaused(client, userId);
+        await client.query('COMMIT');
+        return { deleted_goal_id: Number(goalId), active_goal_id: activeGoalId };
+    } catch (error) {
+        await client.query('ROLLBACK');
+        throw error;
+    } finally {
+        client.release();
+    }
 };
 
 User.completeGoal = async (goalId, userId) => {
@@ -1056,9 +1197,16 @@ User.getDailyPracticeTime = async (userId) => {
 };
 
 User.getDailyProgress = async (userId) => {
-  // 1. 复述完成状态 — 前端通过 localStorage 跟踪，后端暂返回 false
-  //    后续可通过 conversation-service 添加 mode 字段来追踪
-  let recallCompleted = false;
+  // 1. 复述完成状态 — recall_daily_state 是跨设备、跨页面的权威来源。
+  //    Recall 页面完成最后一句时会通过 /users/recall/complete 写入该表。
+  const recallRes = await db.query(
+    `SELECT completed
+     FROM recall_daily_state
+     WHERE user_id = $1 AND state_date = CURRENT_DATE
+     LIMIT 1`,
+    [userId]
+  ).catch(() => ({ rows: [] }));
+  const recallCompleted = recallRes.rows[0]?.completed === true;
 
   // 2. 问答完成
   const qaStatus = await User.getDailyQAPassStatus(userId);
@@ -1126,7 +1274,48 @@ User.submitFeedback = async (userId, category, message) => {
 
 // ===== Achievements =====
 
+User.evaluateAchievements = async (userId) => {
+  const { rows } = await db.query(
+    `WITH scenario_status AS (
+       SELECT goal_id, scenario_title, BOOL_AND(status = 'completed') AS completed
+       FROM user_tasks
+       WHERE user_id = $1
+       GROUP BY goal_id, scenario_title
+     ),
+     goal_status AS (
+       SELECT goal_id, BOOL_AND(status = 'completed') AS completed
+       FROM user_tasks
+       WHERE user_id = $1
+       GROUP BY goal_id
+     )
+     SELECT
+       (SELECT COUNT(*)::int FROM user_tasks WHERE user_id = $1 AND status = 'completed') AS completed_tasks,
+       (SELECT COUNT(*)::int FROM scenario_status WHERE completed) AS completed_scenarios,
+       (SELECT COUNT(*)::int FROM goal_status WHERE completed) AS completed_goals,
+       COALESCE((SELECT MAX(streak_count)::int FROM user_checkins WHERE user_id = $1), 0) AS max_streak,
+       COALESCE((SELECT MAX(score)::int FROM user_tasks WHERE user_id = $1), 0) AS max_score,
+       (SELECT COUNT(DISTINCT g.target_language)::int
+        FROM user_goals g
+        JOIN user_tasks t ON t.goal_id = g.id AND t.user_id = g.user_id
+        WHERE g.user_id = $1 AND t.status = 'completed' AND NULLIF(g.target_language, '') IS NOT NULL
+       ) AS practiced_languages`,
+    [userId]
+  );
+  const stats = rows[0] || {};
+  const eligible = achievementKeysForStats(stats);
+  if (eligible.length) {
+    await db.query(
+      `INSERT INTO user_achievements (user_id, achievement_key)
+       SELECT $1, key FROM UNNEST($2::text[]) AS key
+       ON CONFLICT (user_id, achievement_key) DO NOTHING`,
+      [userId, eligible]
+    );
+  }
+  return eligible;
+};
+
 User.getUserAchievements = async (userId) => {
+  await User.evaluateAchievements(userId);
   const { rows } = await db.query(
     'SELECT achievement_key, unlocked_at FROM user_achievements WHERE user_id = $1',
     [userId]
@@ -1136,10 +1325,13 @@ User.getUserAchievements = async (userId) => {
     unlocked[r.achievement_key] = r.unlocked_at;
   }
   const result = Object.entries(ACHIEVEMENTS).map(([key, def]) => ({
+    id: key,
     key,
     ...def,
+    desc: def.description,
     unlocked: !!unlocked[key],
     unlocked_at: unlocked[key] || null,
+    unlocked_date: unlocked[key] || null,
   }));
   return result;
 };
@@ -1155,6 +1347,8 @@ User.unlockAchievement = async (userId, achievementKey) => {
   );
   return rows[0] || null;
 };
+
+User._achievementKeysForStats = achievementKeysForStats;
 
 // Persist a scenario cover image URL into user_goals.scenarios[i].image_url.
 // JSONB column — we read, mutate the matching scenario by title, write back.

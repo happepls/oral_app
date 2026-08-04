@@ -1,4 +1,4 @@
-import React, { createContext, useState, useContext, useEffect, useMemo } from 'react';
+import React, { createContext, useState, useContext, useEffect, useMemo, useCallback } from 'react';
 import { authAPI, userAPI } from '../services/api';
 
 const AuthContext = createContext(null);
@@ -202,7 +202,7 @@ export const AuthProvider = ({ children }) => {
     setError(null);
   };
 
-  const refreshProfile = async () => {
+  const refreshProfile = useCallback(async () => {
     try {
       const response = await userAPI.getProfile();
       // The API response is now standardized with success/data format
@@ -215,7 +215,7 @@ export const AuthProvider = ({ children }) => {
       console.error('Failed to refresh profile:', err);
       return null;
     }
-  };
+  }, []);
 
   const checkTokenExpiry = () => {
     // Cookie-based auth: token validity is handled by server/httpOnly cookie

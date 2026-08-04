@@ -1,5 +1,11 @@
 import React from 'react';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
+
+jest.mock('react-i18next', () => ({
+  useTranslation: () => ({
+    t: (_key, fallback) => typeof fallback === 'string' ? fallback : _key,
+  }),
+}));
 
 let mockPathname = '/';
 jest.mock('react-router-dom', () => ({
@@ -24,6 +30,9 @@ describe('SupportChat opt-in loading', () => {
     delete window.Tawk_LoadStart;
     delete window.__tawkUserActivated;
     delete window.__tawkVisible;
+    delete window.__tawkLoadState;
+    window.clearTimeout(window.__tawkLoadTimer);
+    delete window.__tawkLoadTimer;
     window.__tawkTitleObserver?.disconnect();
     delete window.__tawkTitleObserver;
     document.title = 'GuaJi';
@@ -48,7 +57,8 @@ describe('SupportChat opt-in loading', () => {
       'src',
       'https://embed.tawk.to/property-id/widget-id'
     );
-    expect(window.Tawk_API.autoStart).toBe(false);
+    expect(document.getElementById('tawk-to-script')).not.toHaveAttribute('crossorigin');
+    expect(window.Tawk_API.autoStart).toBeUndefined();
     expect(window.__tawkUserActivated).toBe(true);
 
     document.title = '1 new message';
@@ -62,23 +72,33 @@ describe('SupportChat opt-in loading', () => {
     expect(document.getElementById('tawk-to-script')).toBeNull();
   });
 
-  test('opens only after activation and hides when the active route is not public', () => {
+  test('opens only after activation without calling start', () => {
     renderAt('/subscription');
     fireEvent.click(screen.getByRole('button', { name: '打开在线客服' }));
 
     const start = jest.fn();
     const showWidget = jest.fn();
-    const hideWidget = jest.fn();
     const maximize = jest.fn();
-    Object.assign(window.Tawk_API, { start, showWidget, hideWidget, maximize });
+    Object.assign(window.Tawk_API, { start, showWidget, maximize });
 
-    window.Tawk_API.onLoad();
-    expect(start).toHaveBeenCalledWith({ showWidget: true });
+    act(() => window.Tawk_API.onLoad());
+    expect(start).not.toHaveBeenCalled();
     expect(showWidget).toHaveBeenCalled();
     expect(maximize).toHaveBeenCalled();
+  });
 
-    window.__tawkVisible = false;
-    window.Tawk_API.onLoad();
-    expect(hideWidget).toHaveBeenCalled();
+  test('script failure restores a visible retry button and reinjects once', async () => {
+    renderAt('/login');
+    fireEvent.click(screen.getByRole('button', { name: '打开在线客服' }));
+    const firstScript = document.getElementById('tawk-to-script');
+    fireEvent.error(firstScript);
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('客服连接失败');
+    expect(firstScript).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: '重试在线客服' }));
+    const scripts = document.querySelectorAll('#tawk-to-script');
+    expect(scripts).toHaveLength(1);
+    expect(scripts[0]).not.toBe(firstScript);
   });
 });

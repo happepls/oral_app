@@ -24,7 +24,7 @@ if (!JWT_SECRET) throw new Error('JWT_SECRET is required');
 const AI_SERVICE_URL = process.env.AI_SERVICE_WS_URL || 'ws://ai-omni-service:8082/stream';
 
 console.log('WebSocket server initializing...');
-console.log(`AI Service URL: ${AI_SERVICE_URL}`);
+console.log('AI service bridge configured.');
 
 wss.on('connection', async function connection(clientWs, req) {
   const connectionTime = new Date().toISOString();
@@ -178,7 +178,7 @@ wss.on('connection', async function connection(clientWs, req) {
       if (voice) aiUrl.searchParams.set('voice', voice);
       if (mode) aiUrl.searchParams.set('mode', mode);
 
-      console.log(`Connecting to AI service: ${aiUrl.toString()}`);
+      console.log(`[AI_CONNECT] user=${userId} session=${sessionId} mode=${mode || 'scenario'}`);
 
       // Add additional options for WebSocket connection
       const wsOptions = {
@@ -234,7 +234,6 @@ wss.on('connection', async function connection(clientWs, req) {
 
       aiServiceWs.on('error', (error) => {
         console.error(`AI Service WebSocket error for user ${userId}:`, error.message);
-        console.error(`Error details:`, error);
         clearTimeout(connectionTimeout);
         
         // Close client connection with error message
@@ -324,7 +323,6 @@ wss.on('connection', async function connection(clientWs, req) {
 
     } catch (error) {
       console.error('Failed to connect to AI service:', error.message);
-      console.error('Error details:', error);
       clientWs.send(JSON.stringify({
         type: 'error',
         message: `Could not connect to AI service: ${error.message}`

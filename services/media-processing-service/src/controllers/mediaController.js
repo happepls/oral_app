@@ -92,6 +92,7 @@ const ALLOWED_IMAGE_HOSTS = [
     'oss-cn-hangzhou.aliyuncs.com',
     'oss-cn-shanghai.aliyuncs.com',
     'oss-ap-southeast-1.aliyuncs.com',
+    'dashscope-5859.oss-cn-wulanchabu-acdr-1.aliyuncs.com',
 ];
 
 const isAllowedImageHost = (hostname) => {
@@ -108,31 +109,8 @@ const extFromContentType = (ct) => {
     return '.jpg'; // 默认/jpeg
 };
 
-// Internal-only guard: mirror user-service's internalAuthWithNetworkSkip.
-// Skip for Docker internal networks (172.x/10.x); otherwise require the shared
-// x-internal-service-key header. If INTERNAL_SERVICE_KEY is unset (dev), allow
-// but warn — never hard-fail dev. Callers: ai-omni-service _rehost_image_to_cos.
-function assertInternalCaller(req, res) {
-    const ip = req.ip || req.connection?.remoteAddress || '';
-    const clientIp = ip.replace(/^::ffff:/, '');
-    if (clientIp.startsWith('172.') || clientIp.startsWith('10.') || clientIp === '127.0.0.1' || clientIp === '::1') {
-        return true; // internal network — trusted
-    }
-    const expectedKey = process.env.INTERNAL_SERVICE_KEY;
-    if (!expectedKey) {
-        console.warn('[media] INTERNAL_SERVICE_KEY not configured — /upload-image auth disabled');
-        return true;
-    }
-    if (req.headers['x-internal-service-key'] !== expectedKey) {
-        res.status(403).json({ error: 'Forbidden: internal endpoint' });
-        return false;
-    }
-    return true;
-}
-
 exports.uploadImageFromUrl = async (req, res) => {
     try {
-        if (!assertInternalCaller(req, res)) return;
         const sourceUrl = (req.body && req.body.image_url || '').trim();
         if (!sourceUrl) {
             return res.status(400).json({ error: 'Missing image_url' });

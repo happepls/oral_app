@@ -51,6 +51,8 @@ services:
       - DATABASE_URL=postgresql://user:${POSTGRES_PASSWORD}@postgres:5432/oral_app
       - DELEGATED_JWT_SECRET=${DELEGATED_JWT_SECRET:?DELEGATED_JWT_SECRET is required}
       - JWT_SECRET=${JWT_SECRET:?JWT_SECRET is required}
+      - INTERNAL_AUTH_SECRET=${INTERNAL_AUTH_SECRET:?INTERNAL_AUTH_SECRET is required}
+      - AI_UPSTREAM_TIMEOUT_MS=60000
       - NODE_ENV=production
     depends_on:
       - postgres
@@ -126,6 +128,9 @@ services:
       - DB_DATABASE=oral_app
       - DB_PORT=5432
       - JWT_SECRET=${JWT_SECRET}
+      - INTERNAL_AUTH_SECRET=${INTERNAL_AUTH_SECRET:?INTERNAL_AUTH_SECRET is required}
+      - HISTORY_ANALYTICS_SERVICE_URL=http://history-analytics-service:3004
+      - CONVERSATION_SERVICE_URL=http://conversation-service:8083
       - NODE_ENV=production
       - DATABASE_SSL=false
     depends_on:
@@ -159,11 +164,16 @@ services:
       - "8082:8082"
       - "8081:8081"
     environment:
-      - QWEN3_OMNI_MODEL=qwen3.5-omni-plus-realtime
+      - DASHSCOPE_API_KEY=${DASHSCOPE_API_KEY:?DASHSCOPE_API_KEY is required}
+      - DASHSCOPE_WS_URL=${DASHSCOPE_WS_URL:?DASHSCOPE_WS_URL is required}
+      - DASHSCOPE_HTTP_BASE=${DASHSCOPE_HTTP_BASE:?DASHSCOPE_HTTP_BASE is required}
+      - QWEN3_OMNI_MODEL=qwen3.5-omni-flash-realtime
       - USER_SERVICE_URL=http://user-service:3000
       - CONVERSATION_SERVICE_URL=http://conversation-service:8083
       - MEDIA_SERVICE_URL=http://media-processing-service:3005
       - WORKFLOW_SERVICE_URL=http://workflow-service:3006
+      - INTERNAL_AUTH_SECRET=${INTERNAL_AUTH_SECRET:?INTERNAL_AUTH_SECRET is required}
+      - ENABLE_MAGIC_PASSCODE=true
       - NODE_ENV=production
     depends_on:
       - workflow-service
@@ -203,6 +213,7 @@ services:
     environment:
       - PORT=3005
       - NODE_ENV=production
+      - INTERNAL_AUTH_SECRET=${INTERNAL_AUTH_SECRET:?INTERNAL_AUTH_SECRET is required}
     networks:
       - oral_app_net
 
@@ -220,6 +231,7 @@ services:
       - POSTGRES_DB=oral_app
       - REDIS_HOST=redis
       - REDIS_PORT=6379
+      - INTERNAL_AUTH_SECRET=${INTERNAL_AUTH_SECRET:?INTERNAL_AUTH_SECRET is required}
       - REDIS_DB=0
     depends_on:
       - postgres
@@ -227,9 +239,43 @@ services:
     networks:
       - oral_app_net
 
+  backup-service:
+    image: ghcr.io/sjx1943/oral_app/backup-service:latest
+    container_name: oral_app_backup_service_prod
+    restart: unless-stopped
+    environment:
+      - POSTGRES_HOST=postgres
+      - POSTGRES_PORT=5432
+      - POSTGRES_DB=oral_app
+      - POSTGRES_USER=user
+      - PGPASSWORD=${POSTGRES_PASSWORD}
+      - MONGO_URI=mongodb://root:${MONGO_PASSWORD}@mongo:27017/oral_app_history?authSource=admin
+      - BACKUP_COS_BUCKET=${BACKUP_COS_BUCKET:?BACKUP_COS_BUCKET is required}
+      - BACKUP_COS_REGION=${BACKUP_COS_REGION:?BACKUP_COS_REGION is required}
+      - BACKUP_COS_PREFIX=${BACKUP_COS_PREFIX:-backups/oral-app}
+      - COS_SECRET_ID=${COS_SECRET_ID:?COS_SECRET_ID is required}
+      - COS_SECRET_KEY=${COS_SECRET_KEY:?COS_SECRET_KEY is required}
+      - COS_SESSION_TOKEN=${COS_SESSION_TOKEN:-}
+      - BACKUP_ALERT_WEBHOOK=${BACKUP_ALERT_WEBHOOK:-}
+      - BACKUP_STATUS_FILE=/var/lib/oral-backup/status.json
+    volumes:
+      - backup_status_prod:/var/lib/oral-backup
+    depends_on:
+      - postgres
+      - mongo
+    healthcheck:
+      test: ["CMD", "/opt/oral-backup/health.sh"]
+      interval: 1h
+      timeout: 30s
+      retries: 1
+      start_period: 27h
+    networks:
+      - oral_app_net
+
 volumes:
   postgres_data_prod:
   mongo_data_prod:
+  backup_status_prod:
 
 networks:
   oral_app_net:

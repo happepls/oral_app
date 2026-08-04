@@ -164,6 +164,8 @@ services:
       - CONVERSATION_SERVICE_URL=http://conversation-service:8083
       - MEDIA_SERVICE_URL=http://media-processing-service:3005
       - WORKFLOW_SERVICE_URL=http://workflow-service:3006
+      - INTERNAL_AUTH_SECRET=${INTERNAL_AUTH_SECRET:?INTERNAL_AUTH_SECRET is required}
+      - ENABLE_MAGIC_PASSCODE=true
       - NODE_ENV=staging
     depends_on:
       - workflow-service
@@ -203,6 +205,7 @@ services:
     environment:
       - PORT=3005
       - NODE_ENV=staging
+      - INTERNAL_AUTH_SECRET=${INTERNAL_AUTH_SECRET:?INTERNAL_AUTH_SECRET is required}
     networks:
       - oral_app_net
 
@@ -220,6 +223,7 @@ services:
       - POSTGRES_DB=oral_app_staging
       - REDIS_HOST=redis
       - REDIS_PORT=6379
+      - INTERNAL_AUTH_SECRET=${INTERNAL_AUTH_SECRET:?INTERNAL_AUTH_SECRET is required}
       - REDIS_DB=0
     depends_on:
       - postgres

@@ -13,7 +13,16 @@ export function StreakRing({ streak = 0, checkedInToday = false, onCheckin, mont
       padding: 16, display: 'flex', alignItems: 'center', gap: 16,
     }}>
       <div style={{ position: 'relative', width: 84, height: 84, flexShrink: 0 }}>
-        <svg width="84" height="84" viewBox="0 0 96 96">
+        <svg
+          width="84"
+          height="84"
+          viewBox="0 0 96 96"
+          role="progressbar"
+          aria-label={t('qa_ui.streak_progress_label')}
+          aria-valuemin={0}
+          aria-valuemax={30}
+          aria-valuenow={Math.min(streak, 30)}
+        >
           <circle cx="48" cy="48" r={r} fill="none" stroke="#F3F4F6" strokeWidth="8" />
           <circle cx="48" cy="48" r={r} fill="none" stroke="var(--primary)" strokeWidth="8"
             strokeLinecap="round" strokeDasharray={circ}
@@ -25,7 +34,7 @@ export function StreakRing({ streak = 0, checkedInToday = false, onCheckin, mont
           alignItems: 'center', justifyContent: 'center',
         }}>
           <span style={{ fontSize: 20, fontWeight: 700, color: 'var(--foreground)', lineHeight: 1 }}>{streak}</span>
-          <span style={{ fontSize: 9, color: 'var(--foreground-subtle)' }}>{t('qa_ui.streak_days_short')}</span>
+          <span style={{ fontSize: 12, color: 'var(--foreground-subtle)' }}>{t('qa_ui.streak_days_short')}</span>
         </div>
       </div>
       <div style={{ flex: 1 }}>
@@ -35,8 +44,11 @@ export function StreakRing({ streak = 0, checkedInToday = false, onCheckin, mont
         <div style={{ fontSize: 12, color: 'var(--foreground-muted)', marginBottom: 10 }}>
           {t('qa_ui.streak_goal')}
         </div>
+        <div style={{ fontSize: 12, color: 'var(--foreground-subtle)', marginBottom: 10 }}>
+          {t('qa_ui.monthly_checkins', { count: monthlyCheckinDays })}
+        </div>
         {!checkedInToday && onCheckin ? (
-          <button onClick={onCheckin} style={{
+          <button onClick={onCheckin} className="focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50 focus-visible:ring-offset-2" style={{
             background: 'var(--gradient-brand)', color: '#fff', border: 'none',
             borderRadius: 10, padding: '7px 16px', fontSize: 12, fontWeight: 600,
             cursor: 'pointer', boxShadow: 'var(--shadow-brand)',

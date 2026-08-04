@@ -9,10 +9,12 @@ import { useTour } from '../contexts/TourContext';
 import { userAPI, historyAPI, aiAPI } from '../services/api';
 import { StatCard } from '../components/StatCard';
 import { GuajiAvatar } from '../components/GuajiAvatar';
+import { AccessibleDialog } from '../components/AccessibleDialog';
 import { motion, AnimatePresence } from 'motion/react';
 import { Trophy } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { getScenarioDisplayTitle } from '../utils/scenarioDisplay';
+import { calcScenarioProgress, getScenarioPracticeStatus } from '../utils/scenarioProgress';
 
 // --- Scenario emoji 映射（按关键词） ---
 const SCENARIO_EMOJIS = [
@@ -84,12 +86,6 @@ const generateScenarios = (language, interestsStr) => {
 };
 
 // --- 辅助函数 ---
-function calcProgress(scenario) {
-  if (!scenario.tasks || scenario.tasks.length === 0) return 0;
-  const done = scenario.tasks.filter(t => typeof t === 'object' && t.status === 'completed').length;
-  return Math.round((done / scenario.tasks.length) * 100);
-}
-
 function getDifficulty(index) {
   if (index <= 2) return 'beginner';
   if (index <= 6) return 'intermediate';
@@ -99,12 +95,25 @@ function getDifficulty(index) {
 // 免费用户初始解锁的场景数；完成解锁区间后会自动扩展。
 const FREE_INITIAL_UNLOCK = 3;
 
+const EMPTY_DAILY_PROGRESS = {
+  recallCompleted: false,
+  qaCompleted: false,
+  scenarioCompleted: false,
+  practiceMinutes: 0,
+  practiceGoal: 15,
+  streak: 0,
+  monthlyCheckinDays: 0,
+  checkedInToday: false,
+};
+
+const DISCOVERY_AUTO_RETRY_DELAYS_MS = [2000, 5000, 10000];
+
 // 计算免费用户的累计解锁数：初始 3 个，已解锁场景全部完成（pct===100）后扩展 +1。
 // scenarios 数组顺序即解锁顺序。
 function calcUnlockedCount(scenarios) {
   let unlocked = Math.min(FREE_INITIAL_UNLOCK, scenarios.length);
   while (unlocked < scenarios.length) {
-    const allPrevDone = scenarios.slice(0, unlocked).every(s => calcProgress(s) === 100);
+    const allPrevDone = scenarios.slice(0, unlocked).every(s => calcScenarioProgress(s) === 100);
     if (!allPrevDone) break;
     unlocked += 1;
   }
@@ -131,27 +140,21 @@ const FILTER_TABS = [
   { id: 'not-started', labelKey: 'qa_ui.filter_new' },
 ];
 
-function DailyQAPaywallModal({ onClose, onUpgrade }) {
+function DailyQAPaywallModal({ onClose, onUpgrade, t }) {
   return (
-    <div
-      style={{
-        position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)',
-        display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 300,
-      }}
-      onClick={onClose}>
-      <div
-        onClick={(e) => e.stopPropagation()}
-        style={{
-          background: '#FFFFFF', borderRadius: 24, padding: 32,
-          maxWidth: 360, width: '90%', textAlign: 'center',
-          boxShadow: '0 20px 40px rgba(0,0,0,0.2)',
-        }}>
-        <div style={{ fontSize: 56, marginBottom: 12 }}>🔒</div>
-        <h2 style={{ fontSize: 20, fontWeight: 700, color: '#1F2937', marginBottom: 8 }}>
-          升级解锁
+    <AccessibleDialog
+      title={t('qa_ui.daily_qa_paywall_title')}
+      description={t('qa_ui.daily_qa_paywall_desc')}
+      onClose={onClose}
+      closeLabel={t('qa_ui.close_dialog')}
+      panelClassName="max-w-sm rounded-3xl p-8 text-center"
+    >
+        <div aria-hidden="true" style={{ fontSize: 56, marginBottom: 12 }}>🔒</div>
+        <h2 style={{ fontSize: 20, fontWeight: 700, marginBottom: 8 }}>
+          {t('qa_ui.daily_qa_paywall_title')}
         </h2>
-        <p style={{ fontSize: 14, color: '#6B7280', marginBottom: 24, lineHeight: 1.55 }}>
-          Pro 会员可无限次再次回答与换题，随时巩固口语节奏。
+        <p style={{ fontSize: 14, color: 'var(--foreground-muted)', marginBottom: 24, lineHeight: 1.55 }}>
+          {t('qa_ui.daily_qa_paywall_desc')}
         </p>
         <div style={{ display: 'flex', gap: 12 }}>
           <button
@@ -161,20 +164,19 @@ function DailyQAPaywallModal({ onClose, onUpgrade }) {
               background: '#F3F4F6', color: '#374151', border: 'none',
               fontWeight: 600, fontSize: 14, cursor: 'pointer',
             }}>
-            取消
+            {t('qa_ui.cancel')}
           </button>
           <button
             onClick={onUpgrade}
             style={{
               flex: 1, padding: '10px 0', borderRadius: 12,
-              background: '#6366F1', color: '#fff', border: 'none',
+              background: 'var(--primary)', color: '#fff', border: 'none',
               fontWeight: 700, fontSize: 14, cursor: 'pointer',
             }}>
-            去升级
+            {t('qa_ui.upgrade_now')}
           </button>
         </div>
-      </div>
-    </div>
+    </AccessibleDialog>
   );
 }
 
@@ -183,7 +185,7 @@ function Discovery() {
   const { i18n } = useTranslation();
   const navigate = useNavigate();
   const location = useLocation();
-  const { user } = useAuth();
+  const { user, loading: authLoading } = useAuth();
   const tour = useTour();
 
   const qaPoolAbortControllerRef = useRef(null);
@@ -218,11 +220,7 @@ function Discovery() {
   const [dailyQA, setDailyQA] = useState(null);
   const [dailyQAError, setDailyQAError] = useState(false);
   const [dailyQALoading, setDailyQALoading] = useState(true);
-  const [isQAPlaying, setIsQAPlaying] = useState(false);
-  const [showQATranscript, setShowQATranscript] = useState(false);
-  const [qaAudioBlobUrl, setQaAudioBlobUrl] = useState(null);
   const [showDailyQAPaywall, setShowDailyQAPaywall] = useState(false);
-  const [qaActionLoading, setQaActionLoading] = useState(false);
   const [dailyQAPassedDB, setDailyQAPassedDB] = useState(false);
   const [showQAPool, setShowQAPool] = useState(false);
   const [qaPool, setQaPool] = useState([]);
@@ -230,38 +228,23 @@ function Discovery() {
   const [unlockToast, setUnlockToast] = useState(null);
   const prevUnlockedCountRef = useRef(null);
   const [dailyProgress, setDailyProgress] = useState(null);
+  const [dashboardError, setDashboardError] = useState(false);
+  const [dailyProgressError, setDailyProgressError] = useState(false);
+  const [dailyProgressLoading, setDailyProgressLoading] = useState(true);
+  const [qaPoolError, setQaPoolError] = useState(false);
+  const [qaSelectError, setQaSelectError] = useState(false);
+  const [checkinError, setCheckinError] = useState(false);
+  const [switchGoalError, setSwitchGoalError] = useState(false);
+  const [reloadVersion, setReloadVersion] = useState(0);
+  const autoRetryAttemptRef = useRef(0);
 
   const isPro = user?.subscription_status === 'active';
-
-  const handleDailyQAAction = async (kind) => {
-    if (!isPro) { setShowDailyQAPaywall(true); return; }
-    if (qaActionLoading) return;
-    setQaActionLoading(true);
-    try {
-      const fresh = kind === 're-answer'
-        ? await aiAPI.reAnswerDaily()
-        : await aiAPI.changeDailyQuestion();
-      if (fresh && fresh.question_text) {
-        setDailyQA(fresh);
-        setQaAudioBlobUrl(null);
-        setShowQATranscript(false);
-      }
-      navigate('/conversation?mode=daily_qa');
-    } catch (err) {
-      if (err?.status === 403) {
-        setShowDailyQAPaywall(true);
-      } else {
-        console.error('[DAILY_QA] action failed', err);
-      }
-    } finally {
-      setQaActionLoading(false);
-    }
-  };
 
   const handleOpenQAPool = async () => {
     setShowQAPool(true);
     if (qaPool.length > 0) return;
     setQaPoolLoading(true);
+    setQaPoolError(false);
 
     if (qaPoolAbortControllerRef.current) {
       qaPoolAbortControllerRef.current.abort();
@@ -278,25 +261,60 @@ function Discovery() {
         return;
       }
       console.error('[DAILY_QA] pool fetch failed', err);
+      setQaPoolError(true);
     } finally {
       setQaPoolLoading(false);
     }
   };
 
   const handleSelectQuestion = async (index) => {
+    setQaSelectError(false);
     try {
       const res = await aiAPI.selectDailyQuestion(index);
       const selected = res?.question_text ? res : res?.data;
       if (selected) {
         setDailyQA({ ...selected, passed: false });
         setDailyQAPassedDB(false);
-        setQaAudioBlobUrl(null);
-        setShowQATranscript(false);
       }
       setShowQAPool(false);
       navigate('/conversation?mode=daily_qa');
     } catch (err) {
       console.error('[DAILY_QA] select failed', err);
+      setQaSelectError(true);
+    }
+  };
+
+  const handleRetryDailyQA = async () => {
+    setDailyQALoading(true);
+    setDailyQAError(false);
+    try {
+      const question = await aiAPI.getDailyQuestion();
+      if (question?.question_text) setDailyQA(question);
+      else setDailyQAError(true);
+    } catch (error) {
+      console.error('[DAILY_QA] retry failed', error);
+      setDailyQAError(true);
+    } finally {
+      setDailyQALoading(false);
+    }
+  };
+
+  const handleRetryDailyProgress = async () => {
+    setDailyProgressLoading(true);
+    setDailyProgressError(false);
+    try {
+      const res = await userAPI.getDailyProgress();
+      const progress = { ...EMPTY_DAILY_PROGRESS, ...(res?.data || res || {}) };
+      const today = new Date().toISOString().slice(0, 10);
+      if (localStorage.getItem(`recall_completed_${today}`) === 'true') {
+        progress.recallCompleted = true;
+      }
+      setDailyProgress(progress);
+    } catch (error) {
+      console.error('[DAILY_PROGRESS] retry failed', error);
+      setDailyProgressError(true);
+    } finally {
+      setDailyProgressLoading(false);
     }
   };
 
@@ -312,7 +330,18 @@ function Discovery() {
     const abortController = new AbortController();
 
     const fetchData = async () => {
-      if (!user) return;
+      if (authLoading) return;
+      if (!user) {
+        navigate('/login', { replace: true });
+        setLoading(false);
+        return;
+      }
+      setLoading(true);
+      setDashboardError(false);
+      setDailyQAError(false);
+      setDailyQALoading(true);
+      setDailyProgressError(false);
+      setDailyProgressLoading(true);
       try {
         if (!user.native_language) { navigate('/onboarding'); return; }
 
@@ -325,9 +354,9 @@ function Discovery() {
         try {
           const goalsRes = await userAPI.getUserGoals();
           if (abortController.signal.aborted) return;
-          const other = (goalsRes.goals || []).filter(g => g.status !== 'active');
+          const other = (goalsRes.goals || []).filter(g => g.status === 'paused');
           setHasOtherGoals(other.length > 0);
-        } catch (_) { if (!abortController.signal.aborted) setHasOtherGoals(false); }
+        } catch { if (!abortController.signal.aborted) setHasOtherGoals(false); }
 
         if (goalRes.goal.scenarios?.length > 0) {
           setScenarios(goalRes.goal.scenarios);
@@ -335,11 +364,12 @@ function Discovery() {
           setScenarios(generateScenarios(goalRes.goal.target_language, goalRes.goal.interests));
         }
 
-        const [statsRes, histRes, checkinRes, qaRes] = await Promise.allSettled([
+        const [statsRes, histRes, checkinRes, qaRes, progressRes] = await Promise.allSettled([
           historyAPI.getStats(user.id),
           historyAPI.getUserHistory(user.id),
           userAPI.getCheckinStats(),
           aiAPI.getDailyQuestion({ signal: abortController.signal }),
+          userAPI.getDailyProgress(),
         ]);
         if (abortController.signal.aborted) return;
 
@@ -362,10 +392,24 @@ function Discovery() {
         if (qaRes.status === 'fulfilled' && qaRes.value?.question_text) {
           setDailyQA(qaRes.value);
           setDailyQAError(false);
-        } else if (qaRes.status === 'rejected') {
+        } else {
           setDailyQAError(true);
         }
         setDailyQALoading(false);
+
+        if (progressRes.status === 'fulfilled') {
+          const progress = { ...EMPTY_DAILY_PROGRESS, ...(progressRes.value?.data || progressRes.value || {}) };
+          const today = new Date().toISOString().slice(0, 10);
+          if (localStorage.getItem(`recall_completed_${today}`) === 'true') {
+            progress.recallCompleted = true;
+          }
+          setDailyProgress(progress);
+          setDailyProgressError(false);
+        } else {
+          setDailyProgress(current => current || { ...EMPTY_DAILY_PROGRESS });
+          setDailyProgressError(true);
+        }
+        setDailyProgressLoading(false);
 
         // Check daily QA pass status from database
         userAPI.getDailyQAPassStatus().then(res => {
@@ -373,21 +417,15 @@ function Discovery() {
           if (res?.data?.passed) setDailyQAPassedDB(true);
         }).catch(() => {});
 
-        // Load daily progress and merge frontend-tracked state
-        userAPI.getDailyProgress().then(res => {
-          if (abortController.signal.aborted) return;
-          const dp = res?.data || res || {};
-          // Recall completion tracked in localStorage (backend has no recall-specific record)
-          const today = new Date().toISOString().slice(0, 10);
-          const recallDone = localStorage.getItem(`recall_completed_${today}`) === 'true';
-          if (recallDone) dp.recallCompleted = true;
-          setDailyProgress(dp);
-        }).catch(() => {});
       } catch (e) {
         if (abortController.signal.aborted) return;
         console.error('Dashboard fetch error:', e);
         setDailyQAError(true);
         setDailyQALoading(false);
+        setDailyProgressError(true);
+        setDailyProgressLoading(false);
+        setDailyProgress(current => current || { ...EMPTY_DAILY_PROGRESS });
+        setDashboardError(true);
       } finally {
         if (!abortController.signal.aborted) setLoading(false);
       }
@@ -396,7 +434,52 @@ function Discovery() {
     fetchData();
 
     return () => abortController.abort();
-  }, [user, navigate, location.key]);
+  }, [user, authLoading, navigate, location.key, reloadVersion]);
+
+  const hasLoadError = dashboardError || dailyProgressError || dailyQAError;
+
+  useEffect(() => {
+    if (!loading && !hasLoadError) {
+      autoRetryAttemptRef.current = 0;
+      return undefined;
+    }
+    if (loading || !hasLoadError) return undefined;
+
+    let retryTimer;
+    const runRetry = () => {
+      window.clearTimeout(retryTimer);
+      autoRetryAttemptRef.current += 1;
+      setReloadVersion(version => version + 1);
+    };
+    if (autoRetryAttemptRef.current < DISCOVERY_AUTO_RETRY_DELAYS_MS.length) {
+      const delay = DISCOVERY_AUTO_RETRY_DELAYS_MS[autoRetryAttemptRef.current];
+      retryTimer = window.setTimeout(runRetry, delay);
+    }
+
+    const retryOnResume = () => {
+      autoRetryAttemptRef.current = 0;
+      runRetry();
+    };
+
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') retryOnResume();
+    };
+    window.addEventListener('online', retryOnResume);
+    window.addEventListener('focus', retryOnResume);
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+
+    return () => {
+      window.clearTimeout(retryTimer);
+      window.removeEventListener('online', retryOnResume);
+      window.removeEventListener('focus', retryOnResume);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+    };
+  }, [hasLoadError, loading]);
+
+  const retryDashboard = () => {
+    autoRetryAttemptRef.current = 0;
+    setReloadVersion(version => version + 1);
+  };
 
   const { subscribe } = useNotifications();
 
@@ -410,20 +493,31 @@ function Discovery() {
             if (goalRes.goal.scenarios?.length > 0) setScenarios(goalRes.goal.scenarios);
             checkAchievement(goalRes.goal);
           }
-        } catch (_) {}
+        } catch {
+          // Notification refresh is best-effort; the next page load reconciles it.
+        }
       }),
       subscribe('proficiency_update', async (data) => {
         if (data?.payload?.delta > 0) {
           try {
             const goalRes = await userAPI.getActiveGoal();
             if (goalRes?.goal) setActiveGoal(goalRes.goal);
-          } catch (_) {}
+          } catch {
+            // Notification refresh is best-effort; keep the last visible progress.
+          }
         }
       }),
       subscribe('daily_qa_completed', () => {
         setDailyQAPassedDB(true);
+        // Update immediately from the completion event. The subsequent fetch
+        // reconciles the rest of the daily metrics without allowing a delayed
+        // response to visually revert QA back to incomplete.
+        setDailyProgress(prev => prev ? { ...prev, qaCompleted: true } : prev);
         userAPI.getDailyProgress().then(res => {
-          setDailyProgress(res?.data || res);
+          setDailyProgress({
+            ...(res?.data || res || {}),
+            qaCompleted: true,
+          });
         }).catch(() => {});
       })
     ];
@@ -445,30 +539,53 @@ function Discovery() {
   };
 
   const handleCheckin = async () => {
+    setCheckinError(false);
     try {
       const res = await userAPI.checkin();
       const streak = res?.data?.streak || res?.checkin?.streak_count || checkinStats.currentStreak + 1;
       setCheckinStats(prev => ({ ...prev, currentStreak: streak, checkedInToday: true }));
     } catch (e) {
       console.error('Checkin error:', e);
+      setCheckinError(true);
     }
   };
 
   const handleOpenSwitch = async () => {
+    setSwitchGoalError(false);
     try {
       const res = await userAPI.getUserGoals();
-      setAllGoals(res.goals || []);
+      setAllGoals((res.goals || []).filter(goal => goal.status === 'paused'));
       setShowGoalSwitch(true);
-    } catch (e) { console.error('Load goals error:', e); }
+    } catch (e) {
+      console.error('Load goals error:', e);
+      setSwitchGoalError(true);
+      setAllGoals([]);
+      setShowGoalSwitch(true);
+    }
   };
 
   const handleSwitchGoal = async (goalId) => {
     setSwitching(true);
+    setSwitchGoalError(false);
     try {
       await userAPI.switchGoal(goalId);
       setShowGoalSwitch(false);
       navigate(location.pathname, { replace: true });
-    } catch (e) { console.error('Switch goal error:', e); }
+    } catch (e) {
+      console.error('Switch goal error:', e);
+      setSwitchGoalError(true);
+      if (e?.status === 404) {
+        try {
+          const res = await userAPI.getUserGoals();
+          const switchable = (res.goals || []).filter(goal => goal.status === 'paused');
+          setAllGoals(switchable);
+          setHasOtherGoals(switchable.length > 0);
+          if (switchable.length === 0) setShowGoalSwitch(false);
+        } catch {
+          setAllGoals(current => current.filter(goal => goal.id !== goalId));
+        }
+      }
+    }
     finally { setSwitching(false); }
   };
 
@@ -484,40 +601,6 @@ function Discovery() {
       navigate(`/conversation?scenario=${encodeURIComponent(scenario.title)}`, {
         state: { tasks: scenario.tasks, emoji: scenario.emoji },
       });
-    }
-  };
-
-  const handleCustomScenario = () => {
-    if (isPro) navigate('/goal-setting?mode=custom');
-    else setShowUpgradeModal(true);
-  };
-
-  const handleQAPlay = async () => {
-    if (isQAPlaying || !dailyQA) return;
-
-    setIsQAPlaying(true);
-    try {
-      if (!qaAudioBlobUrl) {
-        try {
-          const blob = await aiAPI.tts(dailyQA.question_text, 'Serena');
-          const blobUrl = URL.createObjectURL(blob);
-          setQaAudioBlobUrl(blobUrl);
-
-          const audio = new Audio(blobUrl);
-          audio.onended = () => setIsQAPlaying(false);
-          audio.play();
-        } catch (ttsErr) {
-          console.warn('TTS synthesis failed:', ttsErr);
-          setIsQAPlaying(false);
-        }
-      } else {
-        const audio = new Audio(qaAudioBlobUrl);
-        audio.onended = () => setIsQAPlaying(false);
-        audio.play();
-      }
-    } catch (err) {
-      console.warn('QA audio playback error:', err);
-      setIsQAPlaying(false);
     }
   };
 
@@ -542,13 +625,14 @@ function Discovery() {
   }, [unlockedCount, scenarios, user]);
 
   const enrichedScenarios = useMemo(() => scenarios.map((s, i) => {
-    const pct = calcProgress(s);
+    const pct = calcScenarioProgress(s);
+    const practiceStatus = getScenarioPracticeStatus(s);
     const unlocked = isScenarioUnlocked(i, unlockedCount, isPro);
     const cardState = getScenarioCardState(s, unlocked, pct);
     // image_url 优先来自后端 scenario 数据（若曾持久化），否则用懒加载 state
     const imageUrl = s.image_url || scenarioImages[s.title] || '';
     const displayTitle = getScenarioDisplayTitle(s.title, i, i18n.resolvedLanguage || i18n.language);
-    return { ...s, displayTitle, pct, unlocked, cardState, difficulty: getDifficulty(i), emoji: getEmoji(s.title), imageUrl, index: i };
+    return { ...s, displayTitle, pct, practiceStatus, unlocked, cardState, difficulty: getDifficulty(i), emoji: getEmoji(s.title), imageUrl, index: i };
   }), [scenarios, unlockedCount, isPro, scenarioImages, i18n.resolvedLanguage, i18n.language]);
 
   // 懒加载已解锁场景的 AI 配图：一次只取一张（节流），sessionStorage 跨页缓存，
@@ -566,25 +650,32 @@ function Discovery() {
     }
     let cancelled = false;
     (async () => {
-      // 带上 activeGoal.id → 后端转存 COS 后直接写回 scenarios[i].image_url，
-      // 下次进页 getActiveGoal 直接返回 image_url，本 effect 因 !s.image_url 跳过，
-      // 不再重复扣费生成。
-      const { image_url } = await aiAPI.generateScenarioImage(target.title, activeGoal?.id);
-      if (cancelled) return;
-      const url = image_url || '';
-      try { sessionStorage.setItem(cacheKey, url); } catch {}
-      setScenarioImages(prev => ({ ...prev, [target.title]: url }));
+      try {
+        // 带上 activeGoal.id → 后端转存 COS 后直接写回 scenarios[i].image_url。
+        const { image_url } = await aiAPI.generateScenarioImage(target.title, activeGoal?.id);
+        if (cancelled) return;
+        const url = image_url || '';
+        try {
+          sessionStorage.setItem(cacheKey, url);
+        } catch {
+          // Storage may be unavailable in privacy mode; in-memory fallback remains valid.
+        }
+        setScenarioImages(prev => ({ ...prev, [target.title]: url }));
+      } catch {
+        if (!cancelled) {
+          // Emoji remains the deliberate visual fallback and prevents retry loops.
+          setScenarioImages(prev => ({ ...prev, [target.title]: '' }));
+        }
+      }
     })();
     return () => { cancelled = true; };
   }, [enrichedScenarios, scenarioImages, activeGoal]);
 
   const todayRecommended = useMemo(() => enrichedScenarios.find(s => s.unlocked && s.pct < 100), [enrichedScenarios]);
-
-  // 今日复述：从活跃场景中取第一个未完成任务作为复述句
-  const recallTask = todayRecommended?.tasks?.find(t => t.status !== 'completed');
-  const recallSentence = recallTask
-    ? (typeof recallTask === 'object' ? (recallTask.text || recallTask.description || recallTask.title || '') : String(recallTask))
-    : '';
+  const qaTaskCompleted = Boolean(
+    dailyProgress?.qaCompleted || dailyQAPassedDB || dailyQA?.passed
+  );
+  const currentDailyProgress = dailyProgress || EMPTY_DAILY_PROGRESS;
 
   const overallProgress = useMemo(() => scenarios.length > 0
     ? Math.round(enrichedScenarios.filter(s => s.pct === 100).length / scenarios.length * 100)
@@ -592,9 +683,9 @@ function Discovery() {
 
   const filteredScenarios = useMemo(() => enrichedScenarios.filter(s => {
     if (filterTab === 'all') return true;
-    if (filterTab === 'in-progress') return s.unlocked && s.pct > 0 && s.pct < 100;
-    if (filterTab === 'completed') return s.pct === 100;
-    if (filterTab === 'not-started') return s.unlocked && s.pct === 0;
+    if (filterTab === 'in-progress') return s.unlocked && s.practiceStatus === 'in-progress';
+    if (filterTab === 'completed') return s.practiceStatus === 'completed';
+    if (filterTab === 'not-started') return s.unlocked && s.practiceStatus === 'not-started';
     return true;
   }), [enrichedScenarios, filterTab]);
 
@@ -609,43 +700,45 @@ function Discovery() {
   if (loading) {
     return (
       <div className="flex items-center justify-center min-h-screen bg-background-light dark:bg-background-dark">
-        <div className="flex flex-col items-center gap-3">
+        <div role="status" aria-live="polite" className="flex flex-col items-center gap-3">
           <div className="w-10 h-10 rounded-full border-4 border-t-transparent animate-spin"
-            style={{ borderColor: '#637FF1', borderTopColor: 'transparent' }} />
-          <p className="text-sm text-slate-400">加载中...</p>
+            aria-hidden="true"
+            style={{ borderColor: 'var(--primary)', borderTopColor: 'transparent' }} />
+          <p className="text-sm text-slate-500">{t('qa_ui.loading')}</p>
         </div>
       </div>
     );
   }
 
   return (
-    <div className="relative flex flex-col min-h-screen w-full" style={{ background: 'var(--background)' }}>
+    <div className="relative mx-auto flex min-h-screen w-full max-w-[720px] flex-col" style={{ background: 'var(--background)' }}>
 
       {/* ── 成就 Modal ── */}
       {showAchievement && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
-          <motion.div initial={{ scale: 0.9, opacity: 0 }} animate={{ scale: 1, opacity: 1 }}
-            className="bg-white dark:bg-slate-800 rounded-3xl p-8 max-w-sm w-full text-center shadow-brand-lg">
-            <div className="text-7xl mb-3">🏆</div>
-            <h2 className="text-2xl font-bold text-slate-900 dark:text-white mb-1">目标全部完成！</h2>
-            <p className="text-sm text-primary font-semibold mb-2">成就已解锁</p>
+        <AccessibleDialog
+          title={t('qa_ui.achievement_title')}
+          description={t('qa_ui.achievement_body', { count: scenarios.length, level: activeGoal?.target_level })}
+          onClose={() => setShowAchievement(false)}
+          closeLabel={t('qa_ui.close_dialog')}
+          panelClassName="max-w-sm rounded-3xl p-8 text-center"
+        >
+            <div aria-hidden="true" className="text-7xl mb-3">🏆</div>
+            <h2 className="text-2xl font-bold text-slate-900 dark:text-white mb-1">{t('qa_ui.achievement_title')}</h2>
+            <p className="text-sm text-primary font-semibold mb-2">{t('qa_ui.achievement_unlocked')}</p>
             <p className="text-slate-500 text-sm mb-6">
-              太棒了！你已完成所有 {scenarios.length} 个场景，成功达到{' '}
-              <span className="font-bold text-primary">{activeGoal?.target_level}</span> 水平目标！
+              {t('qa_ui.achievement_body', { count: scenarios.length, level: activeGoal?.target_level })}
             </p>
             <div className="flex gap-3">
               <button onClick={() => setShowAchievement(false)}
-                className="flex-1 py-3 rounded-xl border border-slate-200 text-slate-600 font-medium text-sm">
-                稍后再说
+                className="flex-1 py-3 rounded-xl border border-slate-300 text-slate-700 font-medium text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50 dark:text-slate-200">
+                {t('qa_ui.later')}
               </button>
               <button onClick={() => { setShowAchievement(false); navigate('/goal-setting'); }}
-                className="flex-1 py-3 rounded-xl text-white font-medium text-sm"
-                style={{ background: 'linear-gradient(135deg, #637FF1, #a47af6)' }}>
-                制定新目标
+                className="flex-1 py-3 rounded-xl bg-primary text-white font-medium text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50 focus-visible:ring-offset-2">
+                {t('qa_ui.create_new_goal')}
               </button>
             </div>
-          </motion.div>
-        </div>
+        </AccessibleDialog>
       )}
 
       {/* ── 目标切换 Modal ── */}
@@ -653,30 +746,40 @@ function Discovery() {
           Bottom padding reserves space for the 72px nav plus iOS safe-area
           inset so the last item never sits behind the nav bar. */}
       {showGoalSwitch && (
-        <div className="fixed inset-0 z-[60] flex items-end justify-center bg-black/60"
-          onClick={() => setShowGoalSwitch(false)}>
-          <motion.div initial={{ y: 40, opacity: 0 }} animate={{ y: 0, opacity: 1 }}
-            className="bg-white dark:bg-slate-800 rounded-t-3xl w-full max-w-lg p-5 max-h-[70vh] overflow-y-auto"
-            style={{ paddingBottom: 'calc(96px + env(safe-area-inset-bottom, 0px))' }}
-            onClick={e => e.stopPropagation()}>
-            <h3 className="text-base font-bold text-slate-900 dark:text-white mb-4">切换学习目标</h3>
-            {allGoals.filter(g => g.status !== 'active').map(goal => (
+        <AccessibleDialog
+          title={t('qa_ui.switch_goal_title')}
+          onClose={() => setShowGoalSwitch(false)}
+          closeLabel={t('qa_ui.close_dialog')}
+          placement="bottom"
+          zIndex={310}
+          panelClassName="max-w-lg rounded-t-3xl p-5 max-h-[70vh] overflow-y-auto"
+        >
+            <h2 className="text-base font-bold text-slate-900 dark:text-white mb-4 pr-12">{t('qa_ui.switch_goal_title')}</h2>
+            {switchGoalError && (
+              <div role="alert" className="mb-3 rounded-xl bg-red-50 p-3 text-sm text-red-800 dark:bg-red-950/40 dark:text-red-200">
+                {t('qa_ui.switch_goal_error')}
+              </div>
+            )}
+            {allGoals.filter(g => g.status === 'paused').map(goal => (
               <button key={goal.id} onClick={() => handleSwitchGoal(goal.id)} disabled={switching}
-                className="w-full text-left flex items-center gap-3 p-3 rounded-xl border border-slate-200 hover:border-primary/40 hover:bg-slate-50 transition mb-2">
+                className="w-full text-left flex items-center gap-3 p-3 rounded-xl border border-slate-200 hover:border-primary/40 hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50 transition mb-2 dark:border-slate-600 dark:hover:bg-slate-700">
                 <div className="flex-1 min-w-0">
                   <p className="font-semibold text-slate-900 text-sm">{goal.target_language}</p>
-                  <p className="text-xs text-slate-500">{goal.target_level} · {new Date(goal.created_at).toLocaleDateString('zh-CN')}</p>
+                  <p className="text-xs text-slate-500">
+                    {goal.target_level} · {goal.created_at
+                      ? new Intl.DateTimeFormat(i18n.resolvedLanguage || i18n.language).format(new Date(goal.created_at))
+                      : t('qa_ui.time_unknown')}
+                  </p>
                 </div>
                 <span className="text-xs font-medium px-2 py-0.5 rounded-full bg-slate-100 text-slate-500">
                   {goal.current_proficiency || 0}%
                 </span>
               </button>
             ))}
-            {allGoals.filter(g => g.status !== 'active').length === 0 && (
-              <p className="text-sm text-slate-400 text-center py-6">暂无其他学习目标</p>
+            {!switchGoalError && allGoals.filter(g => g.status === 'paused').length === 0 && (
+              <p className="text-sm text-slate-500 text-center py-6">{t('qa_ui.no_other_goals')}</p>
             )}
-          </motion.div>
-        </div>
+        </AccessibleDialog>
       )}
 
       {/* ── Daily QA Paywall Modal ── */}
@@ -684,6 +787,7 @@ function Discovery() {
         <DailyQAPaywallModal
           onClose={() => setShowDailyQAPaywall(false)}
           onUpgrade={() => { setShowDailyQAPaywall(false); navigate('/subscription'); }}
+          t={t}
         />
       )}
 
@@ -691,6 +795,8 @@ function Discovery() {
       <AnimatePresence>
         {unlockToast && (
           <motion.div
+            role="status"
+            aria-live="polite"
             initial={{ y: -60, opacity: 0 }}
             animate={{ y: 0, opacity: 1 }}
             exit={{ y: -60, opacity: 0 }}
@@ -702,94 +808,80 @@ function Discovery() {
               zIndex: 400, fontSize: 14, fontWeight: 600, display: 'flex', alignItems: 'center', gap: 10,
               maxWidth: '90%',
             }}>
-            <span style={{ fontSize: 22 }}>{unlockToast.emoji || '🎉'}</span>
-            <span>解锁新场景：{unlockToast.title}</span>
+            <span aria-hidden="true" style={{ fontSize: 22 }}>{unlockToast.emoji || '🎉'}</span>
+            <span>{t('qa_ui.unlock_toast', { title: unlockToast.title })}</span>
           </motion.div>
         )}
       </AnimatePresence>
 
       {showQAPool && (
-        <div style={{
-          position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)',
-          display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 200,
-          padding: '20px'
-        }} onClick={() => setShowQAPool(false)}>
-          <div
-            onClick={e => e.stopPropagation()}
-            style={{
-              background: '#fff', borderRadius: 20, padding: '24px 20px 24px',
-              width: '100%', maxWidth: 400, maxHeight: '70vh', overflowY: 'auto',
-              animation: 'slideUpBanner 0.3s ease-out'
-            }}>
-            <h3 style={{ fontSize: 16, fontWeight: 700, color: '#1F2937', marginBottom: 16 }}>
-              选择今日问题
-            </h3>
+        <AccessibleDialog
+          title={t('qa_ui.question_pool_title')}
+          onClose={() => setShowQAPool(false)}
+          closeLabel={t('qa_ui.close_dialog')}
+          panelClassName="max-w-md rounded-3xl p-5 max-h-[70vh] overflow-y-auto"
+        >
+            <h2 className="text-base font-bold text-slate-900 dark:text-white mb-4 pr-12">{t('qa_ui.question_pool_title')}</h2>
             {qaPoolLoading ? (
-              <div style={{ textAlign: 'center', padding: 24, color: '#9CA3AF' }}>加载中...</div>
+              <div role="status" className="p-6 text-center text-sm text-slate-600 dark:text-slate-300">{t('qa_ui.loading')}</div>
+            ) : qaPoolError ? (
+              <div role="alert" className="rounded-xl bg-red-50 p-4 text-center text-sm text-red-800 dark:bg-red-950/40 dark:text-red-200">
+                <p>{t('qa_ui.question_pool_error')}</p>
+                <button onClick={handleOpenQAPool} className="mt-3 rounded-xl bg-primary px-4 py-2 font-semibold text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50">
+                  {t('qa_ui.retry')}
+                </button>
+              </div>
             ) : qaPool.length === 0 ? (
-              <div style={{ textAlign: 'center', padding: 24, color: '#9CA3AF' }}>暂无候选问题</div>
+              <div className="p-6 text-center text-sm text-slate-600 dark:text-slate-300">{t('qa_ui.question_pool_empty')}</div>
             ) : (
               qaPool.map((q, i) => (
                 <button
                   key={i}
                   onClick={() => handleSelectQuestion(q.index)}
-                  style={{
-                    display: 'block', width: '100%', textAlign: 'left', padding: '14px 16px',
-                    marginBottom: 8, borderRadius: 12, border: '1px solid #E5E7EB',
-                    background: '#F9FAFB', cursor: 'pointer', transition: 'all 0.15s'
-                  }}
-                  onMouseEnter={e => { e.target.style.borderColor = '#6366F1'; e.target.style.background = '#EEF2FF'; }}
-                  onMouseLeave={e => { e.target.style.borderColor = '#E5E7EB'; e.target.style.background = '#F9FAFB'; }}>
-                  <p style={{ fontSize: 14, color: '#1F2937', marginBottom: 4, fontWeight: 500 }}>
+                  className="mb-2 block w-full rounded-xl border border-slate-300 bg-slate-50 p-4 text-left transition hover:border-primary hover:bg-indigo-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50 dark:border-slate-600 dark:bg-slate-700 dark:hover:bg-slate-600">
+                  <p className="mb-1 text-sm font-medium text-slate-900 dark:text-white">
                     {q.question_text}
                   </p>
                   {q.reference_answer && (
-                    <p style={{ fontSize: 11, color: '#9CA3AF', fontStyle: 'italic' }}>
-                      💡 {q.reference_answer}
+                    <p className="text-xs italic text-slate-600 dark:text-slate-300">
+                      <span aria-hidden="true">💡</span> {q.reference_answer}
                     </p>
                   )}
                 </button>
               ))
             )}
-            <style>{`
-              @keyframes slideUpBanner {
-                0% { transform: translateY(30px); opacity: 0; }
-                100% { transform: translateY(0); opacity: 1; }
-              }
-            `}</style>
-          </div>
-        </div>
+            {qaSelectError && <p role="alert" className="mt-3 text-sm text-red-700 dark:text-red-300">{t('qa_ui.question_select_error')}</p>}
+        </AccessibleDialog>
       )}
 
       {/* ── 升级 Pro Modal ── */}
       {showUpgradeModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4"
-          onClick={() => setShowUpgradeModal(false)}>
-          <motion.div initial={{ scale: 0.92, opacity: 0 }} animate={{ scale: 1, opacity: 1 }}
-            className="bg-white dark:bg-slate-800 rounded-3xl p-7 max-w-sm w-full text-center shadow-xl"
-            onClick={e => e.stopPropagation()}>
-            <div className="text-5xl mb-4">👑</div>
-            <h2 className="text-xl font-bold text-slate-900 dark:text-white mb-2">升级 Pro 解锁全部功能</h2>
+        <AccessibleDialog
+          title={t('qa_ui.upgrade_title')}
+          onClose={() => setShowUpgradeModal(false)}
+          closeLabel={t('qa_ui.close_dialog')}
+          panelClassName="max-w-sm rounded-3xl p-7 text-center"
+        >
+            <div aria-hidden="true" className="text-5xl mb-4">👑</div>
+            <h2 className="text-xl font-bold text-slate-900 dark:text-white mb-2">{t('qa_ui.upgrade_title')}</h2>
             <ul className="text-sm text-slate-500 text-left mb-6 space-y-2">
-              {['解锁全部 10 个场景（免费仅3个）', '自定义场景创建', '提前解锁高难度场景', '定制 AI 导师音色', '优先访问新功能'].map(f => (
-                <li key={f} className="flex items-center gap-2">
-                  <span className="text-yellow-500">★</span> {f}
+              {['upgrade_benefit_scenarios', 'upgrade_benefit_custom', 'upgrade_benefit_advanced', 'upgrade_benefit_voice', 'upgrade_benefit_early'].map(key => (
+                <li key={key} className="flex items-center gap-2">
+                  <span aria-hidden="true" className="text-amber-700 dark:text-amber-300">★</span> {t(`qa_ui.${key}`)}
                 </li>
               ))}
             </ul>
             <div className="flex gap-3">
               <button onClick={() => setShowUpgradeModal(false)}
-                className="flex-1 py-3 rounded-xl border border-slate-200 text-slate-500 font-medium text-sm">
-                稍后再说
+                className="flex-1 py-3 rounded-xl border border-slate-300 text-slate-700 dark:text-slate-200 font-medium text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50">
+                {t('qa_ui.later')}
               </button>
               <button onClick={() => { setShowUpgradeModal(false); navigate('/subscription'); }}
-                className="flex-1 py-3 rounded-xl text-white font-semibold text-sm"
-                style={{ background: 'linear-gradient(135deg, #F6B443, #F97316)' }}>
-                立即升级
+                className="flex-1 py-3 rounded-xl bg-primary text-white font-semibold text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50 focus-visible:ring-offset-2">
+                {t('qa_ui.upgrade_now')}
               </button>
             </div>
-          </motion.div>
-        </div>
+        </AccessibleDialog>
       )}
 
       {/* ── Header ── */}
@@ -801,7 +893,15 @@ function Discovery() {
           </h1>
           {/* 目标总进度 */}
           <div className="mt-1.5 flex items-center gap-2">
-            <div className="h-1 rounded-full bg-slate-200 overflow-hidden" style={{ width: 100 }}>
+            <div
+              role="progressbar"
+              aria-label={t('qa_ui.overall_progress_label')}
+              aria-valuemin={0}
+              aria-valuemax={100}
+              aria-valuenow={overallProgress}
+              className="h-1 rounded-full bg-slate-200 overflow-hidden"
+              style={{ width: 100 }}
+            >
               <div className="h-full rounded-full bg-primary transition-all duration-500"
                 style={{ width: `${overallProgress}%` }} />
             </div>
@@ -811,12 +911,12 @@ function Discovery() {
         <div className="flex items-center gap-2">
           {hasOtherGoals && (
             <button onClick={handleOpenSwitch}
-              className="text-xs text-slate-500 hover:text-primary transition px-2 py-1 rounded-lg bg-slate-100 dark:bg-slate-800">
+              className="text-xs text-slate-600 hover:text-primary transition px-2 py-1 rounded-lg bg-slate-100 dark:bg-slate-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50">
               {t('qa_ui.switch_goal')}
             </button>
           )}
-          <div className="w-10 h-10 rounded-full flex items-center justify-center text-white font-bold text-sm flex-shrink-0"
-            style={{ background: 'linear-gradient(135deg, #637FF1, #a47af6)' }}>
+          <div aria-hidden="true" className="w-10 h-10 rounded-full flex items-center justify-center text-white font-bold text-sm flex-shrink-0"
+            style={{ background: 'var(--primary)' }}>
             {userName.charAt(0).toUpperCase()}
           </div>
         </div>
@@ -824,20 +924,48 @@ function Discovery() {
 
       <main className="flex-grow pb-28 space-y-5 px-4 pt-2">
 
+        {dashboardError && (
+          <section role="alert" className="rounded-2xl border border-red-200 bg-red-50 p-4 text-red-900 dark:border-red-900 dark:bg-red-950/40 dark:text-red-100">
+            <h2 className="text-sm font-bold">{t('qa_ui.dashboard_error_title')}</h2>
+            <p className="mt-1 text-sm">{t('qa_ui.dashboard_error_desc')}</p>
+            <button
+              onClick={retryDashboard}
+              className="mt-3 rounded-xl bg-primary px-4 py-2 text-sm font-semibold text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50 focus-visible:ring-offset-2"
+            >
+              {t('qa_ui.retry')}
+            </button>
+          </section>
+        )}
+
         {/* ── 今日任务（合并卡片） ── */}
-        {dailyProgress && (
           <section data-tour="today-tasks">
             <div className="rounded-2xl p-5 bg-white dark:bg-slate-800 shadow-sm border border-slate-200 dark:border-slate-700">
               {/* 标题栏 */}
               <div className="flex items-center justify-between mb-4 pb-4 border-b border-slate-200 dark:border-slate-700">
                 <div className="flex items-center gap-2">
                   <GuajiAvatar size={28} />
-                  <h3 className="text-sm font-semibold text-slate-900 dark:text-white">{t('qa_ui.today_tasks')}</h3>
+                  <h2 className="text-sm font-semibold text-slate-900 dark:text-white">{t('qa_ui.today_tasks')}</h2>
                 </div>
-                <span className="text-xs text-slate-500">
-                  {(dailyProgress.recallCompleted ? 1 : 0) + (dailyProgress.qaCompleted ? 1 : 0) + (dailyProgress.scenarioCompleted ? 1 : 0)}/3
+                <span className="text-xs text-slate-600" aria-label={t('qa_ui.tasks_completed_count', {
+                  count: (currentDailyProgress.recallCompleted ? 1 : 0) + (qaTaskCompleted ? 1 : 0) + (currentDailyProgress.scenarioCompleted ? 1 : 0),
+                  total: 3,
+                })}>
+                  {(currentDailyProgress.recallCompleted ? 1 : 0) + (qaTaskCompleted ? 1 : 0) + (currentDailyProgress.scenarioCompleted ? 1 : 0)}/3
                 </span>
               </div>
+
+              {dailyProgressError && (
+                <div role="alert" className="mb-4 flex flex-wrap items-center justify-between gap-2 rounded-xl bg-amber-50 p-3 text-sm text-amber-900 dark:bg-amber-950/40 dark:text-amber-100">
+                  <span>{t('qa_ui.daily_progress_error')}</span>
+                  <button
+                    onClick={handleRetryDailyProgress}
+                    disabled={dailyProgressLoading}
+                    className="rounded-lg bg-primary px-3 py-2 text-xs font-semibold text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50 disabled:opacity-60"
+                  >
+                    {dailyProgressLoading ? t('qa_ui.loading') : t('qa_ui.retry')}
+                  </button>
+                </div>
+              )}
 
               {/* 3 个任务按钮 */}
               <div className="flex items-center justify-around gap-2 mb-5">
@@ -849,18 +977,39 @@ function Discovery() {
                     // Recall page loads today's scenario itself via getActiveGoal.
                     navigate('/recall');
                   }}
-                  className="flex flex-col items-center gap-2 flex-1">
+                  aria-label={t('qa_ui.task_button_label', {
+                    task: t('qa_ui.recall'),
+                    status: t(currentDailyProgress.recallCompleted ? 'qa_ui.task_complete' : 'qa_ui.task_pending'),
+                  })}
+                  className="flex flex-col items-center gap-2 flex-1 rounded-xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50"
+                  data-completed={currentDailyProgress.recallCompleted}>
                   <div
-                    className="w-14 h-14 rounded-full flex items-center justify-center text-xl transition-all"
+                    className="relative w-14 h-14 rounded-full flex items-center justify-center text-xl transition-all"
                     style={{
-                      background: dailyProgress.recallCompleted
+                      background: currentDailyProgress.recallCompleted
                         ? 'linear-gradient(135deg, #10B981, #059669)'
                         : 'rgba(148, 163, 184, 0.1)',
-                      border: dailyProgress.recallCompleted ? 'none' : '2px dashed #CBD5E1',
+                      border: currentDailyProgress.recallCompleted ? 'none' : '2px dashed #CBD5E1',
+                      boxShadow: currentDailyProgress.recallCompleted
+                        ? '0 6px 14px rgba(5, 150, 105, 0.28), inset 0 0 0 1px rgba(255,255,255,0.24)'
+                        : 'none',
                     }}>
-                    {dailyProgress.recallCompleted ? '✓' : '🔁'}
+                    <span aria-hidden="true" style={{
+                      filter: currentDailyProgress.recallCompleted ? 'saturate(1.35) contrast(1.1)' : 'grayscale(0.25)',
+                    }}>🔁</span>
+                    {currentDailyProgress.recallCompleted && (
+                      <span
+                        aria-hidden="true"
+                        className="absolute -right-0.5 -bottom-0.5 w-5 h-5 rounded-full bg-white text-emerald-600 flex items-center justify-center text-xs font-black shadow-sm">
+                        ✓
+                      </span>
+                    )}
                   </div>
-                  <span className="text-xs font-medium text-slate-700 dark:text-slate-300">{t('qa_ui.recall')}</span>
+                  <span className={`text-xs font-medium ${
+                    currentDailyProgress.recallCompleted
+                      ? 'text-emerald-700 dark:text-emerald-400 font-semibold'
+                      : 'text-slate-700 dark:text-slate-300'
+                  }`}>{t('qa_ui.recall')}</span>
                 </motion.button>
 
                 {/* 问答任务 */}
@@ -874,18 +1023,39 @@ function Discovery() {
                       navigate('/conversation?mode=daily_qa');
                     }
                   }}
-                  className="flex flex-col items-center gap-2 flex-1">
+                  aria-label={t('qa_ui.task_button_label', {
+                    task: t('qa_ui.qa'),
+                    status: t(qaTaskCompleted ? 'qa_ui.task_complete' : 'qa_ui.task_pending'),
+                  })}
+                  className="flex flex-col items-center gap-2 flex-1 rounded-xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50"
+                  data-completed={qaTaskCompleted}>
                   <div
-                    className="w-14 h-14 rounded-full flex items-center justify-center text-xl transition-all"
+                    className="relative w-14 h-14 rounded-full flex items-center justify-center text-xl transition-all"
                     style={{
-                      background: dailyProgress.qaCompleted
+                      background: qaTaskCompleted
                         ? 'linear-gradient(135deg, #10B981, #059669)'
                         : 'rgba(148, 163, 184, 0.1)',
-                      border: dailyProgress.qaCompleted ? 'none' : '2px dashed #CBD5E1',
+                      border: qaTaskCompleted ? 'none' : '2px dashed #CBD5E1',
+                      boxShadow: qaTaskCompleted
+                        ? '0 6px 14px rgba(5, 150, 105, 0.28), inset 0 0 0 1px rgba(255,255,255,0.24)'
+                        : 'none',
                     }}>
-                    {dailyProgress.qaCompleted ? '✓' : '❓'}
+                    <span aria-hidden="true" style={{
+                      filter: qaTaskCompleted ? 'saturate(1.35) contrast(1.1)' : 'grayscale(0.25)',
+                    }}>❓</span>
+                    {qaTaskCompleted && (
+                      <span
+                        aria-hidden="true"
+                        className="absolute -right-0.5 -bottom-0.5 w-5 h-5 rounded-full bg-white text-emerald-600 flex items-center justify-center text-xs font-black shadow-sm">
+                        ✓
+                      </span>
+                    )}
                   </div>
-                  <span className="text-xs font-medium text-slate-700 dark:text-slate-300">{t('qa_ui.qa')}</span>
+                  <span className={`text-xs font-medium ${
+                    qaTaskCompleted
+                      ? 'text-emerald-700 dark:text-emerald-400 font-semibold'
+                      : 'text-slate-700 dark:text-slate-300'
+                  }`}>{t('qa_ui.qa')}</span>
                 </motion.button>
 
                 {/* 练习任务 */}
@@ -899,56 +1069,97 @@ function Discovery() {
                       );
                     }
                   }}
-                  className="flex flex-col items-center gap-2 flex-1">
+                  disabled={!todayRecommended && !currentDailyProgress.scenarioCompleted}
+                  aria-label={t('qa_ui.task_button_label', {
+                    task: t('qa_ui.practice'),
+                    status: t(currentDailyProgress.scenarioCompleted ? 'qa_ui.task_complete' : 'qa_ui.task_pending'),
+                  })}
+                  className="flex flex-col items-center gap-2 flex-1 rounded-xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50 disabled:cursor-not-allowed disabled:opacity-60"
+                  data-completed={currentDailyProgress.scenarioCompleted}>
                   <div
-                    className="w-14 h-14 rounded-full flex items-center justify-center text-xl transition-all"
+                    className="relative w-14 h-14 rounded-full flex items-center justify-center text-xl transition-all"
                     style={{
-                      background: dailyProgress.scenarioCompleted
+                      background: currentDailyProgress.scenarioCompleted
                         ? 'linear-gradient(135deg, #10B981, #059669)'
                         : 'rgba(148, 163, 184, 0.1)',
-                      border: dailyProgress.scenarioCompleted ? 'none' : '2px dashed #CBD5E1',
+                      border: currentDailyProgress.scenarioCompleted ? 'none' : '2px dashed #CBD5E1',
+                      boxShadow: currentDailyProgress.scenarioCompleted
+                        ? '0 6px 14px rgba(5, 150, 105, 0.28), inset 0 0 0 1px rgba(255,255,255,0.24)'
+                        : 'none',
                     }}>
-                    {dailyProgress.scenarioCompleted ? '✓' : '🎯'}
+                    <span aria-hidden="true" style={{
+                      filter: currentDailyProgress.scenarioCompleted ? 'saturate(1.35) contrast(1.1)' : 'grayscale(0.25)',
+                    }}>🎯</span>
+                    {currentDailyProgress.scenarioCompleted && (
+                      <span
+                        aria-hidden="true"
+                        className="absolute -right-0.5 -bottom-0.5 w-5 h-5 rounded-full bg-white text-emerald-600 flex items-center justify-center text-xs font-black shadow-sm">
+                        ✓
+                      </span>
+                    )}
                   </div>
-                  <span className="text-xs font-medium text-slate-700 dark:text-slate-300">{t('qa_ui.practice')}</span>
+                  <span className={`text-xs font-medium ${
+                    currentDailyProgress.scenarioCompleted
+                      ? 'text-emerald-700 dark:text-emerald-400 font-semibold'
+                      : 'text-slate-700 dark:text-slate-300'
+                  }`}>{t('qa_ui.practice')}</span>
                 </motion.button>
               </div>
+
+              {dailyQALoading && (
+                <p role="status" className="mb-4 text-center text-xs text-slate-600 dark:text-slate-300">{t('qa_ui.daily_qa_loading')}</p>
+              )}
+              {dailyQAError && !dailyQALoading && (
+                <div role="alert" className="mb-4 flex flex-wrap items-center justify-between gap-2 rounded-xl bg-amber-50 p-3 text-sm text-amber-900 dark:bg-amber-950/40 dark:text-amber-100">
+                  <span>{t('qa_ui.daily_qa_error')}</span>
+                  <button onClick={handleRetryDailyQA} className="rounded-lg bg-primary px-3 py-2 text-xs font-semibold text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50">
+                    {t('qa_ui.retry')}
+                  </button>
+                </div>
+              )}
 
               {/* 今日练习时长进度条 */}
               <div>
                 <div className="flex items-center justify-between mb-2">
                   <span className="text-xs text-slate-500">{t('qa_ui.today_practice')}</span>
                   <span className="text-xs font-semibold text-slate-700 dark:text-slate-300">
-                    {t('qa_ui.minutes_progress', { current: dailyProgress.practiceMinutes || 0, goal: dailyProgress.practiceGoal || 15 })}
+                    {t('qa_ui.minutes_progress', { current: currentDailyProgress.practiceMinutes || 0, goal: currentDailyProgress.practiceGoal || 15 })}
                   </span>
                 </div>
-                <div className="h-2 rounded-full bg-slate-200 dark:bg-slate-700 overflow-hidden">
+                <div
+                  role="progressbar"
+                  aria-label={t('qa_ui.practice_progress_label')}
+                  aria-valuemin={0}
+                  aria-valuemax={currentDailyProgress.practiceGoal || 15}
+                  aria-valuenow={Math.min(currentDailyProgress.practiceMinutes || 0, currentDailyProgress.practiceGoal || 15)}
+                  className="h-2 rounded-full bg-slate-200 dark:bg-slate-700 overflow-hidden"
+                >
                   <div
                     className="h-full rounded-full transition-all duration-500"
                     style={{
-                      width: `${Math.min(((dailyProgress.practiceMinutes || 0) / (dailyProgress.practiceGoal || 15)) * 100, 100)}%`,
-                      background: 'linear-gradient(135deg, #637FF1, #a47af6)',
+                      width: `${Math.min(((currentDailyProgress.practiceMinutes || 0) / (currentDailyProgress.practiceGoal || 15)) * 100, 100)}%`,
+                      background: 'var(--primary)',
                     }}
                   />
                 </div>
               </div>
             </div>
           </section>
-        )}
 
         {/* ── 连续学习进度环 ── */}
         <div data-tour="recall-streak">
           <StreakRing
-            streak={dailyProgress?.streak || checkinStats.currentStreak}
-            monthlyCheckinDays={dailyProgress?.monthlyCheckinDays || 0}
-            checkedInToday={dailyProgress?.checkedInToday || checkinStats.checkedInToday}
+            streak={currentDailyProgress.streak || checkinStats.currentStreak}
+            monthlyCheckinDays={currentDailyProgress.monthlyCheckinDays || 0}
+            checkedInToday={currentDailyProgress.checkedInToday || checkinStats.checkedInToday}
             onCheckin={handleCheckin}
           />
+          {checkinError && <p role="alert" className="mt-2 text-sm text-red-700 dark:text-red-300">{t('qa_ui.checkin_error')}</p>}
         </div>
 
         {/* ── 4格统计 ── */}
         <section data-tour="stats">
-          <div style={{ display: 'flex', gap: 8 }}>
+          <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
             <StatCard emoji="📚" value={stats?.totalSessions || activeSessions?.length || 0} label={t('qa_ui.total_conversations')} />
             <StatCard emoji="📅" value={stats?.learningDays || checkinStats.totalCheckins || 0} label={t('qa_ui.learning_days')} />
             <StatCard emoji="✅" value={`${enrichedScenarios.filter(s => s.pct === 100).length}/${scenarios.length}`} label={t('qa_ui.scenarios_completed')} />
@@ -958,15 +1169,15 @@ function Discovery() {
 
         {/* ── 场景完成 Banner ── */}
         {overallProgress === 100 && (
-          <motion.div whileHover={{ scale: 1.01 }} onClick={() => navigate('/goal-setting')}
-            className="flex items-center gap-3 border-2 border-yellow-400/60 rounded-2xl p-4 cursor-pointer"
+          <button type="button" onClick={() => navigate('/goal-setting')}
+            className="flex w-full items-center gap-3 border-2 border-amber-500/60 rounded-2xl p-4 text-left cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50"
             style={{ background: 'rgba(251,191,36,0.08)' }}>
-            <Trophy className="w-7 h-7 text-yellow-500 flex-shrink-0" />
+            <Trophy aria-hidden="true" className="w-7 h-7 text-amber-700 dark:text-amber-300 flex-shrink-0" />
             <div className="flex-1">
               <p className="font-bold text-slate-800 dark:text-slate-100 text-sm">{t('qa_ui.all_scenarios_done')}</p>
               <p className="text-xs text-slate-500">{t('qa_ui.new_goal_cta')}</p>
             </div>
-          </motion.div>
+          </button>
         )}
 
         {/* ── 场景轮播 ── */}
@@ -984,10 +1195,11 @@ function Discovery() {
           </div>
 
           {/* Filter chips */}
-          <div className="flex flex-wrap gap-2 pb-1 mb-3">
+          <div role="group" aria-label={t('qa_ui.filter_label')} className="flex flex-wrap gap-2 pb-1 mb-3">
             {FILTER_TABS.map(tab => (
               <button key={tab.id} onClick={() => setFilterTab(tab.id)}
-                className="flex-shrink-0 px-3 py-1 rounded-full text-xs font-medium transition-all"
+                aria-pressed={filterTab === tab.id}
+                className="flex-shrink-0 px-3 py-1 rounded-full text-xs font-medium transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50"
                 style={{
                   background: filterTab === tab.id ? '#2d44ca' : '#F3F4F6',
                   color: filterTab === tab.id ? '#fff' : '#374151',
@@ -997,8 +1209,7 @@ function Discovery() {
             ))}
           </div>
 
-          {/* 2列网格卡片 */}
-          <div className="grid grid-cols-2 gap-3" data-tour="scenario-card">
+          <div className="grid grid-cols-1 gap-3 min-[360px]:grid-cols-2 md:grid-cols-3" data-tour="scenario-card">
             {filteredScenarios.map((s) => (
               <ScenarioCard
                 key={s.index}
@@ -1015,6 +1226,8 @@ function Discovery() {
                 difficulty={s.difficulty}
                 progress={s.pct}
                 state={s.cardState === 'locked' ? 'locked' : s.cardState === 'active' ? 'selected' : 'default'}
+                unlockReason={s.cardState === 'locked' ? t('qa_ui.scenario_unlock_reason') : ''}
+                onUnlock={s.cardState === 'locked' ? () => setShowUpgradeModal(true) : undefined}
                 onStart={() => handleScenarioClick(s)}
               />
             ))}

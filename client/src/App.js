@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react';
-import { BrowserRouter as Router, Route, Routes, Navigate } from 'react-router-dom';
+import { BrowserRouter as Router, Route, Routes, Navigate, useLocation } from 'react-router-dom';
+import { useTranslation } from 'react-i18next';
 import { GoogleOAuthProvider } from '@react-oauth/google';
-import { AuthProvider } from './contexts/AuthContext';
+import { AuthProvider, useAuth } from './contexts/AuthContext';
 import { NotificationProvider } from './contexts/NotificationContext';
 import { TourProvider } from './contexts/TourContext';
 import Welcome from './pages/Welcome';
@@ -26,6 +27,23 @@ import SplashScreen from './components/SplashScreen';
 import SupportChat from './components/SupportChat';
 import './App.css';
 
+const RequireAuth = ({ children }) => {
+  const { user, loading } = useAuth();
+  const location = useLocation();
+  const { t } = useTranslation();
+
+  if (loading) {
+    return (
+      <div role="status" aria-live="polite" className="flex min-h-[100dvh] items-center justify-center bg-slate-50 text-slate-700 dark:bg-slate-950 dark:text-slate-200">
+        <span className="sr-only">{t('qa_ui.loading')}</span>
+        <span aria-hidden="true" className="h-9 w-9 animate-spin rounded-full border-2 border-primary/30 border-t-primary" />
+      </div>
+    );
+  }
+
+  return user ? children : <Navigate to="/login" replace state={{ from: location.pathname }} />;
+};
+
 // Separate Layout component for Routes to keep main App clean
 const AppRoutes = () => {
     return (
@@ -42,15 +60,15 @@ const AppRoutes = () => {
             <Route path="/conversation" element={<Conversation />} />
             <Route path="/recall" element={<Recall />} />
             <Route path="/discovery" element={<Discovery />} />
-            <Route path="/profile" element={<Profile />} />
-            <Route path="/checkin" element={<Checkin />} />
-            <Route path="/goals" element={<Goals />} />
-            <Route path="/achievements" element={<Achievements />} />
-            <Route path="/history" element={<History />} />
-            <Route path="/history/:sessionId" element={<History />} />
-            <Route path="/subscription" element={<Subscription />} />
-            <Route path="/subscription/success" element={<Subscription />} />
-            <Route path="/subscription/cancel" element={<Subscription />} />
+            <Route path="/profile" element={<RequireAuth><Profile /></RequireAuth>} />
+            <Route path="/checkin" element={<RequireAuth><Checkin /></RequireAuth>} />
+            <Route path="/goals" element={<RequireAuth><Goals /></RequireAuth>} />
+            <Route path="/achievements" element={<RequireAuth><Achievements /></RequireAuth>} />
+            <Route path="/history" element={<RequireAuth><History /></RequireAuth>} />
+            <Route path="/history/:sessionId" element={<RequireAuth><History /></RequireAuth>} />
+            <Route path="/subscription" element={<RequireAuth><Subscription /></RequireAuth>} />
+            <Route path="/subscription/success" element={<RequireAuth><Subscription /></RequireAuth>} />
+            <Route path="/subscription/cancel" element={<RequireAuth><Subscription /></RequireAuth>} />
             <Route path="/developer/authorize" element={<DeveloperAuthorization />} />
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>

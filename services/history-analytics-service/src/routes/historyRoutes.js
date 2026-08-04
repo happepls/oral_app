@@ -10,6 +10,7 @@ router.get('/user/:userId', requireHistoryUser, historyController.getUserHistory
 router.get('/session/:sessionId', requireHistoryUser, historyController.getConversationDetail);
 router.get('/session/:sessionId/messages', requireHistoryUser, historyController.getSessionHistory);
 router.post('/session/:sessionId/messages', requireInternalService, historyController.saveSessionMessages);
+router.delete('/internal/users/:userId/goals/:goalId/conversations', requireInternalService, historyController.deleteGoalConversations);
 
 // Proficiency metrics endpoints
 router.post('/proficiency/:userId', requireInternalService, historyController.saveProficiencyMetrics);

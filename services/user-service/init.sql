@@ -45,7 +45,7 @@ CREATE TABLE IF NOT EXISTS user_goals (
     interests TEXT, -- Goal specific interests
     scenarios JSONB, -- List of 10 scenarios + tasks
     scenario_review JSONB, -- Latest per-scenario AI review (review_report/recommendations/analysis) for instant REST fetch
-    status VARCHAR(20) DEFAULT 'active', -- active, completed, abandoned
+    status VARCHAR(20) DEFAULT 'active', -- active, paused, completed, archived (abandoned is legacy)
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     completed_at TIMESTAMPTZ
@@ -103,6 +103,15 @@ CREATE TABLE IF NOT EXISTS recall_daily_state (
     UNIQUE(user_id, state_date)
 );
 CREATE INDEX IF NOT EXISTS idx_recall_daily_state_user_date ON recall_daily_state(user_id, state_date);
+
+CREATE TABLE IF NOT EXISTS user_achievements (
+    id BIGSERIAL PRIMARY KEY,
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    achievement_key VARCHAR(64) NOT NULL,
+    unlocked_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE(user_id, achievement_key)
+);
+CREATE INDEX IF NOT EXISTS idx_user_achievements_user ON user_achievements(user_id);
 
 -- Create the user_feedback table (in-app feedback submissions)
 CREATE TABLE IF NOT EXISTS user_feedback (

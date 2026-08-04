@@ -67,6 +67,37 @@ test('history append rejects a session owned by another user', async () => {
   }
 });
 
+test('history message writes are idempotent by stable id and can patch audioUrl', async () => {
+  const original = Conversation.findOne;
+  const conversation = {
+    userId: 'trusted-user',
+    messages: [{ id: 'ai-1', role: 'assistant', content: 'hello', timestamp: new Date('2026-01-01') }],
+    save: async () => {},
+  };
+  Conversation.findOne = async () => conversation;
+  try {
+    const res = response();
+    await controller.saveSessionMessages({
+      params: { sessionId: 'session-a' },
+      body: {
+        userId: 'trusted-user',
+        messages: [{
+          id: 'ai-1',
+          role: 'assistant',
+          content: 'hello',
+          audioUrl: 'https://example.test/audio.mp3',
+          timestamp: '2026-01-01T00:00:00.000Z',
+        }],
+      },
+    }, res);
+    assert.equal(res.statusCode, 201);
+    assert.equal(conversation.messages.length, 1);
+    assert.equal(conversation.messages[0].audioUrl, 'https://example.test/audio.mp3');
+  } finally {
+    Conversation.findOne = original;
+  }
+});
+
 test('summary update rejects a session owned by another user', async () => {
   const original = Conversation.findOne;
   let saved = false;

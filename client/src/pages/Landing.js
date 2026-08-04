@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { useAuth } from '../contexts/AuthContext';
 import LanguageSwitcher from '../components/LanguageSwitcher';
+import { formatCnyReference, formatMinorCurrency } from '../utils/pricing';
 import { motion } from 'motion/react';
 import { Mic, GraduationCap, Timer, TrendingUp, ChevronRight, ArrowRight } from 'lucide-react';
 
@@ -11,7 +12,7 @@ const TESTIMONIAL_COUNT = 3;
 function Landing() {
   const navigate = useNavigate();
   const { user } = useAuth();
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const [activeTestimonial, setActiveTestimonial] = useState(0);
   const [showPrivacy, setShowPrivacy] = useState(false);
   const [livePrices, setLivePrices] = useState({});
@@ -31,21 +32,35 @@ function Landing() {
 
   const pricingPlans = useMemo(() => [
     {
-      name: t('plan_free_name'), price: '0', period: '',
+      name: t('plan_free_name'), price: '$0', period: '', cnyReference: null,
       features: [t('plan_free_f1'), t('plan_free_f2'), t('plan_free_f3')],
       cta: t('plan_free_cta'), highlight: false,
     },
     {
-      name: t('plan_week_name'), price: livePrices.weekly?.price || null, period: livePrices.weekly?.period || '',
+      name: t('plan_week_name'),
+      price: livePrices.weekly
+        ? formatMinorCurrency(livePrices.weekly.unitAmount, livePrices.weekly.currency, i18n.language)
+        : null,
+      period: livePrices.weekly ? `/${t('qa_ui.subscription_interval_week')}` : '',
+      cnyReference: livePrices.weekly
+        ? formatCnyReference(livePrices.weekly.unitAmount, livePrices.weekly.currency, i18n.language)
+        : null,
       features: [t('plan_week_f1'), t('plan_week_f2'), t('plan_week_f3'), t('plan_week_f4')],
       cta: t('plan_week_cta'), highlight: true,
     },
     {
-      name: t('plan_year_name'), price: livePrices.annual?.price || null, period: livePrices.annual?.period || '',
+      name: t('plan_year_name'),
+      price: livePrices.annual
+        ? formatMinorCurrency(livePrices.annual.unitAmount, livePrices.annual.currency, i18n.language)
+        : null,
+      period: livePrices.annual ? `/${t('qa_ui.subscription_interval_year')}` : '',
+      cnyReference: livePrices.annual
+        ? formatCnyReference(livePrices.annual.unitAmount, livePrices.annual.currency, i18n.language)
+        : null,
       features: [t('plan_year_f1'), t('plan_year_f2'), t('plan_year_f3'), t('plan_year_f4'), t('plan_year_f5')],
       cta: t('plan_year_cta'), highlight: false,
     },
-  ], [t, livePrices]);
+  ], [t, i18n.language, livePrices]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -57,7 +72,11 @@ function Landing() {
           const price = product.prices?.[0];
           const tier = product.metadata?.tier;
           if (!price || !tier) continue;
-          mapped[tier] = { price: (price.unit_amount / 100).toFixed(2), period: price.recurring?.interval === 'year' ? '/yr' : '/wk' };
+          mapped[tier] = {
+            unitAmount: price.unit_amount,
+            currency: price.currency,
+            interval: price.recurring?.interval,
+          };
         }
         setLivePrices(mapped);
       })
@@ -267,11 +286,16 @@ function Landing() {
                   {plan.name}
                 </h3>
                 <div className="mb-4">
-                  <span className="text-4xl font-bold">{plan.price === null ? '—' : `$${plan.price}`}</span>
+                  <span className="text-4xl font-bold">{plan.price === null ? '—' : plan.price}</span>
                   <span className={`text-sm ${plan.highlight ? 'text-primary-light' : 'text-slate-500'}`}>
                     {plan.period}
                   </span>
                   {plan.price === null && <span className="ml-2 text-xs text-slate-500">{t('qa_ui.price_unavailable_short')}</span>}
+                  {plan.cnyReference && (
+                    <p className={`mt-1 text-xs ${plan.highlight ? 'text-indigo-100' : 'text-slate-500 dark:text-slate-400'}`}>
+                      {t('price_cny_reference', { price: plan.cnyReference })}
+                    </p>
+                  )}
                 </div>
                 <ul className="space-y-3 mb-6">
                   {plan.features.map((f, j) => (
@@ -295,6 +319,9 @@ function Landing() {
               </motion.div>
             ))}
           </div>
+          <p className="mt-6 text-center text-xs text-slate-500 dark:text-slate-400">
+            {t('landing_price_settlement_note')}
+          </p>
         </div>
       </section>
 

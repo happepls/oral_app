@@ -156,8 +156,7 @@ def user_id():
 @pytest.fixture
 def today_iso():
     # Matches design: key = f"daily_qa_passed:{user_id}:{YYYY-MM-DD}"
-    from datetime import datetime, timezone
-    return datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    return _main_module._today_utc_str()
 
 
 class _FakeHttpResponse:
@@ -392,6 +391,206 @@ class TestDailyQaPassedMarker:
         assert "[DAILY_QA_PASSED]" not in cleaned
         assert "Great!" in cleaned
         assert "tomorrow" in cleaned
+
+
+class TestProgressAwareDailyMaterial:
+    def test_progress_context_contains_pending_and_completed_tasks(self):
+        build = getattr(_main_module, "_build_learning_progress_context")
+        context = build({
+            "active_goal": {
+                "target_level": "Intermediate",
+                "current_proficiency": 42,
+                "scenarios": [{
+                    "title": "Restaurant",
+                    "tasks": [
+                        {"text": "Order dinner", "status": "completed", "score": 9},
+                        {"text": "Ask for the bill", "status": "in_progress", "score": 5},
+                    ],
+                }],
+            },
+        })
+        assert "Ask for the bill" in context
+        assert "Order dinner" in context
+        assert "Current proficiency: 42" in context
+
+    def test_daily_seed_is_stable_and_date_sensitive(self):
+        pick = getattr(_main_module, "_daily_seeded_index")
+        assert pick("u1", "2026-07-31", "goal-a", 10) == pick(
+            "u1", "2026-07-31", "goal-a", 10
+        )
+        samples = {
+            pick("u1", f"2026-08-{day:02d}", "goal-a", 10)
+            for day in range(1, 8)
+        }
+        assert len(samples) > 1
+
+    @pytest.mark.asyncio
+    async def test_daily_recall_is_cached_and_avoids_today_question(
+        self, fake_redis, user_id
+    ):
+        handle = getattr(_main_module, "handle_daily_recall")
+        user_context = {
+            "id": user_id,
+            "native_language": "Chinese",
+            "active_goal": {
+                "id": 7,
+                "target_language": "Japanese",
+                "target_level": "Intermediate",
+                "scenarios": [{
+                    "title": "食事",
+                    "tasks": [{"text": "注文する", "status": "in_progress"}],
+                }],
+            },
+        }
+        generated = {
+            "topic": "週末の予定",
+            "sentences": ["土曜日に友達と会います。", "一緒に昼ご飯を食べます。", "午後は映画を見ます。"],
+        }
+        generate = AsyncMock(return_value=generated)
+        question = AsyncMock(return_value="好きな料理は何ですか？")
+        with patch.object(_main_module, "_generate_daily_recall_material", generate), \
+             patch.object(_main_module, "_get_cached_daily_question_text", question):
+            first = await handle(fake_redis, user_context, variant=0)
+            second = await handle(fake_redis, user_context, variant=0)
+
+        assert first == second
+        assert first["sentences"] == generated["sentences"]
+        generate.assert_awaited_once()
+        avoid = generate.await_args.args[3]
+        assert "好きな料理は何ですか？" in avoid
+
+    @pytest.mark.asyncio
+    async def test_daily_recall_variant_generates_fresh_cached_material(
+        self, fake_redis, user_id
+    ):
+        handle = getattr(_main_module, "handle_daily_recall")
+        user_context = {
+            "id": user_id,
+            "active_goal": {
+                "id": 7,
+                "target_language": "English",
+                "target_level": "Beginner",
+                "scenarios": [],
+            },
+        }
+        generate = AsyncMock(side_effect=[
+            {"topic": "A", "sentences": ["A1", "A2", "A3"]},
+            {"topic": "B", "sentences": ["B1", "B2", "B3"]},
+        ])
+        question = AsyncMock(return_value="Q")
+        with patch.object(_main_module, "_generate_daily_recall_material", generate), \
+             patch.object(_main_module, "_get_cached_daily_question_text", question):
+            first = await handle(fake_redis, user_context, variant=0)
+            changed = await handle(fake_redis, user_context, variant=1)
+
+        assert first["sentences"] != changed["sentences"]
+        assert generate.await_count == 2
+
+
+class TestSceneProgressWithoutMedia:
+    @pytest.mark.asyncio
+    async def test_uses_authoritative_current_task_context(self):
+        callback = MagicMock()
+        callback.phase_key = "user-1:Restaurant"
+        callback.messages = [{"role": "user", "content": "この料理はいくらですか。"}]
+        callback.user_context = {
+            "native_language": "Chinese",
+            "active_goal": {
+                "target_language": "Japanese",
+                "current_task": {
+                    "id": 42,
+                    "task_description": "询问菜单上的菜品名称和价格。",
+                    "scenario_title": "在餐厅点餐",
+                },
+            },
+        }
+        callback.scenario = "在餐厅点餐"
+        callback.user_id = "user-1"
+        callback.token = "token"
+        callback.conversation = MagicMock()
+        callback.websocket = MagicMock()
+        callback._safe_send = AsyncMock()
+        _main_module.session_phases[callback.phase_key] = {"phase": "scene_theater"}
+
+        evaluate = AsyncMock(return_value=None)
+        with patch.object(_main_module, "_handle_turn_with_accumulator", evaluate):
+            await _main_module._evaluate_scene_turn_progress(
+                callback, 7, 42, "いいですね。"
+            )
+
+        current_task = evaluate.await_args.args[8]
+        assert current_task == {
+            "id": 42,
+            "task_description": "询问菜单上的菜品名称和价格。",
+            "scenario_title": "在餐厅点餐",
+            "target_language": "Japanese",
+        }
+
+    @pytest.mark.asyncio
+    async def test_emits_ready_event_without_media_url(self):
+        callback = MagicMock()
+        callback.phase_key = "user-1:Restaurant"
+        callback.messages = [{"role": "user", "content": "この料理はいくらですか。"}]
+        callback.user_context = {
+            "active_goal": {"current_task": {"scenario_title": "Restaurant"}}
+        }
+        callback.scenario = "Restaurant"
+        callback.user_id = "user-1"
+        callback.token = "token"
+        callback.conversation = MagicMock()
+        callback.websocket = MagicMock()
+        callback._safe_send = AsyncMock()
+        _main_module.session_phases[callback.phase_key] = {"phase": "scene_theater"}
+
+        result = {
+            "task_id": 42,
+            "task_score": 9,
+            "task_title": "Ask the price",
+            "task_ready_to_complete": True,
+            "task_completed": False,
+        }
+        with patch.object(
+            _main_module,
+            "_handle_turn_with_accumulator",
+            AsyncMock(return_value=result),
+        ):
+            await _main_module._evaluate_scene_turn_progress(
+                callback, 7, 42, "Great."
+            )
+
+        callback._safe_send.assert_awaited_once()
+        message = callback._safe_send.await_args.args[0]
+        assert message["type"] == "task_ready_to_complete"
+        assert message["payload"]["score"] == 9
+
+
+@pytest.mark.skipif(
+    not _IMPL_AVAILABLE,
+    reason="daily QA finalize implementation unavailable",
+)
+class TestDailyQaFinalizePersistence:
+    @pytest.mark.asyncio
+    async def test_bonus_completion_still_repairs_authoritative_db_state(
+        self, fake_redis, user_id
+    ):
+        finalize = getattr(_main_module, "_finalize_daily_qa_pass", None)
+        if finalize is None:
+            pytest.skip("_finalize_daily_qa_pass() not exposed")
+
+        persist = AsyncMock()
+        notify = AsyncMock()
+        with patch.object(_main_module, "_persist_daily_qa_pass", persist), \
+             patch.object(_main_module, "_send_daily_qa_completed_ws", notify):
+            await finalize(
+                fake_redis,
+                user_id,
+                AsyncMock(),
+                "Well done!",
+                is_bonus=True,
+            )
+
+        persist.assert_awaited_once_with(user_id, "Well done!")
+        notify.assert_awaited_once()
 
 
 # =========================================================================

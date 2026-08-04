@@ -1,19 +1,21 @@
-import { useEffect, useRef, useState } from 'react';
-import { motion, AnimatePresence } from 'motion/react';
+import { useEffect, useState } from 'react';
+import { motion } from 'motion/react';
 import {
   ArrowLeft, RotateCcw, ChevronRight, BookOpen,
   CheckCircle2, Lightbulb, Star, Clock, Flame, CheckCircle
 } from 'lucide-react';
 import designTokens from '../imports/design-tokens.json';
+import { AccessibleDialog } from './AccessibleDialog';
 
 const tokens = designTokens.global;
 
 /* ── Score Ring ── */
 function ScoreRing({ score, size = 140 }) {
   const [animated, setAnimated] = useState(false);
+  const normalizedScore = Math.max(0, Math.min(100, Number(score) || 0));
   const radius = 52;
   const circumference = 2 * Math.PI * radius;
-  const offset = circumference - (score / 100) * circumference;
+  const offset = circumference - (normalizedScore / 100) * circumference;
 
   useEffect(() => {
     const t = setTimeout(() => setAnimated(true), 200);
@@ -21,7 +23,12 @@ function ScoreRing({ score, size = 140 }) {
   }, []);
 
   return (
-    <div className="relative" style={{ width: size, height: size }}>
+    <div
+      className="relative"
+      role="img"
+      aria-label={`本场景总分 ${Math.round(normalizedScore)} 分`}
+      style={{ width: size, height: size }}
+    >
       <svg
         className="w-full h-full"
         viewBox="0 0 120 120"
@@ -56,7 +63,7 @@ function ScoreRing({ score, size = 140 }) {
           className="text-4xl font-bold"
           style={{ color: tokens.color.primary.value }}
         >
-          {score}
+          {Math.round(normalizedScore)}
         </motion.span>
         <span className="text-xs text-slate-400 mt-0.5">总分</span>
       </div>
@@ -93,6 +100,11 @@ function SkillBar({ icon, name, score, delay = 0 }) {
           </div>
           <div className="h-2 bg-slate-100 dark:bg-slate-700 rounded-full overflow-hidden">
             <div
+              role="progressbar"
+              aria-label={`${name}评分`}
+              aria-valuemin={0}
+              aria-valuemax={100}
+              aria-valuenow={Math.round(score)}
               className="h-full rounded-full"
               style={{
                 width: `${width}%`,
@@ -268,18 +280,19 @@ export function PracticeReport({
   hasNextScenario = false,
   onCheckin,
 }) {
-  const scrollRef = useRef(null);
   const [checkinDone, setCheckinDone] = useState(false);
   const [checkinLoading, setCheckinLoading] = useState(false);
+  const [checkinError, setCheckinError] = useState('');
 
   const handleCheckin = async () => {
     if (!onCheckin || checkinDone) return;
+    setCheckinError('');
     setCheckinLoading(true);
     try {
       await onCheckin();
       setCheckinDone(true);
     } catch (e) {
-      // silently ignore — user can visit /checkin manually
+      setCheckinError('打卡暂时失败，请稍后重试。练习报告不会丢失。');
     } finally {
       setCheckinLoading(false);
     }
@@ -288,13 +301,11 @@ export function PracticeReport({
   // Derive skill scores from available data
   const analysis = reviewData?.analysis || {};
   const vocabDiversity = analysis.vocabulary_diversity || 0;
-  const grammarErrors = analysis.grammar_errors || 0;
-  const totalUserMsgs = analysis.user_messages || 1;
 
   // Fallback 4 skill scores when backend detail_scores not available
   const fallbackPronunciation = Math.min(100, Math.round(scenarioScore * 1.05));
   const fallbackFluency = Math.min(100, Math.round(vocabDiversity * 100 * 0.7 + scenarioScore * 0.3));
-  const fallbackIntonation = Math.min(100, Math.round(scenarioScore * 0.98 + Math.random() * 4 - 2));
+  const fallbackIntonation = Math.min(100, Math.round(scenarioScore * 0.98));
   const fallbackVocabulary = Math.min(100, Math.round(
     vocabDiversity > 0
       ? vocabDiversity * 80 + 20
@@ -303,6 +314,8 @@ export function PracticeReport({
 
   // Prefer backend detail_scores from qwen-turbo deep evaluation
   const backendScores = analysis?.detail_scores;
+  const hasDetailedScores = backendScores && ['pronunciation', 'fluency', 'intonation', 'vocabulary']
+    .every(key => Number.isFinite(Number(backendScores[key])));
   const pronunciationScore = backendScores?.pronunciation ?? fallbackPronunciation;
   const fluencyScore = backendScores?.fluency ?? fallbackFluency;
   const intonationScore = backendScores?.intonation ?? fallbackIntonation;
@@ -310,9 +323,9 @@ export function PracticeReport({
 
   const skills = [
     { icon: '🎯', name: '发音准确度', score: pronunciationScore, delay: 0 },
-    { icon: '💬', name: '语速流畅度', score: Math.max(40, fluencyScore), delay: 100 },
-    { icon: '🗣️', name: '语调自然度', score: Math.max(40, intonationScore), delay: 200 },
-    { icon: '📝', name: '词汇完整度', score: Math.max(40, vocabularyScore), delay: 300 },
+    { icon: '💬', name: '语速流畅度', score: fluencyScore, delay: 100 },
+    { icon: '🗣️', name: '语调自然度', score: intonationScore, delay: 200 },
+    { icon: '📝', name: '词汇完整度', score: vocabularyScore, delay: 300 },
   ];
 
   const strengths = Array.isArray(analysis.strengths) ? analysis.strengths : [];
@@ -354,8 +367,12 @@ export function PracticeReport({
     '语调自然度': '可优化语调，注意句子的升降调与重音',
     '词汇完整度': '可扩展词汇量，尝试使用更地道的高级表达',
   };
-  const derivedStrengths = skills.filter(s => s.score >= 75).map(s => SKILL_STRENGTH_LABEL[s.name]).filter(Boolean);
-  const derivedImprove = skills.filter(s => s.score < 65).map(s => SKILL_IMPROVE_LABEL[s.name]).filter(Boolean);
+  const derivedStrengths = hasDetailedScores
+    ? skills.filter(s => s.score >= 75).map(s => SKILL_STRENGTH_LABEL[s.name]).filter(Boolean)
+    : [];
+  const derivedImprove = hasDetailedScores
+    ? skills.filter(s => s.score < 65).map(s => SKILL_IMPROVE_LABEL[s.name]).filter(Boolean)
+    : [];
 
   const finalStrengths = strengths.length > 0
     ? strengths
@@ -373,7 +390,16 @@ export function PracticeReport({
   const stars = analysis?.stars ?? Math.max(1, Math.min(5, Math.ceil(scenarioScore / 20)));
 
   return (
-    <div className="fixed inset-0 z-50 bg-background-light dark:bg-background-dark overflow-y-auto">
+    <AccessibleDialog
+      title="练习报告"
+      description={`${scenarioTitle || '场景练习'}的总结与改进建议`}
+      onClose={onClose}
+      closeLabel="关闭练习报告"
+      showCloseButton={false}
+      overlayClassName="!items-stretch !bg-background-light !p-0 dark:!bg-background-dark"
+      panelClassName="!h-[100dvh] !max-w-lg !overflow-y-auto !rounded-none !bg-background-light dark:!bg-background-dark"
+      zIndex={280}
+    >
       <div className="max-w-lg mx-auto px-4 pb-10">
 
         {/* ── Header ── */}
@@ -456,11 +482,17 @@ export function PracticeReport({
 
         {/* ── Skill Analysis ── */}
         <h2 className="text-base font-bold text-slate-900 dark:text-white mb-3">技能分析</h2>
-        <div className="grid grid-cols-2 gap-3 mb-5">
-          {skills.map((s) => (
-            <SkillBar key={s.name} {...s} />
-          ))}
-        </div>
+        {hasDetailedScores ? (
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-5">
+            {skills.map((s) => (
+              <SkillBar key={s.name} {...s} />
+            ))}
+          </div>
+        ) : (
+          <div role="status" className="mb-5 rounded-2xl border border-indigo-100 bg-indigo-50 p-4 text-sm leading-relaxed text-indigo-900 dark:border-indigo-800 dark:bg-indigo-950/40 dark:text-indigo-100">
+            AI 详细维度暂未生成。总分和任务完成情况仍然有效；继续练习后可获得发音、流利度、语调和词汇分析。
+          </div>
+        )}
 
         {/* ── Feedback Cards ── finalStrengths/finalImproveItems 总有兜底内容，
             「详细反馈」恒显；vocabItems 来自对话纠错，可能为空，单独判断。 */}
@@ -510,6 +542,11 @@ export function PracticeReport({
             )}
           </motion.button>
         )}
+        {checkinError && (
+          <p role="alert" className="-mt-2 mb-4 text-center text-sm text-red-600 dark:text-red-300">
+            {checkinError}
+          </p>
+        )}
 
         {/* ── Action Buttons ── */}
         <div className="space-y-3">
@@ -544,7 +581,7 @@ export function PracticeReport({
           </button>
         </div>
       </div>
-    </div>
+    </AccessibleDialog>
   );
 }
 

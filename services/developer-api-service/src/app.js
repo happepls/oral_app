@@ -12,7 +12,7 @@ const decodeCursor = (value) => {
 };
 
 function createApp(options) {
-  const { db, delegatedSecret, realtimeSecret, conversationUrl = 'http://conversation-service:8083', historyUrl = 'http://history-analytics-service:3004', aiUrl = 'http://ai-omni-service:8082', rateLimitMax = 120, upstreamTimeoutMs = 10000 } = options;
+  const { db, delegatedSecret, realtimeSecret, internalAuthSecret, conversationUrl = 'http://conversation-service:8083', historyUrl = 'http://history-analytics-service:3004', aiUrl = 'http://ai-omni-service:8082', rateLimitMax = 120, upstreamTimeoutMs = 10000 } = options;
   const aiTimeoutMs = options.aiTimeoutMs ?? (options.upstreamTimeoutMs === undefined ? 35000 : upstreamTimeoutMs);
   const app = express();
   const auth = createAuth({ db, delegatedSecret, realtimeSecret });
@@ -154,6 +154,11 @@ function createApp(options) {
       const { type = 'custom', description = '', target_language, target_level, current_proficiency = 0, completion_time_days, interests = '', scenarios = [] } = req.body || {};
       if (!target_language || !target_level || !Array.isArray(scenarios)) throw error(400, 'goal_invalid', 'target_language, target_level, and scenarios are required');
       await client.query('BEGIN');
+      await client.query(
+        `UPDATE user_goals SET status = 'paused', completed_at = NULL, updated_at = NOW()
+         WHERE user_id = $1 AND status = 'active'`,
+        [req.delegated.user_id]
+      );
       const goal = (await client.query(
         `INSERT INTO user_goals (user_id,type,description,target_language,target_level,current_proficiency,completion_time_days,interests,scenarios,status)
          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,'active') RETURNING *`,
@@ -169,6 +174,126 @@ function createApp(options) {
       res.status(201).json({ data: goal, meta: { request_id: req.requestId } });
     } catch (err) { await client.query('ROLLBACK').catch(() => {}); next(err); }
     finally { client.release(); }
+  });
+
+  async function currentActiveGoalId(client, userId) {
+    return (await client.query(
+      `SELECT id FROM user_goals WHERE user_id = $1 AND status = 'active'
+       ORDER BY created_at DESC, id DESC LIMIT 1`,
+      [userId]
+    )).rows[0]?.id || null;
+  }
+
+  async function activateLatestPaused(client, userId) {
+    return (await client.query(
+      `UPDATE user_goals SET status = 'active', completed_at = NULL, updated_at = NOW()
+       WHERE id = (
+         SELECT id FROM user_goals WHERE user_id = $1 AND status = 'paused'
+         ORDER BY updated_at DESC NULLS LAST, created_at DESC, id DESC
+         LIMIT 1 FOR UPDATE
+       ) RETURNING id`,
+      [userId]
+    )).rows[0]?.id || null;
+  }
+
+  app.post('/v1/goals/:id/archive', auth.requireScopes('goals:write'), async (req, res, next) => {
+    const client = await db.connect();
+    try {
+      await client.query('BEGIN');
+      const goal = (await client.query(
+        'SELECT * FROM user_goals WHERE id = $1 AND user_id = $2 FOR UPDATE',
+        [req.params.id, req.delegated.user_id]
+      )).rows[0];
+      if (!goal) throw error(404, 'goal_not_found', 'Goal not found');
+      let archived = goal;
+      if (!['archived', 'abandoned'].includes(goal.status)) {
+        archived = (await client.query(
+          `UPDATE user_goals SET status = 'archived', completed_at = NULL, updated_at = NOW()
+           WHERE id = $1 RETURNING *`,
+          [goal.id]
+        )).rows[0];
+      }
+      let activeGoalId = await currentActiveGoalId(client, req.delegated.user_id);
+      if (goal.status === 'active') activeGoalId = await activateLatestPaused(client, req.delegated.user_id);
+      await client.query('COMMIT');
+      res.json({ data: { goal: archived, active_goal_id: activeGoalId }, meta: { request_id: req.requestId } });
+    } catch (err) {
+      await client.query('ROLLBACK').catch(() => {});
+      next(err);
+    } finally { client.release(); }
+  });
+
+  app.post('/v1/goals/:id/restore', auth.requireScopes('goals:write'), async (req, res, next) => {
+    try {
+      let goal = (await db.query(
+        `UPDATE user_goals SET status = 'paused', completed_at = NULL, updated_at = NOW()
+         WHERE id = $1 AND user_id = $2 AND status IN ('archived', 'abandoned')
+         RETURNING *`,
+        [req.params.id, req.delegated.user_id]
+      )).rows[0];
+      if (!goal) {
+        goal = (await db.query(
+          `SELECT * FROM user_goals WHERE id = $1 AND user_id = $2 AND status = 'paused'`,
+          [req.params.id, req.delegated.user_id]
+        )).rows[0];
+      }
+      if (!goal) throw error(404, 'goal_not_found', 'Goal not found or cannot be restored');
+      const activeGoalId = await currentActiveGoalId(db, req.delegated.user_id);
+      res.json({ data: { goal, active_goal_id: activeGoalId }, meta: { request_id: req.requestId } });
+    } catch (err) { next(err); }
+  });
+
+  app.delete('/v1/goals/:id', auth.requireScopes('goals:write'), async (req, res, next) => {
+    let deletedConversationCount = 0;
+    try {
+      const owned = (await db.query(
+        'SELECT id, status FROM user_goals WHERE id = $1 AND user_id = $2',
+        [req.params.id, req.delegated.user_id]
+      )).rows[0];
+      if (!owned) throw error(404, 'goal_not_found', 'Goal not found');
+      if (!internalAuthSecret) throw error(503, 'goal_cleanup_unavailable', 'Goal cleanup is not configured');
+      const cleanupHeaders = { 'X-Guaji-Internal-Auth': internalAuthSecret };
+      const [historyResponse, sessionResponse] = await Promise.all([
+        fetchWithTimeout(
+          `${historyUrl}/api/history/internal/users/${encodeURIComponent(req.delegated.user_id)}/goals/${encodeURIComponent(req.params.id)}/conversations`,
+          { method: 'DELETE', headers: cleanupHeaders }
+        ),
+        fetchWithTimeout(
+          `${conversationUrl}/internal/users/${encodeURIComponent(req.delegated.user_id)}/goals/${encodeURIComponent(req.params.id)}/sessions`,
+          { method: 'DELETE', headers: cleanupHeaders }
+        ),
+      ]);
+      if (!historyResponse.ok) throw await upstreamError(historyResponse);
+      if (!sessionResponse.ok) throw await upstreamError(sessionResponse);
+      deletedConversationCount = Number((await historyResponse.json()).deleted_conversation_count || 0);
+    } catch (err) {
+      return next(err);
+    }
+
+    const client = await db.connect();
+    try {
+      await client.query('BEGIN');
+      const goal = (await client.query(
+        'SELECT id, status FROM user_goals WHERE id = $1 AND user_id = $2 FOR UPDATE',
+        [req.params.id, req.delegated.user_id]
+      )).rows[0];
+      if (!goal) throw error(404, 'goal_not_found', 'Goal not found');
+      await client.query('DELETE FROM user_goals WHERE id = $1 AND user_id = $2', [goal.id, req.delegated.user_id]);
+      let activeGoalId = await currentActiveGoalId(client, req.delegated.user_id);
+      if (goal.status === 'active') activeGoalId = await activateLatestPaused(client, req.delegated.user_id);
+      await client.query('COMMIT');
+      res.json({
+        data: {
+          deleted_goal_id: Number(goal.id),
+          deleted_conversation_count: deletedConversationCount,
+          active_goal_id: activeGoalId,
+        },
+        meta: { request_id: req.requestId },
+      });
+    } catch (err) {
+      await client.query('ROLLBACK').catch(() => {});
+      next(err);
+    } finally { client.release(); }
   });
 
   app.get('/v1/tasks', auth.requireScopes('goals:read'), async (req, res, next) => {
@@ -235,7 +360,7 @@ function createApp(options) {
   app.post('/v1/ai/scenarios', auth.requireScopes('ai:generate'), requireIdempotency, proxyJson(`${aiUrl}/generate-scenarios`, aiTimeoutMs));
   app.post('/v1/ai/tts', auth.requireScopes('ai:generate'), requireIdempotency, async (req, res, next) => {
     try {
-      const upstream = await fetchWithTimeout(`${aiUrl}/tts`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(req.body) });
+      const upstream = await fetchWithTimeout(`${aiUrl}/tts`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(req.body) }, aiTimeoutMs);
       if (!upstream.ok) throw await upstreamError(upstream);
       const contentType = upstream.headers.get('content-type') || 'audio/wav';
       const audio = await upstream.buffer();

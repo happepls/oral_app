@@ -1,0 +1,2 @@
+CRON_TZ=Asia/Shanghai
+30 2 * * * . /run/oral-backup.env && /opt/oral-backup/run-with-alert.sh >> /var/log/oral-backup.log 2>&1

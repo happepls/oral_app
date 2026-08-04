@@ -53,11 +53,12 @@ jobs:
         docker pull "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/api-gateway:$IMAGE_TAG"
         docker pull "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/developer-api-service:$IMAGE_TAG"
         docker pull "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/workflow-service:$IMAGE_TAG"
+        docker pull "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/backup-service:$IMAGE_TAG"
 
     - name: Render Docker Compose template
       run: |
         # Replace image tags in docker-compose.yml with tagged versions
-        for service in client user-service comms-service ai-omni-service history-analytics-service conversation-service media-processing-service api-gateway developer-api-service workflow-service; do
+        for service in client user-service comms-service ai-omni-service history-analytics-service conversation-service media-processing-service api-gateway developer-api-service workflow-service backup-service; do
           sed -i "s|image: .*${service}:.*|image: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/${service}:$IMAGE_TAG|g" docker-compose.prod.yml
         done
 

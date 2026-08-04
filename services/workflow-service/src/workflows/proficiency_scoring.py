@@ -696,7 +696,7 @@ class ProficiencyScoringWorkflow:
                     # 调用 user-service 的关键词 API
                     resp = await client.get(
                         f"{user_service_url}/api/users/tasks/{task_id}/keywords",
-                        headers={"Authorization": f"Bearer {token}"}
+                        headers={"X-Guaji-Internal-Auth": os.getenv("INTERNAL_AUTH_SECRET", "")}
                     )
                     if resp.status_code == 200:
                         keywords_data = resp.json().get('data', {}).get('keywords', [])

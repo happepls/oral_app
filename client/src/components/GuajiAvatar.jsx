@@ -1,3 +1,5 @@
+import { useEffect, useState } from 'react';
+
 const MOOD_SVG = {
   happy: 'bird-expression-happy.svg',
   excited: 'bird-expression-excited.svg',
@@ -15,6 +17,11 @@ const MOOD_SVG = {
 export function GuajiAvatar({ mood = 'calm', size = 36, className = '' }) {
   const svgFile = MOOD_SVG[mood] || MOOD_SVG.calm;
   const svgPath = `${process.env.PUBLIC_URL}/assets/mascot/${svgFile}`;
+  const [imageFailed, setImageFailed] = useState(false);
+
+  useEffect(() => {
+    setImageFailed(false);
+  }, [svgPath]);
 
   return (
     <div className={className} style={{
@@ -28,15 +35,20 @@ export function GuajiAvatar({ mood = 'calm', size = 36, className = '' }) {
       flexShrink: 0,
       overflow: 'hidden',
     }}>
-      <img
-        src={svgPath}
-        alt="avatar"
-        style={{
-          width: '100%',
-          height: '100%',
-          objectFit: 'contain',
-        }}
-      />
+      {imageFailed ? (
+        <span aria-hidden="true" style={{ fontSize: size * 0.55, lineHeight: 1 }}>🐦</span>
+      ) : (
+        <img
+          src={svgPath}
+          alt=""
+          onError={() => setImageFailed(true)}
+          style={{
+            width: '100%',
+            height: '100%',
+            objectFit: 'contain',
+          }}
+        />
+      )}
     </div>
   );
 }

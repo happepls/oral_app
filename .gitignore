@@ -106,6 +106,9 @@ verify-*.png
 # quality/baselines/ and remain tracked; only transient run artifacts are ignored.
 /quality/artifacts/
 
+# Local UX audit reports and screenshots (generated evidence, not source)
+/reports/
+
 # Mobile responsive test screenshots (one-off evidence; findings recorded in docs/test-cases-design-integration.md §10)
 docs/mobile-test-screenshots/
 
