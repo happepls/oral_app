@@ -2250,6 +2250,11 @@ class WebSocketCallback(OmniRealtimeCallback):
         else:
             logger.warning("connection_established already sent, skipping")
         self._update_session_prompt()
+        # SDK callback order is not stable: session.created can arrive before
+        # or after on_open. The guarded trigger at both readiness edges starts
+        # exactly once as soon as both flags are true.
+        if not self.messages and not self.welcome_sent and not self.welcome_muted:
+            self._trigger_welcome_message()
 
     def _update_session_prompt(self, extra_directive: str = None):
         if self.conversation:
@@ -2510,10 +2515,10 @@ class WebSocketCallback(OmniRealtimeCallback):
             self._mark_latency_stage("session_created")
             self.session_ready = True
             if not self.messages and not self.welcome_sent and not getattr(self, "welcome_muted", False):
-                import threading
-                welcome_timer = threading.Timer(0.5, self._trigger_welcome_message)
-                welcome_timer.daemon = True
-                welcome_timer.start()
+                # session.created is DashScope's readiness acknowledgement, so
+                # an extra timer only delays first audio and races teardown on
+                # short-lived connections. Trigger on the callback thread now.
+                self._trigger_welcome_message()
         # Always update current_response_id if we have a new one
         if rid and rid not in self.ignored_response_ids:
             self.current_response_id = rid

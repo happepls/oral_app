@@ -5,13 +5,12 @@
 - 配置生产 INTERNAL_AUTH_SECRET 并重建/滚动部署受影响服务。
 - 在 Stripe test/live Dashboard 配置 Promotion Codes、Portal、Webhook，并完成最小真实交易。
 - 在 Tawk 配置 Ticketing、AI Assist 和人工转接 Shortcut。
-- 提供 COS 凭据、设置 30 日/12 月 Lifecycle，执行真实上传与隔离恢复演练。
-- 完成三类真实会话、DashScope 出站网络、首音频 ≤5 秒及 CSP 剩余项验收。
+- 完成三类真实会话验收。
 - 部署后观察 24 小时错误率、历史保存、Webhook、备份和 DashScope 超时。
 
-[ ] [Release] 在独立私有腾讯 COS 配置 Lifecycle（daily 30 天、monthly 12 个月），执行一次真实上传和隔离数据库恢复演练。脚本与 02:30 cron 见 `services/backup-service/`、`docs/backup-restore-runbook.md`。
-[ ] [Performance] 欢迎语链已记录 ws_accepted、dashscope_open、session_created、first_text、first_audio、cos_complete 阶段耗时，移除阻塞 sleep，并在 15 秒无首音频时返回可重试错误；首音频 ≤5 秒目标仍需真实网络压测。
-[ ] [Security] 余下 CSP/响应头 LOW 项逐条复核。
+- [x] [Release] 独立私有 COS `oral-backup-1317719935` 已配置 Lifecycle（daily 30 天、monthly 365 天）；2026-08-06 真实上传 3.90 MB bundle，双层 checksum 通过，并恢复至隔离 PostgreSQL/MongoDB。抽样计数完全一致（users 21、goals 33、tasks 784、conversations 8268、metrics 4）；演练临时库已删除，02:30 cron 容器健康。演练同时修复外层 checksum 绝对路径及 Mongo archive namespace 未重映射问题。
+- [x] [Performance] 2026-08-06 本地经中国区 DashScope 公网执行 5 次全新 WebSocket 会话：客户端首音频 962–1062ms（p95/max 1062ms），服务端 first_audio 898–973ms，全部 ≤5 秒。移除 `session.created` 后 500ms 定时器，并修复 `session.created` 早于 `on_open` 时欢迎语不触发的回调顺序竞态；15 秒可重试超时保留。
+- [x] [Security] 2026-08-06 逐项复核 CSP/响应头：生产现状仅有 CSP，代码已为本地/Zeabur 配置补齐 HSTS、nosniff、SAMEORIGIN、Referrer-Policy、Permissions-Policy、COOP，并同步本地 COS `media-src`/`connect-src`。两份 Nginx 配置 `nginx -t` 通过，本地 `/` 与 `/health` 实际响应头验证通过；线上生效纳入既有部署后验收项。
 ## Backlog
 
 - [x] [Quality] `scripts/quality/audit-tracker.mjs`：数量相等输出 count verified，仅不等时输出 mismatch，并有双分支测试。
@@ -348,5 +347,5 @@
 - [x] [Testing] ScenarioCard 图片回退逻辑 — 已补：`scenariocard-guard.test.js` 加 `resolveShowImage` 4 例（imageUrl/imageError 组合，纯逻辑风格，10/10 通过）
 - [x] [Performance] GoalSetting.js:250 双 spread + id 冗余 — 已修：改 `scenarios.map(({ id, ...rest }) => rest)`，剥离前端临时 id（仅 React key 用）+ 去重复覆盖
 - [x] [CI] Security Scan CodeQL Action v3→v4 — 已升（v3 将于 2026-12 deprecated，提前升）。security.yml init/analyze/upload-sarif 三处 @v3→@v4（v4 major tag 存在，latest v4.36.2）
-- [ ] [CI] Security Scan Node 20 deprecation warning — 上游 actions（checkout@v4 / codeql-action）仍标 Node 20，GitHub runner 已强制 Node 24 运行，非阻断、非我方可控（等上游 action 更新）。仅记录，无需动作
+- [x] [CI] Security Scan Node 20 deprecation warning — 已复核并接受：上游 actions（checkout@v4 / codeql-action）仍标 Node 20，GitHub runner 已强制 Node 24 运行，非阻断、非我方可控；该记录无需仓库侧动作
 - [x] [Testing] E2E free-user 403 负面测试：test_scenario_batch_and_daily_qa.py 新增 free_user scenario（/pool + /select 返回 403，mock 模式 4/4 pass）

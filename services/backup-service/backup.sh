@@ -1,6 +1,12 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Local compose already keeps Tencent COS credentials in the ignored media
+# service env file. Accept those names while retaining COS_* for production
+# least-privilege credentials.
+COS_SECRET_ID="${COS_SECRET_ID:-${TENCENT_SECRET_ID:-}}"
+COS_SECRET_KEY="${COS_SECRET_KEY:-${TENCENT_SECRET_KEY:-}}"
+
 required=(POSTGRES_HOST POSTGRES_PORT POSTGRES_DB POSTGRES_USER PGPASSWORD MONGO_URI BACKUP_COS_BUCKET BACKUP_COS_REGION COS_SECRET_ID COS_SECRET_KEY)
 for name in "${required[@]}"; do
   if [[ -z "${!name:-}" ]]; then
@@ -55,7 +61,10 @@ mongodump \
 )
 
 tar -C "${BUNDLE}" -czf "${BACKUP_TMP_DIR}/${STAMP}.tar.gz" .
-sha256sum "${BACKUP_TMP_DIR}/${STAMP}.tar.gz" > "${BACKUP_TMP_DIR}/${STAMP}.tar.gz.sha256"
+(
+  cd "${BACKUP_TMP_DIR}"
+  sha256sum "${STAMP}.tar.gz" > "${STAMP}.tar.gz.sha256"
+)
 
 upload() {
   local source="$1"

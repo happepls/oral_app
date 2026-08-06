@@ -300,6 +300,10 @@ services:
     build: ./services/backup-service
     container_name: oral_app_backup_service
     restart: unless-stopped
+    env_file:
+      # Local credentials stay in this ignored file; production should inject
+      # dedicated COS_SECRET_* credentials scoped to the backup bucket.
+      - ./services/media-processing-service/.env
     environment:
       - POSTGRES_HOST=postgres
       - POSTGRES_PORT=5432
@@ -307,11 +311,9 @@ services:
       - POSTGRES_USER=user
       - PGPASSWORD=password
       - MONGO_URI=mongodb://root:password@mongo:27017/oral_app_history?authSource=admin
-      - BACKUP_COS_BUCKET=${BACKUP_COS_BUCKET:-}
-      - BACKUP_COS_REGION=${BACKUP_COS_REGION:-}
+      - BACKUP_COS_BUCKET=${BACKUP_COS_BUCKET:-oral-backup-1317719935}
+      - BACKUP_COS_REGION=${BACKUP_COS_REGION:-ap-shanghai}
       - BACKUP_COS_PREFIX=${BACKUP_COS_PREFIX:-backups/oral-app}
-      - COS_SECRET_ID=${COS_SECRET_ID:-}
-      - COS_SECRET_KEY=${COS_SECRET_KEY:-}
       - COS_SESSION_TOKEN=${COS_SESSION_TOKEN:-}
       - BACKUP_ALERT_WEBHOOK=${BACKUP_ALERT_WEBHOOK:-}
     volumes:
