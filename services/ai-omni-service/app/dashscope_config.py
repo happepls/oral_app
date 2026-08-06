@@ -1,5 +1,6 @@
 """Strict DashScope endpoint/credential routing without secret-bearing diagnostics."""
 
+import asyncio
 from dataclasses import dataclass, field
 from urllib.parse import urlparse
 
@@ -157,3 +158,31 @@ def classify_connection_error(error: Exception) -> dict:
         "message": "AI 服务暂时无法连接",
         "retryable": True,
     }
+
+
+async def connect_with_retry(
+    connect,
+    *,
+    attempts: int = 3,
+    base_delay: float = 1.0,
+    runner=None,
+    sleeper=None,
+    on_retry=None,
+):
+    """Run a blocking DashScope connect without blocking the event loop."""
+    if attempts < 1:
+        raise ValueError("attempts must be at least 1")
+    runner = runner or asyncio.to_thread
+    sleeper = sleeper or asyncio.sleep
+
+    for attempt in range(1, attempts + 1):
+        try:
+            return await runner(connect)
+        except Exception as error:
+            public_error = classify_connection_error(error)
+            if not public_error["retryable"] or attempt == attempts:
+                raise
+            delay = base_delay * (2 ** (attempt - 1))
+            if on_retry:
+                on_retry(attempt, attempts, delay, public_error)
+            await sleeper(delay)

@@ -1,5 +1,8 @@
-# Production Docker Compose Configuration
-# This file defines the production deployment configuration
+# Self-hosted production Docker Compose configuration.
+# This file is consumed only by the manual SSH workflow in
+# .github/workflows/deploy.yml. Zeabur production does not consume it: each
+# Git-backed service is built independently from its Root Directory and
+# Dockerfile configured in the Zeabur panel.
 
 version: '3.8'
 

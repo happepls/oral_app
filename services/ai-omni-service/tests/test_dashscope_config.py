@@ -1,9 +1,12 @@
+import asyncio
+
 import pytest
 
 from app.dashscope_config import (
     DashScopeConfigurationError,
     PUBLIC_HTTP_BASE,
     PUBLIC_WS_URL,
+    connect_with_retry,
     resolve_dashscope_config,
 )
 
@@ -81,3 +84,47 @@ def test_public_key_can_never_satisfy_a_maas_request():
             "QWEN3_OMNI_API_KEY": "public-secret",
             "DASHSCOPE_WS_URL": "wss://workspace.ap-southeast-1.maas.aliyuncs.com/api-ws/v1/realtime",
         })
+
+
+def test_transient_connect_failure_retries_without_blocking_event_loop():
+    calls = []
+    delays = []
+
+    def connect():
+        calls.append(1)
+        if len(calls) < 3:
+            raise TimeoutError("temporary network timeout")
+        return "connected"
+
+    async def runner(fn):
+        return fn()
+
+    async def sleeper(delay):
+        delays.append(delay)
+
+    result = asyncio.run(connect_with_retry(
+        connect,
+        attempts=3,
+        runner=runner,
+        sleeper=sleeper,
+    ))
+
+    assert result == "connected"
+    assert len(calls) == 3
+    assert delays == [1.0, 2.0]
+
+
+def test_non_retryable_connect_failure_stops_immediately():
+    calls = []
+
+    def connect():
+        calls.append(1)
+        raise DashScopeConfigurationError("endpoint rejected")
+
+    async def runner(fn):
+        return fn()
+
+    with pytest.raises(DashScopeConfigurationError):
+        asyncio.run(connect_with_retry(connect, attempts=3, runner=runner))
+
+    assert len(calls) == 1

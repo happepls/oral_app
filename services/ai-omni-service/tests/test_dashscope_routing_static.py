@@ -22,3 +22,19 @@ def test_workflow_public_calls_never_fall_back_to_maas_key():
         source = (workflows / filename).read_text()
         assert 'os.getenv("DASHSCOPE_API_KEY")' not in source
         assert 'os.getenv("QWEN3_OMNI_API_KEY")' in source
+
+
+def test_realtime_connect_retries_async_and_never_forwards_raw_errors():
+    source = (ROOT / "services/ai-omni-service/app/main.py").read_text()
+    assert "conversation = await connect_dashscope_with_retry()" in source
+    assert "await connect_dashscope_with_retry(attempts=1)" in source
+    assert 'self.websocket.send_json({"type": "error", "payload": public_error})' in source
+    assert '"payload": {"message": str(error)}' not in source
+
+
+def test_local_compose_does_not_shadow_dedicated_realtime_config():
+    source = (ROOT / "docker-compose.yml").read_text()
+    assert "./services/ai-omni-service/.env" in source
+    assert "- DASHSCOPE_API_KEY=" not in source
+    assert "- DASHSCOPE_WS_URL=wss://dashscope.aliyuncs.com" not in source
+    assert "- DASHSCOPE_HTTP_BASE=https://dashscope.aliyuncs.com" not in source
