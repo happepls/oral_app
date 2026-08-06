@@ -13,8 +13,8 @@ RUN COSCLI_ARCH="$(dpkg --print-architecture)" \
          arm64) COSCLI_SHA256="0404b4da5b1d0c230c7d7522cb3bbec2909e314ab998889a0aeb8dc6094a2d21" ;; \
          *) echo "Unsupported target architecture: ${COSCLI_ARCH}" >&2; exit 1 ;; \
        esac \
-    && curl -fsSL --retry 3 --retry-all-errors --connect-timeout 20 --max-time 120 \
-         "https://cosbrowser.cloud.tencent.com/software/coscli/coscli-linux-${COSCLI_ARCH}" \
+    && curl -fsSL --retry 3 --retry-all-errors --connect-timeout 20 --max-time 600 \
+         "https://github.com/tencentyun/coscli/releases/download/${COSCLI_VERSION}/coscli-${COSCLI_VERSION}-linux-${COSCLI_ARCH}" \
          -o /usr/local/bin/coscli \
     && echo "${COSCLI_SHA256}  /usr/local/bin/coscli" | sha256sum -c - \
     && chmod 0755 /usr/local/bin/coscli \
