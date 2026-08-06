@@ -23,6 +23,7 @@ import { useTranslation } from 'react-i18next';
 import { resolveDailyLimitModal } from './dailyLimitLogic';
 import { shouldUseProgressiveAudio, progressiveAudioSrc, nextProgressiveAttempt } from './audioPlaybackLogic';
 import { cleanStreamingText, appendDelta, aiBubbleRenderState, stripAllMarkers, extractMagicSentence } from './streamingTextLogic';
+import { normalizeConnectionError, shouldShowConnectionError } from './connectionErrorLogic';
 
 const MAGIC_TIPS = [
   '点击消息气泡右侧的喇叭图标，可重听 AI 的示范发音。',
@@ -1779,7 +1780,10 @@ function Conversation() {
            const errMsg = data.message || data.payload?.message || data.payload?.error || data.payload || '';
            const retryable = data.payload?.retryable !== false;
            console.error('Server Error:', errMsg);
-           const errText = String(errMsg);
+           const errText = normalizeConnectionError(
+             errMsg,
+             t('ws_error_generic', '连接异常，请稍后重试')
+           );
            // An explicit server-side error before any usable session means the
            // connection is being rejected (e.g. Invalid scenario after a goal
            // switch). Surface a readable reason instead of an endless
@@ -3684,7 +3688,7 @@ function Conversation() {
             </div>
 
             {/* WebSocket Error Display with Retry / Back exit */}
-            {webSocketError && (
+            {shouldShowConnectionError(webSocketError, isConnected, wsRejected) && (
                 <div className="flex items-center gap-3 w-full max-w-md">
                     <p className="text-xs text-red-500 bg-red-50 dark:bg-red-900/20 px-3 py-1.5 rounded-full flex-1">
                         {webSocketError}

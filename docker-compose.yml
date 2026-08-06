@@ -218,6 +218,13 @@ services:
       - WORKFLOW_SERVICE_URL=http://workflow-service:3006
       - INTERNAL_AUTH_SECRET=${INTERNAL_AUTH_SECRET:?Set INTERNAL_AUTH_SECRET in the root .env}
       - ENABLE_MAGIC_PASSCODE=true
+      # Local development reaches DashScope through the host proxy. Keep all
+      # service-to-service traffic on the Docker network instead of proxying it.
+      - HTTPS_PROXY=http://host.docker.internal:7890
+      - HTTP_PROXY=http://host.docker.internal:7890
+      - NO_PROXY=localhost,127.0.0.1,user-service,conversation-service,media-processing-service,workflow-service,redis,postgres,mongo
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     networks:
       - oral_app_net
 

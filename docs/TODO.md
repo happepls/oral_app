@@ -8,7 +8,7 @@
 - 提供 COS 凭据、设置 30 日/12 月 Lifecycle，执行真实上传与隔离恢复演练。
 - 完成三类真实会话、DashScope 出站网络、首音频 ≤5 秒及 CSP 剩余项验收。
 - 部署后观察 24 小时错误率、历史保存、Webhook、备份和 DashScope 超时。
-[ ]对话场景实测，包括每日问答、复述和场景对话
+
 [ ] [Release] 在独立私有腾讯 COS 配置 Lifecycle（daily 30 天、monthly 12 个月），执行一次真实上传和隔离数据库恢复演练。脚本与 02:30 cron 见 `services/backup-service/`、`docs/backup-restore-runbook.md`。
 [ ] [Performance] 欢迎语链已记录 ws_accepted、dashscope_open、session_created、first_text、first_audio、cos_complete 阶段耗时，移除阻塞 sleep，并在 15 秒无首音频时返回可重试错误；首音频 ≤5 秒目标仍需真实网络压测。
 [ ] [Security] 余下 CSP/响应头 LOW 项逐条复核。
