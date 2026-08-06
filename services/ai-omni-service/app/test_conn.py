@@ -4,6 +4,10 @@ from dashscope.audio.qwen_omni import OmniRealtimeConversation
 from dashscope.audio.qwen_omni import OmniRealtimeCallback
 import asyncio
 from dotenv import load_dotenv
+try:
+    from .dashscope_config import classify_connection_error, resolve_dashscope_config
+except ImportError:
+    from dashscope_config import classify_connection_error, resolve_dashscope_config
 
 # 加载 .env 文件
 # 尝试加载 services/ai-omni-service/.env 如果存在，否则加载当前目录 .env
@@ -14,19 +18,9 @@ if not os.path.exists(env_path):
 print(f"Loading env from: {env_path}")
 load_dotenv(env_path)
 
-api_key = os.getenv("QWEN3_OMNI_API_KEY")
-if not api_key:
-    # 尝试从 DASHSCOPE_API_KEY 读取
-    api_key = os.getenv("DASHSCOPE_API_KEY")
-
-print(f"API Key found: {'Yes' if api_key else 'No'}")
-if api_key:
-    print(f"API Key prefix: {api_key[:6]}...")
-else:
-    print("Error: No API Key found in env variables!")
-    exit(1)
-
-dashscope.api_key = api_key
+config = resolve_dashscope_config(os.environ)
+print(f"Credential source: {config.ws_credential_source}")
+dashscope.api_key = config.http_api_key
 
 class TestCallback(OmniRealtimeCallback):
     def on_open(self):
@@ -39,13 +33,15 @@ class TestCallback(OmniRealtimeCallback):
         print(f"Received Event: {response.get('type')}")
 
     def on_error(self, error):
-        print(f"❌ Error: {error}")
+        print(f"❌ Error: {classify_connection_error(error)['code']}")
 
 def test_connection():
     print("Attempting to connect to DashScope Qwen-Omni...")
     conversation = OmniRealtimeConversation(
         model=os.getenv("QWEN3_OMNI_MODEL", "qwen3.5-omni-plus-realtime"),
         callback=TestCallback(),
+        url=config.ws_url,
+        api_key=config.ws_api_key,
     )
     
     try:
@@ -58,7 +54,7 @@ def test_connection():
         conversation.close()
         print("Test finished.")
     except Exception as e:
-        print(f"❌ Exception during connection: {e}")
+        print(f"❌ Exception during connection: {classify_connection_error(e)['code']}")
 
 if __name__ == "__main__":
     test_connection()

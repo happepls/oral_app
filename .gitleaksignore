@@ -1,0 +1,6 @@
+# Revoked and rotated 2026-08-06. These exact historical findings exist only
+# in commit fef9dab; all new occurrences remain blocked by gitleaks.
+fef9dab80e680b38f6441a42d4240116a52551d0:.security-keys.json:jwt-secret-json:2
+fef9dab80e680b38f6441a42d4240116a52551d0:.security-keys.json:jwt-secret-json:3
+fef9dab80e680b38f6441a42d4240116a52551d0:.security-keys.json:jwt-secret-json:4
+fef9dab80e680b38f6441a42d4240116a52551d0:.security-keys.json:jwt-secret-json:5

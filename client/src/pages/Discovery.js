@@ -237,6 +237,7 @@ function Discovery() {
   const [switchGoalError, setSwitchGoalError] = useState(false);
   const [reloadVersion, setReloadVersion] = useState(0);
   const autoRetryAttemptRef = useRef(0);
+  const hasLoadedDashboardRef = useRef(false);
 
   const isPro = user?.subscription_status === 'active';
 
@@ -336,7 +337,10 @@ function Discovery() {
         setLoading(false);
         return;
       }
-      setLoading(true);
+      // Background retries must not replace the dashboard DOM. Keeping the
+      // existing controls mounted preserves keyboard focus and lets users keep
+      // working while a partial request is retried.
+      if (!hasLoadedDashboardRef.current) setLoading(true);
       setDashboardError(false);
       setDailyQAError(false);
       setDailyQALoading(true);
@@ -427,7 +431,10 @@ function Discovery() {
         setDailyProgress(current => current || { ...EMPTY_DAILY_PROGRESS });
         setDashboardError(true);
       } finally {
-        if (!abortController.signal.aborted) setLoading(false);
+        if (!abortController.signal.aborted) {
+          hasLoadedDashboardRef.current = true;
+          setLoading(false);
+        }
       }
     };
 
@@ -1169,7 +1176,15 @@ function Discovery() {
 
         {/* ── 场景完成 Banner ── */}
         {overallProgress === 100 && (
-          <button type="button" onClick={() => navigate('/goal-setting')}
+          <button
+            type="button"
+            onClick={() => navigate('/goal-setting')}
+            onKeyDown={(event) => {
+              if (event.key === 'Enter' || event.key === ' ') {
+                event.preventDefault();
+                navigate('/goal-setting');
+              }
+            }}
             className="flex w-full items-center gap-3 border-2 border-amber-500/60 rounded-2xl p-4 text-left cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50"
             style={{ background: 'rgba(251,191,36,0.08)' }}>
             <Trophy aria-hidden="true" className="w-7 h-7 text-amber-700 dark:text-amber-300 flex-shrink-0" />

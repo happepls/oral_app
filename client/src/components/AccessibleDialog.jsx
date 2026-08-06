@@ -83,8 +83,17 @@ export function AccessibleDialog({
         if (rootAriaHidden === null) appRoot.removeAttribute('aria-hidden');
         else appRoot.setAttribute('aria-hidden', rootAriaHidden);
       }
-      if (previouslyFocused instanceof HTMLElement && previouslyFocused.isConnected) {
-        previouslyFocused.focus();
+      if (previouslyFocused instanceof HTMLElement) {
+        // Restore synchronously for standards-compliant browsers and test DOMs.
+        if (previouslyFocused.isConnected) previouslyFocused.focus();
+        // WebKit can ignore focus() while the portal and the inert app root are
+        // being restored in the same commit. Retry one frame later so the
+        // opener is interactive again before returning keyboard focus.
+        window.requestAnimationFrame(() => {
+          if (previouslyFocused.isConnected && document.activeElement !== previouslyFocused) {
+            previouslyFocused.focus();
+          }
+        });
       }
     };
   }, []);

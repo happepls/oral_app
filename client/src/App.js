@@ -44,10 +44,37 @@ const RequireAuth = ({ children }) => {
   return user ? children : <Navigate to="/login" replace state={{ from: location.pathname }} />;
 };
 
+const PageMetadata = () => {
+  const location = useLocation();
+  const { t, i18n } = useTranslation();
+
+  useEffect(() => {
+    const isPublicHomepage = location.pathname === '/';
+    const robots = document.querySelector('meta[name="robots"]');
+    const canonical = document.querySelector('link[rel="canonical"]');
+    const schema = document.getElementById('homepage-structured-data');
+
+    if (robots) robots.setAttribute('content', isPublicHomepage ? 'index,follow' : 'noindex,nofollow');
+    if (canonical) {
+      if (isPublicHomepage) canonical.setAttribute('href', 'https://guajiguaji.top/');
+      else canonical.removeAttribute('href');
+    }
+    if (schema) schema.setAttribute('type', isPublicHomepage ? 'application/ld+json' : 'application/json');
+
+    document.documentElement.lang = i18n.language === 'zh' ? 'zh-CN' : i18n.language;
+    document.title = isPublicHomepage ? t('landing_meta_title') : 'GuaJi AI';
+    const description = document.querySelector('meta[name="description"]');
+    if (description && isPublicHomepage) description.setAttribute('content', t('landing_meta_description'));
+  }, [i18n.language, location.pathname, t]);
+
+  return null;
+};
+
 // Separate Layout component for Routes to keep main App clean
 const AppRoutes = () => {
     return (
         <div className="App">
+          <PageMetadata />
           <Routes>
             <Route path="/" element={<Landing />} />
             <Route path="/welcome" element={<Welcome />} />

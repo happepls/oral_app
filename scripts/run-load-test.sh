@@ -1,69 +1,42 @@
-#!/bin/bash
+#!/usr/bin/env bash
+set -euo pipefail
 
-# Load Test Script for Oral AI Application
-# This script performs basic load testing on the application
+target=""
+production=false
+confirmed=false
 
-set -e
+usage() {
+  echo "Usage: $0 --target https://host [--production --confirm-production-read-only]"
+}
 
-echo "Starting load tests for Oral AI Application..."
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --target) target="${2:-}"; shift 2 ;;
+    --production) production=true; shift ;;
+    --confirm-production-read-only) confirmed=true; shift ;;
+    -h|--help) usage; exit 0 ;;
+    *) usage >&2; exit 2 ;;
+  esac
+done
 
-# Check if artillery is installed
-if ! command -v artillery &> /dev/null; then
-    echo "Artillery not found. Installing..."
-    npm install -g artillery
+if [[ -z "$target" || ! "$target" =~ ^https?://[^/]+/?$ ]]; then
+  echo "A scheme and host-only --target is required." >&2
+  exit 2
 fi
 
-# Create a basic load test scenario
-cat > /tmp/load-test.yaml << EOF
-config:
-  target: 'http://localhost:8080'
-  phases:
-    - duration: 60
-      arrivalRate: 5
-      name: Warm up phase
-    - duration: 120
-      arrivalRate: 10
-      name: Sustained load
-    - duration: 60
-      arrivalRate: 20
-      name: Spike phase
-scenarios:
-  - name: "Health check"
-    weight: 2
-    flow:
-      - get:
-          url: "/health"
-  - name: "User registration simulation"
-    weight: 1
-    flow:
-      - post:
-          url: "/api/users/register"
-          json:
-            email: "{{ profile.email }}"
-            username: "{{ profile.username }}"
-            password: "{{ profile.password }}"
-          capture:
-            - json: "$.data.token"
-              as: "token"
-        # Only proceed if registration is successful
-        - get:
-            url: "/api/users/profile"
-            headers:
-              Authorization: "Bearer {{ token }}"
-          expect:
-            - statusCode: 200
-  - name: "API endpoint check"
-    weight: 3
-    flow:
-      - get:
-          url: "/api/users/health"
-EOF
+if [[ "$production" == true && "$confirmed" != true ]]; then
+  echo "Production load tests require --confirm-production-read-only." >&2
+  exit 2
+fi
 
-# Run the load test
-echo "Running load test..."
-artillery run /tmp/load-test.yaml
+if [[ "$target" =~ ^https://(www\.)?guajiguaji\.top/?$ && "$production" != true ]]; then
+  echo "The production host requires --production and --confirm-production-read-only." >&2
+  exit 2
+fi
 
-# Clean up
-rm /tmp/load-test.yaml
-
-echo "Load testing completed."
+python3 -m locust \
+  -f scripts/load/locustfile.py \
+  --host "$target" \
+  --headless \
+  --csv "${LOAD_TEST_REPORT_PREFIX:-/tmp/guaji-readonly-load}" \
+  --only-summary

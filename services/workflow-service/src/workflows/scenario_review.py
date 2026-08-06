@@ -353,7 +353,7 @@ class ScenarioReviewWorkflow:
         penalizes abstract filler, numeric parroting, off-task answers. Replaces the
         old DB-cumulative `user_tasks.score` path that always returned ~100/100.
         """
-        api_key = os.getenv("QWEN3_OMNI_API_KEY") or os.getenv("DASHSCOPE_API_KEY")
+        api_key = os.getenv("QWEN3_OMNI_API_KEY")
         if not api_key:
             logger.warning("[SCENARIO_REVIEW] No API key for deep evaluation, skipping")
             return None
@@ -471,7 +471,7 @@ Student's actual turns (most recent, up to 20):
         Call DashScope text LLM to generate personalized, scenario-specific feedback.
         Returns {"summary": str, "recommendation": str} or None on failure.
         """
-        api_key = os.getenv("QWEN3_OMNI_API_KEY") or os.getenv("DASHSCOPE_API_KEY")
+        api_key = os.getenv("QWEN3_OMNI_API_KEY")
         if not api_key:
             logger.warning("[SCENARIO_REVIEW] No API key for AI feedback, using template fallback")
             return None

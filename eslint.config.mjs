@@ -30,7 +30,7 @@ export default defineConfig([
     settings: { react: { version: "detect" } }
   },
   {
-    files: ["client/src/__tests__/**/*.{js,jsx}", "client/src/setupTests.js"],
+    files: ["client/src/__tests__/**/*.{js,jsx}", "client/src/**/*.test.{js,jsx}", "client/src/setupTests.js"],
     languageOptions: { globals: globals.jest }
   },
   {

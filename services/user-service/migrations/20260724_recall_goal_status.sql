@@ -13,10 +13,8 @@ CREATE TABLE IF NOT EXISTS recall_daily_state (
 CREATE INDEX IF NOT EXISTS idx_recall_daily_state_user_date
     ON recall_daily_state(user_id, state_date);
 
-UPDATE user_goals
-SET status = 'archived',
-    completed_at = NULL,
-    updated_at = NOW()
-WHERE status = 'abandoned';
+-- Legacy goal data is intentionally not rewritten by this structural migration.
+-- Use scripts/release/data-migration-gate.sh after recording the anonymous
+-- candidate count and receiving an explicit production approval.
 
 COMMIT;

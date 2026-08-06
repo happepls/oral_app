@@ -7,13 +7,10 @@ import { formatCnyReference, formatMinorCurrency } from '../utils/pricing';
 import { motion } from 'motion/react';
 import { Mic, GraduationCap, Timer, TrendingUp, ChevronRight, ArrowRight } from 'lucide-react';
 
-const TESTIMONIAL_COUNT = 3;
-
 function Landing() {
   const navigate = useNavigate();
   const { user } = useAuth();
   const { t, i18n } = useTranslation();
-  const [activeTestimonial, setActiveTestimonial] = useState(0);
   const [showPrivacy, setShowPrivacy] = useState(false);
   const [livePrices, setLivePrices] = useState({});
 
@@ -24,10 +21,10 @@ function Landing() {
     { Icon: TrendingUp,    title: t('feature_4_title'), desc: t('feature_4_desc') },
   ], [t]);
 
-  const testimonials = useMemo(() => [
-    { name: t('t1_name'), role: t('t1_role'), text: t('t1_text'), avatar: '👨‍🎓' },
-    { name: t('t2_name'), role: t('t2_role'), text: t('t2_text'), avatar: '👩‍💼' },
-    { name: t('t3_name'), role: t('t3_role'), text: t('t3_text'), avatar: '🧳' },
+  const faqs = useMemo(() => [
+    { question: t('landing_faq_q1'), answer: t('landing_faq_a1') },
+    { question: t('landing_faq_q2'), answer: t('landing_faq_a2') },
+    { question: t('landing_faq_q3'), answer: t('landing_faq_a3') },
   ], [t]);
 
   const pricingPlans = useMemo(() => [
@@ -94,11 +91,28 @@ function Landing() {
   }, [user, navigate]);
 
   useEffect(() => {
-    const timer = setInterval(() => {
-      setActiveTestimonial((prev) => (prev + 1) % TESTIMONIAL_COUNT);
-    }, 5000);
-    return () => clearInterval(timer);
-  }, []);
+    const node = document.getElementById('homepage-structured-data');
+    if (!node) return;
+    try {
+      const schema = JSON.parse(node.textContent);
+      const graph = schema['@graph'] || [];
+      const website = graph.find((item) => item['@type'] === 'WebSite');
+      const app = graph.find((item) => item['@type'] === 'SoftwareApplication');
+      const faq = graph.find((item) => item['@type'] === 'FAQPage');
+      if (website) website.inLanguage = i18n.language === 'zh' ? 'zh-CN' : i18n.language;
+      if (app) app.description = t('landing_direct_answer');
+      if (faq) {
+        faq.mainEntity = faqs.map(({ question, answer }) => ({
+          '@type': 'Question',
+          name: question,
+          acceptedAnswer: { '@type': 'Answer', text: answer },
+        }));
+      }
+      node.textContent = JSON.stringify(schema);
+    } catch {
+      // The build-time JSON-LD remains valid if an extension mutates the node.
+    }
+  }, [faqs, i18n.language, t]);
 
   return (
     <div className="min-h-[100dvh] bg-gradient-to-b from-slate-50 to-white dark:from-slate-900 dark:to-slate-800">
@@ -200,6 +214,23 @@ function Landing() {
         </div>
       </section>
 
+      {/* ── Direct answer ── */}
+      <section className="py-16 px-4 bg-white dark:bg-slate-900" aria-labelledby="direct-answer-title">
+        <div className="max-w-4xl mx-auto">
+          <h2 id="direct-answer-title" className="text-3xl md:text-4xl font-bold text-slate-900 dark:text-white mb-5">
+            {t('landing_direct_title')}
+          </h2>
+          <p className="text-lg leading-8 text-slate-700 dark:text-slate-300">
+            {t('landing_direct_answer')}
+          </p>
+          <ul className="mt-8 grid gap-4 md:grid-cols-3 text-slate-700 dark:text-slate-300">
+            <li className="rounded-xl border border-slate-200 dark:border-slate-700 p-5">{t('landing_direct_point_1')}</li>
+            <li className="rounded-xl border border-slate-200 dark:border-slate-700 p-5">{t('landing_direct_point_2')}</li>
+            <li className="rounded-xl border border-slate-200 dark:border-slate-700 p-5">{t('landing_direct_point_3')}</li>
+          </ul>
+        </div>
+      </section>
+
       {/* ── Features ── */}
       <section id="features" className="py-20 px-4 bg-slate-50 dark:bg-slate-800/50">
         <div className="max-w-6xl mx-auto">
@@ -227,37 +258,6 @@ function Landing() {
                 <p className="text-slate-600 dark:text-slate-400 text-sm">{desc}</p>
               </motion.div>
             ))}
-          </div>
-        </div>
-      </section>
-
-      {/* ── Testimonials ── */}
-      <section className="py-20 px-4">
-        <div className="max-w-4xl mx-auto text-center">
-          <h2 className="text-3xl md:text-4xl font-bold text-slate-900 dark:text-white mb-4">
-            {t('landing_testimonials_title')}
-          </h2>
-          <p className="text-slate-600 dark:text-slate-400 mb-12">{t('landing_testimonials_desc')}</p>
-          <div className="relative bg-white dark:bg-slate-800 rounded-2xl p-8 border border-slate-200 dark:border-slate-700 shadow-brand">
-            <div className="text-5xl mb-4">{testimonials[activeTestimonial].avatar}</div>
-            <p className="text-xl text-slate-700 dark:text-slate-300 italic mb-6">
-              &ldquo;{testimonials[activeTestimonial].text}&rdquo;
-            </p>
-            <p className="font-bold text-slate-900 dark:text-white">{testimonials[activeTestimonial].name}</p>
-            <p className="text-slate-500 text-sm">{testimonials[activeTestimonial].role}</p>
-            <div className="flex justify-center gap-2 mt-6">
-              {testimonials.map((_, i) => (
-                <button
-                  key={i}
-                  onClick={() => setActiveTestimonial(i)}
-                  aria-label={`查看第 ${i + 1} 条用户反馈`}
-                  aria-current={i === activeTestimonial ? 'true' : undefined}
-                  className={`h-2 rounded-full transition-all ${
-                    i === activeTestimonial ? 'w-6 bg-primary' : 'w-2 bg-slate-300 dark:bg-slate-600'
-                  }`}
-                />
-              ))}
-            </div>
           </div>
         </div>
       </section>
@@ -322,6 +322,23 @@ function Landing() {
           <p className="mt-6 text-center text-xs text-slate-500 dark:text-slate-400">
             {t('landing_price_settlement_note')}
           </p>
+        </div>
+      </section>
+
+      {/* ── FAQ ── */}
+      <section className="py-20 px-4 bg-white dark:bg-slate-900" aria-labelledby="faq-title">
+        <div className="max-w-4xl mx-auto">
+          <h2 id="faq-title" className="text-3xl md:text-4xl font-bold text-slate-900 dark:text-white mb-10">
+            {t('landing_faq_title')}
+          </h2>
+          <div className="space-y-6">
+            {faqs.map(({ question, answer }) => (
+              <article key={question} className="rounded-2xl border border-slate-200 dark:border-slate-700 p-6">
+                <h3 className="text-xl font-bold text-slate-900 dark:text-white mb-3">{question}</h3>
+                <p className="leading-7 text-slate-700 dark:text-slate-300">{answer}</p>
+              </article>
+            ))}
+          </div>
         </div>
       </section>
 

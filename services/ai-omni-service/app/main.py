@@ -38,12 +38,14 @@ WORKFLOW_SERVICE_URL = os.getenv("WORKFLOW_SERVICE_URL", "http://workflow-servic
 # Resolve the credential and endpoint as one immutable startup configuration.
 # This prevents a local key from ever being sent to a production MaaS workspace.
 DASHSCOPE_CONFIG = resolve_dashscope_config(os.environ)
-api_key = DASHSCOPE_CONFIG.api_key
-dashscope.api_key = api_key
+api_key = DASHSCOPE_CONFIG.ws_api_key
+dashscope.api_key = DASHSCOPE_CONFIG.http_api_key
 logger.info(
-    "DashScope configured: credential=%s endpoint_family=%s",
-    DASHSCOPE_CONFIG.credential_source,
-    "dedicated" if DASHSCOPE_CONFIG.dedicated else "public",
+    "DashScope configured: ws=%s http=%s chat=%s image=%s",
+    DASHSCOPE_CONFIG.ws_credential_source,
+    DASHSCOPE_CONFIG.http_credential_source,
+    DASHSCOPE_CONFIG.chat_credential_source,
+    DASHSCOPE_CONFIG.image_credential_source,
 )
 
 # DashScope endpoint switching (China default vs international/Zeabur).
@@ -1177,7 +1179,7 @@ async def _generate_daily_question_pool(target_language: str, native_language: s
     # Use the chat-completions endpoint on the GENERAL intl gateway
     # (DASHSCOPE_CHAT_BASE), NOT the SDK global host (which points at the maas
     # dedicated workspace and 403s for text-generation). qwen-flash on intl.
-    ds_api_key = os.getenv("DASHSCOPE_API_KEY") or os.getenv("QWEN3_OMNI_API_KEY")
+    ds_api_key = DASHSCOPE_CONFIG.chat_api_key
     text = None
     try:
         async with httpx.AsyncClient(timeout=30) as _client:
@@ -1705,7 +1707,7 @@ async def _generate_daily_recall_material(
         "Return ONLY valid JSON:\n"
         '{"topic":"short topic","sentences":["sentence 1","sentence 2","sentence 3"]}'
     )
-    api_key = os.getenv("DASHSCOPE_API_KEY") or os.getenv("QWEN3_OMNI_API_KEY")
+    api_key = DASHSCOPE_CONFIG.chat_api_key
     try:
         async with httpx.AsyncClient(timeout=10) as client:
             response = await client.post(
@@ -3500,16 +3502,16 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query(None), ses
                 model=os.getenv("QWEN3_OMNI_MODEL", "qwen3.5-omni-flash-realtime"),
                 callback=callback,
                 url=DASHSCOPE_CONFIG.ws_url,
-                api_key=DASHSCOPE_CONFIG.api_key,
+                api_key=DASHSCOPE_CONFIG.ws_api_key,
             )
             callback.conversation = conversation
             conversation.connect()
             logger.info(f"DashScope connected call initiated for session {session_id}")
             return conversation
         except Exception as e:
-            logger.error(f"Error connecting to DashScope: {e}")
-            logger.error(traceback.format_exc())
-            raise e
+            public_error = classify_connection_error(e)
+            logger.error("DashScope connection failed: %s", public_error["code"])
+            raise
 
 
 
@@ -4385,9 +4387,7 @@ async def _try_wanx_image(scenario_title: str, prompt_en: str, size: str = "768*
     need long-term persistence must re-host it (e.g. COS).
     """
     import asyncio
-    dashscope_key = os.environ.get("DASHSCOPE_API_KEY") or os.environ.get("QWEN3_OMNI_API_KEY")
-    if not dashscope_key:
-        return None
+    dashscope_key = DASHSCOPE_CONFIG.image_api_key
 
     async def _call_wanx() -> str | None:
         try:
@@ -4491,10 +4491,7 @@ async def generate_scenarios(payload: dict = Body(...)):
         from fastapi import HTTPException
         raise HTTPException(status_code=400, detail="Missing required fields")
 
-    ds_api_key = os.getenv("QWEN3_OMNI_API_KEY") or os.getenv("DASHSCOPE_API_KEY")
-    if not ds_api_key:
-        from fastapi import HTTPException
-        raise HTTPException(status_code=503, detail="AI service not configured")
+    ds_api_key = DASHSCOPE_CONFIG.chat_api_key
 
     prompt = (
         f"你是一位专业的口语学习课程设计师。请为一位学习{target_language}的用户生成恰好10个口语练习场景。\n\n"
@@ -4564,9 +4561,7 @@ async def _scenario_visual_prompt(scenario_title: str) -> str:
         f"Flat illustration of a real-life scene: {scenario_title}. "
         f"Soft pastel colors, friendly, no text, no letters, no words."
     )
-    ds_api_key = os.getenv("QWEN3_OMNI_API_KEY") or os.getenv("DASHSCOPE_API_KEY")
-    if not ds_api_key:
-        return fallback
+    ds_api_key = DASHSCOPE_CONFIG.chat_api_key
     try:
         import httpx as _httpx
         async with _httpx.AsyncClient(timeout=12) as client:
@@ -4751,7 +4746,7 @@ async def text_to_speech(payload: dict = Body(...)):
     try:
         def _synth():
             response = dashscope.MultiModalConversation.call(
-                api_key=DASHSCOPE_CONFIG.api_key,
+                api_key=DASHSCOPE_CONFIG.http_api_key,
                 model="qwen3-tts-flash",
                 text=text,
                 voice=voice,
@@ -4801,7 +4796,7 @@ async def translate_text(req: TranslateRequest):
     # Use chat-completions on the GENERAL intl gateway (DASHSCOPE_CHAT_BASE),
     # NOT the SDK global host (which points at the maas dedicated workspace and
     # 403s for text-generation). qwen-flash on intl.
-    ds_api_key = os.getenv("DASHSCOPE_API_KEY") or os.getenv("QWEN3_OMNI_API_KEY")
+    ds_api_key = DASHSCOPE_CONFIG.chat_api_key
     try:
         async with httpx.AsyncClient(timeout=20) as client:
             resp = await client.post(

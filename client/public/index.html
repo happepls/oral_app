@@ -5,14 +5,105 @@
     <link rel="icon" href="%PUBLIC_URL%/favicon.ico" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="theme-color" content="#637FF1" />
-    <meta name="description" content="GuaJi AI - 24/7 AI口语练习伙伴" />
-    <link rel="apple-touch-icon" href="%PUBLIC_URL%/logo192.png" />
+    <meta name="description" content="GuaJi AI 为语言学习者提供 AI 语音对话、真实场景任务、即时反馈和学习进度记录，帮助你按目标练习口语。" />
+    <meta name="robots" content="index,follow" />
+    <link rel="canonical" href="https://guajiguaji.top/" />
+    <meta property="og:type" content="website" />
+    <meta property="og:locale" content="zh_CN" />
+    <meta property="og:site_name" content="GuaJi AI" />
+    <meta property="og:title" content="GuaJi AI｜按真实场景练习口语的 AI 语音伙伴" />
+    <meta property="og:description" content="通过 AI 语音对话、场景任务、即时反馈与进度记录，按自己的语言目标反复练习口语。" />
+    <meta property="og:url" content="https://guajiguaji.top/" />
+    <meta property="og:image" content="https://guajiguaji.top/guaji-logo.svg" />
+    <meta name="twitter:card" content="summary" />
+    <meta name="twitter:title" content="GuaJi AI｜AI 口语练习伙伴" />
+    <meta name="twitter:description" content="用 AI 语音对话和真实场景任务练习口语，并记录学习进度。" />
+    <meta name="twitter:image" content="https://guajiguaji.top/guaji-logo.svg" />
+    <link rel="apple-touch-icon" href="%PUBLIC_URL%/guaji-logo.svg" />
     <link rel="manifest" href="%PUBLIC_URL%/manifest.json" />
-    <link href="%PUBLIC_URL%/fonts/fonts.css" rel="stylesheet"/>
-    <title>Guaji AI - 口语练习</title>
+    <link href="%PUBLIC_URL%/fonts/fonts.css" rel="stylesheet" />
+    <title>GuaJi AI｜按真实场景练习口语的 AI 语音伙伴</title>
+    <script id="homepage-structured-data" type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@graph": [
+          {
+            "@type": "WebSite",
+            "@id": "https://guajiguaji.top/#website",
+            "url": "https://guajiguaji.top/",
+            "name": "GuaJi AI",
+            "inLanguage": "zh-CN"
+          },
+          {
+            "@type": "Organization",
+            "@id": "https://guajiguaji.top/#organization",
+            "name": "GuaJi AI",
+            "url": "https://guajiguaji.top/",
+            "logo": "https://guajiguaji.top/guaji-logo.svg"
+          },
+          {
+            "@type": "SoftwareApplication",
+            "@id": "https://guajiguaji.top/#app",
+            "name": "GuaJi AI",
+            "url": "https://guajiguaji.top/",
+            "applicationCategory": "EducationalApplication",
+            "operatingSystem": "Web",
+            "inLanguage": ["zh-CN", "en"],
+            "publisher": { "@id": "https://guajiguaji.top/#organization" },
+            "description": "提供 AI 语音对话、真实场景任务、即时反馈和学习进度记录的浏览器口语练习应用。"
+          },
+          {
+            "@type": "FAQPage",
+            "@id": "https://guajiguaji.top/#faq",
+            "mainEntity": [
+              {
+                "@type": "Question",
+                "name": "GuaJi AI 是什么？",
+                "acceptedAnswer": { "@type": "Answer", "text": "GuaJi AI 是浏览器中的 AI 口语练习应用，提供语音对话、真实场景任务、即时反馈和学习进度记录。" }
+              },
+              {
+                "@type": "Question",
+                "name": "可以按自己的学习目标练习吗？",
+                "acceptedAnswer": { "@type": "Answer", "text": "可以。你可以选择目标语言、当前水平、学习目标和声音，系统据此生成练习场景与任务。" }
+              },
+              {
+                "@type": "Question",
+                "name": "练习过程会记录什么？",
+                "acceptedAnswer": { "@type": "Answer", "text": "应用会记录任务进度、对话历史和学习表现，方便你回顾已完成的场景并继续练习。" }
+              }
+            ]
+          }
+        ]
+      }
+    </script>
   </head>
   <body>
-    <noscript>您需要启用 JavaScript 来运行此应用。</noscript>
-    <div id="root"></div>
+    <div id="root">
+      <main style="max-width: 880px; margin: 0 auto; padding: 48px 20px; font-family: system-ui, sans-serif; line-height: 1.7; color: #17213f">
+        <header>
+          <p>GuaJi AI · AI 口语练习伙伴</p>
+          <h1>按真实场景练习口语的 AI 语音伙伴</h1>
+          <p>GuaJi AI 是浏览器中的口语练习应用。你可以设置目标语言和学习目标，通过 AI 语音对话完成真实场景任务，获得即时反馈，并在之后查看学习进度。</p>
+          <p><a href="/register">免费开始体验</a> · <a href="/login">登录</a></p>
+        </header>
+        <section aria-labelledby="fallback-capabilities">
+          <h2 id="fallback-capabilities">你可以怎样使用 GuaJi AI？</h2>
+          <ul>
+            <li>根据目标语言、水平和学习目标生成口语场景。</li>
+            <li>通过浏览器进行 AI 语音对话，并逐项完成场景任务。</li>
+            <li>查看即时反馈、任务进度、对话历史和复习内容。</li>
+          </ul>
+        </section>
+        <section aria-labelledby="fallback-faq">
+          <h2 id="fallback-faq">常见问题</h2>
+          <h3>GuaJi AI 是什么？</h3>
+          <p>GuaJi AI 是浏览器中的 AI 口语练习应用，提供语音对话、真实场景任务、即时反馈和学习进度记录。</p>
+          <h3>可以按自己的学习目标练习吗？</h3>
+          <p>可以。你可以选择目标语言、当前水平、学习目标和声音，系统据此生成练习场景与任务。</p>
+          <h3>练习过程会记录什么？</h3>
+          <p>应用会记录任务进度、对话历史和学习表现，方便你回顾已完成的场景并继续练习。</p>
+        </section>
+      </main>
+    </div>
   </body>
 </html>

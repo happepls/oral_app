@@ -8,7 +8,8 @@
     "verify": "node scripts/quality/verify.mjs",
     "verify:report": "node scripts/quality/score.mjs",
     "verify:ui": "npm --prefix client run test:e2e",
-    "verify:ui:report": "node scripts/quality/playwright-findings.mjs"
+    "verify:ui:report": "node scripts/quality/playwright-findings.mjs",
+    "verify:geo": "node scripts/verify-geo-build.mjs"
   },
   "devDependencies": {
     "@eslint/js": "^9.37.0",

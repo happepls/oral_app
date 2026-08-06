@@ -40,8 +40,37 @@ test.beforeEach(async ({ page }, testInfo) => {
     else if (url.endsWith('/users/goals')) data = { goals: [activeGoal] };
     else if (url.includes('/checkin/history')) data = [];
     else if (url.includes('/checkin/stats')) data = { streak: 0, total: 0 };
+    else if (url.includes('/users/daily-progress')) data = {
+      recallCompleted: false,
+      qaCompleted: false,
+      scenarioCompleted: false,
+      practiceMinutes: 0,
+      practiceGoal: 15,
+      streak: 0,
+      monthlyCheckinDays: 0,
+      checkedInToday: false,
+    };
+    else if (url.includes('/users/daily-qa-pass')) data = { passed: false };
+    else if (url.includes('/ai/daily-question')) data = {
+      id: 'quality-daily-question',
+      question_text: 'What did you enjoy doing today?',
+      reference_answer: 'I enjoyed practicing English today.',
+      passed: false,
+    };
     else if (url.includes('/history/')) data = [];
-    else if (url.includes('/stripe/products')) data = { products: [] };
+    else if (url.includes('/stripe/products-with-prices')) data = [
+      {
+        id: 'annual-product', name: 'Guaji AI Annual', active: true,
+        metadata: { app: 'guaji_ai', tier: 'annual' },
+        prices: [{ id: 'annual-price', active: true, unit_amount: 9900, currency: 'usd', recurring: { interval: 'year', interval_count: 1 } }],
+      },
+      {
+        id: 'weekly-product', name: 'Guaji AI Weekly', active: true,
+        metadata: { app: 'guaji_ai', tier: 'weekly' },
+        prices: [{ id: 'weekly-price', active: true, unit_amount: 499, currency: 'usd', recurring: { interval: 'week', interval_count: 1 } }],
+      },
+    ];
+    else if (url.includes('/stripe/products')) data = [];
     await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ success: true, data }) });
   });
   await page.route('**/api/users/sse', (route) => route.fulfill({ status: 200, contentType: 'text/event-stream', body: 'event: ping\ndata: {}\n\n' }));
@@ -139,9 +168,9 @@ test('@critical discovery recovers after a transient dashboard request failure',
   });
 
   await page.goto('/discovery');
-  await expect(page.getByRole('alert').filter({ hasText: /not fully loaded|未完全加载/i })).toBeVisible();
+  await expect(page.getByRole('alert').filter({ hasText: /couldn't fully load|not fully loaded|未完全加载/i })).toBeVisible();
   await expect(page.getByRole('heading', { name: /today's tasks|今日任务/i })).toBeVisible({ timeout: 7000 });
-  await expect(page.getByRole('alert').filter({ hasText: /not fully loaded|未完全加载/i })).toHaveCount(0);
+  await expect(page.getByRole('alert').filter({ hasText: /couldn't fully load|not fully loaded|未完全加载/i })).toHaveCount(0);
   expect(goalRequests).toBeGreaterThanOrEqual(2);
 });
 
@@ -164,7 +193,7 @@ test('@critical discovery locked scenario opens a keyboard-safe localized dialog
   await page.evaluate((useDark) => document.documentElement.classList.toggle('dark', useDark), testInfo.project.name.endsWith('-dark-en'));
 
   const unlock = page.getByRole('button', { name: /view unlock options|查看解锁方式/i });
-  await unlock.click();
+  await unlock.press('Enter');
   const dialog = page.getByRole('dialog', { name: /upgrade to pro|升级 pro/i });
   await expect(dialog).toBeVisible();
   await expect(page.getByRole('button', { name: /close dialog|关闭对话框/i })).toBeFocused();
@@ -174,7 +203,6 @@ test('@critical discovery locked scenario opens a keyboard-safe localized dialog
 });
 
 test('@critical discovery completion banner is keyboard actionable', async ({ page }) => {
-  await page.addInitScript(() => localStorage.setItem('goal_all_completed_1', 'true'));
   await page.route('**/api/v1/tasks?limit=100', (route) => route.fulfill({
     status: 200,
     contentType: 'application/json',
@@ -193,8 +221,15 @@ test('@critical discovery completion banner is keyboard actionable', async ({ pa
   }));
   await page.goto('/discovery');
 
+  // A freshly completed goal may legitimately show the one-time achievement
+  // dialog first. Dismiss it by keyboard before exercising the banner behind it.
+  const achievementDialog = page.getByRole('dialog', { name: /goal completed|目标全部完成/i });
+  await expect(achievementDialog).toBeVisible();
+  await achievementDialog.getByRole('button', { name: /later|稍后再说/i }).press('Enter');
+  await expect(achievementDialog).toBeHidden();
   const completion = page.getByRole('button', { name: /all scenarios completed|所有场景已完成/i });
-  await completion.focus();
-  await page.keyboard.press('Enter');
+  // Target the control directly so the assertion exercises its keyboard
+  // activation in WebKit as well as Chromium.
+  await completion.press('Enter');
   await expect(page).toHaveURL(/\/goal-setting$/);
 });

@@ -34,6 +34,7 @@ function Login() {
   const [sending, setSending] = useState(false);
   const [cooldown, setCooldown] = useState(0);
   const googleContainerRef = useRef(null);
+  const emailSubmitRef = useRef(null);
   const [googleButtonWidth, setGoogleButtonWidth] = useState(360);
 
   useEffect(() => {
@@ -241,6 +242,11 @@ function Login() {
                     onChange={(e) => setPassword(e.target.value)}
                     required
                     disabled={loading}
+                    onFocus={() => {
+                      // With a software keyboard open, keep the primary action in
+                      // the visual viewport instead of leaving it below the fold.
+                      window.requestAnimationFrame(() => emailSubmitRef.current?.scrollIntoView({ block: 'nearest' }));
+                    }}
                     className="w-full px-4 py-3 pr-11 rounded-xl border border-slate-200 dark:border-slate-600 bg-slate-50 dark:bg-slate-700 text-slate-900 dark:text-white focus:border-primary focus:ring-2 focus:ring-primary/20 outline-none disabled:opacity-50 transition"
                     placeholder="••••••••"
                   />
@@ -265,6 +271,7 @@ function Login() {
               </div>
 
               <motion.button
+                ref={emailSubmitRef}
                 whileHover={{ scale: 1.01 }}
                 whileTap={{ scale: 0.98 }}
                 type="submit"
