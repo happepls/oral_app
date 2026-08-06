@@ -1,11 +1,15 @@
 FROM mongo:6.0 AS mongo-tools
 
-FROM ubuntu:24.04
+FROM postgres:18-bookworm
+
+# The production database runs PostgreSQL 18. Keep pg_dump on the same major
+# version; older clients refuse to dump newer servers.
+ENTRYPOINT []
 
 ARG COSCLI_VERSION=v1.0.8
 RUN apt-get update \
     && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-       ca-certificates cron curl gzip postgresql-client ripgrep tar tzdata \
+       ca-certificates cron curl gzip ripgrep tar tzdata \
     && rm -rf /var/lib/apt/lists/*
 RUN COSCLI_ARCH="$(dpkg --print-architecture)" \
     && case "${COSCLI_ARCH}" in \
