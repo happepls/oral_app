@@ -24,9 +24,9 @@ from dashscope.audio.qwen_omni import (
 )
 import dashscope
 try:
-    from .dashscope_config import classify_connection_error, resolve_dashscope_config
+    from .dashscope_config import classify_connection_error, connect_with_retry, resolve_dashscope_config
 except ImportError:  # tests and direct `python app/main.py` load it as a module
-    from dashscope_config import classify_connection_error, resolve_dashscope_config
+    from dashscope_config import classify_connection_error, connect_with_retry, resolve_dashscope_config
 
 # --- Configuration & Logging ---
 logging.basicConfig(level=logging.INFO)
@@ -3332,15 +3332,17 @@ class WebSocketCallback(OmniRealtimeCallback):
                 pass  # Ignore errors if WebSocket is already closed
 
     def on_error(self, error: Exception) -> None:
-        error_str = str(error)
-        logger.error(f"DashScope Error: {error_str}")
-        if 'Access denied' in error_str:
+        public_error = classify_connection_error(error)
+        logger.error("DashScope Error: %s", public_error["code"])
+        if not public_error["retryable"]:
             self.auth_denied = True
-            logger.error("[DashScope] Access denied — API key lacks permission or unsupported parameter. Reconnect blocked.")
+            logger.error("[DashScope] Non-retryable connection error — reconnect blocked.")
+        if getattr(self, "_connection_retrying", False):
+            return
         # Don't try to send message if WebSocket is already closed
         try:
             asyncio.run_coroutine_threadsafe(
-                self.websocket.send_json({"type": "error", "payload": {"message": str(error)}}),
+                self.websocket.send_json({"type": "error", "payload": public_error}),
                 self.loop
             )
         except Exception:
@@ -3513,6 +3515,33 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query(None), ses
             logger.error("DashScope connection failed: %s", public_error["code"])
             raise
 
+    async def connect_dashscope_with_retry(attempts=3):
+        def on_retry(attempt, total, delay, public_error):
+            logger.warning(
+                "DashScope connect retry %d/%d in %.1fs: %s",
+                attempt + 1,
+                total,
+                delay,
+                public_error["code"],
+            )
+            failed = getattr(callback, "conversation", None)
+            if failed:
+                try:
+                    failed.close()
+                except Exception:
+                    pass
+                callback.conversation = None
+
+        callback._connection_retrying = True
+        try:
+            return await connect_with_retry(
+                connect_dashscope,
+                attempts=attempts,
+                on_retry=on_retry,
+            )
+        finally:
+            callback._connection_retrying = False
+
 
 
     async def heartbeat():
@@ -3532,7 +3561,7 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query(None), ses
     conversation = None
     try:
         try:
-            conversation = connect_dashscope()
+            conversation = await connect_dashscope_with_retry()
         except Exception as e:
             public_error = classify_connection_error(e)
             await websocket.send_json({"type": "error", "payload": public_error})
@@ -3615,7 +3644,7 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query(None), ses
                     if _backoff > 1:
                         await asyncio.sleep(_backoff)
                     try:
-                        conversation = connect_dashscope()
+                        conversation = await connect_dashscope_with_retry(attempts=1)
                         await asyncio.sleep(0.5)
                     except Exception as e:
                         logger.error(f"Reconnection failed: {e}")
