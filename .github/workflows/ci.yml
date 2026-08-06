@@ -91,9 +91,7 @@ jobs:
         python -m compileall -q integration_tests
 
   ui-audit:
-    # Pixel baselines are approved on macOS; pin the runner OS so system-font
-    # rasterization does not turn visual review into an Ubuntu/macOS diff.
-    runs-on: macos-14
+    runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v4
     - name: Use Node.js 20

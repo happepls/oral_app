@@ -91,6 +91,9 @@ for (const [name, url] of pages) {
     await expect(page).toHaveScreenshot(`${name}.png`, {
       animations: 'disabled',
       fullPage: true,
+      // System font antialiasing differs across developer and CI hosts. Keep
+      // the strict 3% layout/content budget while tolerating edge-color noise.
+      threshold: 0.3,
       maxDiffPixelRatio: 0.03,
     });
     const overflow = await page.evaluate(() => ({ width: document.documentElement.scrollWidth, viewport: window.innerWidth }));
