@@ -479,11 +479,11 @@ function Subscription() {
               value={promoCode}
               onChange={(e) => setPromoCode(e.target.value)}
               placeholder={t('qa_ui.subscription_promo_placeholder')}
-              className="flex-1 px-4 py-2 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-700 text-slate-900 dark:text-white focus:border-indigo-500 focus:outline-none"
+              className="min-w-0 flex-1 px-4 py-2 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-700 text-slate-900 dark:text-white focus:border-indigo-500 focus:outline-none"
             />
             <button
               onClick={handleApplyPromo}
-              className="px-4 py-2 bg-indigo-600 text-white rounded-lg font-medium hover:bg-indigo-700"
+              className="shrink-0 whitespace-nowrap px-4 py-2 bg-indigo-600 text-white rounded-lg font-medium hover:bg-indigo-700"
             >
               {t('qa_ui.subscription_apply')}
             </button>
