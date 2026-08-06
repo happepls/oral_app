@@ -1,5 +1,6 @@
 const { test, expect } = require('@playwright/test');
 const AxeBuilder = require('@axe-core/playwright').default;
+const fs = require('node:fs');
 const path = require('node:path');
 
 const pages = [
@@ -88,7 +89,10 @@ for (const [name, url] of pages) {
     await expect(page.locator('body')).toBeVisible();
     const target = path.resolve(testInfo.config.rootDir, '../../quality/artifacts/ui-candidates', testInfo.project.name, `${name}.png`);
     await page.screenshot({ path: target, fullPage: true, animations: 'disabled' });
-    await expect(page).toHaveScreenshot(`${name}.png`, {
+    const linuxSnapshot = `${name}-linux.png`;
+    const linuxSnapshotPath = path.resolve(testInfo.config.rootDir, '../../quality/baselines/ui', testInfo.project.name, linuxSnapshot);
+    const snapshot = process.platform === 'linux' && fs.existsSync(linuxSnapshotPath) ? linuxSnapshot : `${name}.png`;
+    await expect(page).toHaveScreenshot(snapshot, {
       animations: 'disabled',
       fullPage: true,
       // System font antialiasing differs across developer and CI hosts. Keep
