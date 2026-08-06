@@ -103,7 +103,7 @@ jobs:
     - name: Install client dependencies
       run: npm ci --legacy-peer-deps --prefix client
     - name: Install browser engines
-      run: npm exec --prefix client -- playwright install --with-deps chromium webkit
+      run: npm exec --prefix client -- playwright install --with-deps chrome webkit
     - name: Run deterministic viewport, theme, locale, accessibility, and WebKit checks
       run: npm --prefix client run test:e2e
     - name: Upload UI evidence
