@@ -1,4 +1,4 @@
-import React, { createContext, useState, useContext, useEffect, useMemo } from 'react';
+import React, { createContext, useState, useContext, useEffect, useMemo, useCallback } from 'react';
 import { authAPI, userAPI } from '../services/api';
 
 const AuthContext = createContext(null);
@@ -170,7 +170,7 @@ export const AuthProvider = ({ children }) => {
     try {
       setLoading(true);
       const response = await userAPI.updateProfile(updates);
-      const updatedUser = response.user;
+      const updatedUser = response.user || response;
       localStorage.setItem('user', JSON.stringify(updatedUser));
       setUser(updatedUser);
       return { success: true };
@@ -202,12 +202,12 @@ export const AuthProvider = ({ children }) => {
     setError(null);
   };
 
-  const refreshProfile = async () => {
+  const refreshProfile = useCallback(async () => {
     try {
       const response = await userAPI.getProfile();
       // The API response is now standardized with success/data format
       // handleResponse in api.js extracts the data part for successful responses
-      const userData = response.user;
+      const userData = response.user || response;
       localStorage.setItem('user', JSON.stringify(userData));
       setUser(userData);
       return userData; // callers (e.g. Subscription success poll) read fresh status
@@ -215,7 +215,7 @@ export const AuthProvider = ({ children }) => {
       console.error('Failed to refresh profile:', err);
       return null;
     }
-  };
+  }, []);
 
   const checkTokenExpiry = () => {
     // Cookie-based auth: token validity is handled by server/httpOnly cookie

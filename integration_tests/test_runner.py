@@ -11,7 +11,7 @@ import unittest
 import subprocess
 import time
 import signal
-import requests
+import argparse
 from pathlib import Path
 
 
@@ -49,6 +49,7 @@ class IntegrationTestRunner:
     
     def check_service_health(self):
         """Check if key services are healthy"""
+        import requests
         services_to_check = [
             ("http://localhost:8080", "API Gateway"),
             ("http://localhost:3002", "User Service"),
@@ -123,6 +124,8 @@ class IntegrationTestRunner:
 
 
 if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="Start the local stack and run Guaji integration tests")
+    parser.parse_args()
     runner = IntegrationTestRunner()
     success = runner.run()
     sys.exit(0 if success else 1)

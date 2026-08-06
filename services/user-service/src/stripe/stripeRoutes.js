@@ -87,6 +87,26 @@ router.get('/prices', async (req, res) => {
   }
 });
 
+async function validatePromotionCode(req, res) {
+  try {
+    const promo = await stripeService.validatePromotionCode(req.body?.code);
+    if (!promo) return res.status(404).json({ valid: false, error: '优惠码无效或已过期' });
+    res.json({
+      valid: true,
+      code: promo.code,
+      discount: promo.percent_off,
+      amount_off: promo.amount_off,
+      currency: promo.currency,
+      description: promo.description,
+    });
+  } catch (error) {
+    console.error('Error validating Stripe promotion code:', error.message);
+    res.status(502).json({ valid: false, error: '优惠码校验服务暂不可用' });
+  }
+}
+
+router.post('/promotion-codes/validate', protect, validatePromotionCode);
+
 router.get('/subscription', protect, async (req, res) => {
   try {
     const user = await stripeService.getUserById(req.user.id);
@@ -142,7 +162,11 @@ router.post('/checkout', protect, async (req, res) => {
       res.json({ url: session.url });
     } catch (sessionError) {
       console.error('Error creating checkout session:', sessionError);
-      res.status(500).json({ error: 'Failed to create checkout session' });
+      res.status(sessionError.code === 'INVALID_PROMOTION_CODE' ? 400 : 500).json({
+        error: sessionError.code === 'INVALID_PROMOTION_CODE'
+          ? 'Promotion code is invalid or expired'
+          : 'Failed to create checkout session'
+      });
     }
   } catch (error) {
     console.error('Error creating checkout session:', error);
@@ -154,8 +178,8 @@ router.post('/portal', protect, async (req, res) => {
   try {
     const user = await stripeService.getUserById(req.user.id);
 
-    if (!user.stripe_customer_id) {
-      return res.status(400).json({ error: 'No Stripe customer found' });
+    if (!user.stripe_customer_id || !user.stripe_subscription_id) {
+      return res.status(400).json({ error: 'No manageable Stripe subscription found' });
     }
 
     const baseUrl = getValidatedBaseUrl(req);

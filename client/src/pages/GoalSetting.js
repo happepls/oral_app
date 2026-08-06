@@ -7,6 +7,7 @@ import { Lock } from 'lucide-react';
 import { VOICE_OPTIONS, DEFAULT_VOICE } from '../config/personaConfig';
 import { GuajiMascot } from '../components/GuajiMascot';
 import { LANGUAGES as SHARED_LANGUAGES } from '../constants/languages';
+import { useTranslation } from 'react-i18next';
 
 const TOTAL_STEPS = 5;  // Welcome + Language + Quiz + Goal/Voice + Scenarios
 
@@ -122,9 +123,9 @@ const GOAL_TYPES = [
 // VOICE_OPTIONS imported from personaConfig.js
 
 const FEATURES = [
-  { icon: '🎯', title: '个性化学习', desc: '根据你的水平定制内容' },
-  { icon: '💬', title: '真实场景',   desc: '18+ 生活场景任你选' },
-  { icon: '🎤', title: '实时反馈',   desc: '发音和表达即时点评' },
+  { icon: '🎯', titleKey: 'qa_ui.goal_personalized', descKey: 'qa_ui.goal_personalized_desc' },
+  { icon: '💬', titleKey: 'qa_ui.goal_scenarios', descKey: 'qa_ui.goal_scenarios_desc' },
+  { icon: '🎤', titleKey: 'qa_ui.goal_feedback', descKey: 'qa_ui.goal_feedback_desc' },
 ];
 
 const slideVariants = {
@@ -134,6 +135,7 @@ const slideVariants = {
 };
 
 export default function GoalSetting() {
+  const { t } = useTranslation();
   const navigate = useNavigate();
   const location = useLocation();
   const { user, updateProfile } = useAuth();
@@ -291,7 +293,7 @@ export default function GoalSetting() {
     goTo(step - 1);
   };
 
-  const nextLabel = step === 1 ? '开始设置'
+  const nextLabel = step === 1 ? t('qa_ui.get_started')
     : step === 3 && currentQ < QUIZ_QUESTIONS.length - 1 ? '下一题'
     : step === 3 ? '查看结果'
     : step === 4 ? (isGenerating ? '生成中...' : '生成场景')
@@ -307,7 +309,7 @@ export default function GoalSetting() {
   const displayTotal = TOTAL_STEPS - 1;
 
   return (
-    <div className="flex flex-col min-h-screen" style={{ background: 'var(--background)' }}>
+    <div className="flex h-[100dvh] flex-col overflow-hidden" style={{ background: 'var(--background)' }}>
 
       {/* ── Top Bar ── */}
       <div className="px-5 pt-5 pb-0 flex items-center justify-between shrink-0">
@@ -332,7 +334,7 @@ export default function GoalSetting() {
       </div>
 
       {/* ── Content ── */}
-      <div className="flex-1 flex flex-col px-4 pt-5 pb-32 overflow-y-auto">
+      <div className="flex min-h-0 flex-1 flex-col overflow-y-auto px-4 py-4">
         <AnimatePresence mode="wait" custom={dir}>
           <motion.div
             key={step === 3 ? `3-${currentQ}` : step}
@@ -342,25 +344,26 @@ export default function GoalSetting() {
             animate="center"
             exit="exit"
             transition={{ duration: 0.25, ease: [0.4, 0, 0.2, 1] }}
+            className={`w-full max-w-lg self-center ${step === 1 ? 'my-auto' : ''}`}
           >
 
             {/* ─── STEP 1: Welcome ─── */}
             {step === 1 && (
-              <div className="bg-white rounded-3xl shadow-sm p-6 flex flex-col items-center gap-5">
-                <GuajiMascot mood="happy" size={100} className="mt-2" />
+              <div className="flex flex-col items-center gap-3 rounded-3xl bg-white p-4 shadow-sm">
+                <GuajiMascot mood="happy" size={76} />
                 <div className="text-center">
-                  <h1 className="text-3xl font-bold text-slate-900 mb-2">欢迎来到 GuaJi</h1>
-                  <p className="text-slate-500 text-sm mb-1">你的私人 AI 口语练习伙伴</p>
-                  <p className="text-slate-500 text-sm">随时随地，自信开口说外语</p>
+                  <h1 className="mb-2 text-2xl font-bold text-slate-900 sm:text-3xl">{t('qa_ui.goal_welcome')}</h1>
+                  <p className="text-slate-500 text-sm mb-1">{t('qa_ui.goal_partner')}</p>
+                  <p className="text-slate-500 text-sm">{t('qa_ui.goal_anywhere')}</p>
                 </div>
-                <div className="grid grid-cols-3 gap-3 w-full mt-2">
+                <div className="grid w-full grid-cols-3 gap-2">
                   {FEATURES.map(f => (
-                    <div key={f.title}
-                      className="flex flex-col items-center gap-2 rounded-2xl p-3 text-center"
+                    <div key={f.titleKey}
+                      className="flex min-w-0 flex-col items-center gap-1 rounded-2xl p-2 text-center"
                       style={{ background: 'rgba(99,127,241,0.07)' }}>
                       <span className="text-2xl">{f.icon}</span>
-                      <span className="text-xs font-bold text-slate-800">{f.title}</span>
-                      <span className="text-[10px] text-slate-500 leading-tight">{f.desc}</span>
+                      <span className="break-words text-xs font-bold leading-tight text-slate-800">{t(f.titleKey)}</span>
+                      <span className="text-[10px] text-slate-500 leading-tight">{t(f.descKey)}</span>
                     </div>
                   ))}
                 </div>
@@ -642,11 +645,14 @@ export default function GoalSetting() {
         </AnimatePresence>
       </div>
 
-      {/* ── Fixed Bottom Buttons ── */}
-      <div className="fixed bottom-0 left-0 right-0 flex items-center gap-3 px-4 pb-8 pt-4 bg-[#F5F5F7]">
+      {/* ── Bottom Buttons ── */}
+      <div
+        className="z-10 flex shrink-0 items-center gap-3 border-t border-slate-200 px-4 pt-3 dark:border-slate-700"
+        style={{ background: 'var(--background)', paddingBottom: 'max(1rem, env(safe-area-inset-bottom, 0px))' }}
+      >
         <button onClick={handleBack}
           className="flex items-center gap-1 px-5 py-3.5 rounded-2xl border border-slate-200 bg-white text-slate-600 text-sm font-medium shadow-sm shrink-0">
-          ‹ 上一步
+          {t('qa_ui.previous')}
         </button>
         <button onClick={handleNext} disabled={!canNext || isGenerating}
           className="flex-1 flex items-center justify-center gap-1.5 py-3.5 rounded-2xl text-white font-bold text-sm shadow-md disabled:opacity-50 transition-all active:scale-95"

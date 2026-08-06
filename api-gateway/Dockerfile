@@ -6,9 +6,10 @@ RUN mkdir -p /var/cache/nginx/client_temp /var/cache/nginx/proxy_temp /var/cache
     chmod -R 755 /var/cache/nginx /var/run
 
 # Copy nginx configuration
-# Zeabur build uses the .zeabur.internal-hostname variant; local docker-compose
-# bind-mounts ./api-gateway/nginx.conf over this at /etc/nginx/nginx.conf.
-COPY nginx.zeabur.conf /etc/nginx/nginx.conf
+# Standard images target Docker Compose service DNS. Zeabur deployments that
+# need internal hostnames can override this build argument explicitly.
+ARG NGINX_CONFIG=nginx.conf
+COPY ${NGINX_CONFIG} /etc/nginx/nginx.conf
 
 # Create a simple health check endpoint
 RUN echo "healthy" > /usr/share/nginx/html/health.html && \

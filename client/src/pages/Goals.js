@@ -1,11 +1,12 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { motion, AnimatePresence } from 'motion/react';
-import { ChevronDown, ChevronUp, Plus, Target, Flame, CheckCircle, Lock } from 'lucide-react';
+import { motion } from 'motion/react';
+import { Archive, ChevronDown, ChevronUp, MoreVertical, Plus, RotateCcw, Target, Flame, CheckCircle, Lock, Trash2 } from 'lucide-react';
 import BottomNav from '../components/BottomNav';
 import { useAuth } from '../contexts/AuthContext';
 import { userAPI } from '../services/api';
 import { PERSONA_MAP } from '../config/personaConfig';
+import { useTranslation } from 'react-i18next';
 
 const VOICE_OPTIONS = Object.values(PERSONA_MAP).map(p => ({
   id: p.name, name: p.name, description: p.desc, subtitle: p.subtitle,
@@ -21,9 +22,11 @@ function getGoalProgress(goal) {
   return { completed, total, pct: Math.round((completed / total) * 100) };
 }
 
-function GoalCard({ goal, isActive, onPractice, index }) {
+function GoalCard({ goal, isActive, onPractice, onArchive, onRestore, onDelete, operating, index }) {
+  const { t } = useTranslation();
   const { completed, total, pct } = getGoalProgress(goal);
   const [expanded, setExpanded] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false);
   const visibleScenarios = expanded ? goal.scenarios : (goal.scenarios || []).slice(0, 3);
 
   return (
@@ -49,16 +52,53 @@ function GoalCard({ goal, isActive, onPractice, index }) {
                   ? 'bg-primary/10 text-primary'
                   : goal.status === 'paused'
                   ? 'bg-amber-50 dark:bg-amber-900/20 text-amber-600 dark:text-amber-400'
+                  : ['archived', 'abandoned'].includes(goal.status)
+                  ? 'bg-slate-100 dark:bg-slate-700 text-slate-500 dark:text-slate-300'
                   : 'bg-emerald-50 dark:bg-emerald-900/20 text-emerald-600 dark:text-emerald-400'
               }`}
             >
-              {goal.status === 'active' ? '进行中' : goal.status === 'paused' ? '已暂停' : '已完成'}
+              {goal.status === 'active'
+                ? t('qa_ui.status_active')
+                : goal.status === 'paused'
+                  ? t('qa_ui.status_paused')
+                  : ['archived', 'abandoned'].includes(goal.status)
+                    ? t('qa_ui.archived_goals', '已归档')
+                    : t('qa_ui.status_completed')}
             </span>
           </div>
         </div>
-        <div className="flex-shrink-0 text-right">
-          <p className="text-lg font-bold text-primary">{pct}%</p>
-          <p className="text-xs text-slate-400">{completed}/{total}</p>
+        <div className="flex items-start gap-1 flex-shrink-0">
+          <div className="text-right">
+            <p className="text-lg font-bold text-primary">{pct}%</p>
+            <p className="text-xs text-slate-400">{completed}/{total}</p>
+          </div>
+          <div className="relative">
+            <button
+              type="button"
+              aria-label={t('qa_ui.goal_actions', '目标操作')}
+              disabled={operating}
+              onClick={() => setMenuOpen(open => !open)}
+              className="p-1.5 rounded-lg text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-700 disabled:opacity-50"
+            >
+              <MoreVertical className="w-4 h-4" />
+            </button>
+            {menuOpen && (
+              <div className="absolute right-0 top-8 z-20 w-32 rounded-xl border border-slate-200 dark:border-slate-600 bg-white dark:bg-slate-800 shadow-lg p-1">
+                {['archived', 'abandoned'].includes(goal.status) ? (
+                  <button type="button" onClick={() => { setMenuOpen(false); onRestore?.(); }} className="w-full flex items-center gap-2 px-3 py-2 text-xs rounded-lg hover:bg-slate-50 dark:hover:bg-slate-700">
+                    <RotateCcw className="w-3.5 h-3.5" />{t('qa_ui.restore_goal', '恢复')}
+                  </button>
+                ) : (
+                  <button type="button" onClick={() => { setMenuOpen(false); onArchive?.(); }} className="w-full flex items-center gap-2 px-3 py-2 text-xs rounded-lg hover:bg-slate-50 dark:hover:bg-slate-700">
+                    <Archive className="w-3.5 h-3.5" />{t('qa_ui.archive_goal', '归档')}
+                  </button>
+                )}
+                <button type="button" onClick={() => { setMenuOpen(false); onDelete?.(); }} className="w-full flex items-center gap-2 px-3 py-2 text-xs text-red-600 rounded-lg hover:bg-red-50 dark:hover:bg-red-900/20">
+                  <Trash2 className="w-3.5 h-3.5" />{t('qa_ui.delete_goal', '永久删除')}
+                </button>
+              </div>
+            )}
+          </div>
         </div>
       </div>
 
@@ -101,9 +141,9 @@ function GoalCard({ goal, isActive, onPractice, index }) {
               className="flex items-center gap-1 text-xs text-primary mt-1 hover:text-primary/80 transition-colors"
             >
               {expanded ? (
-                <><ChevronUp className="w-3 h-3" /> 收起</>
+                <><ChevronUp className="w-3 h-3" /> {t('qa_ui.show_less')}</>
               ) : (
-                <><ChevronDown className="w-3 h-3" /> 查看全部 {goal.scenarios.length} 个场景</>
+                <><ChevronDown className="w-3 h-3" /> {t('qa_ui.show_all_scenarios', { count: goal.scenarios.length })}</>
               )}
             </button>
           )}
@@ -114,10 +154,11 @@ function GoalCard({ goal, isActive, onPractice, index }) {
       {(goal.status === 'active' || goal.status === 'paused') && (
         <button
           onClick={onPractice}
+          disabled={operating}
           className="w-full py-2.5 rounded-xl text-sm font-semibold text-white transition-opacity hover:opacity-90 active:opacity-80"
           style={{ background: 'linear-gradient(135deg, #637FF1, #a47af6)' }}
         >
-          {goal.status === 'active' ? '继续练习 →' : '切换并练习 →'}
+          {goal.status === 'active' ? t('qa_ui.continue_practice') : t('qa_ui.switch_practice')}
         </button>
       )}
     </motion.div>
@@ -125,6 +166,7 @@ function GoalCard({ goal, isActive, onPractice, index }) {
 }
 
 function Goals() {
+  const { t } = useTranslation();
   const navigate = useNavigate();
   const { user } = useAuth();
   const [allGoals, setAllGoals] = useState([]);
@@ -135,6 +177,9 @@ function Goals() {
     return VOICE_OPTIONS.some(v => v.id === saved) ? saved : 'Tina';
   });
   const [practiceGoal, setPracticeGoal] = useState(() => user?.daily_practice_goal || 15);
+  const [archivedOpen, setArchivedOpen] = useState(false);
+  const [operatingGoalId, setOperatingGoalId] = useState(null);
+  const [operationError, setOperationError] = useState('');
 
   useEffect(() => {
     const controller = new AbortController();
@@ -178,6 +223,43 @@ function Goals() {
 
   const activeGoals = allGoals.filter(g => g.status === 'active' || g.status === 'paused');
   const completedGoals = allGoals.filter(g => g.status === 'completed');
+  const archivedGoals = allGoals.filter(g => g.status === 'archived' || g.status === 'abandoned');
+
+  const runGoalOperation = async (goal, operation) => {
+    if (operatingGoalId) return;
+    const deleting = operation === 'delete';
+    const prompt = deleting
+      ? t('qa_ui.delete_goal_confirm', '永久删除后无法恢复。确定删除这个目标及其任务、评分和关联对话吗？')
+      : operation === 'archive'
+        ? t('qa_ui.archive_goal_confirm', '归档后可在页面底部恢复。确定归档这个目标吗？')
+        : null;
+    if (prompt && !window.confirm(prompt)) return;
+    setOperatingGoalId(goal.id);
+    setOperationError('');
+    try {
+      if (operation === 'archive') {
+        const result = await userAPI.archiveGoal(goal.id);
+        setAllGoals(current => current.map(item =>
+          item.id === goal.id ? { ...item, ...(result.goal || {}), status: 'archived' } :
+          item.id === result.active_goal_id ? { ...item, status: 'active' } : item
+        ));
+      } else if (operation === 'restore') {
+        const result = await userAPI.restoreGoal(goal.id);
+        setAllGoals(current => current.map(item =>
+          item.id === goal.id ? { ...item, ...(result.goal || {}), status: 'paused' } : item
+        ));
+      } else {
+        const result = await userAPI.deleteGoal(goal.id);
+        setAllGoals(current => current
+          .filter(item => item.id !== goal.id)
+          .map(item => item.id === result.active_goal_id ? { ...item, status: 'active' } : item));
+      }
+    } catch (error) {
+      setOperationError(error.message || t('qa_ui.goal_operation_failed', '操作失败，请重试'));
+    } finally {
+      setOperatingGoalId(null);
+    }
+  };
   const totalCompletedScenes = allGoals.reduce((acc, g) => {
     return acc + (g.scenarios || []).filter(s =>
       s.tasks?.length > 0 && s.tasks.every(t => t.status === 'completed')
@@ -187,10 +269,10 @@ function Goals() {
   // Summary stats contain JSX icons — memoize so the array (and its
   // <Target/> etc. elements) isn't rebuilt on every render.
   const summaryStats = useMemo(() => [
-    { label: '进行中', value: activeGoals.length, icon: <Target className="w-4 h-4" />, color: 'text-primary', bg: 'bg-primary/10' },
-    { label: '已完成场景', value: totalCompletedScenes, icon: <CheckCircle className="w-4 h-4" />, color: 'text-emerald-500', bg: 'bg-emerald-50 dark:bg-emerald-900/20' },
-    { label: '连续天数', value: streak, icon: <Flame className="w-4 h-4" />, color: 'text-amber-500', bg: 'bg-amber-50 dark:bg-amber-900/20' },
-  ], [activeGoals.length, totalCompletedScenes, streak]);
+    { label: t('qa_ui.status_active'), value: activeGoals.length, icon: <Target className="w-4 h-4" />, color: 'text-primary', bg: 'bg-primary/10' },
+    { label: t('qa_ui.scenarios_completed_stat'), value: totalCompletedScenes, icon: <CheckCircle className="w-4 h-4" />, color: 'text-emerald-500', bg: 'bg-emerald-50 dark:bg-emerald-900/20' },
+    { label: t('qa_ui.streak_days'), value: streak, icon: <Flame className="w-4 h-4" />, color: 'text-amber-500', bg: 'bg-amber-50 dark:bg-amber-900/20' },
+  ], [activeGoals.length, totalCompletedScenes, streak, t]);
 
   if (loading) {
     return (
@@ -204,13 +286,13 @@ function Goals() {
     <div className="relative flex flex-col min-h-screen w-full bg-background-light dark:bg-background-dark">
       {/* Header */}
       <div className="flex items-center bg-white dark:bg-slate-800 px-4 py-3 justify-between sticky top-0 z-10 border-b border-slate-100 dark:border-slate-700 shadow-sm">
-        <h1 className="text-lg font-bold text-slate-900 dark:text-white">学习目标</h1>
+        <h1 className="text-lg font-bold text-slate-900 dark:text-white">{t('qa_ui.goals_title')}</h1>
         <button
           onClick={() => navigate('/goal-setting')}
           className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-sm font-medium text-primary border border-primary/30 hover:bg-primary/5 transition-colors"
         >
           <Plus className="w-4 h-4" />
-          新目标
+          {t('qa_ui.new_goal')}
         </button>
       </div>
 
@@ -237,16 +319,24 @@ function Goals() {
         </motion.div>
 
         <div className="px-4">
+          {operationError && (
+            <p role="alert" className="mb-3 rounded-xl bg-red-50 dark:bg-red-900/20 px-3 py-2 text-sm text-red-600">
+              {operationError}
+            </p>
+          )}
           {/* Active Goals */}
           {activeGoals.length > 0 ? (
             <>
-              <p className="text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wide mb-3">进行中</p>
+              <p className="text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wide mb-3">{t('qa_ui.status_active')}</p>
               {activeGoals.map((g, i) => (
                 <GoalCard
                   key={g.id}
                   goal={g}
                   isActive
                   index={i}
+                  operating={operatingGoalId === g.id}
+                  onArchive={() => runGoalOperation(g, 'archive')}
+                  onDelete={() => runGoalOperation(g, 'delete')}
                   onPractice={async () => {
                     if (g.status !== 'active') {
                       try {
@@ -268,19 +358,19 @@ function Goals() {
               className="bg-white dark:bg-slate-800 rounded-2xl shadow-brand border border-slate-100 dark:border-slate-700 p-8 text-center mb-4"
             >
               <div className="text-4xl mb-3">🎯</div>
-              <p className="text-slate-500 dark:text-slate-400 text-sm mb-4">还没有进行中的目标</p>
+              <p className="text-slate-500 dark:text-slate-400 text-sm mb-4">{t('qa_ui.no_active_goals')}</p>
               <button
                 onClick={() => navigate('/goal-setting')}
                 className="px-6 py-2.5 rounded-xl text-sm font-semibold text-white transition-opacity hover:opacity-90"
                 style={{ background: 'linear-gradient(135deg, #637FF1, #a47af6)' }}
               >
-                设定新目标
+                {t('qa_ui.set_new_goal')}
               </button>
             </motion.div>
           )}
 
           {/* AI Voice Selection */}
-          <p className="text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wide mb-3 mt-2">AI 导师音色</p>
+          <p className="text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wide mb-3 mt-2">{t('qa_ui.voice_title')}</p>
           <motion.div
             initial={{ opacity: 0, y: 8 }}
             animate={{ opacity: 1, y: 0 }}
@@ -296,7 +386,7 @@ function Goals() {
                     key={v.id}
                     onClick={() => !locked && handleVoiceChange(v.id)}
                     className={`relative flex items-center gap-2.5 p-3 rounded-xl border transition-all text-left ${
-                      locked ? 'opacity-50 cursor-not-allowed' : ''
+                      locked ? 'cursor-not-allowed' : ''
                     } ${
                       selectedVoice === v.id
                         ? 'border-primary bg-primary/5 dark:bg-primary/10'
@@ -311,7 +401,7 @@ function Goals() {
                       <p className={`text-sm font-semibold ${selectedVoice === v.id ? 'text-primary' : 'text-slate-800 dark:text-slate-200'}`}>
                         {v.name}
                       </p>
-                      <p className="text-xs text-slate-400 dark:text-slate-500">{v.description}</p>
+                      <p className="text-xs text-slate-400 dark:text-slate-500">{t(`qa_ui.voice_${v.id.toLowerCase()}`)}</p>
                     </div>
                     {locked && (
                       <Lock className="absolute top-2 right-2 w-3.5 h-3.5 text-slate-400" />
@@ -323,7 +413,7 @@ function Goals() {
           </motion.div>
 
           {/* Practice Goal Setting */}
-          <p className="text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wide mb-3 mt-2">每日练习目标</p>
+          <p className="text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wide mb-3 mt-2">{t('qa_ui.daily_practice_goal')}</p>
           <motion.div
             initial={{ opacity: 0, y: 8 }}
             animate={{ opacity: 1, y: 0 }}
@@ -341,7 +431,7 @@ function Goals() {
                       : 'bg-slate-50 dark:bg-slate-700/50 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700 hover:border-primary/30'
                   }`}
                 >
-                  {m}分钟
+                  {t('qa_ui.minutes', { count: m })}
                 </button>
               ))}
             </div>
@@ -350,17 +440,46 @@ function Goals() {
           {/* Completed Goals */}
           {completedGoals.length > 0 && (
             <>
-              <p className="text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wide mb-3 mt-2">已完成</p>
+              <p className="text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wide mb-3 mt-2">{t('qa_ui.status_completed')}</p>
               {completedGoals.map((g, i) => (
                 <GoalCard
                   key={g.id}
                   goal={g}
                   isActive={false}
                   index={i}
+                  operating={operatingGoalId === g.id}
+                  onArchive={() => runGoalOperation(g, 'archive')}
+                  onDelete={() => runGoalOperation(g, 'delete')}
                   onPractice={() => {}}
                 />
               ))}
             </>
+          )}
+
+          {archivedGoals.length > 0 && (
+            <section className="mb-4 mt-2">
+              <button
+                type="button"
+                aria-expanded={archivedOpen}
+                onClick={() => setArchivedOpen(open => !open)}
+                className="w-full flex items-center justify-between py-2 text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wide"
+              >
+                <span>{t('qa_ui.archived_goals', '已归档')} ({archivedGoals.length})</span>
+                {archivedOpen ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+              </button>
+              {archivedOpen && archivedGoals.map((g, i) => (
+                <GoalCard
+                  key={g.id}
+                  goal={g}
+                  isActive={false}
+                  index={i}
+                  operating={operatingGoalId === g.id}
+                  onRestore={() => runGoalOperation(g, 'restore')}
+                  onDelete={() => runGoalOperation(g, 'delete')}
+                  onPractice={() => {}}
+                />
+              ))}
+            </section>
           )}
         </div>
       </main>

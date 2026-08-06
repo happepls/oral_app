@@ -23,7 +23,7 @@ import _omni_stubs  # noqa: E402
 
 # Confirms main.py loads cleanly (isolated import under stubs). Not otherwise
 # used here — the inline magic-sentence regex is pinned against source below.
-_main = _omni_stubs.load_main()  # noqa: F841
+_main = _omni_stubs.load_main()
 
 _MAIN_PATH = os.path.join(os.path.dirname(__file__), "..", "app", "main.py")
 
@@ -62,6 +62,18 @@ class TestSourcePinning:
             "quote-fallback magic-sentence regex changed in main.py; "
             "update test_magic_sentence.py to match"
         )
+
+
+class TestMagicPasscode:
+    def test_exact_phrase_and_supported_punctuation(self):
+        assert _main.is_magic_passcode_transcript("急急如律令")
+        assert _main.is_magic_passcode_transcript(" 急急如律令！ ")
+        assert _main.is_magic_passcode_transcript("急急如律令?!")
+
+    def test_rejects_embedded_or_additional_words(self):
+        assert not _main.is_magic_passcode_transcript("请说急急如律令")
+        assert not _main.is_magic_passcode_transcript("急急如律令然后继续")
+        assert not _main.is_magic_passcode_transcript("")
 
 
 class TestCornerBracketMatch:

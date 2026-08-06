@@ -7,9 +7,15 @@ import { AiAvatar } from '../components/AiAvatar';
 import { GuajiMascot } from '../components/GuajiMascot';
 import { getPersona } from '../config/personaConfig';
 import { PracticeReport } from '../components/PracticeReport';
+import { AccessibleDialog } from '../components/AccessibleDialog';
 import { MessageBubble } from '../components/MessageBubble';
 import { useAuth } from '../contexts/AuthContext';
 import AudioBar from '../components/AudioBar.jsx';
+import {
+  collapseAdjacentHistoryDuplicates,
+  historyContentKey,
+  prepareHistorySnapshot,
+} from '../utils/conversationHistory';
 import NetworkAdaptiveManager from '../utils/network-adaptive-manager';
 import OptimizedWebSocket from '../utils/websocket-optimized';
 import { motion, AnimatePresence } from 'motion/react';
@@ -17,6 +23,7 @@ import { useTranslation } from 'react-i18next';
 import { resolveDailyLimitModal } from './dailyLimitLogic';
 import { shouldUseProgressiveAudio, progressiveAudioSrc, nextProgressiveAttempt } from './audioPlaybackLogic';
 import { cleanStreamingText, appendDelta, aiBubbleRenderState, stripAllMarkers, extractMagicSentence } from './streamingTextLogic';
+import { normalizeConnectionError, shouldShowConnectionError } from './connectionErrorLogic';
 
 const MAGIC_TIPS = [
   '点击消息气泡右侧的喇叭图标，可重听 AI 的示范发音。',
@@ -156,14 +163,19 @@ function CCRollingCaption({ isAISpeaking, text, getProgressRatio }) {
   if (!isAISpeaking || sentences.length === 0) return null;
   const current = sentences[Math.min(sentenceIdx, sentences.length - 1)];
   return (
-    <div style={{
+    <div
+      role="status"
+      aria-live="polite"
+      aria-atomic="true"
+      style={{
       marginTop: 16, padding: '10px 18px', borderRadius: 14,
       background: 'rgba(0,0,0,0.72)', color: '#fff',
       fontSize: 14, lineHeight: 1.5, maxWidth: '85%', textAlign: 'center', fontWeight: 500,
       animation: 'subtitle-in 240ms ease-out',
       minHeight: '44px', display: 'flex', alignItems: 'center', justifyContent: 'center',
-    }}
-    key={sentenceIdx}>
+      }}
+      key={sentenceIdx}
+    >
       <span>{current}</span>
     </div>
   );
@@ -214,25 +226,38 @@ function DailyQAPassModal({ onClose, onReturn, isBonus }) {
 }
 
 function ScorePopup({ scores, delta, onClose }) {
+  const scoreValue = (...keys) => {
+    const value = keys.map(key => scores?.[key]).find(candidate => candidate != null);
+    const numeric = Number(value);
+    return Number.isFinite(numeric) ? Math.max(0, Math.min(10, numeric)) : 5;
+  };
+  const fluency = scoreValue('fluency');
+  const grammar = scoreValue('grammar', 'grammar_quality');
+  const vocabulary = scoreValue('vocabulary', 'keyword_coverage');
+  const relevance = scoreValue('task_relevance', 'topic_relevance');
   const overall = Math.round(
-    ((scores.fluency || 5) + (scores.grammar || 5) + (scores.vocabulary || 5) + (scores.task_relevance || 5)) / 4 * 10
+    (fluency + grammar + vocabulary + relevance) / 4 * 10
   );
   const circumference = 2 * Math.PI * 45;
   const offset = circumference * (1 - Math.min(overall, 100) / 100);
   const dims = [
-    { label: '流利度', val: Math.round((scores.fluency || 5) * 10) },
-    { label: '语法',   val: Math.round((scores.grammar || 5) * 10) },
-    { label: '词汇',   val: Math.round((scores.vocabulary || 5) * 10) },
-    { label: '话题',   val: Math.round((scores.task_relevance || 5) * 10) },
+    { label: '流利度', val: Math.round(fluency * 10) },
+    { label: '语法',   val: Math.round(grammar * 10) },
+    { label: '词汇',   val: Math.round(vocabulary * 10) },
+    { label: '话题',   val: Math.round(relevance * 10) },
   ];
   return (
-    <div style={{ position:'fixed', inset:0, background:'rgba(0,0,0,0.75)',
-                  display:'flex', alignItems:'center', justifyContent:'center', zIndex:200 }}
-         onClick={onClose}>
-      <div style={{ background:'#1E293B', borderRadius:29, padding:32, maxWidth:340,
-                    width:'90%', textAlign:'center' }}
-           onClick={e => e.stopPropagation()}>
-        <h5 style={{ color:'#F8FAFC', marginBottom:24 }}>本轮评估 +{delta} 熟练度 🎉</h5>
+    <AccessibleDialog
+      title={`本轮评估，增加 ${delta} 熟练度`}
+      description="查看本轮口语练习的四项评分"
+      onClose={onClose}
+      closeLabel="关闭本轮评估"
+      showCloseButton={false}
+      panelClassName="app-modal-boundary !w-[min(90vw,340px)] !rounded-[29px] !bg-slate-800 !text-white"
+      zIndex={260}
+    >
+      <div style={{ padding:32, textAlign:'center' }}>
+        <h2 style={{ color:'#F8FAFC', marginBottom:24, fontSize:18, fontWeight:700 }}>本轮评估 +{delta} 熟练度 🎉</h2>
         <div style={{ width:120, height:120, margin:'0 auto 24px', position:'relative' }}>
           <svg viewBox="0 0 100 100" style={{ transform:'rotate(-90deg)', width:'100%', height:'100%' }}>
             <circle cx="50" cy="50" r="45" fill="none" stroke="#334155" strokeWidth="8"/>
@@ -250,7 +275,14 @@ function ScorePopup({ scores, delta, onClose }) {
           {dims.map(({ label, val }) => (
             <div key={label} style={{ display:'flex', alignItems:'center', gap:8, marginBottom:10 }}>
               <span style={{ width:40, fontSize:12, color:'#94A3B8', flexShrink:0 }}>{label}</span>
-              <div style={{ flex:1, height:6, background:'#334155', borderRadius:3, overflow:'hidden' }}>
+              <div
+                role="progressbar"
+                aria-label={`${label}评分`}
+                aria-valuemin={0}
+                aria-valuemax={100}
+                aria-valuenow={val}
+                style={{ flex:1, height:6, background:'#334155', borderRadius:3, overflow:'hidden' }}
+              >
                 <div style={{ height:'100%', width:`${val}%`, background:'#637FF1',
                               borderRadius:3, transition:'width 1s ease' }}/>
               </div>
@@ -259,50 +291,61 @@ function ScorePopup({ scores, delta, onClose }) {
           ))}
         </div>
         <button onClick={onClose}
+                className="min-h-11 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/80"
                 style={{ width:'100%', padding:'12px', borderRadius:20,
                          background:'#637FF1', color:'#fff', border:'none',
                          fontWeight:600, cursor:'pointer', fontSize:14 }}>
           继续练习
         </button>
       </div>
-    </div>
+    </AccessibleDialog>
   );
 }
 
-function TaskCompletionSheet({ taskReadyToComplete, tasks, completedTasks, onConfirm, onContinue }) {
+function TaskCompletionSheet({ taskReadyToComplete, tasks, completedTasks, onConfirm, onContinue, canConfirm = true }) {
   const completedTitle = taskReadyToComplete?.task_title || '';
   const taskList = tasks || [];
-  const completedCount = (completedTasks?.size || 0) + 1;
-  const totalCount = taskList.length || completedCount;
+  const totalCount = taskList.length || (completedTasks?.size || 0) + 1;
+  const completedCount = Math.min(totalCount, (completedTasks?.size || 0) + 1);
 
-  const nextTask = taskList.find(t => {
-    const text = typeof t === 'string' ? t : t.text;
-    return text !== completedTitle && !completedTasks?.has(text);
+  const completedTaskIndex = taskList.findIndex(task => {
+    if (typeof task === 'object' && taskReadyToComplete?.task_id != null) {
+      return String(task.id) === String(taskReadyToComplete.task_id);
+    }
+    const text = typeof task === 'string' ? task : task.text;
+    return text?.trim() === completedTitle.trim();
+  });
+  const remainingTasks = completedTaskIndex >= 0
+    ? taskList.slice(completedTaskIndex + 1)
+    : taskList;
+  const nextTask = remainingTasks.find(task => {
+    const text = typeof task === 'string' ? task : task.text;
+    return text?.trim() !== completedTitle.trim() && !completedTasks?.has(text);
   });
   const nextTitle = typeof nextTask === 'string' ? nextTask : (nextTask?.text || '');
 
   return (
-    <motion.div
-      initial={{ opacity: 0 }}
-      animate={{ opacity: 1 }}
-      exit={{ opacity: 0 }}
-      transition={{ duration: 0.2 }}
-      style={{
-        position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)',
-        display: 'flex', alignItems: 'flex-end', justifyContent: 'center', zIndex: 250,
-      }}
-      onClick={onContinue}
+    <AccessibleDialog
+      title="当前子任务已达标"
+      description={nextTitle ? `即将切换到下一个任务：${nextTitle}` : '可以完成当前任务或继续深入练习'}
+      onClose={onContinue}
+      closeLabel="关闭任务完成提示"
+      placement="bottom"
+      showCloseButton={false}
+      overlayClassName="!p-0 sm:!p-4"
+      panelClassName="!max-w-[440px] !rounded-t-3xl sm:!rounded-3xl !bg-transparent"
+      zIndex={250}
     >
       <motion.div
         initial={{ y: '100%' }}
         animate={{ y: 0 }}
         exit={{ y: '100%' }}
         transition={{ type: 'spring', damping: 28, stiffness: 320 }}
-        onClick={e => e.stopPropagation()}
+        className="rounded-t-3xl sm:rounded-3xl"
         style={{
           width: '100%', maxWidth: 440,
           background: 'linear-gradient(135deg, #637FF1 0%, #8B5CF6 100%)',
-          borderRadius: '24px 24px 0 0', padding: '28px 24px 32px',
+          padding: '28px 24px max(32px, env(safe-area-inset-bottom))',
           color: '#fff',
         }}
       >
@@ -320,7 +363,7 @@ function TaskCompletionSheet({ taskReadyToComplete, tasks, completedTasks, onCon
           }}>✅</div>
           <div style={{ flex: 1, minWidth: 0 }}>
             <div style={{ fontSize: 12, opacity: 0.8, marginBottom: 2 }}>任务完成</div>
-            <div style={{ fontSize: 15, fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+            <div style={{ fontSize: 15, fontWeight: 600, lineHeight: 1.45, overflowWrap: 'anywhere' }}>
               {completedTitle}
             </div>
           </div>
@@ -339,7 +382,7 @@ function TaskCompletionSheet({ taskReadyToComplete, tasks, completedTasks, onCon
             }}>🎯</div>
             <div style={{ flex: 1, minWidth: 0 }}>
               <div style={{ fontSize: 12, opacity: 0.7, marginBottom: 2 }}>下一个任务</div>
-              <div style={{ fontSize: 15, fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+              <div style={{ fontSize: 15, fontWeight: 600, lineHeight: 1.45, overflowWrap: 'anywhere' }}>
                 {nextTitle}
               </div>
             </div>
@@ -350,6 +393,9 @@ function TaskCompletionSheet({ taskReadyToComplete, tasks, completedTasks, onCon
         <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
           <button
             onClick={onConfirm}
+            disabled={!canConfirm}
+            aria-describedby={!canConfirm ? 'task-completion-connection-note' : undefined}
+            className="min-h-11 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/80 disabled:cursor-not-allowed disabled:opacity-60"
             style={{
               width: '100%', padding: '14px', borderRadius: 16,
               background: '#fff', color: '#637FF1', border: 'none',
@@ -358,10 +404,16 @@ function TaskCompletionSheet({ taskReadyToComplete, tasks, completedTasks, onCon
             }}
           >
             <span>🚀</span>
-            <span>{nextTitle ? '切换下一个任务' : '完成当前任务'}</span>
+            <span>{canConfirm ? (nextTitle ? '切换下一个任务' : '完成当前任务') : '连接已断开，请先重连'}</span>
           </button>
+          {!canConfirm && (
+            <p id="task-completion-connection-note" role="status" style={{ margin: '-2px 0 2px', textAlign: 'center', fontSize: 12, color: 'rgba(255,255,255,0.9)' }}>
+              当前进度仍会保留，连接恢复后即可切换。
+            </p>
+          )}
           <button
             onClick={onContinue}
+            className="min-h-11 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/80"
             style={{
               width: '100%', padding: '14px', borderRadius: 16,
               background: 'rgba(255,255,255,0.15)', color: '#fff', border: '1px solid rgba(255,255,255,0.25)',
@@ -372,7 +424,7 @@ function TaskCompletionSheet({ taskReadyToComplete, tasks, completedTasks, onCon
           </button>
         </div>
       </motion.div>
-    </motion.div>
+    </AccessibleDialog>
   );
 }
 
@@ -404,6 +456,7 @@ function Conversation() {
   // a "back to Discover" exit instead of a (futile) retry button.
   const [wsRejected, setWsRejected] = useState(false);
   const [sessionId, setSessionId] = useState(null);
+  const sessionIdRef = useRef(null);
   const [selection, setSelection] = useState({ text: '', x: 0, y: 0, visible: false });
   const [isSynthesizing, setIsSynthesizing] = useState(false);
   const [playingAudioUrl, setPlayingAudioUrl] = useState(null);
@@ -428,6 +481,7 @@ function Conversation() {
 
   // localStorage key helper — encodes scenario name to prevent key injection via crafted URLs
   const _lsScenarioKey = (prefix, raw) => `${prefix}${encodeURIComponent(raw || '')}`;
+  const _lsSessionKey = (userId, scenario) => `session_${encodeURIComponent(String(userId || 'anon'))}_${encodeURIComponent(scenario || '')}`;
 
   // Scenario Tasks State
   // Initialize as empty - will be populated from backend in useEffect
@@ -468,6 +522,15 @@ function Conversation() {
   
   // CC (immersive) mode — shows GuajiMascot overlay
   const [ccMode, setCcMode] = useState(false);
+
+  useEffect(() => {
+    if (!ccMode) return undefined;
+    const exitOnEscape = (event) => {
+      if (event.key === 'Escape') setCcMode(false);
+    };
+    document.addEventListener('keydown', exitOnEscape);
+    return () => document.removeEventListener('keydown', exitOnEscape);
+  }, [ccMode]);
 
   // Scenario Completion State
   const [showCompletionModal, setShowCompletionModal] = useState(false);
@@ -758,6 +821,13 @@ function Conversation() {
   const lastProficiencyUpdateRef = useRef(null); // Track last processed proficiency update to prevent duplicates
   const recorderRef = useRef(null); // Ref for RealTimeRecorder to control session ID
   const practiceStartTimeRef = useRef(null); // Set on first user recording, not on WS open
+  const historyAutosaveTimerRef = useRef(null);
+  const restoredAiContentKeysRef = useRef(new Set());
+  const suppressNextRestoredAudioRef = useRef(false);
+
+  useEffect(() => {
+    sessionIdRef.current = sessionId;
+  }, [sessionId]);
 
   // Initialize audio context
   const initAudioContext = () => {
@@ -1166,6 +1236,9 @@ function Conversation() {
 
           // Clear scenario-specific session from localStorage to prevent history reload on refresh
           if (scenarioTitle) {
+            if (user?.id) {
+              localStorage.removeItem(_lsSessionKey(user.id, scenarioTitle));
+            }
             localStorage.removeItem(_lsScenarioKey('session_', scenarioTitle));
             console.log('Cleared localStorage session for scenario:', scenarioTitle);
           }
@@ -1245,24 +1318,20 @@ function Conversation() {
   }, [sessionId]);
 
   // Save conversation history
-  const saveConversationHistory = async () => {
-    if (!sessionId || messages.length === 0) {
+  const saveConversationHistory = async (sessionIdOverride = null, messagesOverride = null, options = {}) => {
+    const activeSessionId = sessionIdOverride || sessionIdRef.current || sessionId;
+    const activeMessages = messagesOverride || messages;
+    if (!activeSessionId || activeMessages.length === 0) {
       console.log('No session ID or messages to save');
       return;
     }
 
     try {
-      console.log('Saving conversation history. Total messages:', messages.length);
-      console.log('Messages before filtering:', messages.map((m, i) => ({index: i, type: m.type, isFinal: m.isFinal, content: m.content?.substring(0, 50)})));
+      console.log('Saving conversation history. Total messages:', activeMessages.length);
+      console.log('Messages before filtering:', activeMessages.map((m, i) => ({index: i, type: m.type, isFinal: m.isFinal, content: m.content?.substring(0, 50)})));
       
       // Prepare messages for saving - save final messages and non-final AI messages
-      const messagesToSave = messages
-        .filter(msg => msg.isFinal || msg.type === 'ai') // Save finalized messages AND AI messages (even if not final)
-        .map(msg => ({
-          role: msg.type === 'user' ? 'user' : 'assistant',
-          content: msg.content,
-          audioUrl: msg.audioUrl || null
-        }));
+      const messagesToSave = prepareHistorySnapshot(activeMessages);
 
       console.log('Messages after filtering:', messagesToSave.map((m, i) => ({index: i, role: m.role, content: m.content?.substring(0, 50)})));
 
@@ -1271,8 +1340,8 @@ function Conversation() {
         return;
       }
 
-      const response = await conversationAPI.saveHistory(sessionId, messagesToSave, user.id);
-      if (response.success) {
+      const response = await conversationAPI.saveHistory(activeSessionId, messagesToSave, user.id, options);
+      if (response?.success) {
         console.log('Conversation history saved successfully');
       } else {
         console.error('Failed to save conversation history:', response.message);
@@ -1384,6 +1453,7 @@ function Conversation() {
            break;
         case 'transcription':
            console.log('Transcription Event:', data);
+           restoredAiContentKeysRef.current.clear();
            // User transcription
            setMessages(prev => {
                const last = prev[prev.length - 1];
@@ -1434,6 +1504,10 @@ function Conversation() {
            const streamedThisTurn = streamedAudioSinceCutRef.current;
 
            if (role === 'assistant') {
+               if (suppressNextRestoredAudioRef.current) {
+                   suppressNextRestoredAudioRef.current = false;
+                   break;
+               }
                setMessages(prev => {
                    const newMessages = [...prev];
 
@@ -1572,6 +1646,15 @@ function Conversation() {
            }
 
            if (cleanContent) {
+               const restoredKey = historyContentKey({ type: 'ai', content: cleanContent });
+               if (restoredAiContentKeysRef.current.delete(restoredKey)) {
+                   suppressNextRestoredAudioRef.current = true;
+                   setMessages(prev => {
+                       const last = prev[prev.length - 1];
+                       return last?.type === 'ai' && !last.isFinal ? prev.slice(0, -1) : prev;
+                   });
+                   break;
+               }
                setMessages(prev => {
                    const last = prev[prev.length - 1];
                    // If last message is an in-progress AI message, update it
@@ -1640,6 +1723,15 @@ function Conversation() {
            }
 
            const finalText = responseText.trim();
+           const restoredKey = historyContentKey({ type: 'ai', content: finalText });
+           if (finalText && restoredAiContentKeysRef.current.delete(restoredKey)) {
+               suppressNextRestoredAudioRef.current = true;
+               setMessages(prev => {
+                   const last = prev[prev.length - 1];
+                   return last?.type === 'ai' && !last.isFinal ? prev.slice(0, -1) : prev;
+               });
+               break;
+           }
            setMessages(prev => {
                const last = prev[prev.length - 1];
                if (last && last.type === 'ai' && !last.isFinal) {
@@ -1661,6 +1753,7 @@ function Conversation() {
         case 'user_transcript':
            // Display user's speech transcription in chat
            if (data.payload && data.payload.text) {
+             restoredAiContentKeysRef.current.clear();
              setMessages(prev => {
                // Find any in-progress AI message and ensure user transcript is inserted BEFORE it
                const newMessages = [...prev];
@@ -1684,19 +1777,25 @@ function Conversation() {
         case 'error': {
            // Backend sends rejection errors at the TOP level ({type:'error', message:...}),
            // older frames used data.payload. Accept both shapes.
-           const errMsg = data.message || data.payload?.message || data.payload || '';
+           const errMsg = data.message || data.payload?.message || data.payload?.error || data.payload || '';
+           const retryable = data.payload?.retryable !== false;
            console.error('Server Error:', errMsg);
-           const errText = String(errMsg);
+           const errText = normalizeConnectionError(
+             errMsg,
+             t('ws_error_generic', '连接异常，请稍后重试')
+           );
            // An explicit server-side error before any usable session means the
            // connection is being rejected (e.g. Invalid scenario after a goal
            // switch). Surface a readable reason instead of an endless
            // "connecting" spinner, and stop auto-reconnect.
-           const isRejection = /invalid scenario/i.test(errText) || /scenario/i.test(errText);
-           wsRejectedRef.current = true;
-           setWsRejected(true);
-           setIsManualDisconnect(true); // prevent the close handler from auto-reconnecting
-           isManualDisconnectRef.current = true;
-           if (reconnectTimerRef.current) { clearTimeout(reconnectTimerRef.current); reconnectTimerRef.current = null; }
+           const isRejection = !retryable || /invalid scenario/i.test(errText);
+           wsRejectedRef.current = isRejection;
+           setWsRejected(isRejection);
+           if (isRejection) {
+             setIsManualDisconnect(true); // prevent the close handler from auto-reconnecting
+             isManualDisconnectRef.current = true;
+             if (reconnectTimerRef.current) { clearTimeout(reconnectTimerRef.current); reconnectTimerRef.current = null; }
+           }
            setWebSocketError(
              isRejection
                ? t('ws_error_invalid_scenario', '场景无效，请返回重新选择场景')
@@ -2161,7 +2260,8 @@ function Conversation() {
   }, [handleJsonMessage]);
 
   // --- WebSocket Logic ---
-  const connectWebSocket = useCallback((explicitSessionId = null) => {
+  const connectWebSocket = useCallback(async (explicitSessionId = null, options = {}) => {
+    const { signal, suppressWelcome = false } = options;
     const effectiveSessionId = explicitSessionId || sessionId;
     // Cookie-based auth: check user instead of token
     if (!user || !effectiveSessionId) {
@@ -2198,7 +2298,6 @@ function Conversation() {
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     const searchParams = new URLSearchParams(window.location.search);
     const scenario = searchParams.get('scenario');
-    const topic = searchParams.get('topic');
     const voice = localStorage.getItem('ai_voice') || 'Tina';
     const persona = getPersona(voice);
     
@@ -2212,9 +2311,18 @@ function Conversation() {
       wsHost = window.location.host;
     }
     
-    // Cookie-based auth: token is now in httpOnly cookie, no need to pass in URL
     const mode = searchParams.get('mode');
-    wsUrl = `${protocol}//${wsHost}/api/ws/?sessionId=${encodeURIComponent(effectiveSessionId)}${scenario ? `&scenario=${encodeURIComponent(scenario)}` : ''}${topic ? `&topic=${encodeURIComponent(topic)}` : ''}&voice=${encodeURIComponent(voice)}${mode ? `&mode=${encodeURIComponent(mode)}` : ''}`;
+    let realtime;
+    try {
+      realtime = await conversationAPI.createRealtimeTicket({ signal });
+    } catch (error) {
+      if (error.name === 'AbortError' || signal?.aborted) return;
+      console.error('Failed to create realtime ticket:', error);
+      setWebSocketError('无法建立安全连接，请稍后重试');
+      return;
+    }
+    if (signal?.aborted) return;
+    wsUrl = `${protocol}//${wsHost}/api/v1/realtime?ticket=${encodeURIComponent(realtime.ticket)}&sessionId=${encodeURIComponent(effectiveSessionId)}${scenario ? `&scenario=${encodeURIComponent(scenario)}` : ''}&voice=${encodeURIComponent(voice)}${mode ? `&mode=${encodeURIComponent(mode)}` : ''}`;
 
     // Create optimized WebSocket connection
     socketRef.current = new OptimizedWebSocket(wsUrl, {
@@ -2253,12 +2361,12 @@ function Conversation() {
       const payload = {
         type: 'session_start',
         userId: user.id,
-          sessionId: sessionId,
+          sessionId: effectiveSessionId,
         token: token,
         scenario: scenario,
         topic: searchParams.get('topic'),
           isRestoration: true,
-        welcomeMuted: welcomeMuted,  // Flag to suppress welcome message
+        welcomeMuted: welcomeMuted || suppressWelcome,
         clientInfo: {
             optimized: true,
           version: '2.0',
@@ -2325,7 +2433,7 @@ function Conversation() {
         }
 
         // Save conversation history when connection closes
-        await saveConversationHistory();
+        void saveConversationHistory(null, null, { keepalive: true });
 
         // Stop network monitoring
         if (window.networkAdaptiveManager) {
@@ -2545,22 +2653,28 @@ function Conversation() {
           }
       }
 
-      // Determine session ID priority: URL > localStorage > new session
+      // Determine session ID priority: URL > user-scoped localStorage > new session
       let effectiveSessionId = urlSessionId;
+      let restoredHistory = false;
 
       // If no URL session ID, check localStorage for persisted session
-      if (!effectiveSessionId && scenario) {
-          const storedSessionId = localStorage.getItem(_lsScenarioKey('session_', scenario));
+      if (!effectiveSessionId && scenario && user?.id) {
+          const sessionKey = _lsSessionKey(user.id, scenario);
+          const legacySessionKey = _lsScenarioKey('session_', scenario);
+          let storedSessionId = localStorage.getItem(sessionKey) || null;
+          if (!storedSessionId) {
+              storedSessionId = localStorage.getItem(legacySessionKey);
+          }
           if (storedSessionId) {
               effectiveSessionId = storedSessionId;
               // Load history messages for this session
               try {
                   const historyRes = await conversationAPI.getHistory(storedSessionId, { signal: abortController.signal });
-                  if (historyRes && historyRes.messages) {
+                  if (historyRes?.success && historyRes.messages) {
                       // Load history messages into state
                       // Set audioPlayed: true to prevent auto-play on page refresh
                       let lastMagicSentence = '';
-                      const historyMessages = historyRes.messages.map(msg => {
+                      const mappedHistoryMessages = historyRes.messages.map(msg => {
                           let content = msg.content || '';
                           if (msg.role !== 'user') {
                               // 提取最新的 MAGIC_SENTENCE（取最后一条，共享正则兼容嵌套括号）
@@ -2574,9 +2688,17 @@ function Conversation() {
                               content,
                               audioUrl: msg.audioUrl,
                               isFinal: true,
-                              audioPlayed: true
+                              audioPlayed: true,
+                              historyId: msg.id || msg._id
                           };
                       });
+                      const historyMessages = collapseAdjacentHistoryDuplicates(mappedHistoryMessages);
+                      restoredHistory = historyMessages.length > 0;
+                      restoredAiContentKeysRef.current = new Set(
+                        historyMessages
+                          .filter(message => message.type === 'ai')
+                          .map(historyContentKey)
+                      );
                       if (lastMagicSentence) {
                           setCurrentMagicSentence(lastMagicSentence);
                       }
@@ -2586,9 +2708,22 @@ function Conversation() {
                           return systemMsg ? [systemMsg, ...historyMessages] : historyMessages;
                       });
                       console.log('Loaded history messages:', historyMessages.length);
+                      localStorage.setItem(sessionKey, storedSessionId);
+                      if (localStorage.getItem(legacySessionKey) === storedSessionId) {
+                        localStorage.removeItem(legacySessionKey);
+                      }
+                  } else if (historyRes?.status === 403 || historyRes?.status === 404) {
+                      localStorage.removeItem(sessionKey);
+                      localStorage.removeItem(legacySessionKey);
+                      effectiveSessionId = null;
                   }
               } catch (err) {
                   console.log('Failed to load history:', err);
+                  if (err?.status === 403 || err?.status === 404) {
+                      localStorage.removeItem(sessionKey);
+                      localStorage.removeItem(legacySessionKey);
+                      effectiveSessionId = null;
+                  }
               }
           }
       }
@@ -2599,8 +2734,8 @@ function Conversation() {
       }
 
       // Persist session ID for this scenario
-      if (scenario) {
-          localStorage.setItem(_lsScenarioKey('session_', scenario), effectiveSessionId);
+      if (scenario && user?.id) {
+          localStorage.setItem(_lsSessionKey(user.id, scenario), effectiveSessionId);
       }
 
       setSessionId(effectiveSessionId);
@@ -2617,7 +2752,10 @@ function Conversation() {
       }
 
       // Connect WebSocket with the effective session ID (state may not be updated yet)
-      connectWebSocket(effectiveSessionId);
+      connectWebSocket(effectiveSessionId, {
+        signal: abortController.signal,
+        suppressWelcome: restoredHistory,
+      });
     };
 
     init();
@@ -2661,6 +2799,27 @@ function Conversation() {
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
+
+  // Persist the latest conversation while the page is still alive so a refresh
+  // does not depend on the websocket close handler completing in time.
+  useEffect(() => {
+    if (!sessionId || !user?.id || messages.length === 0) return;
+
+    if (historyAutosaveTimerRef.current) {
+      clearTimeout(historyAutosaveTimerRef.current);
+    }
+
+    historyAutosaveTimerRef.current = setTimeout(() => {
+      void saveConversationHistory(sessionId, messages, { keepalive: true });
+    }, 1200);
+
+    return () => {
+      if (historyAutosaveTimerRef.current) {
+        clearTimeout(historyAutosaveTimerRef.current);
+        historyAutosaveTimerRef.current = null;
+      }
+    };
+  }, [sessionId, user?.id, messages]);
 
   // Auto-dismiss the language gate warning after 6s.
   useEffect(() => {
@@ -2974,7 +3133,7 @@ function Conversation() {
     : 'idle';
 
   return (
-    <div className="flex flex-col h-screen max-w-lg mx-auto bg-background-light dark:bg-background-dark relative">
+    <div className="flex h-[100dvh] max-h-[100dvh] flex-col overflow-hidden max-w-lg mx-auto bg-background-light dark:bg-background-dark relative">
 
       {/* ── Header: 场景图（有时）+ 简洁 nav bar ── */}
       <div className="w-full shrink-0">
@@ -2991,18 +3150,19 @@ function Conversation() {
         )}
 
         {/* Nav bar：白色底，场景名 + 进度点 + AI状态 */}
-        <div className="flex items-center justify-between px-4 bg-white border-b border-gray-100 shadow-sm" style={{ height: '56px' }}>
+        <header className="flex items-center justify-between px-4 bg-white border-b border-gray-100 shadow-sm" style={{ height: '56px' }}>
 
           {/* 左：× 关闭 + 场景名 */}
           <div className="flex items-center gap-2 min-w-0 flex-1">
             <button
               onClick={() => navigate('/discovery')}
+              aria-label={t('qa_ui.conversation_back', '返回发现页')}
               className="w-7 h-7 rounded-full bg-gray-100 flex items-center justify-center text-gray-500 hover:bg-gray-200 transition shrink-0">
-              <span className="material-symbols-outlined" style={{ fontSize: '16px' }}>close</span>
+              <span className="material-symbols-outlined" aria-hidden="true" style={{ fontSize: '16px' }}>close</span>
             </button>
-            <p className="text-gray-900 font-semibold text-sm leading-tight truncate">
-              {isDailyQAMode ? '今日问答' : (currentScenarioTitle || 'AI 口语导师')}
-            </p>
+            <h1 className="text-gray-900 font-semibold text-sm leading-tight truncate">
+              {isDailyQAMode ? t('qa_ui.conversation_daily_qa') : (currentScenarioTitle || t('qa_ui.conversation_tutor'))}
+            </h1>
           </div>
 
           {/* 右：子任务进度点 + AI 状态 */}
@@ -3029,18 +3189,18 @@ function Conversation() {
 
             {/* AI 导师状态（Tour demo 态不连 WS，显"演示"而非误导的"连接中"；
                 被后端拒绝时显红色"已断开"而非永久"连接中"） */}
-            <span className={`text-xs px-2 py-0.5 rounded-full flex items-center gap-1 ${
+            <span role="status" className={`text-xs px-2 py-0.5 rounded-full flex items-center gap-1 ${
               isTourMode ? 'bg-violet-50 text-violet-600'
                 : wsRejected ? 'bg-red-50 text-red-600'
-                : isConnected ? 'bg-emerald-50 text-emerald-600' : 'bg-amber-50 text-amber-600'
+                : isConnected ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'
             }`}>
               <span className={`w-1.5 h-1.5 rounded-full ${
                 isTourMode ? 'bg-violet-500' : wsRejected ? 'bg-red-500' : isConnected ? 'bg-emerald-500' : 'bg-amber-400'
               }`} />
-              {isTourMode ? '演示' : wsRejected ? t('ws_status_rejected', '已断开') : isConnected ? '在线' : '连接中'}
+              {isTourMode ? t('qa_ui.conversation_demo') : wsRejected ? t('ws_status_rejected', '已断开') : isConnected ? t('qa_ui.conversation_online') : t('qa_ui.conversation_connecting')}
             </span>
           </div>
-        </div>
+        </header>
       </div>
 
       {/* 每日鼓励 Banner（软提示，非硬限制；真正的轮次硬护栏由后端 daily_limit_reached 负责）。
@@ -3064,7 +3224,7 @@ function Conversation() {
               <button
                 onClick={() => navigate('/discovery')}
                 className="text-xs text-indigo-600 hover:text-indigo-700 font-medium">
-                返回发现
+                {t('qa_ui.conversation_back')}
               </button>
             </div>
           ) : dailyQAQuestion ? (
@@ -3096,8 +3256,9 @@ function Conversation() {
 
       {/* Mission Tasks Dropdown Bar — only visible in scene_theater phase (not in daily_qa mode) */}
       {!isDailyQAMode && currentPhase === 'scene_theater' && (tasks.length > 0 || tasksLoading) && (
-        <div
-          className={`z-10 bg-[#637FF1] border-b border-indigo-400/30 transition-all duration-700 shrink-0 relative ${!showTasks && taskBarFaded ? 'opacity-30' : 'opacity-100'}`}
+        <nav
+          aria-label="场景任务进度"
+          className={`z-10 bg-[#4055B5] border-b border-indigo-300/30 transition-all duration-700 shrink-0 relative ${!showTasks && taskBarFaded ? 'opacity-50' : 'opacity-100'}`}
           onMouseEnter={() => {
             if (!showTasks && taskBarFaded) {
               clearTimeout(taskBarFadeTimerRef.current);
@@ -3120,7 +3281,9 @@ function Conversation() {
                 return next;
               });
             }}
-            className="w-full bg-[#637FF1] hover:bg-[#5570E0] active:bg-[#4860CF] transition-colors"
+            aria-expanded={showTasks}
+            aria-controls="conversation-task-list"
+            className="w-full bg-[#4055B5] hover:bg-[#35489F] active:bg-[#2D44CA] transition-colors"
           >
             <div className="flex items-center justify-between px-5 py-3">
               <div className="flex items-center gap-3">
@@ -3128,12 +3291,19 @@ function Conversation() {
                   任务 ({completedTasks.size}/{tasks.length} 完成)
                 </span>
               </div>
-              <span className="material-symbols-outlined text-white text-base">
+              <span aria-hidden="true" className="material-symbols-outlined text-white text-base">
                 {showTasks ? 'expand_less' : 'expand_more'}
               </span>
             </div>
             {/* Overall progress bar — always visible in header */}
-            <div className="w-full h-1 bg-indigo-900/30">
+            <div
+              role="progressbar"
+              aria-label="当前子任务进度"
+              aria-valuemin={0}
+              aria-valuemax={100}
+              aria-valuenow={Math.round(currentTaskProgress)}
+              className="w-full h-1 bg-indigo-950/40"
+            >
               <div
                 className="h-full bg-white/80 transition-all duration-500 ease-out"
                 style={{ width: `${currentTaskProgress}%` }}
@@ -3142,9 +3312,9 @@ function Conversation() {
           </button>
 
           {showTasks && (
-            <ul className="bg-[#637FF1] px-5 pb-4 pt-2 space-y-3 border-t border-indigo-400/30">
+            <ul id="conversation-task-list" aria-label="场景子任务" className="bg-[#4055B5] px-5 pb-4 pt-2 space-y-3 border-t border-indigo-300/30">
               {tasksLoading ? (
-                <li className="text-xs text-white/80 py-1">Loading tasks...</li>
+                <li className="text-xs text-white/80 py-1">{t('conversation_tasks_loading', '任务加载中…')}</li>
               ) : (() => {
                 // determine which is the current in-progress task (first incomplete)
                 const firstIncompleteIdx = tasks.findIndex(t => {
@@ -3165,7 +3335,7 @@ function Conversation() {
                           )}
                         </span>
                         <div className="flex-1 min-w-0">
-                          <span className={`text-sm ${isCompleted ? 'text-white/60 line-through' : 'text-white font-medium'}`}>
+                          <span className={`text-sm ${isCompleted ? 'text-indigo-100 line-through' : 'text-white font-medium'}`}>
                             {isCurrent && !isCompleted && '→ '}
                             {taskText}
                           </span>
@@ -3177,7 +3347,7 @@ function Conversation() {
                             />
                           </div>
                           {isCurrent && !isCompleted && (
-                            <span className="text-[10px] text-white/70 mt-0.5 inline-block">{progress}%</span>
+                            <span className="text-xs font-medium text-white mt-0.5 inline-block">{progress}%</span>
                           )}
                         </div>
                       </div>
@@ -3187,13 +3357,14 @@ function Conversation() {
               })()}
             </ul>
           )}
-        </div>
+        </nav>
       )}
 
       {/* Floating Playback Button */}
       {selection.visible && (
         <button
           onClick={playSelectedText}
+          aria-label={isSynthesizing ? '正在生成选中文本的语音' : '播放选中文本'}
           className="fixed z-50 p-2 bg-primary text-white rounded-full shadow-lg transform -translate-x-1/2 flex items-center justify-center animate-in fade-in zoom-in duration-200"
           style={{ left: selection.x, top: selection.y }}
         >
@@ -3206,7 +3377,7 @@ function Conversation() {
       )}
 
       {/* Messages Area */}
-      <main className="flex-1 overflow-y-auto p-4 space-y-6 scroll-smooth">
+      <main className="min-h-0 flex-1 overflow-y-auto p-4 space-y-6 scroll-smooth">
 
         {/* 魔法重复阶段：台词卡（句子跟读卡片，仅 recall 模式显示）*/}
         {isRecallMode && currentPhase === 'magic_repetition' && (
@@ -3382,9 +3553,10 @@ function Conversation() {
                         console.error('Translation error:', err);
                       }
                     }}
-                    className="text-xs text-slate-400 hover:text-slate-600 flex items-center gap-1 transition"
+                    aria-label="翻译这条 AI 回复"
+                    className="text-xs text-slate-600 hover:text-slate-800 flex items-center gap-1 transition"
                   >
-                    <span style={{fontSize:'13px'}}>🌐</span> 翻译
+                    <span aria-hidden="true" style={{fontSize:'13px'}}>🌐</span> 翻译
                   </button>
                 </div>
               )}
@@ -3396,18 +3568,26 @@ function Conversation() {
 
       {/* CC Immersive Overlay */}
       {ccMode && (
-        <div style={{
+        <section
+          aria-label="CC 沉浸模式"
+          style={{
           position: 'absolute', inset: '56px 0 120px 0',
           display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
           background: 'radial-gradient(ellipse at top, rgba(99,127,241,0.18), transparent 60%) var(--background)',
           zIndex: 10,
-        }}>
-          <button onClick={() => setCcMode(false)} style={{
+          }}
+        >
+          <button
+            onClick={() => setCcMode(false)}
+            aria-label="退出 CC 沉浸模式"
+            className="min-h-11 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/60"
+            style={{
             position: 'absolute', top: 10, right: 14,
             background: 'var(--card)', border: '1px solid var(--border-solid)',
             borderRadius: 20, padding: '5px 12px', fontSize: 11, fontWeight: 600,
             color: 'var(--foreground-muted)', cursor: 'pointer', fontFamily: 'inherit',
-          }}>退出 CC &times;</button>
+            }}
+          >退出 CC <span aria-hidden="true">×</span></button>
 
           {/* 当前子任务进度（CC 浮层会盖住主视图任务面板，这里补一个紧凑进度指示） */}
           {!isRecallMode && !isDailyQAMode && (
@@ -3416,9 +3596,16 @@ function Conversation() {
               display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6,
             }}>
               <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--foreground-muted)' }}>
-                子任务 {Math.min(theaterCompletedTasks.size + 1, 3)}/3
+                子任务 {Math.min(theaterCompletedTasks.size + 1, Math.max(tasks.length, 1))}/{Math.max(tasks.length, 1)}
               </span>
-              <div style={{ width: 160, height: 6, borderRadius: 3, background: 'rgba(99,127,241,0.15)', overflow: 'hidden' }}>
+              <div
+                role="progressbar"
+                aria-label="CC 当前子任务进度"
+                aria-valuemin={0}
+                aria-valuemax={100}
+                aria-valuenow={Math.round(currentTaskProgress)}
+                style={{ width: 160, height: 6, borderRadius: 3, background: 'rgba(99,127,241,0.15)', overflow: 'hidden' }}
+              >
                 <div style={{
                   width: `${Math.max(0, Math.min(100, currentTaskProgress))}%`,
                   height: '100%', borderRadius: 3, background: '#637FF1',
@@ -3444,7 +3631,7 @@ function Conversation() {
               return Math.max(0, Math.min(1, elapsed / total));
             }}
           />
-        </div>
+        </section>
       )}
 
       {/* Footer / Controls */}
@@ -3465,23 +3652,22 @@ function Conversation() {
                     />
                 </div>
                 
-                {/* CC Mode Toggle — hidden while in CC mode; the overlay
-                    provides its own `退出 CC` button so there's no duplicate
-                    control in the footer. */}
-                {!ccMode && (
-                  <button
-                    data-tour="cc-mode"
-                    onClick={() => setCcMode(true)}
-                    className="flex-shrink-0 w-12 h-12 rounded-xl flex items-center justify-center transition"
-                    style={{
-                      border: '1.5px solid var(--border-solid)',
-                      background: 'var(--card)',
-                      color: 'var(--foreground-muted)',
-                      fontSize: 13, fontWeight: 700,
-                    }}
-                    title="沉浸模式"
-                  >CC</button>
-                )}
+                {/* Keep the toggle in place while active so the footer width does
+                    not reflow and clip the restart action on narrow screens. */}
+                <button
+                  data-tour="cc-mode"
+                  onClick={() => setCcMode(value => !value)}
+                  aria-label={ccMode ? '退出 CC 沉浸模式' : '进入 CC 沉浸模式'}
+                  aria-pressed={ccMode}
+                  className="flex-shrink-0 w-12 h-12 rounded-xl flex items-center justify-center transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50"
+                  style={{
+                    border: `1.5px solid ${ccMode ? 'var(--primary)' : 'var(--border-solid)'}`,
+                    background: ccMode ? 'rgba(99,127,241,0.12)' : 'var(--card)',
+                    color: ccMode ? 'var(--primary-dark)' : 'var(--foreground-muted)',
+                    fontSize: 13, fontWeight: 700,
+                  }}
+                  title={ccMode ? '退出沉浸模式' : '进入沉浸模式'}
+                >CC</button>
 
                 {/* Restart Practice Button - Icon only */}
                 {(tasks.length > 0 || location.state?.scenario || new URLSearchParams(window.location.search).get('scenario')) && (
@@ -3493,15 +3679,16 @@ function Conversation() {
                         }
                       }}
                       className="flex-shrink-0 w-12 h-12 bg-amber-100 dark:bg-amber-900/30 hover:bg-amber-200 dark:hover:bg-amber-900/50 text-amber-700 dark:text-amber-300 rounded-xl flex items-center justify-center transition border border-amber-200 dark:border-amber-700"
+                      aria-label="重新练习当前场景"
                       title="重新练习"
                     >
-                      <span className="material-symbols-outlined">replay</span>
+                      <span className="material-symbols-outlined" aria-hidden="true">replay</span>
                     </button>
                 )}
             </div>
 
             {/* WebSocket Error Display with Retry / Back exit */}
-            {webSocketError && (
+            {shouldShowConnectionError(webSocketError, isConnected, wsRejected) && (
                 <div className="flex items-center gap-3 w-full max-w-md">
                     <p className="text-xs text-red-500 bg-red-50 dark:bg-red-900/20 px-3 py-1.5 rounded-full flex-1">
                         {webSocketError}
@@ -3568,20 +3755,22 @@ function Conversation() {
         />
       )}
       {dailyLimitModal && (
-        <div
-          style={{
-            position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)',
-            display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 300,
-          }}
-          onClick={() => setDailyLimitModal(null)}>
+        <AccessibleDialog
+          title={dailyLimitModal.kind === 'paywall' ? t('daily_limit_paywall_title') : t('daily_limit_reached_title')}
+          description={dailyLimitModal.kind === 'paywall'
+            ? t('daily_limit_paywall_desc', { limit: dailyLimitModal.limit })
+            : t('daily_limit_reached_desc', { limit: dailyLimitModal.limit })}
+          onClose={() => setDailyLimitModal(null)}
+          closeLabel={t('daily_limit_cancel')}
+          showCloseButton={false}
+          panelClassName="!max-w-[360px] !rounded-3xl"
+          zIndex={300}
+        >
           <div
-            onClick={(e) => e.stopPropagation()}
             style={{
-              background: '#FFFFFF', borderRadius: 24, padding: 32,
-              maxWidth: 360, width: '90%', textAlign: 'center',
-              boxShadow: '0 20px 40px rgba(0,0,0,0.2)',
+              padding: 32, textAlign: 'center',
             }}>
-            <div style={{ fontSize: 56, marginBottom: 12 }}>
+            <div aria-hidden="true" style={{ fontSize: 56, marginBottom: 12 }}>
               {dailyLimitModal.kind === 'paywall' ? '🔒' : '🌙'}
             </div>
             <h2 style={{ fontSize: 20, fontWeight: 700, color: '#1F2937', marginBottom: 8 }}>
@@ -3615,7 +3804,7 @@ function Conversation() {
               )}
             </div>
           </div>
-        </div>
+        </AccessibleDialog>
       )}
       {/* Language gate warning — visible amber banner anchored to the top.
           Without this, the only signal that the daily QA was rejected for
@@ -3661,6 +3850,7 @@ function Conversation() {
             completedTasks={completedTasks}
             onConfirm={handleConfirmComplete}
             onContinue={() => setTaskReadyToComplete(null)}
+            canConfirm={isConnected}
           />
         )}
       </AnimatePresence>

@@ -1,0 +1,254 @@
+openapi: 3.1.0
+info:
+  title: Guaji Developer API
+  version: 1.0.0
+  description: Stable partner façade. Stripe, administration, scoring writes, and phase/reset APIs are intentionally excluded.
+servers:
+  - url: http://localhost:8081/api/v1
+security:
+  - FirstPartyCookie: []
+  - ApiKey: []
+    DelegatedBearer: []
+paths:
+  /oauth/authorize:
+    get:
+      operationId: previewAuthorization
+      description: Preview a partner consent request in an authenticated Guaji first-party session.
+      security: [{ FirstPartyCookie: [] }]
+      parameters:
+        - { name: client_id, in: query, required: true, schema: { type: string, format: uuid } }
+        - { name: redirect_uri, in: query, required: true, schema: { type: string, format: uri } }
+        - { name: scope, in: query, required: true, schema: { type: string, minLength: 1 } }
+        - { name: state, in: query, schema: { type: string, maxLength: 512 } }
+      responses:
+        '200': { $ref: '#/components/responses/AuthorizationPreviewResponse' }
+        default: { $ref: '#/components/responses/Error' }
+    post:
+      operationId: decideAuthorization
+      description: Approve or deny a partner request. Approval returns a single-use code in the registered redirect URL.
+      security: [{ FirstPartyCookie: [] }]
+      parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/AuthorizationDecision' } } }
+      responses:
+        '200': { $ref: '#/components/responses/AuthorizationDecisionResponse' }
+        default: { $ref: '#/components/responses/Error' }
+  /oauth/token:
+    post:
+      operationId: exchangeAuthorizationCode
+      security: [{ ApiKey: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [code]
+              properties: { code: { type: string, minLength: 16 } }
+      responses:
+        '200': { $ref: '#/components/responses/TokenResponse' }
+        default: { $ref: '#/components/responses/Error' }
+  /profile:
+    get:
+      operationId: getProfile
+      x-required-scopes: [profile:read]
+      responses:
+        '200': { $ref: '#/components/responses/DataResponse' }
+        default: { $ref: '#/components/responses/Error' }
+    patch:
+      operationId: updateProfile
+      x-required-scopes: [profile:write]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ProfileUpdate' }
+      responses:
+        '200': { $ref: '#/components/responses/DataResponse' }
+        default: { $ref: '#/components/responses/Error' }
+  /goals:
+    get:
+      operationId: listGoals
+      x-required-scopes: [goals:read]
+      parameters: [{ $ref: '#/components/parameters/Cursor' }, { $ref: '#/components/parameters/Limit' }]
+      responses:
+        '200': { $ref: '#/components/responses/ListResponse' }
+        default: { $ref: '#/components/responses/Error' }
+    post:
+      operationId: createGoal
+      x-required-scopes: [goals:write]
+      parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/GoalCreate' } } } }
+      responses:
+        '201': { $ref: '#/components/responses/DataResponse' }
+        default: { $ref: '#/components/responses/Error' }
+  /tasks:
+    get:
+      operationId: listTasks
+      x-required-scopes: [goals:read]
+      parameters: [{ $ref: '#/components/parameters/Cursor' }, { $ref: '#/components/parameters/Limit' }]
+      responses:
+        '200': { $ref: '#/components/responses/ListResponse' }
+        default: { $ref: '#/components/responses/Error' }
+  /conversations:
+    get:
+      operationId: listConversations
+      x-required-scopes: [conversations:read]
+      parameters: [{ $ref: '#/components/parameters/Cursor' }, { $ref: '#/components/parameters/Limit' }]
+      responses:
+        '200': { $ref: '#/components/responses/ListResponse' }
+        default: { $ref: '#/components/responses/Error' }
+    post:
+      operationId: createConversation
+      x-required-scopes: [conversations:write]
+      parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }]
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties: { goal_id: { type: integer }, force_new: { type: boolean } }
+      responses:
+        '201': { $ref: '#/components/responses/DataResponse' }
+        default: { $ref: '#/components/responses/Error' }
+  /conversations/{sessionId}:
+    get:
+      operationId: getConversation
+      x-required-scopes: [conversations:read]
+      parameters:
+        - name: sessionId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200': { $ref: '#/components/responses/DataResponse' }
+        '404': { $ref: '#/components/responses/Error' }
+        default: { $ref: '#/components/responses/Error' }
+  /ai/scenarios:
+    post:
+      operationId: generateScenarios
+      x-required-scopes: [ai:generate]
+      parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }]
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/ScenarioGenerate' } } } }
+      responses:
+        '200': { $ref: '#/components/responses/DataResponse' }
+        default: { $ref: '#/components/responses/Error' }
+  /ai/tts:
+    post:
+      operationId: synthesizeSpeech
+      description: Binary exception to the JSON success envelope.
+      x-required-scopes: [ai:generate]
+      parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }]
+      requestBody: { required: true, content: { application/json: { schema: { type: object, additionalProperties: false, required: [text], properties: { text: { type: string, minLength: 1, maxLength: 5000 }, voice: { enum: [Tina, Serena, Evan, Arda] } } } } } }
+      responses:
+        '200': { description: WAV audio, content: { audio/wav: { schema: { type: string, contentEncoding: binary } } } }
+        default: { $ref: '#/components/responses/Error' }
+  /realtime/tickets:
+    post:
+      operationId: createRealtimeTicket
+      x-required-scopes: [realtime:connect]
+      parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }]
+      responses:
+        '201': { $ref: '#/components/responses/DataResponse' }
+        default: { $ref: '#/components/responses/Error' }
+components:
+  securitySchemes:
+    FirstPartyCookie: { type: apiKey, in: cookie, name: accessToken, description: Guaji first-party web session only. Partner integrations must use ApiKey and DelegatedBearer. }
+    ApiKey: { type: apiKey, in: header, name: X-Guaji-API-Key }
+    DelegatedBearer: { type: http, scheme: bearer, bearerFormat: JWT }
+  parameters:
+    Cursor: { name: cursor, in: query, schema: { type: string } }
+    Limit: { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 100, default: 20 } }
+    IdempotencyKey: { name: Idempotency-Key, in: header, required: true, schema: { type: string, minLength: 1, maxLength: 255 } }
+  schemas:
+    Meta:
+      type: object
+      required: [request_id]
+      properties: { request_id: { type: string, format: uuid }, next_cursor: { type: [string, 'null'] } }
+    ProfileUpdate:
+      type: object
+      minProperties: 1
+      additionalProperties: false
+      properties:
+        nickname: { type: string, maxLength: 50 }
+        avatar_url: { type: string, format: uri }
+        native_language: { type: string }
+        target_language: { type: string }
+        interests: { type: string }
+        daily_practice_goal: { type: integer, minimum: 1, maximum: 240 }
+        gender: { type: [integer, 'null'], enum: [0, 1, 2, null] }
+        birth_year: { type: [integer, 'null'], minimum: 1900, maximum: 2100 }
+        points: { type: integer, minimum: 0 }
+    AuthorizationDecision:
+      type: object
+      additionalProperties: false
+      required: [client_id, redirect_uri, scope, approved]
+      properties:
+        client_id: { type: string, format: uuid }
+        redirect_uri: { type: string, format: uri }
+        scope: { oneOf: [{ type: string }, { type: array, items: { type: string } }] }
+        state: { type: string, maxLength: 512 }
+        approved: { type: boolean }
+    GoalCreate:
+      type: object
+      additionalProperties: false
+      required: [target_language, target_level, scenarios]
+      properties:
+        type: { type: string, default: custom }
+        description: { type: string, maxLength: 1000 }
+        target_language: { type: string, minLength: 2, maxLength: 32 }
+        target_level: { type: string, minLength: 1, maxLength: 64 }
+        current_proficiency: { type: integer, minimum: 0 }
+        completion_time_days: { type: integer, minimum: 1, maximum: 3650 }
+        interests: { type: string, maxLength: 2000 }
+        scenarios:
+          type: array
+          maxItems: 100
+          items:
+            type: object
+            required: [title]
+            properties:
+              title: { type: string, minLength: 1, maxLength: 200 }
+              tasks: { type: array, maxItems: 100, items: { oneOf: [{ type: string }, { type: object, properties: { text: { type: string } }, required: [text] }] } }
+    ScenarioGenerate:
+      type: object
+      additionalProperties: false
+      required: [target_language]
+      properties:
+        type: { type: string, maxLength: 100 }
+        target_language: { type: string, minLength: 2, maxLength: 32 }
+        target_level: { type: string, maxLength: 64 }
+        native_language: { type: string, minLength: 2, maxLength: 32 }
+        interests: { type: string, maxLength: 2000 }
+        goal: { type: string, maxLength: 1000 }
+    Error:
+      type: object
+      required: [error, meta]
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          properties: { code: { type: string }, message: { type: string }, details: {} }
+        meta: { $ref: '#/components/schemas/Meta' }
+  responses:
+    DataResponse:
+      description: Success envelope
+      content: { application/json: { schema: { type: object, required: [data, meta], properties: { data: {}, meta: { $ref: '#/components/schemas/Meta' } } } } }
+    ListResponse:
+      description: Cursor-paginated success envelope
+      content: { application/json: { schema: { type: object, required: [data, meta], properties: { data: { type: array, items: {} }, meta: { $ref: '#/components/schemas/Meta' } } } } }
+    TokenResponse:
+      description: Delegated bearer token
+      content: { application/json: { schema: { type: object, required: [data, meta], properties: { data: { type: object, required: [access_token, token_type, expires_in, scopes], properties: { access_token: { type: string }, token_type: { const: Bearer }, expires_in: { type: integer, const: 3600 }, scopes: { type: array, items: { type: string } } } }, meta: { $ref: '#/components/schemas/Meta' } } } } }
+    AuthorizationPreviewResponse:
+      description: Consent screen data
+      content: { application/json: { schema: { type: object, required: [data, meta], properties: { data: { type: object, required: [client, redirect_uri, scopes, state], properties: { client: { type: object, required: [id, name], properties: { id: { type: string, format: uuid }, name: { type: string } } }, redirect_uri: { type: string, format: uri }, scopes: { type: array, items: { type: string } }, state: { type: string } } }, meta: { $ref: '#/components/schemas/Meta' } } } } }
+    AuthorizationDecisionResponse:
+      description: Validated registered redirect target containing code or access_denied
+      content: { application/json: { schema: { type: object, required: [data, meta], properties: { data: { type: object, required: [redirect_url], properties: { redirect_url: { type: string, format: uri } } }, meta: { $ref: '#/components/schemas/Meta' } } } } }
+    Error:
+      description: Error envelope
+      content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }

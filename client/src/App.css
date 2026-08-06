@@ -1,4 +1,21 @@
 .App {
-  min-height: 100vh;
+  min-height: 100dvh;
   width: 100%;
+  overflow-x: clip;
 }
+
+.app-viewport {
+  --safe-top: env(safe-area-inset-top, 0px);
+  --safe-right: env(safe-area-inset-right, 0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+  --safe-left: env(safe-area-inset-left, 0px);
+  --bottom-nav-height: 72px;
+  min-height: 100dvh;
+  width: 100%;
+  overflow-x: clip;
+}
+
+.app-page { min-height: 100dvh; width: min(100%, 72rem); margin-inline: auto; padding-left: max(1rem, var(--safe-left)); padding-right: max(1rem, var(--safe-right)); }
+.app-page--with-nav { padding-bottom: calc(var(--bottom-nav-height) + var(--safe-bottom) + 1rem); }
+.app-scroll-region { min-height: 0; overflow-y: auto; overscroll-behavior-y: contain; }
+.app-modal-boundary { max-width: min(calc(100vw - 2rem), 36rem); max-height: calc(100dvh - var(--safe-top) - var(--safe-bottom) - 2rem); overflow: auto; }

@@ -2,9 +2,19 @@
 
 ## In Progress
 
+- 配置生产 INTERNAL_AUTH_SECRET 并重建/滚动部署受影响服务。
+- 在 Stripe test/live Dashboard 配置 Promotion Codes、Portal、Webhook，并完成最小真实交易。
+- 在 Tawk 配置 Ticketing、AI Assist 和人工转接 Shortcut。
+- 完成三类真实会话验收。
+- 部署后观察 24 小时错误率、历史保存、Webhook、备份和 DashScope 超时。
 
+- [x] [Release] 独立私有 COS `oral-backup-1317719935` 已配置 Lifecycle（daily 30 天、monthly 365 天）；2026-08-06 真实上传 3.90 MB bundle，双层 checksum 通过，并恢复至隔离 PostgreSQL/MongoDB。抽样计数完全一致（users 21、goals 33、tasks 784、conversations 8268、metrics 4）；演练临时库已删除，02:30 cron 容器健康。演练同时修复外层 checksum 绝对路径及 Mongo archive namespace 未重映射问题。
+- [x] [Performance] 2026-08-06 本地经中国区 DashScope 公网执行 5 次全新 WebSocket 会话：客户端首音频 962–1062ms（p95/max 1062ms），服务端 first_audio 898–973ms，全部 ≤5 秒。移除 `session.created` 后 500ms 定时器，并修复 `session.created` 早于 `on_open` 时欢迎语不触发的回调顺序竞态；15 秒可重试超时保留。
+- [x] [Security] 2026-08-06 逐项复核 CSP/响应头：生产现状仅有 CSP，代码已为本地/Zeabur 配置补齐 HSTS、nosniff、SAMEORIGIN、Referrer-Policy、Permissions-Policy、COOP，并同步本地 COS `media-src`/`connect-src`。两份 Nginx 配置 `nginx -t` 通过，本地 `/` 与 `/health` 实际响应头验证通过；线上生效纳入既有部署后验收项。
 ## Backlog
 
+- [x] [Quality] `scripts/quality/audit-tracker.mjs`：数量相等输出 count verified，仅不等时输出 mismatch，并有双分支测试。
+- [x] [Reliability] `client/src/components/SupportChat.jsx`：Tawk 改为点击加载，首次失败/超时显示重试入口。
 
 ## Done
 
@@ -17,6 +27,7 @@
 - [x] [Feature] 今日复述切换记录后端持久化：新建 recall_daily_state 表(UUID FK) + 3 端点(/recall/daily-state·switch·complete) + api.js + Recall.js 对接（localStorage 降级为离线 fallback）；recallState.test.js 8 + recall-switch-limit.test.js 5
 - [x] [Commercialization] 订阅分层模型 + 单位经济文档：docs/Pricing_Unit_Economics.md（量化门控矩阵贴代码 + per-minute 成本模型 + LTV/CAC + 标出 Free 缺时长门控最大漏点）
 - [x] [Feature] App 后台 Live Activity 规划文档：docs/Live_Activity_Background.md（澄清 Web/PWA 做不了真 iOS Live Activity，按平台分 A/B/C 档 + 增量路线 + 阻塞决策清单）
+
 
 ### 已知预存项（非本批引入，待后续单独处理）
 - [x] [Bug] update_db.sql user_checkins.user_id 声明为 INT 但 users.id 实为 UUID（迁移脚本类型不一致；init.sql 正确，仅 update_db.sql 漂移）→ 已改 UUID（2026-06-08）
@@ -336,5 +347,5 @@
 - [x] [Testing] ScenarioCard 图片回退逻辑 — 已补：`scenariocard-guard.test.js` 加 `resolveShowImage` 4 例（imageUrl/imageError 组合，纯逻辑风格，10/10 通过）
 - [x] [Performance] GoalSetting.js:250 双 spread + id 冗余 — 已修：改 `scenarios.map(({ id, ...rest }) => rest)`，剥离前端临时 id（仅 React key 用）+ 去重复覆盖
 - [x] [CI] Security Scan CodeQL Action v3→v4 — 已升（v3 将于 2026-12 deprecated，提前升）。security.yml init/analyze/upload-sarif 三处 @v3→@v4（v4 major tag 存在，latest v4.36.2）
-- [ ] [CI] Security Scan Node 20 deprecation warning — 上游 actions（checkout@v4 / codeql-action）仍标 Node 20，GitHub runner 已强制 Node 24 运行，非阻断、非我方可控（等上游 action 更新）。仅记录，无需动作
+- [x] [CI] Security Scan Node 20 deprecation warning — 已复核并接受：上游 actions（checkout@v4 / codeql-action）仍标 Node 20，GitHub runner 已强制 Node 24 运行，非阻断、非我方可控；该记录无需仓库侧动作
 - [x] [Testing] E2E free-user 403 负面测试：test_scenario_batch_and_daily_qa.py 新增 free_user scenario（/pool + /select 返回 403，mock 模式 4/4 pass）

@@ -45,7 +45,7 @@ CREATE TABLE IF NOT EXISTS user_goals (
     interests TEXT, -- Goal specific interests
     scenarios JSONB, -- List of 10 scenarios + tasks
     scenario_review JSONB, -- Latest per-scenario AI review (review_report/recommendations/analysis) for instant REST fetch
-    status VARCHAR(20) DEFAULT 'active', -- active, completed, abandoned
+    status VARCHAR(20) DEFAULT 'active', -- active, paused, completed, archived (abandoned is legacy)
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     completed_at TIMESTAMPTZ
@@ -62,6 +62,7 @@ CREATE TABLE IF NOT EXISTS user_tasks (
     score INT DEFAULT 0, -- 0-100 quality score for this specific task
     interaction_count INT DEFAULT 0, -- Number of dialogue turns for this task
     feedback TEXT, -- AI feedback regarding this task
+    mode VARCHAR(32), -- Conversation mode: scene_theater, daily_qa, recall, tour, etc.
     completed_at TIMESTAMPTZ,
     created_at TIMESTAMPTZ DEFAULT NOW(),
     updated_at TIMESTAMPTZ DEFAULT NOW()
@@ -104,6 +105,15 @@ CREATE TABLE IF NOT EXISTS recall_daily_state (
 );
 CREATE INDEX IF NOT EXISTS idx_recall_daily_state_user_date ON recall_daily_state(user_id, state_date);
 
+CREATE TABLE IF NOT EXISTS user_achievements (
+    id BIGSERIAL PRIMARY KEY,
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    achievement_key VARCHAR(64) NOT NULL,
+    unlocked_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE(user_id, achievement_key)
+);
+CREATE INDEX IF NOT EXISTS idx_user_achievements_user ON user_achievements(user_id);
+
 -- Create the user_feedback table (in-app feedback submissions)
 CREATE TABLE IF NOT EXISTS user_feedback (
     id SERIAL PRIMARY KEY,
@@ -131,3 +141,45 @@ CREATE INDEX IF NOT EXISTS idx_user_goals_user_id ON user_goals(user_id);
 CREATE INDEX IF NOT EXISTS idx_user_goals_status ON user_goals(status);
 CREATE INDEX IF NOT EXISTS idx_user_tasks_goal_id ON user_tasks(goal_id);
 CREATE INDEX IF NOT EXISTS idx_user_tasks_user_id ON user_tasks(user_id);
+
+-- Developer API partner credentials, delegated user grants, and redacted audit log.
+-- Raw API keys and authorization codes are never stored.
+CREATE TABLE IF NOT EXISTS developer_clients (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(), name VARCHAR(120) NOT NULL,
+    status VARCHAR(20) NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'disabled')),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE TABLE IF NOT EXISTS developer_api_keys (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(), client_id UUID NOT NULL REFERENCES developer_clients(id) ON DELETE CASCADE,
+    key_hash CHAR(64) NOT NULL UNIQUE, key_prefix VARCHAR(20) NOT NULL,
+    status VARCHAR(20) NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'revoked')),
+    expires_at TIMESTAMPTZ, last_used_at TIMESTAMPTZ, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE TABLE IF NOT EXISTS developer_user_grants (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(), client_id UUID NOT NULL REFERENCES developer_clients(id) ON DELETE CASCADE,
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE, scopes TEXT[] NOT NULL DEFAULT '{}',
+    authorization_code_hash CHAR(64) UNIQUE, code_exchanged_at TIMESTAMPTZ,
+    status VARCHAR(20) NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'revoked')),
+    expires_at TIMESTAMPTZ, revoked_at TIMESTAMPTZ, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE (client_id, user_id)
+);
+CREATE TABLE IF NOT EXISTS developer_audit_events (
+    id BIGSERIAL PRIMARY KEY, client_id UUID NOT NULL REFERENCES developer_clients(id),
+    grant_id UUID REFERENCES developer_user_grants(id), user_id UUID REFERENCES users(id), request_id UUID NOT NULL,
+    method VARCHAR(10) NOT NULL, path TEXT NOT NULL, status_code INT NOT NULL, duration_ms INT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE TABLE IF NOT EXISTS developer_idempotency_keys (
+    client_id UUID NOT NULL REFERENCES developer_clients(id) ON DELETE CASCADE,
+    grant_id UUID NOT NULL REFERENCES developer_user_grants(id) ON DELETE CASCADE,
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    idempotency_key VARCHAR(255) NOT NULL, method VARCHAR(10) NOT NULL, path TEXT NOT NULL,
+    request_hash CHAR(64) NOT NULL, status_code INT, response_body JSONB,
+    response_body_binary BYTEA, response_content_type VARCHAR(120),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), expires_at TIMESTAMPTZ NOT NULL DEFAULT NOW() + INTERVAL '24 hours',
+    PRIMARY KEY (client_id, grant_id, user_id, method, path, idempotency_key)
+);
+CREATE INDEX IF NOT EXISTS idx_developer_keys_client ON developer_api_keys(client_id);
+CREATE INDEX IF NOT EXISTS idx_developer_grants_lookup ON developer_user_grants(client_id, user_id, status);
+CREATE INDEX IF NOT EXISTS idx_developer_audit_created ON developer_audit_events(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_developer_idempotency_expiry ON developer_idempotency_keys(expires_at);

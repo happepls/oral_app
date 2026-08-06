@@ -3,19 +3,16 @@ import { useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { useAuth } from '../contexts/AuthContext';
 import LanguageSwitcher from '../components/LanguageSwitcher';
+import { formatCnyReference, formatMinorCurrency } from '../utils/pricing';
 import { motion } from 'motion/react';
 import { Mic, GraduationCap, Timer, TrendingUp, ChevronRight, ArrowRight } from 'lucide-react';
-
-const TESTIMONIAL_COUNT = 3;
-
-const FEATURE_ICONS = [Mic, GraduationCap, Timer, TrendingUp];
 
 function Landing() {
   const navigate = useNavigate();
   const { user } = useAuth();
-  const { t } = useTranslation();
-  const [activeTestimonial, setActiveTestimonial] = useState(0);
+  const { t, i18n } = useTranslation();
   const [showPrivacy, setShowPrivacy] = useState(false);
+  const [livePrices, setLivePrices] = useState({});
 
   const features = useMemo(() => [
     { Icon: Mic,           title: t('feature_1_title'), desc: t('feature_1_desc') },
@@ -24,29 +21,65 @@ function Landing() {
     { Icon: TrendingUp,    title: t('feature_4_title'), desc: t('feature_4_desc') },
   ], [t]);
 
-  const testimonials = useMemo(() => [
-    { name: t('t1_name'), role: t('t1_role'), text: t('t1_text'), avatar: '👨‍🎓' },
-    { name: t('t2_name'), role: t('t2_role'), text: t('t2_text'), avatar: '👩‍💼' },
-    { name: t('t3_name'), role: t('t3_role'), text: t('t3_text'), avatar: '🧳' },
+  const faqs = useMemo(() => [
+    { question: t('landing_faq_q1'), answer: t('landing_faq_a1') },
+    { question: t('landing_faq_q2'), answer: t('landing_faq_a2') },
+    { question: t('landing_faq_q3'), answer: t('landing_faq_a3') },
   ], [t]);
 
   const pricingPlans = useMemo(() => [
     {
-      name: t('plan_free_name'), price: '0', period: '',
+      name: t('plan_free_name'), price: '$0', period: '', cnyReference: null,
       features: [t('plan_free_f1'), t('plan_free_f2'), t('plan_free_f3')],
       cta: t('plan_free_cta'), highlight: false,
     },
     {
-      name: t('plan_week_name'), price: '4.99', period: '/wk',
+      name: t('plan_week_name'),
+      price: livePrices.weekly
+        ? formatMinorCurrency(livePrices.weekly.unitAmount, livePrices.weekly.currency, i18n.language)
+        : null,
+      period: livePrices.weekly ? `/${t('qa_ui.subscription_interval_week')}` : '',
+      cnyReference: livePrices.weekly
+        ? formatCnyReference(livePrices.weekly.unitAmount, livePrices.weekly.currency, i18n.language)
+        : null,
       features: [t('plan_week_f1'), t('plan_week_f2'), t('plan_week_f3'), t('plan_week_f4')],
       cta: t('plan_week_cta'), highlight: true,
     },
     {
-      name: t('plan_year_name'), price: '99', period: '/yr',
+      name: t('plan_year_name'),
+      price: livePrices.annual
+        ? formatMinorCurrency(livePrices.annual.unitAmount, livePrices.annual.currency, i18n.language)
+        : null,
+      period: livePrices.annual ? `/${t('qa_ui.subscription_interval_year')}` : '',
+      cnyReference: livePrices.annual
+        ? formatCnyReference(livePrices.annual.unitAmount, livePrices.annual.currency, i18n.language)
+        : null,
       features: [t('plan_year_f1'), t('plan_year_f2'), t('plan_year_f3'), t('plan_year_f4'), t('plan_year_f5')],
       cta: t('plan_year_cta'), highlight: false,
     },
-  ], [t]);
+  ], [t, i18n.language, livePrices]);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    fetch('/api/stripe/products-with-prices', { signal: controller.signal })
+      .then((response) => response.ok ? response.json() : Promise.reject(new Error('price unavailable')))
+      .then((payload) => {
+        const mapped = {};
+        for (const product of Array.isArray(payload?.data) ? payload.data : []) {
+          const price = product.prices?.[0];
+          const tier = product.metadata?.tier;
+          if (!price || !tier) continue;
+          mapped[tier] = {
+            unitAmount: price.unit_amount,
+            currency: price.currency,
+            interval: price.recurring?.interval,
+          };
+        }
+        setLivePrices(mapped);
+      })
+      .catch(() => setLivePrices({}));
+    return () => controller.abort();
+  }, []);
 
   // 已登录用户可以主动回访首页（不再强制 redirect 到 /discovery）。
   // 仅当账号尚未完成 onboarding（无 native_language）时才引导去 /onboarding，
@@ -58,22 +91,39 @@ function Landing() {
   }, [user, navigate]);
 
   useEffect(() => {
-    const timer = setInterval(() => {
-      setActiveTestimonial((prev) => (prev + 1) % TESTIMONIAL_COUNT);
-    }, 5000);
-    return () => clearInterval(timer);
-  }, []);
+    const node = document.getElementById('homepage-structured-data');
+    if (!node) return;
+    try {
+      const schema = JSON.parse(node.textContent);
+      const graph = schema['@graph'] || [];
+      const website = graph.find((item) => item['@type'] === 'WebSite');
+      const app = graph.find((item) => item['@type'] === 'SoftwareApplication');
+      const faq = graph.find((item) => item['@type'] === 'FAQPage');
+      if (website) website.inLanguage = i18n.language === 'zh' ? 'zh-CN' : i18n.language;
+      if (app) app.description = t('landing_direct_answer');
+      if (faq) {
+        faq.mainEntity = faqs.map(({ question, answer }) => ({
+          '@type': 'Question',
+          name: question,
+          acceptedAnswer: { '@type': 'Answer', text: answer },
+        }));
+      }
+      node.textContent = JSON.stringify(schema);
+    } catch {
+      // The build-time JSON-LD remains valid if an extension mutates the node.
+    }
+  }, [faqs, i18n.language, t]);
 
   return (
-    <div className="min-h-screen bg-gradient-to-b from-slate-50 to-white dark:from-slate-900 dark:to-slate-800">
+    <div className="min-h-[100dvh] bg-gradient-to-b from-slate-50 to-white dark:from-slate-900 dark:to-slate-800">
       {/* ── Navbar ── */}
       <nav className="fixed top-0 left-0 right-0 z-50 bg-white/80 dark:bg-slate-900/80 backdrop-blur-md border-b border-slate-200 dark:border-slate-800">
         <div className="max-w-6xl mx-auto px-4 py-4 flex items-center justify-between">
           <div className="flex items-center gap-2">
             <img src="/guaji-logo.svg" alt="GuaJi" className="w-8 h-8" />
-            <span className="text-xl font-bold text-slate-900 dark:text-white">GuaJi</span>
+            <span className="hidden sm:inline text-xl font-bold text-slate-900 dark:text-white">GuaJi</span>
           </div>
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-1 sm:gap-3">
             <LanguageSwitcher />
             {user ? (
               <>
@@ -82,8 +132,8 @@ function Landing() {
                 </span>
                 <button
                   onClick={() => navigate('/discovery')}
-                  className="text-white font-medium px-5 py-2 rounded-lg transition hover:opacity-90"
-                  style={{ background: 'linear-gradient(135deg, #637FF1, #a47af6)' }}
+                  className="text-white font-medium px-3 sm:px-5 py-2 rounded-lg transition hover:opacity-90"
+                  style={{ background: 'linear-gradient(135deg, #2d44ca, #7040cf)' }}
                 >
                   {t('nav_enter_app')}
                 </button>
@@ -92,14 +142,14 @@ function Landing() {
               <>
                 <button
                   onClick={() => navigate('/login')}
-                  className="text-slate-600 dark:text-slate-300 hover:text-primary font-medium px-4 py-2 transition-colors"
+                  className="text-slate-600 dark:text-slate-300 hover:text-primary font-medium px-2 sm:px-4 py-2 transition-colors"
                 >
                   {t('nav_login')}
                 </button>
                 <button
                   onClick={() => navigate('/register')}
-                  className="text-white font-medium px-5 py-2 rounded-lg transition hover:opacity-90"
-                  style={{ background: 'linear-gradient(135deg, #637FF1, #a47af6)' }}
+                  className="text-white font-medium px-3 sm:px-5 py-2 rounded-lg transition hover:opacity-90"
+                  style={{ background: 'linear-gradient(135deg, #2d44ca, #7040cf)' }}
                 >
                   {t('nav_free_start')}
                 </button>
@@ -164,6 +214,23 @@ function Landing() {
         </div>
       </section>
 
+      {/* ── Direct answer ── */}
+      <section className="py-16 px-4 bg-white dark:bg-slate-900" aria-labelledby="direct-answer-title">
+        <div className="max-w-4xl mx-auto">
+          <h2 id="direct-answer-title" className="text-3xl md:text-4xl font-bold text-slate-900 dark:text-white mb-5">
+            {t('landing_direct_title')}
+          </h2>
+          <p className="text-lg leading-8 text-slate-700 dark:text-slate-300">
+            {t('landing_direct_answer')}
+          </p>
+          <ul className="mt-8 grid gap-4 md:grid-cols-3 text-slate-700 dark:text-slate-300">
+            <li className="rounded-xl border border-slate-200 dark:border-slate-700 p-5">{t('landing_direct_point_1')}</li>
+            <li className="rounded-xl border border-slate-200 dark:border-slate-700 p-5">{t('landing_direct_point_2')}</li>
+            <li className="rounded-xl border border-slate-200 dark:border-slate-700 p-5">{t('landing_direct_point_3')}</li>
+          </ul>
+        </div>
+      </section>
+
       {/* ── Features ── */}
       <section id="features" className="py-20 px-4 bg-slate-50 dark:bg-slate-800/50">
         <div className="max-w-6xl mx-auto">
@@ -195,35 +262,6 @@ function Landing() {
         </div>
       </section>
 
-      {/* ── Testimonials ── */}
-      <section className="py-20 px-4">
-        <div className="max-w-4xl mx-auto text-center">
-          <h2 className="text-3xl md:text-4xl font-bold text-slate-900 dark:text-white mb-4">
-            {t('landing_testimonials_title')}
-          </h2>
-          <p className="text-slate-600 dark:text-slate-400 mb-12">{t('landing_testimonials_desc')}</p>
-          <div className="relative bg-white dark:bg-slate-800 rounded-2xl p-8 border border-slate-200 dark:border-slate-700 shadow-brand">
-            <div className="text-5xl mb-4">{testimonials[activeTestimonial].avatar}</div>
-            <p className="text-xl text-slate-700 dark:text-slate-300 italic mb-6">
-              "{testimonials[activeTestimonial].text}"
-            </p>
-            <p className="font-bold text-slate-900 dark:text-white">{testimonials[activeTestimonial].name}</p>
-            <p className="text-slate-500 text-sm">{testimonials[activeTestimonial].role}</p>
-            <div className="flex justify-center gap-2 mt-6">
-              {testimonials.map((_, i) => (
-                <button
-                  key={i}
-                  onClick={() => setActiveTestimonial(i)}
-                  className={`h-2 rounded-full transition-all ${
-                    i === activeTestimonial ? 'w-6 bg-primary' : 'w-2 bg-slate-300 dark:bg-slate-600'
-                  }`}
-                />
-              ))}
-            </div>
-          </div>
-        </div>
-      </section>
-
       {/* ── Pricing ── */}
       <section id="pricing" className="py-20 px-4 bg-slate-50 dark:bg-slate-800/50">
         <div className="max-w-5xl mx-auto">
@@ -248,10 +286,16 @@ function Landing() {
                   {plan.name}
                 </h3>
                 <div className="mb-4">
-                  <span className="text-4xl font-bold">${plan.price}</span>
+                  <span className="text-4xl font-bold">{plan.price === null ? '—' : plan.price}</span>
                   <span className={`text-sm ${plan.highlight ? 'text-primary-light' : 'text-slate-500'}`}>
                     {plan.period}
                   </span>
+                  {plan.price === null && <span className="ml-2 text-xs text-slate-500">{t('qa_ui.price_unavailable_short')}</span>}
+                  {plan.cnyReference && (
+                    <p className={`mt-1 text-xs ${plan.highlight ? 'text-indigo-100' : 'text-slate-500 dark:text-slate-400'}`}>
+                      {t('price_cny_reference', { price: plan.cnyReference })}
+                    </p>
+                  )}
                 </div>
                 <ul className="space-y-3 mb-6">
                   {plan.features.map((f, j) => (
@@ -265,7 +309,7 @@ function Landing() {
                   onClick={() => navigate('/register')}
                   className={`w-full py-3 rounded-xl font-bold transition ${
                     plan.highlight
-                      ? 'bg-white text-primary hover:bg-slate-100'
+                      ? 'bg-white text-indigo-700 hover:bg-slate-100'
                       : 'text-white hover:opacity-90'
                   }`}
                   style={!plan.highlight ? { background: 'linear-gradient(135deg, #637FF1, #a47af6)' } : {}}
@@ -273,6 +317,26 @@ function Landing() {
                   {plan.cta}
                 </button>
               </motion.div>
+            ))}
+          </div>
+          <p className="mt-6 text-center text-xs text-slate-500 dark:text-slate-400">
+            {t('landing_price_settlement_note')}
+          </p>
+        </div>
+      </section>
+
+      {/* ── FAQ ── */}
+      <section className="py-20 px-4 bg-white dark:bg-slate-900" aria-labelledby="faq-title">
+        <div className="max-w-4xl mx-auto">
+          <h2 id="faq-title" className="text-3xl md:text-4xl font-bold text-slate-900 dark:text-white mb-10">
+            {t('landing_faq_title')}
+          </h2>
+          <div className="space-y-6">
+            {faqs.map(({ question, answer }) => (
+              <article key={question} className="rounded-2xl border border-slate-200 dark:border-slate-700 p-6">
+                <h3 className="text-xl font-bold text-slate-900 dark:text-white mb-3">{question}</h3>
+                <p className="leading-7 text-slate-700 dark:text-slate-300">{answer}</p>
+              </article>
             ))}
           </div>
         </div>
@@ -309,10 +373,7 @@ function Landing() {
       <footer className="py-10 px-4 border-t border-slate-200 dark:border-slate-800">
         <div className="max-w-6xl mx-auto flex flex-col md:flex-row items-center justify-between gap-4">
           <div className="flex items-center gap-2">
-            <div
-              className="w-6 h-6 rounded-lg"
-              style={{ background: 'linear-gradient(135deg, #637FF1, #a47af6)' }}
-            />
+            <img src="/guaji-logo.svg" alt="" className="h-8 w-8" />
             <span className="font-bold text-slate-900 dark:text-white">GuaJi</span>
           </div>
           <div className="flex items-center gap-4">

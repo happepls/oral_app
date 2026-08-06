@@ -12,10 +12,8 @@ WORKDIR /app
 
 COPY package*.json ./
 
-# Install dependencies (cloud CI builds don't have host node_modules)
-RUN npm ci --omit=dev
-
-COPY . .
+COPY node_modules ./node_modules
+COPY src ./src
 
 EXPOSE 3005
 

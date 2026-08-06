@@ -51,23 +51,6 @@ const COOKIE_OPTIONS = {
   maxAge: 7 * 24 * 60 * 60 * 1000 // 7 days
 };
 
-// ===== Promo codes (server-side source of truth) =====
-// Moved off the frontend so the discount table can't be read/tampered from JS.
-// Keyed by uppercase code; `discount` is a percentage off.
-const PROMO_CODES = {
-  WELCOME20: { code: 'WELCOME20', discount: 20, description: '新用户8折优惠' },
-  ANNUAL50: { code: 'ANNUAL50', discount: 50, description: '年度订阅5折特惠' },
-};
-
-// Pure validator — no I/O, easy to unit test. Returns the promo object on a
-// valid code, or null when the code is missing/unknown.
-const validatePromo = (rawCode) => {
-  if (typeof rawCode !== 'string') return null;
-  const code = rawCode.trim().toUpperCase();
-  if (!code) return null;
-  return PROMO_CODES[code] || null;
-};
-
 // Helper to generate JWT with proper configuration
 const generateToken = (id) => {
   return jwt.sign(
@@ -576,6 +559,78 @@ exports.switchGoal = async (req, res) => {
     }
 };
 
+exports.archiveGoal = async (req, res) => {
+    try {
+        const result = await User.archiveGoal(req.user.id, Number(req.params.id));
+        if (!result) return res.status(404).json({ success: false, message: '目标未找到' });
+        res.json(result);
+    } catch (error) {
+        console.error('Archive Goal Error:', error.message);
+        res.status(500).json({ success: false, message: '归档目标时服务器错误' });
+    }
+};
+
+exports.restoreGoal = async (req, res) => {
+    try {
+        const result = await User.restoreGoal(req.user.id, Number(req.params.id));
+        if (!result) return res.status(404).json({ success: false, message: '目标未找到或无法恢复' });
+        res.json(result);
+    } catch (error) {
+        console.error('Restore Goal Error:', error.message);
+        res.status(500).json({ success: false, message: '恢复目标时服务器错误' });
+    }
+};
+
+async function deleteGoalExternalData(userId, goalId) {
+    const secret = process.env.INTERNAL_AUTH_SECRET;
+    if (!secret) throw new Error('INTERNAL_AUTH_SECRET is required for goal deletion');
+    const headers = { 'Content-Type': 'application/json', 'X-Guaji-Internal-Auth': secret };
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 10000);
+    try {
+        const historyUrl = process.env.HISTORY_ANALYTICS_SERVICE_URL || 'http://history-analytics-service:3004';
+        const conversationUrl = process.env.CONVERSATION_SERVICE_URL || 'http://conversation-service:8083';
+        const [history, sessions] = await Promise.all([
+            fetch(`${historyUrl}/api/history/internal/users/${encodeURIComponent(userId)}/goals/${encodeURIComponent(goalId)}/conversations`, {
+                method: 'DELETE', headers, signal: controller.signal,
+            }),
+            fetch(`${conversationUrl}/internal/users/${encodeURIComponent(userId)}/goals/${encodeURIComponent(goalId)}/sessions`, {
+                method: 'DELETE', headers, signal: controller.signal,
+            }),
+        ]);
+        if (!history.ok || !sessions.ok) {
+            throw new Error(`external cleanup failed (history=${history.status}, sessions=${sessions.status})`);
+        }
+        const historyBody = await history.json();
+        return Number(historyBody.deleted_conversation_count || 0);
+    } finally {
+        clearTimeout(timer);
+    }
+}
+
+exports.deleteGoal = async (req, res) => {
+    try {
+        const goalId = Number(req.params.id);
+        if (!Number.isInteger(goalId)) return res.status(400).json({ success: false, message: '目标 ID 无效' });
+        const db = require('../models/db');
+        const owned = (await db.query(
+            'SELECT id FROM user_goals WHERE id = $1 AND user_id = $2',
+            [goalId, req.user.id]
+        )).rows[0];
+        if (!owned) return res.status(404).json({ success: false, message: '目标未找到' });
+
+        // External stores are cleaned first. If either service fails, PostgreSQL
+        // remains untouched and the whole operation is safe to retry.
+        const deletedConversationCount = await deleteGoalExternalData(req.user.id, goalId);
+        const result = await User.deleteGoal(req.user.id, goalId);
+        if (!result) return res.status(404).json({ success: false, message: '目标未找到' });
+        res.json({ ...result, deleted_conversation_count: deletedConversationCount });
+    } catch (error) {
+        console.error('Delete Goal Error:', error.message);
+        res.status(502).json({ success: false, message: '目标关联数据清理失败，请重试' });
+    }
+};
+
 exports.completeGoal = async (req, res) => {
 
     try {
@@ -692,12 +747,13 @@ exports.confirmCompleteTask = async (req, res) => {
     try {
         const userId = req.user?.id;
         const taskId = req.params.id;
+        const { mode } = req.body || {};
         if (!userId) return res.status(401).json({ success: false, message: 'Unauthorized' });
         if (!taskId) return res.status(400).json({ success: false, message: 'task id required' });
 
-        console.log(`[User] Confirm-Complete Task: User=${userId}, Task=${taskId}`);
+        console.log(`[User] Confirm-Complete Task: User=${userId}, Task=${taskId}, Mode=${mode || 'default'}`);
 
-        const result = await User.confirmCompleteTaskById(userId, taskId);
+        const result = await User.confirmCompleteTaskById(userId, taskId, mode || null);
         if (result.error === 'not_found') {
             return res.status(404).json({ success: false, message: 'Task not found' });
         }
@@ -716,6 +772,7 @@ exports.confirmCompleteTask = async (req, res) => {
             });
         }
 
+        await User.evaluateAchievements(userId);
         return res.json({
             success: true,
             data: {
@@ -733,15 +790,15 @@ exports.confirmCompleteTask = async (req, res) => {
 exports.completeTaskInternal = async (req, res) => {
     try {
         const userId = req.params.id;
-        const { scenario, task } = req.body;
+        const { scenario, task, mode } = req.body;
 
-        console.log(`[User] Internal Complete Task: User=${userId}, Scenario=${scenario}, Task=${task}`);
+        console.log(`[User] Internal Complete Task: User=${userId}, Scenario=${scenario}, Task=${task}, Mode=${mode || 'default'}`);
 
         if (!scenario || !task) {
             return res.status(400).json({ success: false, message: 'Scenario and Task required' });
         }
 
-        const updatedGoal = await User.completeTask(userId, scenario, task);
+        const updatedGoal = await User.completeTask(userId, scenario, task, mode || null);
 
         if (!updatedGoal) {
             console.log('[User] Task completion skipped (not found or no active goal)');
@@ -749,6 +806,7 @@ exports.completeTaskInternal = async (req, res) => {
         }
 
         publishNotification(userId, 'task_completed', { scenario, task });
+        await User.evaluateAchievements(userId);
 
         res.json({ success: true, data: { goal: updatedGoal } });
 
@@ -779,6 +837,7 @@ exports.updateTaskScoreInternal = async (req, res) => {
         publishNotification(userId, 'task_score_updated', {
             scenario, task, newScore: result.newScore, taskCompleted: result.taskCompleted
         });
+        await User.evaluateAchievements(userId);
 
         res.json({
             success: true,
@@ -880,6 +939,7 @@ exports.checkin = async (req, res) => {
     try {
         const userId = req.user.id;
         const result = await User.checkin(userId);
+        await User.evaluateAchievements(userId);
         
         if (result.alreadyCheckedIn) {
             return res.json({
@@ -1382,6 +1442,7 @@ exports.recordPracticeTime = async (req, res) => {
         let autoCheckin = null;
         if (totalMinutes >= goal) {
             autoCheckin = await User.checkin(req.user.id);
+            await User.evaluateAchievements(req.user.id);
         }
 
         res.json({ totalMinutes, goal, autoCheckin });
@@ -1422,23 +1483,21 @@ exports.submitFeedback = async (req, res) => {
 // so codes can't be enumerated or tampered from the client.
 exports.validatePromoCode = async (req, res) => {
     try {
-        const { code } = req.body || {};
-        const promo = validatePromo(code);
+        const { stripeService } = require('../stripe/stripeService');
+        const promo = await stripeService.validatePromotionCode(req.body?.code);
         if (!promo) {
             return res.status(404).json({ valid: false, error: '优惠码无效或已过期' });
         }
         res.json({
             valid: true,
             code: promo.code,
-            discount: promo.discount,
+            discount: promo.percent_off,
+            amount_off: promo.amount_off,
+            currency: promo.currency,
             description: promo.description
         });
     } catch (err) {
-        console.error('validatePromoCode Error:', err);
-        res.status(500).json({ valid: false, error: err.message });
+        console.error('validatePromoCode Error:', err.message);
+        res.status(502).json({ valid: false, error: '优惠码校验服务暂不可用' });
     }
 };
-
-// Exported for unit tests (pure, no I/O)
-exports._validatePromo = validatePromo;
-exports._PROMO_CODES = PROMO_CODES;

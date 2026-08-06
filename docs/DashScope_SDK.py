@@ -62,7 +62,7 @@ for chunk in completion:
 
 
 # wan2.2-t2i-flash 替换 原 wanx2.1-t2i-turbo
-dashscope.base_http_api_url = 'https://ws-apadg96g31j9nnwh.ap-southeast-1.maas.aliyuncs.com/api/v1'
+dashscope.base_http_api_url = 'https://<workspace>.<region>.maas.aliyuncs.com/api/v1'
 prompt = "一间有着精致窗户的花店，漂亮的木质门，摆放着花朵"
 
 print('----sync call, please wait a moment----')

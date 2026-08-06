@@ -1,65 +1,130 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import BottomNav from '../components/BottomNav';
-import { useAuth } from '../contexts/AuthContext';
-import { historyAPI, feedbackAPI, userAPI } from '../services/api';
-import { motion, AnimatePresence } from 'motion/react';
+import { useTranslation } from 'react-i18next';
 import {
-  ArrowLeft, Settings, Flame, Check, CheckCircle, LogOut,
-  User, Bell, Crown, Palette, MessageSquare,
-  ChevronRight, PlusCircle, X, Info, Pencil
+  CheckCircle, ChevronRight, Crown, History as HistoryIcon,
+  LogOut, MessageSquare, Palette, Pencil, RefreshCw
 } from 'lucide-react';
-// 母语下拉与 GoalSetting / Onboarding 同源（共享 29 种全集，避免选项数量不一致）。
-// 此前 Profile 仅 9 种，远少于 goal-setting 的 29 种 —— 已统一到 constants/languages.js。
+import BottomNav from '../components/BottomNav';
+import { AccessibleDialog } from '../components/AccessibleDialog';
+import { useAuth } from '../contexts/AuthContext';
+import { feedbackAPI, historyAPI, userAPI } from '../services/api';
 import { LANGUAGES } from '../constants/languages';
 
-const NATIVE_LANGUAGES = LANGUAGES;
+const FEEDBACK_MAX_LENGTH = 500;
+
+function ProfileAction({ icon: Icon, label, value, onClick, chevron = true, role, checked }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      role={role}
+      aria-checked={role === 'switch' ? checked : undefined}
+      className="flex min-h-[64px] w-full items-center rounded-2xl border border-slate-100 bg-white p-4 text-left shadow-brand transition hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50 dark:border-slate-700 dark:bg-slate-800 dark:hover:bg-slate-700"
+    >
+      <Icon aria-hidden="true" className="mr-3 h-5 w-5 flex-shrink-0 text-primary" />
+      <span className="flex-1 font-medium text-slate-900 dark:text-white">{label}</span>
+      {value && <span className="mr-2 text-sm text-slate-600 dark:text-slate-300">{value}</span>}
+      {role === 'switch' ? (
+        <span
+          aria-hidden="true"
+          className={`relative h-7 w-12 rounded-full transition-colors ${checked ? 'bg-primary' : 'bg-slate-300 dark:bg-slate-600'}`}
+        >
+          <span className={`absolute top-1 h-5 w-5 rounded-full bg-white shadow transition-transform ${checked ? 'translate-x-6' : 'translate-x-1'}`} />
+        </span>
+      ) : chevron ? <ChevronRight aria-hidden="true" className="h-4 w-4 text-slate-500" /> : null}
+    </button>
+  );
+}
 
 function Profile() {
+  const { t } = useTranslation();
   const navigate = useNavigate();
   const { user, logout, refreshProfile } = useAuth();
+  const feedbackTriggerRef = useRef(null);
 
-  const [stats, setStats] = useState({ sessions: '0 次', practiceTime: '0 小时', totalSessions: 0 });
-  const [loading, setLoading] = useState(true);
-
-  // Checkin state
-  const [checkinStats, setCheckinStats] = useState(null);
-  const [checkinHistory, setCheckinHistory] = useState([]);
-  const [isCheckinLoading, setIsCheckinLoading] = useState(false);
-  const [showCheckinSuccess, setShowCheckinSuccess] = useState(false);
-  const [checkinResult, setCheckinResult] = useState(null);
-
-  // Goal state
-  const [activeGoal, setActiveGoal] = useState(null);
-
-  // Subscription state
+  const [stats, setStats] = useState({ totalSessions: 0, totalDurationMinutes: 0 });
+  const [statsState, setStatsState] = useState('loading');
   const [subscription, setSubscription] = useState(null);
+  const [subscriptionState, setSubscriptionState] = useState('loading');
 
-  // Native language edit state
-  const [editingLang, setEditingLang] = useState(false);
-  const [savingLang, setSavingLang] = useState(false);
-  const [langSaveError, setLangSaveError] = useState('');
-
-  // Username edit state（手机号用户默认「用户xxxx」，登录后可改）
   const [editingName, setEditingName] = useState(false);
   const [nameValue, setNameValue] = useState('');
   const [savingName, setSavingName] = useState(false);
   const [nameSaveError, setNameSaveError] = useState('');
 
+  const [editingLang, setEditingLang] = useState(false);
+  const [savingLang, setSavingLang] = useState(false);
+  const [langSaveError, setLangSaveError] = useState('');
+
+  const [isDarkMode, setIsDarkMode] = useState(() => document.documentElement.classList.contains('dark'));
+
+  const [showFeedbackModal, setShowFeedbackModal] = useState(false);
+  const [feedbackCategory, setFeedbackCategory] = useState('功能建议');
+  const [feedbackText, setFeedbackText] = useState('');
+  const [feedbackSubmitting, setFeedbackSubmitting] = useState(false);
+  const [feedbackSubmitted, setFeedbackSubmitted] = useState(false);
+  const [feedbackError, setFeedbackError] = useState('');
+
+  const loadStats = async () => {
+    if (!user?.id) return;
+    setStatsState('loading');
+    try {
+      const result = await historyAPI.getStats(user.id);
+      setStats({
+        totalSessions: Number(result?.totalSessions || 0),
+        totalDurationMinutes: Number(result?.totalDurationMinutes || 0),
+      });
+      setStatsState('ready');
+    } catch {
+      setStatsState('error');
+    }
+  };
+
+  const loadSubscription = async () => {
+    setSubscriptionState('loading');
+    try {
+      const result = await userAPI.getSubscription();
+      setSubscription(result);
+      setSubscriptionState(result === null ? 'error' : 'ready');
+    } catch {
+      setSubscriptionState('error');
+    }
+  };
+
+  useEffect(() => {
+    void refreshProfile?.();
+  }, [refreshProfile]);
+
+  useEffect(() => {
+    void loadStats();
+    void loadSubscription();
+    // Calls are intentionally independent so one slow account service does not block another.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user?.id]);
+
   const handleSaveUsername = async () => {
     const trimmed = nameValue.trim();
-    if (!trimmed) { setNameSaveError('用户名不能为空'); return; }
-    if (trimmed.length > 30) { setNameSaveError('用户名不超过 30 字'); return; }
-    if (trimmed === user?.username) { setEditingName(false); return; }
+    if (!trimmed) {
+      setNameSaveError(t('qa_ui.profile_name_required'));
+      return;
+    }
+    if (trimmed.length > 30) {
+      setNameSaveError(t('qa_ui.profile_name_too_long'));
+      return;
+    }
+    if (trimmed === (user?.nickname || user?.username)) {
+      setEditingName(false);
+      return;
+    }
     setSavingName(true);
     setNameSaveError('');
     try {
-      await userAPI.updateProfile({ username: trimmed });
-      if (refreshProfile) await refreshProfile();
+      await userAPI.updateProfile({ nickname: trimmed });
+      await refreshProfile?.();
       setEditingName(false);
-    } catch (err) {
-      // username UNIQUE 冲突 → 后端 409/500，提示换一个
-      setNameSaveError(/exist|unique|已被|占用|409/i.test(err.message || '') ? '该用户名已被占用，请换一个' : '保存失败，请重试');
+    } catch {
+      setNameSaveError(t('qa_ui.profile_save_error'));
     } finally {
       setSavingName(false);
     }
@@ -70,84 +135,15 @@ function Profile() {
     setLangSaveError('');
     try {
       await userAPI.updateProfile({ native_language: value });
-      if (refreshProfile) await refreshProfile();
+      await refreshProfile?.();
       setEditingLang(false);
-    } catch (err) {
-      setLangSaveError('保存失败，请重试');
+    } catch {
+      setLangSaveError(t('qa_ui.profile_save_error'));
     } finally {
       setSavingLang(false);
     }
   };
 
-  // Feedback state
-  const [showFeedbackModal, setShowFeedbackModal] = useState(false);
-  const [feedbackCategory, setFeedbackCategory] = useState('功能建议');
-  const [feedbackText, setFeedbackText] = useState('');
-  const [feedbackSubmitting, setFeedbackSubmitting] = useState(false);
-  const [feedbackSubmitted, setFeedbackSubmitted] = useState(false);
-  const [feedbackError, setFeedbackError] = useState('');
-
-  useEffect(() => {
-    if (refreshProfile) refreshProfile();
-  }, []);
-
-  useEffect(() => {
-    const controller = new AbortController();
-    const { signal } = controller;
-    const fetchAll = async () => {
-      if (!user?.id) { setLoading(false); return; }
-      try {
-        await Promise.allSettled([
-          historyAPI.getStats(user.id).then(d => {
-            if (signal.aborted) return;
-            const total = d?.totalSessions || 0;
-            const hours = (total * 15 / 60).toFixed(1);
-            setStats({
-              sessions: `${total} 次`,
-              practiceTime: `${hours} 小时`,
-              totalSessions: total
-            });
-          }),
-          userAPI.getCheckinStats().then(d => { if (!signal.aborted) setCheckinStats(d); }).catch(() => {}),
-          userAPI.getCheckinHistory(30).then(d => { if (!signal.aborted) setCheckinHistory(Array.isArray(d) ? d : []); }).catch(() => {}),
-          userAPI.getActiveGoal().then(d => { if (!signal.aborted) setActiveGoal(d?.goal || d); }).catch(() => {}),
-          userAPI.getSubscription().then(d => { if (!signal.aborted) setSubscription(d); }).catch(() => {})
-        ]);
-      } finally {
-        // ALWAYS clear loading — even if this run was aborted (a newer run, or
-        // the cleanup, fired). Leaving loading=true here was the root cause of
-        // the post-Stripe-redirect blank page: the full-page redirect re-inits
-        // AuthContext, `user` goes null→populated, this effect re-runs and the
-        // earlier run aborted mid-flight, so `setLoading(false)` was skipped and
-        // the page sat on the spinner until a manual refresh.
-        setLoading(false);
-      }
-    };
-    fetchAll();
-    return () => controller.abort();
-  }, [user]);
-
-  // Derive mastered scenarios from activeGoal (needed for achievements)
-  const masteredScenarios = activeGoal?.scenarios
-    ? activeGoal.scenarios.filter(s =>
-        s.tasks && s.tasks.length > 0 && s.tasks.every(t => t.status === 'completed')
-      )
-    : [];
-
-  // Data-driven achievements — computed after all state is loaded
-  const totalCheckins = checkinStats?.totalCheckins || 0;
-  const currentStreak = checkinStats?.currentStreak || 0;
-  const achievements = [
-    { name: '打卡新手', icon: '🔥', desc: '完成首次打卡', unlocked: totalCheckins >= 1 },
-    { name: '坚持一周', icon: '📅', desc: '连续打卡7天', unlocked: currentStreak >= 7 },
-    { name: '坚持一月', icon: '🗓️', desc: '连续打卡30天', unlocked: currentStreak >= 30 },
-    { name: '对话达人', icon: '💬', desc: '累计完成50次对话', unlocked: stats.totalSessions >= 50 },
-    { name: '场景初探', icon: '🎯', desc: '完成首个场景全部任务', unlocked: masteredScenarios.length >= 1 },
-    { name: '练习大师', icon: '🏆', desc: '100%完成3个以上学习目标', unlocked: false },
-    { name: '多语言Master', icon: '🌍', desc: '掌握3种以上目标语言练习闭环', unlocked: false }
-  ];
-
-  const [isDarkMode, setIsDarkMode] = useState(() => document.documentElement.classList.contains('dark'));
   const toggleTheme = () => {
     const next = !isDarkMode;
     setIsDarkMode(next);
@@ -155,24 +151,19 @@ function Profile() {
     localStorage.setItem('theme', next ? 'dark' : 'light');
   };
 
-  const menuItems = [
-    { icon: Crown, label: '订阅', path: '/subscription' },
-    { icon: Palette, label: '主题', value: isDarkMode ? '深色' : '浅色', onPress: toggleTheme },
-    { icon: MessageSquare, label: '意见反馈', onPress: () => setShowFeedbackModal(true) }
-  ];
-
-  const FEEDBACK_CATEGORIES = ['功能建议', '问题反馈', '其他'];
-  const FEEDBACK_MAX_LENGTH = 500;
-
   const handleFeedbackSubmit = async () => {
-    if (!feedbackText.trim()) { setFeedbackError('请输入反馈内容'); return; }
+    const message = feedbackText.trim();
+    if (!message) {
+      setFeedbackError(t('qa_ui.feedback_required'));
+      return;
+    }
     setFeedbackError('');
     setFeedbackSubmitting(true);
     try {
-      await feedbackAPI.submit({ category: feedbackCategory, message: feedbackText.trim() });
+      await feedbackAPI.submit({ category: feedbackCategory, message });
       setFeedbackSubmitted(true);
-    } catch (err) {
-      setFeedbackError('提交失败，请稍后重试');
+    } catch {
+      setFeedbackError(t('qa_ui.feedback_submit_error'));
     } finally {
       setFeedbackSubmitting(false);
     }
@@ -186,658 +177,227 @@ function Profile() {
     setFeedbackSubmitted(false);
   };
 
-  const handleCheckin = async () => {
-    if (checkinStats?.checkedInToday) return;
-    setIsCheckinLoading(true);
-    try {
-      const result = await userAPI.checkin();
-      setCheckinResult(result);
-      setShowCheckinSuccess(true);
-      const [newStats, newHistory] = await Promise.all([
-        userAPI.getCheckinStats().catch(() => null),
-        userAPI.getCheckinHistory(30).catch(() => [])
-      ]);
-      if (newStats) setCheckinStats(newStats);
-      setCheckinHistory(Array.isArray(newHistory) ? newHistory : []);
-    } catch (error) {
-      console.error('Checkin failed:', error);
-    } finally {
-      setIsCheckinLoading(false);
-    }
+  const handleLogout = async () => {
+    await logout();
+    navigate('/login', { replace: true });
   };
 
-  const toLocalDateStr = (d) => {
-    const dt = (d instanceof Date) ? d : new Date(d);
-    if (isNaN(dt.getTime())) return '';
-    const y = dt.getFullYear();
-    const m = String(dt.getMonth() + 1).padStart(2, '0');
-    const day = String(dt.getDate()).padStart(2, '0');
-    return `${y}-${m}-${day}`;
-  };
-
-  const parseLocalDate = (dateStr) => new Date(`${dateStr}T00:00:00`);
-
-  const getLast7Days = () => {
-    const days = [];
-    for (let i = 6; i >= 0; i--) {
-      const date = new Date();
-      date.setDate(date.getDate() - i);
-      days.push(toLocalDateStr(date));
-    }
-    return days;
-  };
-
-  const isDateCheckedIn = (dateStr) => {
-    return checkinHistory.some(h => toLocalDateStr(h.checkin_date) === dateStr);
-  };
-
-  const getDayLabel = (dateStr) => {
-    const date = parseLocalDate(dateStr);
-    const today = toLocalDateStr(new Date());
-    if (dateStr === today) return '今';
-    return ['日', '一', '二', '三', '四', '五', '六'][date.getDay()];
-  };
-
-  const getDateNum = (dateStr) => parseLocalDate(dateStr).getDate();
-
-  // Goal progress
-  const goalTotalTasks = activeGoal?.scenarios
-    ? activeGoal.scenarios.reduce((sum, s) => sum + (s.tasks?.length || 0), 0)
-    : 0;
-  const goalCompletedTasks = activeGoal?.scenarios
-    ? activeGoal.scenarios.reduce((sum, s) =>
-        sum + (s.tasks?.filter(t => t.status === 'completed').length || 0), 0)
-    : 0;
-  const goalProgress = goalTotalTasks > 0 ? Math.round((goalCompletedTasks / goalTotalTasks) * 100) : 0;
-
-  const handleLogout = () => {
-    logout();
-    navigate('/login');
-  };
-
-  if (loading) {
-    return (
-      <div className="flex h-screen items-center justify-center bg-background-light dark:bg-background-dark">
-        <div className="w-10 h-10 rounded-full border-2 border-primary/30 border-t-primary animate-spin" />
-      </div>
-    );
-  }
+  const selectedLanguage = LANGUAGES.find(
+    (language) => language.value.toLowerCase() === (user?.native_language || '').toLowerCase(),
+  );
+  const isSubscribed = user?.subscription_status === 'active' || subscription?.status === 'active';
+  const durationHours = stats.totalDurationMinutes > 0
+    ? (stats.totalDurationMinutes / 60).toFixed(1)
+    : null;
+  const feedbackCategories = [
+    { value: '功能建议', label: t('qa_ui.feedback_category_feature') },
+    { value: '问题反馈', label: t('qa_ui.feedback_category_problem') },
+    { value: '其他', label: t('qa_ui.feedback_category_other') },
+  ];
 
   return (
-    <div className="relative flex flex-col min-h-screen w-full" style={{ background: 'var(--background)' }}>
-      {/* Top App Bar */}
-      <div className="flex items-center bg-white dark:bg-slate-800 px-4 py-3 justify-between sticky top-0 z-10 border-b border-slate-100 dark:border-slate-700 shadow-sm">
-        <button
-          onClick={() => navigate('/discovery')}
-          className="flex items-center justify-center p-2 -ml-1 text-slate-600 dark:text-slate-400 hover:text-primary transition-colors"
-        >
-          <ArrowLeft className="w-5 h-5" />
-        </button>
-        <h1 className="text-lg font-bold text-slate-900 dark:text-white">我的账户</h1>
-        <button className="flex items-center justify-center p-2 -mr-1 invisible">
-          <Settings className="w-5 h-5" />
-        </button>
-      </div>
+    <div className="mx-auto flex min-h-[100dvh] w-full max-w-[720px] flex-col" style={{ background: 'var(--background)' }}>
+      <header className="sticky top-0 z-20 flex min-h-[56px] items-center justify-center border-b border-slate-200 bg-white/95 px-4 backdrop-blur dark:border-slate-700 dark:bg-slate-900/95">
+        <h1 className="text-lg font-bold text-slate-900 dark:text-white">{t('qa_ui.profile_title')}</h1>
+      </header>
 
-      <main className="flex-grow pb-28">
-        {/* Subscription Badge */}
-        {user?.subscription_status === 'active' && (
-          <motion.div
-            initial={{ opacity: 0, y: -8 }}
-            animate={{ opacity: 1, y: 0 }}
-            className="mx-4 mt-4 p-3 rounded-xl"
-            style={{ background: 'linear-gradient(135deg, #637FF1, #a47af6)' }}
-          >
-            <div className="flex items-center gap-2">
-              <span className="text-xl">👑</span>
-              <div>
-                <p className="text-white font-bold text-sm">会员已激活</p>
-                <p className="text-white/70 text-xs">享受全部高级功能</p>
-              </div>
-            </div>
-          </motion.div>
-        )}
-
-        {/* Profile Header */}
-        <motion.div
-          initial={{ opacity: 0, y: 16 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.4 }}
-          className="flex p-4 pt-8"
-        >
-          <div className="flex w-full flex-col gap-4 items-center">
+      <main className="flex-1 space-y-6 px-4 pb-28 pt-5">
+        <section aria-labelledby="profile-identity-title" className="rounded-3xl border border-slate-100 bg-white p-5 shadow-brand dark:border-slate-700 dark:bg-slate-800">
+          <h2 id="profile-identity-title" className="sr-only">{t('qa_ui.profile_identity')}</h2>
+          <div className="flex items-center gap-4">
             {user?.avatar_url ? (
-              <img
-                src={user.avatar_url}
-                alt="Avatar"
-                className="w-24 h-24 rounded-full object-cover ring-4 ring-primary/30"
-              />
+              <img src={user.avatar_url} alt={t('qa_ui.profile_avatar_alt')} className="h-20 w-20 rounded-full object-cover ring-4 ring-primary/20" />
             ) : (
-              <div
-                className="w-24 h-24 rounded-full flex items-center justify-center text-3xl text-white font-bold ring-4 ring-primary/30"
-                style={{ background: 'linear-gradient(135deg, #637FF1, #a47af6)' }}
-              >
-                {user?.username?.[0]?.toUpperCase() || 'U'}
+              <div aria-hidden="true" className="flex h-20 w-20 flex-shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-[#637FF1] to-[#a47af6] text-2xl font-bold text-white ring-4 ring-primary/20">
+                {(user?.nickname || user?.username)?.[0]?.toUpperCase() || 'U'}
               </div>
             )}
-            <div className="flex flex-col items-center gap-1">
+            <div className="min-w-0 flex-1">
               {editingName ? (
-                <div className="flex flex-col items-center gap-2">
+                <div className="space-y-2">
+                  <label htmlFor="profile-name" className="sr-only">{t('qa_ui.profile_name_label')}</label>
                   <input
-                    type="text"
+                    id="profile-name"
                     value={nameValue}
-                    onChange={(e) => setNameValue(e.target.value)}
+                    onChange={(event) => setNameValue(event.target.value)}
                     maxLength={30}
                     autoFocus
                     disabled={savingName}
-                    className="px-3 py-1.5 rounded-lg border border-primary/40 bg-slate-50 dark:bg-slate-700 text-center text-xl font-bold text-slate-900 dark:text-white focus:ring-2 focus:ring-primary/20 outline-none disabled:opacity-50"
-                    placeholder="输入用户名"
+                    aria-describedby={nameSaveError ? 'profile-name-error' : undefined}
+                    className="w-full rounded-xl border border-slate-300 bg-slate-50 px-3 text-lg font-bold text-slate-900 outline-none focus-visible:ring-2 focus-visible:ring-primary/50 dark:border-slate-600 dark:bg-slate-700 dark:text-white"
                   />
                   <div className="flex gap-2">
-                    <button
-                      onClick={handleSaveUsername}
-                      disabled={savingName}
-                      className="px-3 py-1 rounded-lg bg-primary text-white text-sm font-medium disabled:opacity-50"
-                    >
-                      {savingName ? '保存中…' : '保存'}
+                    <button type="button" onClick={handleSaveUsername} disabled={savingName} className="rounded-xl bg-primary px-4 text-sm font-medium text-white disabled:opacity-50">
+                      {savingName ? t('qa_ui.saving') : t('qa_ui.save')}
                     </button>
-                    <button
-                      onClick={() => { setEditingName(false); setNameSaveError(''); }}
-                      disabled={savingName}
-                      className="px-3 py-1 rounded-lg border border-slate-300 dark:border-slate-600 text-slate-600 dark:text-slate-300 text-sm disabled:opacity-50"
-                    >
-                      取消
+                    <button type="button" onClick={() => { setEditingName(false); setNameSaveError(''); }} disabled={savingName} className="rounded-xl border border-slate-300 px-4 text-sm text-slate-700 dark:border-slate-600 dark:text-slate-200">
+                      {t('qa_ui.cancel')}
                     </button>
                   </div>
-                  {nameSaveError && <p className="text-xs text-red-500">{nameSaveError}</p>}
+                  {nameSaveError && <p id="profile-name-error" role="alert" className="text-sm text-red-700 dark:text-red-300">{nameSaveError}</p>}
                 </div>
               ) : (
                 <button
-                  onClick={() => { setNameValue(user?.username || ''); setEditingName(true); setNameSaveError(''); }}
-                  className="flex items-center gap-1.5 group"
-                  title="点击修改用户名"
+                  type="button"
+                  onClick={() => { setNameValue(user?.nickname || user?.username || ''); setEditingName(true); setNameSaveError(''); }}
+                  aria-label={t('qa_ui.profile_edit_name', { name: user?.nickname || user?.username || t('qa_ui.learner') })}
+                  className="flex min-h-[44px] max-w-full items-center gap-2 rounded-lg text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50"
                 >
-                  <span className="text-2xl font-bold text-slate-900 dark:text-white">{user?.username || '用户'}</span>
-                  <Pencil className="w-4 h-4 text-slate-400 group-hover:text-primary transition-colors" />
+                  <span className="truncate text-xl font-bold text-slate-900 dark:text-white">{user?.nickname || user?.username || t('qa_ui.learner')}</span>
+                  <Pencil aria-hidden="true" className="h-4 w-4 flex-shrink-0 text-slate-500" />
                 </button>
               )}
-              <p className="text-sm text-slate-500 dark:text-slate-400">{user?.email || ''}</p>
+              <p className="truncate text-sm text-slate-600 dark:text-slate-300">{user?.email || ''}</p>
             </div>
           </div>
-        </motion.div>
+        </section>
 
-        {/* Stats Overview */}
-        <div className="flex gap-3 px-4 mb-2">
-          {[
-            { label: '对话次数', value: stats.sessions },
-            { label: '总练习时长', value: stats.practiceTime }
-          ].map((s, i) => (
-            <motion.div
-              key={s.label}
-              initial={{ opacity: 0, y: 12 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ delay: i * 0.1 }}
-              className="flex flex-1 flex-col gap-1 rounded-2xl p-4 bg-white dark:bg-slate-800 shadow-brand"
-            >
-              <p className="text-xs text-slate-500 dark:text-slate-400">{s.label}</p>
-              <p className="text-2xl font-bold text-slate-900 dark:text-white">{s.value}</p>
-            </motion.div>
-          ))}
-        </div>
-
-        {/* My Subscription */}
-        <div className="px-4 pt-4 pb-4">
-          <h2 className="text-base font-bold text-slate-900 dark:text-white pb-3">💎 我的订阅</h2>
-          <div className="bg-white dark:bg-slate-800 rounded-2xl p-4 shadow-brand border border-slate-100 dark:border-slate-700">
-            {/* Pro 判定以 user.subscription_status 为权威，与顶部「会员已激活」banner 一致，
-                避免 getSubscription() soft-fail / 形状不符时这里误显「免费版」造成前后矛盾。
-                subscription 详情（套餐名/到期日）若拿到则展示，拿不到回退通用文案。 */}
-            {(user?.subscription_status === 'active' || subscription?.status === 'active') ? (
-              <div className="flex items-center justify-between">
-                <div>
-                  <div className="flex items-center gap-2">
-                    <Crown className="w-4 h-4 text-amber-500" />
-                    <p className="text-base font-semibold text-slate-900 dark:text-white">
-                      {subscription?.subscription?.items?.data?.[0]?.price?.nickname
-                        || subscription?.subscription?.plan?.nickname
-                        || 'Pro 会员'}
-                    </p>
-                  </div>
-                  {(subscription?.subscription?.items?.data?.[0]?.current_period_end
-                    || subscription?.subscription?.current_period_end) && (
-                    <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
-                      到期日：{new Date((subscription.subscription?.items?.data?.[0]?.current_period_end
-                        || subscription.subscription.current_period_end) * 1000).toLocaleDateString('zh-CN')}
-                    </p>
-                  )}
-                </div>
-                <button
-                  onClick={() => navigate('/subscription')}
-                  className="text-xs text-primary hover:underline"
-                >
-                  管理订阅
-                </button>
-              </div>
-            ) : (
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-base font-semibold text-slate-900 dark:text-white">免费版</p>
-                  <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">解锁全部高级功能</p>
-                </div>
-                <button
-                  onClick={() => navigate('/subscription')}
-                  className="px-3 py-1.5 text-xs font-medium text-white rounded-lg"
-                  style={{ background: 'linear-gradient(135deg, #637FF1, #a47af6)' }}
-                >
-                  升级会员
-                </button>
-              </div>
+        <section aria-labelledby="profile-learning-summary">
+          <div className="mb-3 flex items-center justify-between">
+            <h2 id="profile-learning-summary" className="text-base font-bold text-slate-900 dark:text-white">{t('qa_ui.profile_learning_summary')}</h2>
+            {statsState === 'error' && (
+              <button type="button" onClick={loadStats} className="flex items-center gap-1 rounded-lg px-2 text-sm text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50">
+                <RefreshCw aria-hidden="true" className="h-4 w-4" />{t('qa_ui.retry')}
+              </button>
             )}
           </div>
-        </div>
+          {statsState === 'error' && <p role="alert" className="mb-3 rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-800 dark:border-red-800 dark:bg-red-950/30 dark:text-red-200">{t('qa_ui.profile_stats_error')}</p>}
+          <div aria-busy={statsState === 'loading'} className="grid grid-cols-2 gap-3">
+            <div className="rounded-2xl border border-slate-100 bg-white p-4 shadow-brand dark:border-slate-700 dark:bg-slate-800">
+              <p className="text-xs text-slate-600 dark:text-slate-300">{t('qa_ui.sessions_label')}</p>
+              <p className="mt-1 text-2xl font-bold text-slate-900 dark:text-white">{statsState === 'loading' ? '—' : t('qa_ui.session_count', { count: stats.totalSessions })}</p>
+            </div>
+            <div className="rounded-2xl border border-slate-100 bg-white p-4 shadow-brand dark:border-slate-700 dark:bg-slate-800">
+              <p className="text-xs text-slate-600 dark:text-slate-300">{t('qa_ui.practice_time_label')}</p>
+              <p className="mt-1 text-2xl font-bold text-slate-900 dark:text-white">{statsState === 'loading' ? '—' : durationHours ? t('qa_ui.practice_hours', { count: durationHours }) : t('qa_ui.no_data')}</p>
+            </div>
+          </div>
+          {statsState === 'loading' && <p role="status" className="sr-only">{t('qa_ui.profile_stats_loading')}</p>}
+        </section>
 
-        {/* Native Language Setting */}
-        <div className="px-4 pb-4">
-          <h2 className="text-base font-bold text-slate-900 dark:text-white pb-3">🌐 语言设置</h2>
-          <div className="bg-white dark:bg-slate-800 rounded-2xl p-4 shadow-brand border border-slate-100 dark:border-slate-700">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-xs text-slate-500 dark:text-slate-400 mb-1">母语（翻译目标语言）</p>
-                {editingLang ? (
+        <section aria-labelledby="profile-learning-links">
+          <h2 id="profile-learning-links" className="mb-3 text-base font-bold text-slate-900 dark:text-white">{t('qa_ui.profile_learning_records')}</h2>
+          <div className="space-y-2">
+            <ProfileAction icon={HistoryIcon} label={t('qa_ui.menu_history')} onClick={() => navigate('/history')} />
+            <ProfileAction icon={CheckCircle} label={t('qa_ui.daily_checkin_plain')} onClick={() => navigate('/checkin')} />
+            <ProfileAction icon={Crown} label={t('qa_ui.achievements_plain')} onClick={() => navigate('/achievements')} />
+          </div>
+        </section>
+
+        <section aria-labelledby="profile-account-settings">
+          <h2 id="profile-account-settings" className="mb-3 text-base font-bold text-slate-900 dark:text-white">{t('qa_ui.profile_account_settings')}</h2>
+          <div className="space-y-2">
+            <ProfileAction
+              icon={Crown}
+              label={t('qa_ui.menu_subscription')}
+              value={subscriptionState === 'loading' ? t('qa_ui.loading') : isSubscribed ? t('qa_ui.subscription_active_short') : t('qa_ui.subscription_free')}
+              onClick={() => navigate('/subscription')}
+            />
+            {subscriptionState === 'error' && <p role="status" className="px-2 text-sm text-amber-800 dark:text-amber-300">{t('qa_ui.subscription_status_unavailable')}</p>}
+
+            <div className="rounded-2xl border border-slate-100 bg-white p-4 shadow-brand dark:border-slate-700 dark:bg-slate-800">
+              <div className="flex items-center justify-between gap-3">
+                <div className="min-w-0">
+                  <p className="font-medium text-slate-900 dark:text-white">{t('qa_ui.native_language')}</p>
+                  {!editingLang && <p className="mt-1 text-sm text-slate-600 dark:text-slate-300">{selectedLanguage ? `${selectedLanguage.flag} ${selectedLanguage.label}` : t('qa_ui.not_set')}</p>}
+                </div>
+                {!editingLang && (
+                  <button type="button" onClick={() => { setEditingLang(true); setLangSaveError(''); }} className="flex items-center gap-1 rounded-xl bg-primary/10 px-3 text-sm font-medium text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50">
+                    <Pencil aria-hidden="true" className="h-4 w-4" />{t('qa_ui.edit')}
+                  </button>
+                )}
+              </div>
+              {editingLang && (
+                <div className="mt-3 flex flex-col gap-2 sm:flex-row">
+                  <label htmlFor="native-language" className="sr-only">{t('qa_ui.native_language')}</label>
                   <select
+                    id="native-language"
                     autoFocus
                     defaultValue={user?.native_language || ''}
-                    onChange={(e) => handleSaveNativeLang(e.target.value)}
+                    onChange={(event) => handleSaveNativeLang(event.target.value)}
                     disabled={savingLang}
-                    className="text-sm font-medium text-slate-900 dark:text-white bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-lg px-2 py-1 focus:outline-none focus:ring-2 focus:ring-primary/30"
+                    className="min-w-0 flex-1 rounded-xl border border-slate-300 bg-white px-3 text-sm text-slate-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50 dark:border-slate-600 dark:bg-slate-700 dark:text-white"
                   >
-                    <option value="" disabled>请选择母语</option>
-                    {NATIVE_LANGUAGES.map(l => (
-                      <option key={l.value} value={l.value}>
-                        {l.flag} {l.label}
-                      </option>
-                    ))}
+                    <option value="" disabled>{t('qa_ui.native_language_select')}</option>
+                    {LANGUAGES.map((language) => <option key={language.value} value={language.value}>{language.flag} {language.label}</option>)}
                   </select>
-                ) : (
-                  <p className="text-base font-semibold text-slate-900 dark:text-white">
-                    {(() => {
-                      const found = NATIVE_LANGUAGES.find(l =>
-                        l.value.toLowerCase() === (user?.native_language || '').toLowerCase()
-                      );
-                      return found
-                        ? `${found.flag} ${found.label}`
-                        : user?.native_language
-                          ? <span className="text-amber-500">⚠️ {user.native_language}（未识别）</span>
-                          : <span className="text-slate-400">未设置</span>;
-                    })()}
-                  </p>
-                )}
-                {langSaveError && <p className="text-xs text-red-500 mt-1">{langSaveError}</p>}
-              </div>
-              {!editingLang && (
-                <button
-                  onClick={() => { setEditingLang(true); setLangSaveError(''); }}
-                  className="flex items-center gap-1 px-3 py-1.5 text-xs font-medium text-primary bg-primary/10 hover:bg-primary/20 rounded-lg transition"
-                >
-                  <Pencil className="w-3 h-3" /> 修改
-                </button>
+                  <button type="button" onClick={() => setEditingLang(false)} disabled={savingLang} className="rounded-xl border border-slate-300 px-4 text-sm text-slate-700 dark:border-slate-600 dark:text-slate-200">{t('qa_ui.cancel')}</button>
+                </div>
               )}
-              {editingLang && !savingLang && (
-                <button
-                  onClick={() => setEditingLang(false)}
-                  className="text-xs text-slate-400 hover:text-slate-600 px-2 py-1 rounded transition"
-                >
-                  取消
-                </button>
-              )}
+              {langSaveError && <p role="alert" className="mt-2 text-sm text-red-700 dark:text-red-300">{langSaveError}</p>}
+              <p className="mt-2 text-xs text-slate-600 dark:text-slate-400">{t('qa_ui.native_hint')}</p>
             </div>
-            <p className="text-xs text-slate-400 dark:text-slate-500 mt-2">
-              母语用于 AI 对话翻译功能，请确保设置正确
-            </p>
-          </div>
-        </div>
 
-        {/* Daily Checkin Section */}
-        <div id="checkin-section" className="px-4 py-4 space-y-4">
-          <h2 className="text-base font-bold text-slate-900 dark:text-white pt-2">🔥 每日打卡</h2>
-
-          {/* Checkin Stats Card */}
-          <div className="rounded-2xl p-6 text-white shadow-brand-lg" style={{ background: 'linear-gradient(135deg, #637FF1, #a47af6)' }}>
-            <div className="flex items-center justify-between mb-4">
-              <div>
-                <p className="text-white/70 text-sm">当前连续打卡</p>
-                <p className="text-4xl font-bold">{checkinStats?.currentStreak || 0} <span className="text-lg font-normal">天</span></p>
-              </div>
-              <div className="w-16 h-16 bg-white/20 rounded-full flex items-center justify-center">
-                <Flame className="w-8 h-8 text-white" />
-              </div>
-            </div>
-            <div className="flex justify-between text-sm">
-              <div>
-                <p className="text-white/70">累计打卡</p>
-                <p className="font-semibold">{checkinStats?.totalCheckins || 0} 天</p>
-              </div>
-              <div>
-                <p className="text-white/70">获得积分</p>
-                <p className="font-semibold">{checkinStats?.totalPointsFromCheckins || 0}</p>
-              </div>
+            <ProfileAction icon={Palette} label={t('qa_ui.menu_theme')} value={isDarkMode ? t('qa_ui.theme_dark') : t('qa_ui.theme_light')} onClick={toggleTheme} chevron={false} role="switch" checked={isDarkMode} />
+            <div ref={feedbackTriggerRef}>
+              <ProfileAction icon={MessageSquare} label={t('qa_ui.menu_feedback')} onClick={() => setShowFeedbackModal(true)} />
             </div>
           </div>
+        </section>
 
-          {/* Week Calendar */}
-          <div className="bg-white dark:bg-slate-800 rounded-2xl p-4 shadow-brand border border-slate-100 dark:border-slate-700">
-            <h3 className="font-medium text-slate-900 dark:text-white mb-4">本周打卡</h3>
-            <div className="grid grid-cols-7 gap-2">
-              {getLast7Days().map(date => {
-                const checked = isDateCheckedIn(date);
-                const isToday = date === toLocalDateStr(new Date());
-                return (
-                  <div key={date} className="flex flex-col items-center">
-                    <span className="text-xs text-slate-500 mb-1">{getDayLabel(date)}</span>
-                    <div className={`w-9 h-9 rounded-full flex items-center justify-center text-sm font-medium transition-all ${
-                      checked
-                        ? 'text-white'
-                        : isToday
-                          ? 'bg-primary/10 text-primary border-2 border-primary border-dashed'
-                          : 'bg-slate-100 dark:bg-slate-700 text-slate-400'
-                    }`}
-                    style={checked ? { background: 'linear-gradient(135deg, #637FF1, #a47af6)' } : {}}>
-                      {checked ? <Check className="w-4 h-4" /> : getDateNum(date)}
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-
-          {/* Checkin Button */}
-          <motion.button
-            whileHover={!checkinStats?.checkedInToday ? { scale: 1.01 } : {}}
-            whileTap={!checkinStats?.checkedInToday ? { scale: 0.98 } : {}}
-            onClick={handleCheckin}
-            disabled={isCheckinLoading || checkinStats?.checkedInToday}
-            className={`w-full py-4 rounded-2xl font-bold text-base flex items-center justify-center gap-2 transition-all shadow-brand ${
-              checkinStats?.checkedInToday
-                ? 'bg-slate-200 dark:bg-slate-700 text-slate-500 cursor-not-allowed'
-                : 'text-white'
-            }`}
-            style={checkinStats?.checkedInToday ? {} : { background: 'linear-gradient(135deg, #10B981, #059669)' }}
-          >
-            {isCheckinLoading ? (
-              <div className="w-5 h-5 rounded-full border-2 border-white/40 border-t-white animate-spin" />
-            ) : checkinStats?.checkedInToday ? (
-              <>
-                <CheckCircle className="w-5 h-5" />
-                今日已打卡
-              </>
-            ) : (
-              <>
-                <PlusCircle className="w-5 h-5" />
-                立即打卡
-              </>
-            )}
-          </motion.button>
-
-          {/* Checkin History */}
-          {checkinHistory.length > 0 && (
-            <div className="bg-white dark:bg-slate-800 rounded-2xl p-4 shadow-brand border border-slate-100 dark:border-slate-700">
-              <h3 className="font-medium text-slate-900 dark:text-white mb-3">打卡记录</h3>
-              <div className="space-y-2 max-h-48 overflow-y-auto">
-                {checkinHistory.slice(0, 10).map((record, idx) => (
-                  <div key={idx} className="flex items-center justify-between py-2 border-b border-slate-100 dark:border-slate-700 last:border-0">
-                    <div className="flex items-center gap-3">
-                      <div className="w-8 h-8 bg-success/10 rounded-full flex items-center justify-center">
-                        <Check className="w-4 h-4 text-success" />
-                      </div>
-                      <div>
-                        <p className="text-sm font-medium text-slate-900 dark:text-white">
-                          {new Date(record.checkin_date).toLocaleDateString('zh-CN', { month: 'short', day: 'numeric' })}
-                        </p>
-                        <p className="text-xs text-slate-500">连续 {record.streak_count} 天</p>
-                      </div>
-                    </div>
-                    <span className="text-sm font-medium text-success">+{record.points_earned}</span>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-        </div>
-
-        {/* Learning Goal Milestone */}
-        <div className="px-4 pb-4">
-          <h2 className="text-base font-bold text-slate-900 dark:text-white pb-3">🎯 当前学习目标里程碑</h2>
-          {activeGoal ? (
-            <div className="bg-white dark:bg-slate-800 rounded-2xl p-5 shadow-brand border border-slate-100 dark:border-slate-700">
-              <p className="text-base font-semibold text-slate-900 dark:text-white mb-1">{activeGoal.description || '当前学习目标'}</p>
-              {(activeGoal.target_language || activeGoal.target_level) && (
-                <p className="text-sm text-slate-500 dark:text-slate-400 mb-3">
-                  {activeGoal.target_language}{activeGoal.target_level ? ` · ${activeGoal.target_level}` : ''}
-                </p>
-              )}
-              <div className="flex items-center justify-between mb-2">
-                <span className="text-sm text-slate-600 dark:text-slate-400">任务进度</span>
-                <span className="text-sm font-semibold text-slate-900 dark:text-white">{goalCompletedTasks} / {goalTotalTasks}</span>
-              </div>
-              <div className="w-full bg-slate-100 dark:bg-slate-700 rounded-full h-2.5">
-                <div
-                  className="h-2.5 rounded-full transition-all"
-                  style={{ width: `${goalProgress}%`, background: 'linear-gradient(135deg, #637FF1, #a47af6)' }}
-                />
-              </div>
-              <p className="text-xs text-slate-500 mt-2 text-right">{goalProgress}% 完成</p>
-            </div>
-          ) : (
-            <div className="bg-white dark:bg-slate-800 rounded-2xl p-5 shadow-brand border border-slate-100 dark:border-slate-700 flex items-center justify-between">
-              <p className="text-sm text-slate-500 dark:text-slate-400">暂无学习目标</p>
-              <button
-                onClick={() => navigate('/goal-setting')}
-                className="px-4 py-2 text-white text-sm rounded-xl font-medium transition"
-                style={{ background: 'linear-gradient(135deg, #637FF1, #a47af6)' }}
-              >
-                去设置
-              </button>
-            </div>
-          )}
-        </div>
-
-        {/* Mastered Scenarios */}
-        {masteredScenarios.length > 0 && (
-          <div className="px-4 pb-4">
-            <h2 className="text-base font-bold text-slate-900 dark:text-white pb-3">🏅 已掌握场景技能</h2>
-            <div className="flex flex-wrap gap-2">
-              {masteredScenarios.map((s, i) => (
-                <span key={i} className="px-3 py-1.5 bg-success/10 text-success text-sm font-medium rounded-full">
-                  ✓ {s.title || s.scenario_title || `场景 ${i + 1}`}
-                </span>
-              ))}
-            </div>
-          </div>
-        )}
-
-        {/* Achievements */}
-        <h2 className="text-base font-bold px-4 pb-3 pt-2 text-slate-900 dark:text-white">🏆 成就徽章</h2>
-        <div className="flex gap-3 px-4 overflow-x-auto pb-4">
-          {achievements.map((achievement, index) => (
-            <div key={index} className="flex flex-col items-center gap-2 flex-shrink-0 w-20">
-              <div className={`flex items-center justify-center w-16 h-16 rounded-full text-3xl ${
-                achievement.unlocked ? 'bg-primary/10' : 'bg-slate-100 dark:bg-slate-700 grayscale opacity-50'
-              }`}>
-                {achievement.icon}
-              </div>
-              <p className={`text-xs font-medium text-center leading-tight ${
-                achievement.unlocked ? 'text-slate-900 dark:text-white' : 'text-slate-400 dark:text-slate-500'
-              }`}>
-                {achievement.name}
-              </p>
-              <p className="text-xs text-slate-400 dark:text-slate-500 text-center leading-tight">
-                {achievement.desc}
-              </p>
-            </div>
-          ))}
-        </div>
-
-        {/* Menu Items */}
-        <div className="p-4 flex flex-col gap-2">
-          {menuItems.map((item, index) => {
-            const Icon = item.icon;
-            return (
-              <motion.div
-                key={index}
-                whileTap={{ scale: 0.99 }}
-                onClick={() => item.onPress ? item.onPress() : item.path && navigate(item.path)}
-                className="flex items-center p-4 rounded-2xl bg-white dark:bg-slate-800 shadow-brand border border-slate-100 dark:border-slate-700 w-full cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-750 transition-colors"
-              >
-                <Icon className="w-5 h-5 text-primary mr-3 flex-shrink-0" />
-                <span className="text-slate-900 dark:text-white font-medium flex-1">{item.label}</span>
-                {item.value && (
-                  <span className="text-slate-500 dark:text-slate-400 text-sm mr-2">{item.value}</span>
-                )}
-                <ChevronRight className="w-4 h-4 text-slate-400" />
-              </motion.div>
-            );
-          })}
-        </div>
-
-        {/* Logout Button */}
-        <div className="px-4 pt-6 pb-8">
-          <motion.button
-            whileTap={{ scale: 0.98 }}
-            onClick={handleLogout}
-            className="w-full flex items-center justify-center gap-2 rounded-2xl bg-white dark:bg-slate-800 p-4 font-bold text-red-500 shadow-brand border border-slate-100 dark:border-slate-700 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors"
-          >
-            <LogOut className="w-5 h-5" />
-            退出登录
-          </motion.button>
-        </div>
+        <button type="button" onClick={handleLogout} className="flex min-h-[56px] w-full items-center justify-center gap-2 rounded-2xl border border-red-200 bg-white font-bold text-red-700 shadow-brand transition hover:bg-red-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-500/50 dark:border-red-900 dark:bg-slate-800 dark:text-red-300 dark:hover:bg-red-950/30">
+          <LogOut aria-hidden="true" className="h-5 w-5" />{t('qa_ui.logout')}
+        </button>
       </main>
 
-      {/* Checkin Success Modal */}
-      <AnimatePresence>
-        {showCheckinSuccess && checkinResult && (
-          <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm"
-          >
-            <motion.div
-              initial={{ scale: 0.85, opacity: 0 }}
-              animate={{ scale: 1, opacity: 1 }}
-              exit={{ scale: 0.85, opacity: 0 }}
-              className="bg-white dark:bg-slate-800 rounded-3xl p-6 mx-4 max-w-sm w-full text-center shadow-brand-lg"
-            >
-              <div className="text-5xl mb-4">🎉</div>
-              <h2 className="text-xl font-bold text-slate-900 dark:text-white mb-2">打卡成功！</h2>
-              <p className="text-slate-600 dark:text-slate-400 mb-1">
-                获得 <span className="text-success font-bold">{checkinResult.pointsEarned || checkinResult.checkin?.points_earned}</span> 积分
-              </p>
-              <p className="text-sm text-slate-500 mb-6">
-                连续打卡 <span className="font-medium text-primary">{checkinResult.streak || checkinResult.checkin?.streak_count}</span> 天
-              </p>
-              <motion.button
-                whileHover={{ scale: 1.01 }}
-                whileTap={{ scale: 0.98 }}
-                onClick={() => setShowCheckinSuccess(false)}
-                className="w-full py-3 text-white rounded-xl font-bold"
-                style={{ background: 'linear-gradient(135deg, #637FF1, #a47af6)' }}
-              >
-                太棒了！
-              </motion.button>
-            </motion.div>
-          </motion.div>
-        )}
-      </AnimatePresence>
-
-      {/* Feedback Modal */}
-      <AnimatePresence>
-        {showFeedbackModal && (
-          <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm px-4"
-          >
-            <motion.div
-              initial={{ scale: 0.9, opacity: 0 }}
-              animate={{ scale: 1, opacity: 1 }}
-              exit={{ scale: 0.9, opacity: 0 }}
-              className="bg-white dark:bg-slate-800 rounded-3xl shadow-brand-lg w-full max-w-md p-6"
-            >
-              {feedbackSubmitted ? (
-                <div className="flex flex-col items-center gap-4 py-4">
-                  <div className="w-16 h-16 bg-success/10 rounded-full flex items-center justify-center">
-                    <CheckCircle className="w-8 h-8 text-success" />
-                  </div>
-                  <p className="text-lg font-bold text-slate-900 dark:text-white">感谢你的反馈！</p>
-                  <p className="text-sm text-slate-500 dark:text-slate-400 text-center">你的意见对我们非常重要，我们会认真查看。</p>
-                  <button
-                    onClick={handleFeedbackClose}
-                    className="mt-2 w-full py-3 rounded-xl text-white font-medium"
-                    style={{ background: 'linear-gradient(135deg, #637FF1, #a47af6)' }}
-                  >
-                    关闭
-                  </button>
-                </div>
-              ) : (
-                <>
-                  <div className="flex items-center justify-between mb-5">
-                    <h2 className="text-lg font-bold text-slate-900 dark:text-white">意见反馈</h2>
+      {showFeedbackModal && (
+        <AccessibleDialog
+          title={t('qa_ui.feedback_title')}
+          description={t('qa_ui.feedback_dialog_description')}
+          onClose={handleFeedbackClose}
+          closeLabel={t('qa_ui.close_dialog')}
+          panelClassName="max-h-[calc(100dvh-2rem)] max-w-md overflow-y-auto rounded-3xl p-6"
+          zIndex={300}
+        >
+          {feedbackSubmitted ? (
+            <div className="flex flex-col items-center gap-4 py-5 text-center">
+              <div aria-hidden="true" className="flex h-16 w-16 items-center justify-center rounded-full bg-emerald-100 dark:bg-emerald-950/40"><CheckCircle className="h-8 w-8 text-emerald-700 dark:text-emerald-300" /></div>
+              <h3 className="text-lg font-bold">{t('qa_ui.feedback_thanks')}</h3>
+              <p className="text-sm text-slate-600 dark:text-slate-300">{t('qa_ui.feedback_success_body')}</p>
+              <button type="button" onClick={handleFeedbackClose} className="mt-2 w-full rounded-xl bg-primary py-3 font-medium text-white">{t('qa_ui.close')}</button>
+            </div>
+          ) : (
+            <form onSubmit={(event) => { event.preventDefault(); void handleFeedbackSubmit(); }}>
+              <h3 className="mb-5 pr-12 text-lg font-bold">{t('qa_ui.feedback_title')}</h3>
+              <fieldset>
+                <legend className="mb-2 text-sm font-medium text-slate-700 dark:text-slate-200">{t('qa_ui.feedback_type')}</legend>
+                <div className="grid grid-cols-3 gap-2">
+                  {feedbackCategories.map((category) => (
                     <button
-                      onClick={handleFeedbackClose}
-                      className="w-8 h-8 flex items-center justify-center rounded-full hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-400 transition"
+                      key={category.value}
+                      type="button"
+                      aria-pressed={feedbackCategory === category.value}
+                      onClick={() => setFeedbackCategory(category.value)}
+                      className={`rounded-xl border-2 px-2 text-sm font-medium transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50 ${feedbackCategory === category.value ? 'border-primary bg-primary/5 text-primary' : 'border-slate-200 text-slate-700 dark:border-slate-600 dark:text-slate-200'}`}
                     >
-                      <X className="w-4 h-4" />
+                      {category.label}
                     </button>
-                  </div>
-                  <p className="text-sm font-medium text-slate-600 dark:text-slate-400 mb-2">反馈类型</p>
-                  <div className="flex gap-2 mb-4">
-                    {FEEDBACK_CATEGORIES.map((cat) => (
-                      <button
-                        key={cat}
-                        onClick={() => setFeedbackCategory(cat)}
-                        className={`flex-1 py-2 rounded-xl text-sm font-medium border-2 transition-colors ${
-                          feedbackCategory === cat
-                            ? 'border-primary bg-primary/5 text-primary'
-                            : 'border-slate-200 dark:border-slate-600 text-slate-600 dark:text-slate-400'
-                        }`}
-                      >
-                        {cat}
-                      </button>
-                    ))}
-                  </div>
-                  <p className="text-sm font-medium text-slate-600 dark:text-slate-400 mb-2">反馈内容</p>
-                  <textarea
-                    value={feedbackText}
-                    onChange={(e) => {
-                      if (e.target.value.length <= FEEDBACK_MAX_LENGTH) setFeedbackText(e.target.value);
-                    }}
-                    placeholder="请描述你的建议或遇到的问题…"
-                    rows={4}
-                    className="w-full rounded-xl border border-slate-200 dark:border-slate-600 bg-slate-50 dark:bg-slate-700 text-slate-900 dark:text-white text-sm p-3 resize-none focus:outline-none focus:ring-2 focus:ring-primary/30"
-                  />
-                  <p className="text-xs text-slate-400 text-right mt-1">
-                    {feedbackText.length}/{FEEDBACK_MAX_LENGTH}
-                  </p>
-                  {feedbackError && (
-                    <p className="text-sm text-red-500 mt-2">{feedbackError}</p>
-                  )}
-                  <motion.button
-                    whileHover={{ scale: 1.01 }}
-                    whileTap={{ scale: 0.98 }}
-                    onClick={handleFeedbackSubmit}
-                    disabled={feedbackSubmitting}
-                    className="mt-4 w-full py-3 rounded-xl text-white font-medium disabled:opacity-50 transition-opacity"
-                    style={{ background: 'linear-gradient(135deg, #637FF1, #a47af6)' }}
-                  >
-                    {feedbackSubmitting ? '提交中…' : '提交反馈'}
-                  </motion.button>
-                </>
-              )}
-            </motion.div>
-          </motion.div>
-        )}
-      </AnimatePresence>
+                  ))}
+                </div>
+              </fieldset>
+              <div className="mt-4">
+                <label htmlFor="feedback-message" className="mb-2 block text-sm font-medium text-slate-700 dark:text-slate-200">{t('qa_ui.feedback_content')}</label>
+                <textarea
+                  id="feedback-message"
+                  value={feedbackText}
+                  onChange={(event) => setFeedbackText(event.target.value.slice(0, FEEDBACK_MAX_LENGTH))}
+                  placeholder={t('qa_ui.feedback_placeholder')}
+                  rows={5}
+                  maxLength={FEEDBACK_MAX_LENGTH}
+                  aria-describedby={`feedback-count${feedbackError ? ' feedback-error' : ''}`}
+                  aria-invalid={Boolean(feedbackError)}
+                  className="w-full resize-none rounded-xl border border-slate-300 bg-slate-50 p-3 text-sm text-slate-900 outline-none focus-visible:ring-2 focus-visible:ring-primary/50 dark:border-slate-600 dark:bg-slate-700 dark:text-white"
+                />
+                <p id="feedback-count" className="mt-1 text-right text-xs text-slate-600 dark:text-slate-300">{feedbackText.length}/{FEEDBACK_MAX_LENGTH}</p>
+                {feedbackError && <p id="feedback-error" role="alert" className="mt-2 text-sm text-red-700 dark:text-red-300">{feedbackError}</p>}
+              </div>
+              <button type="submit" disabled={feedbackSubmitting || !feedbackText.trim()} className="mt-4 w-full rounded-xl bg-gradient-to-r from-[#637FF1] to-[#a47af6] py-3 font-medium text-white disabled:cursor-not-allowed disabled:opacity-50">
+                {feedbackSubmitting ? t('qa_ui.feedback_submitting') : t('qa_ui.feedback_submit')}
+              </button>
+            </form>
+          )}
+        </AccessibleDialog>
+      )}
 
       <BottomNav currentPage="profile" />
     </div>

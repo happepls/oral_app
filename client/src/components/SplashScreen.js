@@ -74,13 +74,12 @@ const SplashScreen = ({ onComplete }) => {
   return (
     <div className={`fixed inset-0 z-50 flex flex-col items-center justify-center bg-background-light dark:bg-slate-900 transition-opacity duration-500 ${fade ? 'opacity-0' : 'opacity-100'}`}>
         <div className="p-8 text-center max-w-lg animate-in fade-in zoom-in duration-700">
-             <div className="w-20 h-20 bg-gradient-to-br from-indigo-500 to-purple-600 rounded-2xl mx-auto mb-6 shadow-xl flex items-center justify-center">
-                 <span className="material-symbols-outlined text-white text-4xl">school</span>
-             </div>
+             <img src="/guaji-logo.svg" alt="GuaJi" className="mx-auto mb-6 h-24 w-24" />
              <blockquote className="text-xl font-medium text-slate-700 dark:text-slate-200 italic leading-relaxed font-serif">
                 {quote}
              </blockquote>
              <p className="mt-8 text-sm text-slate-400 font-sans tracking-widest uppercase">GuaJi</p>
+             <div role="progressbar" aria-label="正在加载" className="mx-auto mt-4 h-1 w-24 overflow-hidden rounded-full bg-slate-200"><div className="h-full w-1/2 animate-pulse rounded-full bg-primary" /></div>
         </div>
     </div>
   );

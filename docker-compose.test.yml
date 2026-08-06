@@ -1,0 +1,38 @@
+services:
+  postgres-test:
+    image: postgres:14-alpine
+    environment:
+      POSTGRES_DB: oral_app_test
+      POSTGRES_USER: test_user
+      POSTGRES_PASSWORD: test_password
+    tmpfs:
+      - /var/lib/postgresql/data
+    ports:
+      - "127.0.0.1:55432:5432"
+    volumes:
+      - ./services/user-service/init.sql:/docker-entrypoint-initdb.d/001-init.sql:ro
+      - ./quality/seed/postgres.sql:/docker-entrypoint-initdb.d/900-seed.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U test_user -d oral_app_test"]
+      interval: 2s
+      timeout: 3s
+      retries: 20
+
+  mongo-test:
+    image: mongo:6.0
+    tmpfs:
+      - /data/db
+    ports:
+      - "127.0.0.1:57017:27017"
+
+  redis-test:
+    image: redis:7-alpine
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    tmpfs:
+      - /data
+    ports:
+      - "127.0.0.1:56379:6379"
+
+networks:
+  default:
+    name: oral_app_quality_test

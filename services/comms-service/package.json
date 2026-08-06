@@ -4,7 +4,8 @@
   "description": "Real-time Communication Service for Oral AI App",
   "main": "src/index.js",
   "scripts": {
-    "start": "node src/index.js"
+    "start": "node src/index.js",
+    "test": "node --test test/*.test.js"
   },
   "dependencies": {
     "axios": "^1.12.2",

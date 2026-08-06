@@ -482,7 +482,7 @@ class ProficiencyScoringWorkflow:
         """同步调用 DashScope text-embedding，返回向量；失败返回 None（graceful degrade）"""
         if not _DASHSCOPE_AVAILABLE or not text or not text.strip():
             return None
-        api_key = os.getenv("DASHSCOPE_API_KEY") or os.getenv("QWEN3_OMNI_API_KEY")
+        api_key = os.getenv("QWEN3_OMNI_API_KEY")
         if not api_key:
             return None
         try:
@@ -696,7 +696,7 @@ class ProficiencyScoringWorkflow:
                     # 调用 user-service 的关键词 API
                     resp = await client.get(
                         f"{user_service_url}/api/users/tasks/{task_id}/keywords",
-                        headers={"Authorization": f"Bearer {token}"}
+                        headers={"X-Guaji-Internal-Auth": os.getenv("INTERNAL_AUTH_SECRET", "")}
                     )
                     if resp.status_code == 200:
                         keywords_data = resp.json().get('data', {}).get('keywords', [])

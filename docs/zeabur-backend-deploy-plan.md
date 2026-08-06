@@ -90,10 +90,12 @@ add_scenario_review_column.sql
 ### ai-omni-service  (`services/ai-omni-service`, 端口 8082)
 | KEY | VALUE |
 |-----|-------|
-| `QWEN3_OMNI_API_KEY` | `sk-ws-H.IPEDXR...`（intl，CSV） |
-| `DASHSCOPE_API_KEY` | `sk-ws-H.IPEDXR...`（同上） |
-| `DASHSCOPE_WS_URL` | `wss://ws-apadg96g31j9nnwh.ap-southeast-1.maas.aliyuncs.com/api-ws/v1/realtime` |
-| `DASHSCOPE_HTTP_BASE` | `https://ws-apadg96g31j9nnwh.ap-southeast-1.maas.aliyuncs.com` |
+| `DASHSCOPE_API_KEY` | Zeabur Secret：MaaS workspace Key（禁止显示或复制到日志） |
+| `QWEN3_OMNI_API_KEY` | Zeabur Secret：公共 DashScope Key（禁止显示或复制到日志） |
+| `DASHSCOPE_WS_URL` | `wss://<workspace>.<region>.maas.aliyuncs.com/api-ws/v1/realtime` |
+| `DASHSCOPE_HTTP_BASE` | `https://<workspace>.<region>.maas.aliyuncs.com` |
+| `DASHSCOPE_CHAT_BASE` | `https://dashscope-intl.aliyuncs.com` |
+| `DASHSCOPE_IMAGE_BASE` | `https://dashscope-intl.aliyuncs.com` |
 | `CORS_ALLOWED_ORIGINS` | `https://guajiguaji.top,https://www.guajiguaji.top` |
 | `AI_SERVICE_PORT` `HEALTH_CHECK_PORT` | `8082` |
 | `NODE_ENV` | `production` |
@@ -104,6 +106,9 @@ add_scenario_review_column.sql
 
 ### conversation-service  (`services/conversation-service`, 8083)
 DB 5 项=postgres 模板变量 · `JWT_SECRET`=基准 · `PORT`=8083 · `REDIS_HOST/PORT`=redis 模板
+
+### developer-api-service
+`INTERNAL_AUTH_SECRET` 必须与 history/conversation 使用同一基准值；`AI_UPSTREAM_TIMEOUT_MS=60000`。
 
 ### history-analytics-service  (`services/history-analytics-service`, 3004)
 `MONGO_URI`=`${MONGO_CONNECTION_STRING}` · `PORT`=3004

@@ -49,6 +49,6 @@ Stores specific learning goals for the user.
 | `current_proficiency`| `INT`          | `DEFAULT 0`                               | Current proficiency score (0-100).                |
 | `completion_time_days`| `INT`         |                                           | Expected completion time in days.                 |
 | `interests`          | `TEXT`         |                                           | Goal-specific interests.                          |
-| `status`             | `VARCHAR(20)`  | `DEFAULT 'active'`                        | Goal status (active, completed, abandoned).       |
+| `status`             | `VARCHAR(20)`  | `DEFAULT 'active'`                        | Goal status (active, paused, completed, archived; abandoned is legacy). |
 | `created_at`         | `TIMESTAMPTZ`  | `NOT NULL`, `DEFAULT NOW()`               | Timestamp of goal creation.                       |
 | `completed_at`       | `TIMESTAMPTZ`  |                                           | Timestamp of goal completion.                     |

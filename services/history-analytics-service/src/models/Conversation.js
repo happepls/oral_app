@@ -1,8 +1,16 @@
 const mongoose = require('mongoose');
+const crypto = require('crypto');
 
 const MessageSchema = new mongoose.Schema({
+  id: {
+    type: String,
+    required: true,
+    default: function messageIdDefault() {
+      return this._id ? String(this._id) : crypto.randomUUID();
+    },
+  },
   role: { type: String, enum: ['user', 'assistant', 'system'], required: true },
-  content: { type: String, required: true },
+  content: { type: String, default: '' },
   audioUrl: { type: String },
   timestamp: { type: Date, default: Date.now }
 });
@@ -23,5 +31,7 @@ const ConversationSchema = new mongoose.Schema({
     feedback: String
   }
 }, { timestamps: true });
+
+ConversationSchema.index({ userId: 1, goalId: 1 });
 
 module.exports = mongoose.model('Conversation', ConversationSchema);

@@ -7,11 +7,9 @@ WORKDIR /usr/src/app
 # Copy package.json and package-lock.json (if available)
 COPY package*.json ./
 
-# Install dependencies
-RUN npm install
-
-# Copy the rest of the application code
-COPY . .
+# Dependencies are prepared on the host before image rebuilds.
+COPY node_modules ./node_modules
+COPY src ./src
 
 # Your app binds to port 8080
 EXPOSE 8080

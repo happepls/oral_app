@@ -9,13 +9,15 @@ module.exports = {
     extend: {
       colors: {
         // Brand (design-tokens.json)
-        "primary":       "#637FF1",
+        // The original #637FF1 remains available as primary-light artwork, but
+        // interactive fills/text need the AA-safe brand shade against white.
+        "primary":       "#2d44ca",
         "primary-light": "#c3cef8",
         "primary-dark":  "#2d44ca",
         "secondary":     "#a47af6",
         // Semantic
-        "success":  "#10B981",
-        "warning":  "#F59E0B",
+        "success":  "#047857",
+        "warning":  "#92400E",
         "error":    "#e2412e",
         // Surfaces
         "background-light": "#f6f7f8",
@@ -44,4 +46,3 @@ module.exports = {
     require('@tailwindcss/forms'),
   ],
 }
-

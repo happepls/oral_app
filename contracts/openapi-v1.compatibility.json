@@ -1,0 +1,28 @@
+{
+  "version": 1,
+  "operations": [
+    "GET /oauth/authorize",
+    "POST /oauth/authorize",
+    "POST /oauth/token",
+    "GET /profile",
+    "PATCH /profile",
+    "GET /goals",
+    "POST /goals",
+    "GET /tasks",
+    "GET /conversations",
+    "POST /conversations",
+    "GET /conversations/{sessionId}",
+    "POST /ai/scenarios",
+    "POST /ai/tts",
+    "POST /realtime/tickets"
+  ],
+  "required_security_schemes": ["FirstPartyCookie", "ApiKey", "DelegatedBearer"],
+  "idempotent_operations": [
+    "POST /oauth/authorize",
+    "POST /goals",
+    "POST /conversations",
+    "POST /ai/scenarios",
+    "POST /ai/tts",
+    "POST /realtime/tickets"
+  ]
+}

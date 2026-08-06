@@ -65,13 +65,10 @@ function Register() {
   const inputClass = "w-full px-4 py-3 rounded-xl border border-slate-200 dark:border-slate-600 bg-slate-50 dark:bg-slate-700 text-slate-900 dark:text-white focus:border-primary focus:ring-2 focus:ring-primary/20 outline-none disabled:opacity-50 transition";
 
   return (
-    <div className="relative flex min-h-screen w-full flex-col items-center bg-background-light dark:bg-background-dark p-4">
+    <div className="relative flex min-h-[100dvh] w-full flex-col items-center bg-background-light dark:bg-background-dark p-4">
       {/* Logo */}
       <div className="w-full max-w-md flex justify-center pt-10 pb-6">
-        <div
-          className="w-12 h-12 rounded-2xl"
-          style={{ background: 'linear-gradient(135deg, #637FF1, #a47af6)' }}
-        />
+        <img src="/guaji-logo.svg" alt="GuaJi" className="h-16 w-16" />
       </div>
 
       <motion.div
@@ -84,7 +81,7 @@ function Register() {
           {/* Header */}
           <div className="flex items-center justify-between mb-6">
             <button
-              onClick={() => navigate('/')}
+              onClick={() => navigate('/welcome')}
               className="flex items-center gap-1.5 text-slate-500 hover:text-primary transition-colors"
             >
               <ArrowLeft className="w-4 h-4" />
@@ -149,7 +146,7 @@ function Register() {
                   disabled={loading}
                   minLength={8}
                   className={`${inputClass} pr-11`}
-                  placeholder={t('password_placeholder')}
+                  placeholder={t('password_label')}
                 />
                 <button
                   type="button"
@@ -161,7 +158,7 @@ function Register() {
                   {showPassword ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
                 </button>
               </div>
-              <p className="text-xs text-slate-400 mt-1">{t('password_hint')}</p>
+              <p className="text-xs text-slate-600 dark:text-slate-300 mt-1">{t('password_hint')}</p>
             </div>
 
             <div>
@@ -178,7 +175,7 @@ function Register() {
                   disabled={loading}
                   minLength={8}
                   className={`${inputClass} pr-11`}
-                  placeholder="••••••••"
+                  placeholder={t('confirm_password_label')}
                 />
                 <button
                   type="button"
@@ -208,7 +205,7 @@ function Register() {
             {t('register_has_account')}{' '}
             <button
               onClick={() => navigate('/login')}
-              className="text-primary font-semibold hover:underline"
+              className="text-primary-dark dark:text-primary-light font-semibold hover:underline"
             >
               {t('register_login_link')}
             </button>

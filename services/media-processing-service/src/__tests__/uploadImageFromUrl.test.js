@@ -19,6 +19,7 @@ const ALLOWED_IMAGE_HOSTS = [
     'oss-cn-hangzhou.aliyuncs.com',
     'oss-cn-shanghai.aliyuncs.com',
     'oss-ap-southeast-1.aliyuncs.com',
+    'dashscope-5859.oss-cn-wulanchabu-acdr-1.aliyuncs.com',
 ];
 
 const isAllowedImageHost = (hostname) => {
@@ -67,6 +68,7 @@ describe('isAllowedImageHost – SSRF host allowlist', () => {
         expect(isAllowedImageHost('oss-cn-hangzhou.aliyuncs.com')).toBe(true);
         expect(isAllowedImageHost('oss-cn-shanghai.aliyuncs.com')).toBe(true);
         expect(isAllowedImageHost('oss-ap-southeast-1.aliyuncs.com')).toBe(true);
+        expect(isAllowedImageHost('dashscope-5859.oss-cn-wulanchabu-acdr-1.aliyuncs.com')).toBe(true);
     });
 
     test('allows subdomains of an allowed host (endsWith ".<host>")', () => {
@@ -91,6 +93,7 @@ describe('isAllowedImageHost – SSRF host allowlist', () => {
         expect(isAllowedImageHost('dashscope.aliyuncs.com.evil.com')).toBe(false);
         expect(isAllowedImageHost('notdashscope.aliyuncs.com')).toBe(false);
         expect(isAllowedImageHost('xoss-cn-beijing.aliyuncs.com')).toBe(false);
+        expect(isAllowedImageHost('dashscope-5859.oss-cn-wulanchabu-acdr-1.aliyuncs.com.evil.test')).toBe(false);
     });
 
     test('rejects empty / falsy hostname', () => {

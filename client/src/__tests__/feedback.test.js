@@ -9,8 +9,10 @@
  * - Submit state transitions (idle → submitting → submitted / error)
  */
 
+import { feedbackAPI } from '../services/api';
+
 // ---------------------------------------------------------------------------
-// feedbackAPI unit tests (pure logic, no fetch)
+// feedbackAPI request contract
 // ---------------------------------------------------------------------------
 
 const FEEDBACK_MAX_LENGTH = 500;
@@ -22,11 +24,9 @@ describe('feedbackAPI.submit payload', () => {
   beforeEach(() => {
     mockFetch = jest.fn();
     global.fetch = mockFetch;
-    localStorage.setItem('authToken', 'test-token');
   });
 
   afterEach(() => {
-    localStorage.removeItem('authToken');
     jest.restoreAllMocks();
   });
 
@@ -36,46 +36,17 @@ describe('feedbackAPI.submit payload', () => {
       json: async () => ({ data: { success: true } })
     });
 
-    // Inline minimal implementation matching api.js logic
-    const API_BASE_URL = '/api';
     const payload = { category: '功能建议', message: '希望增加更多场景' };
-
-    await fetch(`${API_BASE_URL}/feedback`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: 'Bearer test-token'
-      },
-      body: JSON.stringify(payload)
-    });
+    await feedbackAPI.submit(payload);
 
     expect(mockFetch).toHaveBeenCalledTimes(1);
     const [url, options] = mockFetch.mock.calls[0];
-    expect(url).toBe('/api/feedback');
+    expect(url).toBe('/api/users/feedback');
     expect(options.method).toBe('POST');
     expect(options.headers['Content-Type']).toBe('application/json');
-    expect(options.headers['Authorization']).toBe('Bearer test-token');
+    expect(options.headers.Authorization).toBeUndefined();
+    expect(options.credentials).toBe('include');
     expect(JSON.parse(options.body)).toEqual(payload);
-  });
-
-  test('includes auth token from localStorage', () => {
-    localStorage.setItem('authToken', 'my-jwt-token');
-    const token = localStorage.getItem('authToken');
-    const headers = {
-      'Content-Type': 'application/json',
-      ...(token && { Authorization: `Bearer ${token}` })
-    };
-    expect(headers.Authorization).toBe('Bearer my-jwt-token');
-  });
-
-  test('omits Authorization header when not logged in', () => {
-    localStorage.removeItem('authToken');
-    const token = localStorage.getItem('authToken');
-    const headers = {
-      'Content-Type': 'application/json',
-      ...(token && { Authorization: `Bearer ${token}` })
-    };
-    expect(headers.Authorization).toBeUndefined();
   });
 });
 

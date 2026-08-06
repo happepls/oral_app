@@ -2,34 +2,32 @@
 Tests for Daily QA auto-pass fallback logic.
 
 The auto-pass mechanism triggers when:
-  1. ai_response_count >= 2
-  2. AI reply does NOT contain any negative_indicators
-
-negative_indicators include retry/correction words in English, Chinese, and Japanese.
+  1. ai_response_count >= 3
+  2. AI reply contains an explicit positive-evaluation phrase
+  3. AI reply is long enough to be meaningful
 """
 import pytest
 
 
-NEGATIVE_INDICATORS = [
-    "try again", "もう一度", "再试", "再说", "重新",
-    "let's try", "could you", "can you try",
-    "もう少し", "やり直", "言い直",
-    "not quite", "not correct", "incorrect",
-    "off-topic", "off topic", "関係ない", "关系不大",
-    "话题", "質問に", "question", "about the question",
-    "答えてみ", "回答一下", "answer the",
-    "今日の質問", "今天的问题", "today's question",
-    "日本語で", "in japanese", "in english", "用日语", "用英语",
-    "please use", "please answer",
+POSITIVE_INDICATORS = [
+    "great answer", "well done", "good answer", "nice answer", "good job",
+    "excellent", "perfect", "wonderful", "fantastic", "impressive",
+    "素晴らしい", "よくできました", "いい答え", "すごい",
+    "回答得很好", "答得不错", "说得好", "非常好", "太棒了",
+    "좋은 대답", "잘했어", "훌륭",
+    "très bien", "bonne réponse", "magnifique",
+    "muy bien", "buena respuesta", "excelente",
+    "sehr gut", "tolle antwort", "ausgezeichnet",
 ]
 
 
 def check_auto_pass(ai_text: str, response_count: int) -> bool:
-    if response_count < 2:
+    if response_count < 3:
         return False
-    ai_lower = ai_text.lower()
-    has_negative = any(ind in ai_lower for ind in NEGATIVE_INDICATORS)
-    return not has_negative
+    ai_lower = (ai_text or "").strip().lower()
+    if len(ai_lower) < 10:
+        return False
+    return any(ind in ai_lower for ind in POSITIVE_INDICATORS)
 
 
 class TestAutoPassFallback:
@@ -38,50 +36,50 @@ class TestAutoPassFallback:
         assert check_auto_pass("Great answer! Well done.", 1) is False
 
     def test_positive_response_at_threshold(self):
-        assert check_auto_pass("Great answer! Well done.", 2) is True
+        assert check_auto_pass("Great answer! Well done.", 3) is True
 
     def test_positive_response_above_threshold(self):
         assert check_auto_pass("Excellent work! You nailed it.", 3) is True
 
     def test_english_negative_try_again(self):
-        assert check_auto_pass("Not bad, but try again with more detail.", 2) is False
+        assert check_auto_pass("Not bad, but try again with more detail.", 3) is False
 
     def test_english_negative_not_correct(self):
-        assert check_auto_pass("That's not correct. Let me help you.", 2) is False
+        assert check_auto_pass("That's not correct. Let me help you.", 3) is False
 
     def test_english_negative_not_quite(self):
-        assert check_auto_pass("Not quite right. Can you elaborate?", 2) is False
+        assert check_auto_pass("Not quite right. Can you elaborate?", 3) is False
 
     def test_english_negative_incorrect(self):
-        assert check_auto_pass("That answer is incorrect.", 2) is False
+        assert check_auto_pass("That answer is incorrect.", 3) is False
 
     def test_japanese_negative_mou_ichido(self):
-        assert check_auto_pass("もう少し詳しく話してください。", 2) is False
+        assert check_auto_pass("もう少し詳しく話してください。", 3) is False
 
     def test_japanese_negative_yarinao(self):
-        assert check_auto_pass("やり直してみましょう。", 2) is False
+        assert check_auto_pass("やり直してみましょう。", 3) is False
 
     def test_chinese_negative_zaishi(self):
-        assert check_auto_pass("再试一次吧，加油！", 2) is False
+        assert check_auto_pass("再试一次吧，加油！", 3) is False
 
     def test_chinese_negative_chongxin(self):
-        assert check_auto_pass("请重新回答一下。", 2) is False
+        assert check_auto_pass("请重新回答一下。", 3) is False
 
     def test_off_topic_english(self):
-        assert check_auto_pass("That seems off-topic. Let's focus on the question.", 2) is False
+        assert check_auto_pass("That seems off-topic. Let's focus on the question.", 3) is False
 
     def test_wrong_language_prompt(self):
-        assert check_auto_pass("Please answer in japanese.", 2) is False
+        assert check_auto_pass("Please answer in japanese.", 3) is False
 
-    def test_empty_text_passes(self):
-        assert check_auto_pass("", 2) is True
+    def test_empty_text_does_not_pass(self):
+        assert check_auto_pass("", 3) is False
 
     def test_mixed_positive_negative(self):
-        assert check_auto_pass("Good effort, but could you try again?", 2) is False
+        assert check_auto_pass("Good effort, but could you try again?", 3) is False
 
     def test_case_insensitive(self):
-        assert check_auto_pass("TRY AGAIN please.", 2) is False
-        assert check_auto_pass("NOT CORRECT at all.", 2) is False
+        assert check_auto_pass("TRY AGAIN please.", 3) is False
+        assert check_auto_pass("NOT CORRECT at all.", 3) is False
 
 
 # =========================================================================
@@ -149,15 +147,15 @@ class TestRealImplMatchesReplica:
 
     @pytest.mark.parametrize("ai_text,count,expected", [
         ("Great answer! Well done.", 1, False),    # below threshold
-        ("Great answer! Well done.", 2, True),     # positive at threshold
+        ("Great answer! Well done.", 3, True),     # positive at threshold
         ("Excellent work! You nailed it.", 3, True),
-        ("Not bad, but try again with more detail.", 2, False),
-        ("That's not correct. Let me help you.", 2, False),
-        ("もう少し詳しく話してください。", 2, False),
-        ("再试一次吧，加油！", 2, False),
-        ("Please answer in japanese.", 2, False),
-        ("", 2, True),
-        ("TRY AGAIN please.", 2, False),
+        ("Not bad, but try again with more detail.", 3, False),
+        ("That's not correct. Let me help you.", 3, False),
+        ("もう少し詳しく話してください。", 3, False),
+        ("再试一次吧，加油！", 3, False),
+        ("Please answer in japanese.", 3, False),
+        ("", 3, False),
+        ("TRY AGAIN please.", 3, False),
     ])
     def test_real_matches_expected(self, ai_text, count, expected):
         assert _real_impl(ai_text, count) is expected

@@ -316,45 +316,29 @@ setInterval(cleanupExpiredTokens, 60 * 60 * 1000);
 // Internal service authentication middleware
 // Used for service-to-service communication (e.g., ai-omni-service calling user-service)
 const internalAuth = (req, res, next) => {
-  const internalKey = req.headers['x-internal-service-key'];
-  
-  // Check for internal service key in environment
-  const expectedKey = process.env.INTERNAL_SERVICE_KEY;
-  
-  if (!expectedKey) {
-    console.warn('INTERNAL_SERVICE_KEY not configured - internal API security disabled');
-    // In development, allow without key if not configured
-    if (process.env.NODE_ENV !== 'production') {
-      return next();
-    }
-  }
-  
-  if (!internalKey || internalKey !== expectedKey) {
+  const supplied = req.headers['x-guaji-internal-auth'];
+  const expected = process.env.INTERNAL_AUTH_SECRET;
+  if (!supplied || !expected) {
     return res.status(403).json({
       code: 403,
-      message: 'Forbidden - Invalid internal service key',
+      message: 'Forbidden - Internal authentication required',
       data: null
     });
   }
-  
+  const left = Buffer.from(String(expected));
+  const right = Buffer.from(String(supplied));
+  if (left.length !== right.length || !crypto.timingSafeEqual(left, right)) {
+    return res.status(403).json({
+      code: 403,
+      message: 'Forbidden - Invalid internal authentication',
+      data: null
+    });
+  }
   next();
 };
 
-// Skip internal auth for Docker internal network (172.x.x.x)
+// Backward-compatible export name. Internal network location is not authentication.
 const internalAuthWithNetworkSkip = (req, res, next) => {
-  // Get client IP from various headers (behind proxy/gateway)
-  const clientIp = req.headers['x-real-ip'] || 
-                   req.headers['x-forwarded-for']?.split(',')[0]?.trim() ||
-                   req.connection?.remoteAddress ||
-                   req.socket?.remoteAddress;
-  
-  // Skip auth for Docker/Kubernetes internal networks (172.x.x.x, 10.x.x.x)
-  if (clientIp && (clientIp.startsWith('172.') || clientIp.startsWith('10.'))) {
-    console.log(`Internal auth skipped for Docker internal network: ${clientIp}`);
-    return next();
-  }
-  
-  // Apply internal auth for external requests
   return internalAuth(req, res, next);
 };
 

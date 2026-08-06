@@ -59,7 +59,9 @@ class BatchEvaluationWorkflow:
 
     def __init__(self):
         self.proficiency_workflow = ProficiencyScoringWorkflow()
-        self._api_key = os.getenv("DASHSCOPE_API_KEY") or os.getenv("QWEN3_OMNI_API_KEY")
+        # Generation.call targets the public DashScope gateway. A MaaS workspace
+        # credential must never be used as a fallback for this request.
+        self._api_key = os.getenv("QWEN3_OMNI_API_KEY")
         if _DASHSCOPE_AVAILABLE and self._api_key:
             dashscope.api_key = self._api_key
         self._model = os.getenv("BATCH_EVAL_MODEL", "qwen-turbo")
@@ -174,7 +176,7 @@ class BatchEvaluationWorkflow:
         if not _DASHSCOPE_AVAILABLE:
             raise RuntimeError("dashscope SDK not available")
         if not self._api_key:
-            raise RuntimeError("DASHSCOPE_API_KEY not configured")
+            raise RuntimeError("QWEN3_OMNI_API_KEY not configured")
 
         prompt = self._build_prompt(
             turn_window=turn_window,

@@ -37,6 +37,7 @@ logs
 .env.development.local
 .env.test.local
 .env.production.local
+.security-keys.json
 
 # 包管理
 # 注意：lockfile 必须提交 —— 保证依赖可复现 + 可审计 + 防幻觉包/typosquat（用 `npm ci` 而非 `npm install`）。
@@ -100,6 +101,13 @@ __pycache__/
 
 # Verification screenshots (temporary)
 verify-*.png
+
+# Reproducible local/CI quality outputs. Approved visual baselines live in
+# quality/baselines/ and remain tracked; only transient run artifacts are ignored.
+/quality/artifacts/
+
+# Local UX audit reports and screenshots (generated evidence, not source)
+/reports/
 
 # Mobile responsive test screenshots (one-off evidence; findings recorded in docs/test-cases-design-integration.md §10)
 docs/mobile-test-screenshots/

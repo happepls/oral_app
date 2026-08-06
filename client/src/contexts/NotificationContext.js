@@ -10,6 +10,14 @@ const SSE_EVENT_TYPES = [
   'task_score_updated'
 ];
 
+const SSE_RECONNECT_BASE_DELAY_MS = 1000;
+const SSE_RECONNECT_MAX_DELAY_MS = 30000;
+
+export const getSSEReconnectDelay = (attempt) => Math.min(
+  SSE_RECONNECT_BASE_DELAY_MS * (2 ** Math.max(0, attempt - 1)),
+  SSE_RECONNECT_MAX_DELAY_MS,
+);
+
 export const NotificationProvider = ({ children }) => {
   const { user } = useAuth();
   const eventSourceRef = useRef(null);
@@ -34,30 +42,71 @@ export const NotificationProvider = ({ children }) => {
       return;
     }
 
-    const es = new EventSource('/api/users/sse', { withCredentials: true });
-    eventSourceRef.current = es;
+    let disposed = false;
+    let reconnectTimer = null;
+    let reconnectAttempt = 0;
+    let outageReported = false;
 
-    es.addEventListener('connected', (e) => {
-      console.log('[SSE] Connected:', JSON.parse(e.data));
-    });
-
-    SSE_EVENT_TYPES.forEach(eventType => {
-      es.addEventListener(eventType, (e) => {
-        try {
-          const data = JSON.parse(e.data);
-          listenersRef.current.get(eventType)?.forEach(cb => cb(data));
-        } catch (err) {
-          console.error(`[SSE] Failed to parse ${eventType}:`, err);
-        }
-      });
-    });
-
-    es.onerror = () => {
-      console.warn('[SSE] Connection error, will auto-reconnect');
+    const markConnected = () => {
+      reconnectAttempt = 0;
+      outageReported = false;
     };
 
+    const connect = () => {
+      if (disposed || eventSourceRef.current) return;
+
+      const es = new EventSource('/api/users/sse', { withCredentials: true });
+      eventSourceRef.current = es;
+      es.onopen = markConnected;
+      es.addEventListener('connected', markConnected);
+
+      SSE_EVENT_TYPES.forEach(eventType => {
+        es.addEventListener(eventType, (e) => {
+          try {
+            const data = JSON.parse(e.data);
+            listenersRef.current.get(eventType)?.forEach(cb => cb(data));
+          } catch (err) {
+            console.error(`[SSE] Failed to parse ${eventType}:`, err);
+          }
+        });
+      });
+
+      es.onerror = () => {
+        es.close();
+        if (eventSourceRef.current === es) eventSourceRef.current = null;
+        if (disposed) return;
+
+        reconnectAttempt += 1;
+        if (!outageReported) {
+          console.warn('[SSE] Connection unavailable; retrying in background');
+          outageReported = true;
+        }
+        reconnectTimer = window.setTimeout(connect, getSSEReconnectDelay(reconnectAttempt));
+      };
+    };
+
+    const reconnectNow = () => {
+      if (disposed || eventSourceRef.current) return;
+      if (reconnectTimer) window.clearTimeout(reconnectTimer);
+      reconnectTimer = null;
+      reconnectAttempt = 0;
+      connect();
+    };
+
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') reconnectNow();
+    };
+
+    window.addEventListener('online', reconnectNow);
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    connect();
+
     return () => {
-      es.close();
+      disposed = true;
+      if (reconnectTimer) window.clearTimeout(reconnectTimer);
+      window.removeEventListener('online', reconnectNow);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      eventSourceRef.current?.close();
       eventSourceRef.current = null;
     };
   }, [user]);

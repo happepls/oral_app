@@ -15,6 +15,8 @@ module.exports = {
         ...(config.headers || {}),
         'Cross-Origin-Opener-Policy': 'same-origin-allow-popups',
         'Cross-Origin-Embedder-Policy': 'unsafe-none',
+        // Required by Google Identity Services for HTTP localhost testing.
+        'Referrer-Policy': 'no-referrer-when-downgrade',
       };
       return config;
     };

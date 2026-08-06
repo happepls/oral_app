@@ -2,30 +2,31 @@ name: CI Pipeline
 
 on:
   push:
-    branches: [ main, develop ]
+    branches: [ master, develop ]
   pull_request:
-    branches: [ main ]
+    branches: [ master ]
 
 jobs:
   test:
     runs-on: ubuntu-latest
 
-    strategy:
-      matrix:
-        node-version: [18.x, 20.x]
-
     steps:
     - uses: actions/checkout@v4
 
-    - name: Use Node.js ${{ matrix.node-version }}
+    - name: Use Node.js 20
       uses: actions/setup-node@v4
       with:
-        node-version: ${{ matrix.node-version }}
+        node-version: 20.x
         cache: 'npm'
         cache-dependency-path: |
           package-lock.json
           client/package-lock.json
           services/*/package-lock.json
+
+    - name: Use Python 3.10
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.10'
 
     - name: Install dependencies
       run: npm ci
@@ -33,7 +34,7 @@ jobs:
     - name: Install client dependencies
       run: |
         cd client
-        npm ci
+        npm ci --legacy-peer-deps
 
     - name: Install service dependencies
       run: |
@@ -41,26 +42,76 @@ jobs:
         npm ci
         cd ../comms-service
         npm ci
-        cd ../ai-omni-service
-        npm ci
         cd ../history-analytics-service
         npm ci
         cd ../conversation-service
         npm ci
         cd ../media-processing-service
         npm ci
+        cd ../developer-api-service
+        npm ci
 
     - name: Run linting
       run: |
-        npm run lint || echo "Linting issues found, please fix them"
-        cd client && npm run lint || echo "Client linting issues found, please fix them"
+        npm run lint
+        cd client && npm run lint
 
     - name: Run unit tests
       run: |
         npm test
-        cd client && npm test -- --passWithNoTests
+        cd client && npm test -- --watchAll=false --passWithNoTests
+        cd ../services/user-service && npm test -- --runInBand
+        cd ../media-processing-service && npm test -- --runInBand
+        cd ../history-analytics-service && npm test
+        cd ../conversation-service && npm test
+        cd ../comms-service && npm test
+        cd ../developer-api-service && npm test
 
-    - name: Run integration tests
+    - name: Build client
+      env:
+        CI: false
       run: |
-        cd integration_tests
-        python -m unittest discover -v
+        cd client && npm run build
+        cd .. && npm run verify:geo
+
+    - name: Run Python service tests
+      run: |
+        python -m pip install -r services/workflow-service/requirements.txt -r services/ai-omni-service/requirements.txt pytest pytest-asyncio
+        cd services/workflow-service
+        python -m pytest tests
+        cd ../ai-omni-service
+        python -m pytest tests
+        cd ../..
+        python test_scenario_batch_and_daily_qa.py --scenario all --mock
+
+    - name: Validate integration harness
+      run: |
+        python -m pip install -r integration_tests/requirements.txt
+        python integration_tests/test_runner.py --help
+        python -m compileall -q integration_tests
+
+  ui-audit:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    - name: Use Node.js 20
+      uses: actions/setup-node@v4
+      with:
+        node-version: 20.x
+        cache: npm
+        cache-dependency-path: client/package-lock.json
+    - name: Install client dependencies
+      run: npm ci --legacy-peer-deps --prefix client
+    - name: Install browser engines
+      run: npm exec --prefix client -- playwright install --with-deps chrome webkit
+    - name: Run deterministic viewport, theme, locale, accessibility, and WebKit checks
+      run: npm --prefix client run test:e2e
+    - name: Upload UI evidence
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: ui-audit-evidence
+        path: |
+          quality/artifacts/ui-candidates
+          quality/artifacts/playwright-report
+          quality/artifacts/playwright-results.json

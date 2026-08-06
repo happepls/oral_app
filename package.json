@@ -1,9 +1,22 @@
 {
+  "scripts": {
+    "lint": "eslint scripts quality services/user-service/src services/media-processing-service/src services/history-analytics-service/src services/history-analytics-service/test services/conversation-service/src services/conversation-service/test services/comms-service/src services/comms-service/test services/developer-api-service/src services/developer-api-service/test",
+    "test": "npm run test:contracts && npm run test:score && npm run test:audit",
+    "test:contracts": "node --test quality/tests/contracts.test.mjs",
+    "test:score": "node --test quality/tests/scoring.test.mjs",
+    "test:audit": "node --test quality/tests/audit-tracker.test.mjs",
+    "verify": "node scripts/quality/verify.mjs",
+    "verify:report": "node scripts/quality/score.mjs",
+    "verify:ui": "npm --prefix client run test:e2e",
+    "verify:ui:report": "node scripts/quality/playwright-findings.mjs",
+    "verify:geo": "node scripts/verify-geo-build.mjs"
+  },
   "devDependencies": {
     "@eslint/js": "^9.37.0",
     "cspell": "^9.2.1",
     "eslint": "^9.37.0",
     "eslint-plugin-react": "^7.37.5",
+    "eslint-plugin-react-hooks": "^5.2.0",
     "globals": "^16.4.0",
     "prettier": "^3.6.2",
     "typescript-eslint": "^8.46.0"

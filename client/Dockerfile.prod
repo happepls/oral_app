@@ -13,9 +13,9 @@ ARG REACT_APP_API_URL=/api
 ARG REACT_APP_API_GATEWAY
 ARG REACT_APP_GOOGLE_CLIENT_ID
 
-# --- Layer 1: deps (copy from host to avoid npm alpine bug) ---
+# --- Layer 1: deps ---
 COPY package*.json ./
-COPY node_modules ./node_modules
+RUN npm ci --legacy-peer-deps
 
 # --- Layer 2: source (invalidated only when source changes) ---
 COPY config-overrides.js ./
