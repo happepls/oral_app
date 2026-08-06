@@ -12,6 +12,16 @@ This runbook is evidence-first. The 2026-08-06 release approval explicitly inclu
 
 Stop if the workspace, project, environment, or any existing service ID is missing or ambiguous. Before creating either approved new service, repeat the production inventory and stop if a same-named service now exists.
 
+## Deployment topology: Zeabur does not run Compose
+
+The current Zeabur production project is a set of independent Git-backed services. For each service, Zeabur checks out `master`, uses the Root Directory configured in the panel (for example `services/ai-omni-service`, `services/backup-service`, `api-gateway`, or `client`), and builds that directory's Dockerfile. PostgreSQL, MongoDB, Redis, variables, private networking, and volumes are managed by Zeabur rather than by a repository Compose file.
+
+- `docker-compose.yml` plus the automatically loaded `docker-compose.override.yml`: local development and integration only.
+- `docker-compose.prod.yml`: the separate self-hosted, image-based production target used only by the manually dispatched `.github/workflows/deploy.yml` SSH workflow.
+- Zeabur production: no Compose file. Select the existing project, the unique `production` environment, and the existing service IDs; never run either Compose target against Zeabur and never create a duplicate all-in-one service.
+
+The self-hosted Compose workflow and the Zeabur rollout are mutually exclusive deployment paths. The release described by this runbook uses only the Zeabur path.
+
 ## Pre-merge evidence
 
 1. `git status --short --branch` is clean and the branch contains the six local commits based on `origin/master`.

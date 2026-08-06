@@ -1,4 +1,8 @@
 
+# Local development/integration stack only.
+# Zeabur production does not consume this file: each Git-backed service is
+# built independently from its configured Root Directory and Dockerfile.
+
 services:
   api-gateway:
     build:

@@ -1,4 +1,6 @@
-name: Deploy to Production
+# Manual deployment for the separate self-hosted Compose target.
+# The Zeabur production environment does not run this workflow or this Compose file.
+name: Deploy to Self-hosted Production (Compose)
 
 on:
   workflow_dispatch:
@@ -57,7 +59,7 @@ jobs:
 
     - name: Render Docker Compose template
       run: |
-        # Replace image tags in docker-compose.yml with tagged versions
+        # Replace image tags in the self-hosted Compose template.
         for service in client user-service comms-service ai-omni-service history-analytics-service conversation-service media-processing-service api-gateway developer-api-service workflow-service backup-service; do
           sed -i "s|image: .*${service}:.*|image: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/${service}:$IMAGE_TAG|g" docker-compose.prod.yml
         done
