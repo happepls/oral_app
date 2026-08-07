@@ -5,6 +5,7 @@ FROM postgres:18-bookworm
 # The production database runs PostgreSQL 18. Keep pg_dump on the same major
 # version; older clients refuse to dump newer servers.
 ENTRYPOINT []
+ENV TZ=Asia/Shanghai
 
 ARG COSCLI_VERSION=v1.0.8
 RUN apt-get update \
