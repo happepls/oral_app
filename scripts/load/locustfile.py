@@ -1,6 +1,7 @@
 """Five-minute, read-only production-safe HTTP profile."""
 
 import math
+import os
 import time
 from collections import deque
 
@@ -15,6 +16,12 @@ _unexpected_429 = 0
 
 class ReadOnlyUser(HttpUser):
     wait_time = between(0.5, 1.5)
+
+    def on_start(self):
+        # Locust disables requests' environment proxy discovery by default.
+        # Keep direct connections as the default, but allow an operator whose
+        # network requires an approved proxy to opt in without exposing its URL.
+        self.client.trust_env = os.getenv("LOAD_TEST_TRUST_ENV_PROXY") == "1"
 
     @task(4)
     def gateway_health(self):
