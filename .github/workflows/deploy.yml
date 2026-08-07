@@ -71,11 +71,13 @@ jobs:
         chmod 600 ssh_key
         ssh -i ssh_key -o StrictHostKeyChecking=no \
           ${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }} \
-          'mkdir -p services/user-service'
+          'mkdir -p services/user-service api-gateway'
         scp -i ssh_key -o StrictHostKeyChecking=no docker-compose.prod.yml \
           ${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}:docker-compose.prod.yml
         scp -i ssh_key -o StrictHostKeyChecking=no services/user-service/init.sql \
           ${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}:services/user-service/init.sql
+        scp -i ssh_key -o StrictHostKeyChecking=no api-gateway/nginx.conf \
+          ${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}:api-gateway/nginx.conf
         
         # SSH to production server and deploy
         ssh -i ssh_key -o StrictHostKeyChecking=no ${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }} << 'EOF'

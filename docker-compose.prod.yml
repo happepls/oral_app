@@ -13,6 +13,10 @@ services:
     restart: unless-stopped
     ports:
       - "80:80"
+    volumes:
+      # The published gateway image defaults to Zeabur DNS. This separate
+      # self-hosted Compose target must retain Docker's 127.0.0.11 DNS names.
+      - ./api-gateway/nginx.conf:/etc/nginx/nginx.conf:ro
     depends_on:
       - client-app
       - user-service

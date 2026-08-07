@@ -5,10 +5,10 @@ RUN mkdir -p /var/cache/nginx/client_temp /var/cache/nginx/proxy_temp /var/cache
     chown -R nginx:nginx /var/cache/nginx /var/log/nginx /etc/nginx/conf.d /usr/share/nginx/html /var/run && \
     chmod -R 755 /var/cache/nginx /var/run
 
-# Copy nginx configuration
-# Standard images target Docker Compose service DNS. Zeabur deployments that
-# need internal hostnames can override this build argument explicitly.
-ARG NGINX_CONFIG=nginx.conf
+# The published image targets Zeabur, whose private DNS requires the CoreDNS
+# resolver and fully-qualified `.zeabur.internal` service names. Local and
+# self-hosted Compose explicitly bind-mount nginx.conf over this file.
+ARG NGINX_CONFIG=nginx.zeabur.conf
 COPY ${NGINX_CONFIG} /etc/nginx/nginx.conf
 
 # Create a simple health check endpoint
