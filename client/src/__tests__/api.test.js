@@ -196,6 +196,7 @@ describe('API Request Headers', () => {
 describe('API Error Handling', () => {
   beforeEach(() => {
     fetch.mockClear();
+    localStorage.removeItem.mockClear();
   });
 
   test('should handle 401 Unauthorized', async () => {
@@ -209,6 +210,21 @@ describe('API Error Handling', () => {
     });
 
     await expect(userAPI.resetTask('task-1', 'scenario-1')).rejects.toThrow();
+    expect(localStorage.removeItem).toHaveBeenCalledWith('user');
+  });
+
+  test('history 401 does not clear the primary login session', async () => {
+    fetch.mockResolvedValueOnce({
+      ok: false,
+      status: 401,
+      json: async () => ({
+        success: false,
+        message: 'History service unauthorized',
+      }),
+    });
+
+    await expect(historyAPI.getStats('user-1')).rejects.toThrow('History service unauthorized');
+    expect(localStorage.removeItem).not.toHaveBeenCalledWith('user');
   });
 
   test('should handle network errors', async () => {

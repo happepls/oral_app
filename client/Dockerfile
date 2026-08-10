@@ -38,7 +38,8 @@ COPY client.nginx.zeabur.conf /etc/nginx/nginx.conf
 # if an older client.nginx.conf snuck in.
 RUN grep -q "resolver 10.43.0.20" /etc/nginx/nginx.conf \
     && grep -q "media-src" /etc/nginx/nginx.conf \
-    && grep -q "cloudflareinsights" /etc/nginx/nginx.conf
+    && grep -q "cloudflareinsights" /etc/nginx/nginx.conf \
+    && grep -q "location = /api/v1/realtime" /etc/nginx/nginx.conf
 COPY --from=builder /app/build /usr/share/nginx/html
 
 EXPOSE 5001
