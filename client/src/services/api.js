@@ -3,7 +3,7 @@ const API_BASE_URL = process.env.REACT_APP_API_URL || '/api';
 const V1_BASE_URL = `${API_BASE_URL}/v1`;
 const idempotencyKey = () => window.crypto?.randomUUID?.() || `guaji-${Date.now()}-${Math.random().toString(16).slice(2)}`;
 
-const handleResponse = async (response) => {
+const handleResponse = async (response, { redirectOnUnauthorized = true } = {}) => {
   let data;
   
   try {
@@ -31,7 +31,7 @@ const handleResponse = async (response) => {
     }
   }
   
-  if (response.status === 401) {
+  if (response.status === 401 && redirectOnUnauthorized) {
     // Token expired or invalid — clear auth state and redirect to login
     localStorage.removeItem('authToken');
     localStorage.removeItem('token');
@@ -769,7 +769,7 @@ export const historyAPI = {
       headers: getAuthHeaders(),
       credentials: 'include'
     });
-    return handleResponse(response);
+    return handleResponse(response, { redirectOnUnauthorized: false });
   },
 
   async getConversationDetail(sessionId) {
@@ -777,7 +777,7 @@ export const historyAPI = {
       headers: getAuthHeaders(),
       credentials: 'include'
     });
-    return handleResponse(response);
+    return handleResponse(response, { redirectOnUnauthorized: false });
   },
 
   async getStats(userId) {
@@ -785,7 +785,7 @@ export const historyAPI = {
       headers: getAuthHeaders(),
       credentials: 'include'
     });
-    return handleResponse(response);
+    return handleResponse(response, { redirectOnUnauthorized: false });
   },
 
   async saveProficiencyMetrics(userId, metrics) {
