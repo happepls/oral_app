@@ -101,4 +101,41 @@ describe('SupportChat opt-in loading', () => {
     expect(scripts).toHaveLength(1);
     expect(scripts[0]).not.toBe(firstScript);
   });
+
+  test('timeout preserves the in-flight Tawk runtime and recovers on a late load', () => {
+    jest.useFakeTimers();
+    renderAt('/login');
+    fireEvent.click(screen.getByRole('button', { name: '打开在线客服' }));
+
+    const script = document.getElementById('tawk-to-script');
+    const vendorRuntime = { connection: {} };
+    window.$_Tawk = vendorRuntime;
+
+    act(() => jest.advanceTimersByTime(15000));
+
+    expect(screen.getByRole('alert')).toHaveTextContent('客服连接失败');
+    expect(document.getElementById('tawk-to-script')).toBe(script);
+    expect(window.$_Tawk).toBe(vendorRuntime);
+    expect(window.Tawk_API).toBeDefined();
+
+    act(() => window.Tawk_API.onLoad());
+
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+    expect(window.__tawkLoadState).toBe('ready');
+    jest.useRealTimers();
+  });
+
+  test('retry does not inject a duplicate while Tawk chunks are still loading', () => {
+    jest.useFakeTimers();
+    renderAt('/login');
+    fireEvent.click(screen.getByRole('button', { name: '打开在线客服' }));
+    const script = document.getElementById('tawk-to-script');
+
+    act(() => jest.advanceTimersByTime(15000));
+    fireEvent.click(screen.getByRole('button', { name: '重试在线客服' }));
+
+    expect(document.querySelectorAll('#tawk-to-script')).toHaveLength(1);
+    expect(document.getElementById('tawk-to-script')).toBe(script);
+    jest.useRealTimers();
+  });
 });
