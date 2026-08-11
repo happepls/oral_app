@@ -40,15 +40,20 @@ function protectDocumentTitle() {
   window.__tawkTitleObserver.observe(titleNode, { childList: true, characterData: true, subtree: true });
 }
 
-function clearBrokenTawk() {
+function clearLoadTimer() {
   window.clearTimeout(window.__tawkLoadTimer);
   delete window.__tawkLoadTimer;
+}
+
+function publishLoadState(state) {
+  clearLoadTimer();
+  window.__tawkLoadState = state;
+  window.dispatchEvent(new CustomEvent('tawk-load-state', { detail: state }));
+}
+
+function clearFailedBootstrap() {
+  clearLoadTimer();
   document.getElementById('tawk-to-script')?.remove();
-  document.querySelectorAll('iframe[src*="tawk.to"], [id^="tawk_"], #tawkchat-container')
-    .forEach(node => node.remove());
-  delete window.Tawk_API;
-  delete window.Tawk_LoadStart;
-  delete window.$_Tawk;
 }
 
 /**
@@ -77,7 +82,16 @@ export default function SupportChat() {
 
   useEffect(() => {
     if (!propertyId || loadState !== 'loading') return undefined;
-    if (document.getElementById('tawk-to-script')) return undefined;
+
+    const existingScript = document.getElementById('tawk-to-script');
+    if (existingScript) {
+      // The embed script loads additional chunks after the script element itself
+      // has completed. Keep that in-flight runtime intact: deleting Tawk globals
+      // here races those chunks and can make twk-chunk-common write to undefined.
+      clearLoadTimer();
+      window.__tawkLoadTimer = window.setTimeout(() => publishLoadState('error'), LOAD_TIMEOUT_MS);
+      return undefined;
+    }
 
     window.__tawkUserActivated = true;
     window.__tawkLoadState = 'loading';
@@ -85,20 +99,8 @@ export default function SupportChat() {
     window.Tawk_API = window.Tawk_API || {};
     window.Tawk_LoadStart = new Date();
 
-    const finish = (state) => {
-      window.clearTimeout(window.__tawkLoadTimer);
-      delete window.__tawkLoadTimer;
-      window.__tawkLoadState = state;
-      setLoadState(state);
-      window.dispatchEvent(new CustomEvent('tawk-load-state', { detail: state }));
-    };
-    const fail = () => {
-      clearBrokenTawk();
-      finish('error');
-    };
-
     window.Tawk_API.onLoad = () => {
-      finish('ready');
+      publishLoadState('ready');
       if (window.__tawkVisible) openTawkChat();
       else applyTawkVisibility(false);
     };
@@ -108,9 +110,14 @@ export default function SupportChat() {
     script.async = true;
     script.src = `https://embed.tawk.to/${propertyId}/${widgetId}`;
     script.charset = 'UTF-8';
-    script.onerror = fail;
+    script.onerror = () => {
+      // Only the bootstrap script itself is safe to remove. Tawk's internal
+      // globals and frames may already belong to asynchronously loading chunks.
+      clearFailedBootstrap();
+      publishLoadState('error');
+    };
     document.body.appendChild(script);
-    window.__tawkLoadTimer = window.setTimeout(fail, LOAD_TIMEOUT_MS);
+    window.__tawkLoadTimer = window.setTimeout(() => publishLoadState('error'), LOAD_TIMEOUT_MS);
 
     // Do not remove a healthy script on unmount; it is shared across SPA routes.
     return undefined;
@@ -119,7 +126,11 @@ export default function SupportChat() {
   if (!propertyId || !visible || loadState === 'ready') return null;
 
   const retry = () => {
-    clearBrokenTawk();
+    if (typeof window.Tawk_API?.maximize === 'function') {
+      publishLoadState('ready');
+      openTawkChat();
+      return;
+    }
     window.__tawkLoadState = 'loading';
     setLoadState('loading');
   };
