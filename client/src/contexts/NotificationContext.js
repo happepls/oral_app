@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useEffect, useRef, useCallback } from 'react';
+import React, { createContext, useContext, useEffect, useRef, useCallback, useState } from 'react';
 import { useAuth } from './AuthContext';
 
 const NotificationContext = createContext(null);
@@ -22,19 +22,28 @@ export const NotificationProvider = ({ children }) => {
   const { user } = useAuth();
   const eventSourceRef = useRef(null);
   const listenersRef = useRef(new Map());
+  const [subscriberCount, setSubscriberCount] = useState(0);
 
   const subscribe = useCallback((eventType, callback) => {
     if (!listenersRef.current.has(eventType)) {
       listenersRef.current.set(eventType, new Set());
     }
     listenersRef.current.get(eventType).add(callback);
+    setSubscriberCount(count => count + 1);
+    let subscribed = true;
     return () => {
+      if (!subscribed) return;
+      subscribed = false;
       listenersRef.current.get(eventType)?.delete(callback);
+      setSubscriberCount(count => Math.max(0, count - 1));
     };
   }, []);
 
   useEffect(() => {
-    if (!user) {
+    // Keep the long-lived stream demand-driven. Authenticated pages such as
+    // /recall have no notification listeners and should not open an unused
+    // Cloudflare HTTP/2 connection.
+    if (!user || subscriberCount === 0) {
       if (eventSourceRef.current) {
         eventSourceRef.current.close();
         eventSourceRef.current = null;
@@ -109,7 +118,7 @@ export const NotificationProvider = ({ children }) => {
       eventSourceRef.current?.close();
       eventSourceRef.current = null;
     };
-  }, [user]);
+  }, [user, subscriberCount]);
 
   return (
     <NotificationContext.Provider value={{ subscribe }}>

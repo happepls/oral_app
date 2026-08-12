@@ -5,6 +5,16 @@ export function getLocalDateKey(date = new Date()) {
   return `${year}-${month}-${day}`;
 }
 
+export function rotateSentencesForVariant(sentences, variant = 0) {
+  if (!Array.isArray(sentences) || sentences.length <= 1) return sentences || [];
+  const normalizedVariant = Math.max(0, Number(variant) || 0);
+  const cycle = Math.floor(normalizedVariant / sentences.length);
+  const source = cycle % 2 === 0 ? sentences : [...sentences].reverse();
+  const offset = normalizedVariant % sentences.length;
+  if (offset === 0) return source;
+  return [...source.slice(offset), ...source.slice(0, offset)];
+}
+
 function stableHash(value) {
   let hash = 0;
   for (const char of String(value || '')) {

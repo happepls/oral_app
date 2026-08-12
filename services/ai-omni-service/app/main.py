@@ -1647,6 +1647,22 @@ def _parse_daily_recall_text(text: str) -> dict:
     }
 
 
+def _normalize_daily_recall_sentence(sentence: str) -> str:
+    """Normalize generated text for exact cross-variant duplicate detection."""
+    return re.sub(r"[^\w]+", "", str(sentence or "").casefold(), flags=re.UNICODE)
+
+
+def _daily_recall_overlaps_recent(material: dict, recent: list) -> bool:
+    recent_normalized = {
+        _normalize_daily_recall_sentence(item) for item in (recent or []) if item
+    }
+    return any(
+        _normalize_daily_recall_sentence(sentence) in recent_normalized
+        for sentence in (material or {}).get("sentences", [])
+        if _normalize_daily_recall_sentence(sentence)
+    )
+
+
 async def _get_daily_recall_history(redis, user_id: str) -> list:
     if redis is None or not user_id:
         return []
@@ -1773,7 +1789,8 @@ async def handle_daily_recall(redis, user_context: dict, variant: int = 0) -> di
     date_str = _today_utc_str()
     variant = max(0, min(int(variant or 0), 20))
     cache_key = (
-        f"daily_recall:{user_id}:{goal_id}:{_lang_cache_slug(target_language)}:"
+        # v2 invalidates variants cached before duplicate rejection existed.
+        f"daily_recall:v2:{user_id}:{goal_id}:{_lang_cache_slug(target_language)}:"
         f"{date_str}:{variant}"
     )
 
@@ -1792,9 +1809,21 @@ async def handle_daily_recall(redis, user_context: dict, variant: int = 0) -> di
     )
     recent = await _get_daily_recall_history(redis, user_id)
     avoid = [qa_text] + recent
-    material = await _generate_daily_recall_material(
-        target_language, target_level, progress_context, avoid
-    )
+    material = {}
+    # Models occasionally ignore the negative list and reproduce the previous
+    # variant. Retry with the rejected output added to the avoidance context;
+    # never cache a switched variant containing an old sentence.
+    for _attempt in range(2):
+        material = await _generate_daily_recall_material(
+            target_language, target_level, progress_context, avoid
+        )
+        if not material or not _daily_recall_overlaps_recent(material, recent):
+            break
+        logger.warning(
+            f"[DAILY_RECALL] duplicate variant rejected user={user_id} variant={variant}"
+        )
+        avoid.extend(material.get("sentences") or [])
+        material = {}
     if not material:
         return {}
     payload = {

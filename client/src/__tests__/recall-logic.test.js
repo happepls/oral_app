@@ -8,6 +8,8 @@
 
 // ---- replicated verbatim from client/src/pages/Recall.js ----
 
+import { rotateSentencesForVariant } from '../utils/dailyTaskMaterial';
+
 function normalize(s) {
   return (s || '')
     .toLowerCase()
@@ -177,6 +179,21 @@ describe('extractSentences', () => {
   test('mixed strings and objects', () => {
     const tasks = ['plain', { text: 'fromText' }, { title: 'fromTitle' }, ''];
     expect(extractSentences(tasks)).toEqual(['plain', 'fromText', 'fromTitle']);
+  });
+});
+
+describe('rotateSentencesForVariant', () => {
+  test('changes the first fallback sentence when a new variant is selected', () => {
+    const sentences = ['first', 'second', 'third'];
+    expect(rotateSentencesForVariant(sentences, 0)).toEqual(sentences);
+    expect(rotateSentencesForVariant(sentences, 1)).toEqual(['second', 'third', 'first']);
+    expect(rotateSentencesForVariant(sentences, 2)).toEqual(['third', 'first', 'second']);
+    expect(rotateSentencesForVariant(sentences, 3)).toEqual(['third', 'second', 'first']);
+  });
+
+  test('keeps empty and single-sentence fallbacks safe', () => {
+    expect(rotateSentencesForVariant([], 3)).toEqual([]);
+    expect(rotateSentencesForVariant(['only'], 3)).toEqual(['only']);
   });
 });
 

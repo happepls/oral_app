@@ -76,7 +76,7 @@ _redis_async = types.ModuleType("redis.asyncio")
 
 
 class _FakeRedis:
-    """Minimal in-memory Redis stand-in (get/set/setex/exists/ttl)."""
+    """Minimal in-memory Redis stand-in used by daily material tests."""
 
     def __init__(self):
         self._store = {}
@@ -107,6 +107,26 @@ class _FakeRedis:
             self._store.pop(k, None)
             self._ttl.pop(k, None)
         return len(keys)
+
+    async def lrange(self, key, start, end):
+        values = self._store.get(key, [])
+        stop = None if end == -1 else end + 1
+        return list(values[start:stop])
+
+    async def lpush(self, key, value):
+        values = self._store.setdefault(key, [])
+        values.insert(0, value)
+        return len(values)
+
+    async def ltrim(self, key, start, end):
+        values = self._store.get(key, [])
+        stop = None if end == -1 else end + 1
+        self._store[key] = values[start:stop]
+        return True
+
+    async def expire(self, key, ttl):
+        self._ttl[key] = ttl
+        return True
 
 
 _redis_async.Redis = _FakeRedis
@@ -475,6 +495,9 @@ class TestProgressAwareDailyMaterial:
         }
         generate = AsyncMock(side_effect=[
             {"topic": "A", "sentences": ["A1", "A2", "A3"]},
+            # The model ignores the avoid list once; the handler must reject
+            # this duplicate instead of caching/surfacing the old variant.
+            {"topic": "A again", "sentences": ["A1", "A2", "A3"]},
             {"topic": "B", "sentences": ["B1", "B2", "B3"]},
         ])
         question = AsyncMock(return_value="Q")
@@ -484,7 +507,8 @@ class TestProgressAwareDailyMaterial:
             changed = await handle(fake_redis, user_context, variant=1)
 
         assert first["sentences"] != changed["sentences"]
-        assert generate.await_count == 2
+        assert changed["sentences"] == ["B1", "B2", "B3"]
+        assert generate.await_count == 3
 
 
 class TestSceneProgressWithoutMedia:

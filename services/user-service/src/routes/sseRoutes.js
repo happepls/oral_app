@@ -9,8 +9,9 @@ router.get('/api/users/sse', protect, (req, res) => {
 
   res.writeHead(200, {
     'Content-Type': 'text/event-stream',
-    'Cache-Control': 'no-cache',
+    'Cache-Control': 'no-cache, no-transform',
     'Connection': 'keep-alive',
+    'Content-Encoding': 'identity',
     'X-Accel-Buffering': 'no'
   });
 
@@ -26,8 +27,8 @@ router.get('/api/users/sse', protect, (req, res) => {
   const channel = `${CHANNEL_PREFIX}${userId}`;
 
   const heartbeat = setInterval(() => {
-    res.write(`:heartbeat\n\n`);
-  }, 30000);
+    if (!res.writableEnded && !res.destroyed) res.write(`:heartbeat\n\n`);
+  }, 15000);
 
   // CRITICAL: ioredis emits an 'error' event whenever the connection drops.
   // Without an 'error' listener, Node treats it as an uncaught exception and

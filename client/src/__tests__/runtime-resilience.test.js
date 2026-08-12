@@ -6,7 +6,13 @@ jest.mock('../contexts/AuthContext', () => ({
 }));
 
 import { GuajiAvatar } from '../components/GuajiAvatar';
-import { NotificationProvider, getSSEReconnectDelay } from '../contexts/NotificationContext';
+import { NotificationProvider, getSSEReconnectDelay, useNotifications } from '../contexts/NotificationContext';
+
+function NotificationConsumer() {
+  const { subscribe } = useNotifications();
+  React.useEffect(() => subscribe('task_completed', () => {}), [subscribe]);
+  return <div>Ready</div>;
+}
 
 class MockEventSource {
   static instances = [];
@@ -42,7 +48,7 @@ describe('runtime resilience', () => {
 
   test('SSE uses controlled exponential reconnect and reports one warning per outage', () => {
     const warning = jest.spyOn(console, 'warn').mockImplementation(() => {});
-    const { unmount } = render(<NotificationProvider><div>Ready</div></NotificationProvider>);
+    const { unmount } = render(<NotificationProvider><NotificationConsumer /></NotificationProvider>);
 
     expect(MockEventSource.instances).toHaveLength(1);
     expect(MockEventSource.instances[0].url).toBe('/api/users/sse');
@@ -67,6 +73,11 @@ describe('runtime resilience', () => {
 
     unmount();
     expect(MockEventSource.instances[3].close).toHaveBeenCalledTimes(1);
+  });
+
+  test('does not open SSE on pages without notification subscribers', () => {
+    render(<NotificationProvider><div>Recall page</div></NotificationProvider>);
+    expect(MockEventSource.instances).toHaveLength(0);
   });
 
   test('mascot replaces a failed image with a stable fallback', () => {
