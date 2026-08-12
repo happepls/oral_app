@@ -14,8 +14,13 @@ const llms = read('llms.txt');
 
 requireMatch(html.includes('<link rel="canonical" href="https://guajiguaji.top/"'), 'canonical homepage URL missing');
 requireMatch(html.includes('property="og:title"') && html.includes('name="twitter:card"'), 'social metadata missing');
-requireMatch(html.includes('GuaJi AI 是什么？') && html.includes('练习过程会记录什么？'), 'visible fallback FAQ missing');
-requireMatch(html.includes('按真实场景练习口语的 AI 语音伙伴'), 'visible direct answer heading missing');
+const rootMatch = html.match(/<div id="root">([\s\S]*?)<\/div>/);
+requireMatch(rootMatch && rootMatch[1].trim() === '', 'React root must stay empty to prevent pre-hydration fallback flash');
+const noScriptMatch = html.match(/<noscript>([\s\S]*?)<\/noscript>/);
+requireMatch(noScriptMatch, 'no-JavaScript fallback content missing');
+const noScript = noScriptMatch[1];
+requireMatch(noScript.includes('GuaJi AI 是什么？') && noScript.includes('练习过程会记录什么？'), 'no-JavaScript fallback FAQ missing');
+requireMatch(noScript.includes('按真实场景练习口语的 AI 语音伙伴'), 'no-JavaScript direct answer heading missing');
 
 const schemaMatch = html.match(/<script id="homepage-structured-data" type="application\/ld\+json">([\s\S]*?)<\/script>/);
 requireMatch(schemaMatch, 'homepage JSON-LD missing');
@@ -25,10 +30,10 @@ for (const type of ['WebSite', 'Organization', 'SoftwareApplication', 'FAQPage']
   requireMatch(graph.some((item) => item['@type'] === type), `${type} schema missing`);
 }
 const faq = graph.find((item) => item['@type'] === 'FAQPage');
-requireMatch(faq.mainEntity.length === 3, 'FAQ schema must contain exactly three visible questions');
+requireMatch(faq.mainEntity.length === 3, 'FAQ schema must contain exactly three fallback questions');
 for (const item of faq.mainEntity) {
-  requireMatch(html.includes(item.name), `FAQ question is not visible: ${item.name}`);
-  requireMatch(html.includes(item.acceptedAnswer.text), `FAQ answer is not visible: ${item.name}`);
+  requireMatch(noScript.includes(item.name), `FAQ question is missing from no-JavaScript fallback: ${item.name}`);
+  requireMatch(noScript.includes(item.acceptedAnswer.text), `FAQ answer is missing from no-JavaScript fallback: ${item.name}`);
 }
 
 requireMatch(robots.includes('Disallow: /api/') && robots.includes('Disallow: /login'), 'robots private-route rules missing');
