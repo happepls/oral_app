@@ -5,6 +5,30 @@ export function getLocalDateKey(date = new Date()) {
   return `${year}-${month}-${day}`;
 }
 
+export function toRecallSentences(values, limit = 3) {
+  if (!Array.isArray(values) || limit <= 0) return [];
+  const sentences = [];
+  const seen = new Set();
+
+  for (const value of values) {
+    const text = String(value || '').replace(/\s+/g, ' ').trim();
+    if (!text) continue;
+    // CJK and Latin question/exclamation marks can be adjacent to the next
+    // sentence; English full stops require whitespace + an uppercase starter
+    // so abbreviations such as "e.g." are not split into fragments.
+    const parts = text.split(/(?<=[。！？!?])\s*|(?<=\.)\s+(?=[A-ZÀ-ÖØ-Þ])/u);
+    for (const part of parts) {
+      const sentence = part.trim();
+      const key = sentence.toLocaleLowerCase();
+      if (!sentence || seen.has(key)) continue;
+      seen.add(key);
+      sentences.push(sentence);
+      if (sentences.length >= limit) return sentences;
+    }
+  }
+  return sentences;
+}
+
 export function rotateSentencesForVariant(sentences, variant = 0) {
   if (!Array.isArray(sentences) || sentences.length <= 1) return sentences || [];
   const normalizedVariant = Math.max(0, Number(variant) || 0);

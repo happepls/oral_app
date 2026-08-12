@@ -8,7 +8,7 @@
 
 // ---- replicated verbatim from client/src/pages/Recall.js ----
 
-import { rotateSentencesForVariant } from '../utils/dailyTaskMaterial';
+import { rotateSentencesForVariant, toRecallSentences } from '../utils/dailyTaskMaterial';
 
 function normalize(s) {
   return (s || '')
@@ -42,10 +42,11 @@ function similarity(a, b) {
 
 function extractSentences(tasks) {
   if (!Array.isArray(tasks)) return [];
-  return tasks
+  const values = tasks
     .map(t => (typeof t === 'string' ? t : (t?.text || t?.description || t?.title || '')))
-    .map(s => s.trim())
+    .map(s => String(s || '').trim())
     .filter(Boolean);
+  return toRecallSentences(values);
 }
 
 function pickRecallScenario(scenarios, skipIndex) {
@@ -179,6 +180,23 @@ describe('extractSentences', () => {
   test('mixed strings and objects', () => {
     const tasks = ['plain', { text: 'fromText' }, { title: 'fromTitle' }, ''];
     expect(extractSentences(tasks)).toEqual(['plain', 'fromText', 'fromTitle']);
+  });
+
+  test('splits paragraph tasks and caps recall material at three sentences', () => {
+    const paragraph = 'Halloween began long ago. People wore costumes. Children collected candy. This fourth sentence is omitted.';
+    expect(extractSentences([{ description: paragraph }])).toEqual([
+      'Halloween began long ago.',
+      'People wore costumes.',
+      'Children collected candy.',
+    ]);
+  });
+
+  test('splits CJK sentences without requiring spaces', () => {
+    expect(extractSentences(['先打招呼。询问价格！表示感谢。额外内容。'])).toEqual([
+      '先打招呼。',
+      '询问价格！',
+      '表示感谢。',
+    ]);
   });
 });
 

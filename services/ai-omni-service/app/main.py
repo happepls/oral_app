@@ -1635,15 +1635,33 @@ def _parse_daily_recall_text(text: str) -> dict:
     if not isinstance(parsed, dict):
         return {}
     sentences = []
+    seen = set()
     for item in parsed.get("sentences") or []:
-        sentence = str(item or "").strip()
-        if sentence and sentence not in sentences:
+        normalized = re.sub(r"\s+", " ", str(item or "")).strip()
+        if not normalized:
+            continue
+        # Trust punctuation rather than the model's JSON array boundaries: it
+        # occasionally returns one long paragraph as a single list item.
+        parts = re.split(
+            r"(?<=[。！？!?])\s*|(?<=\.)\s+(?=[A-ZÀ-ÖØ-Þ])",
+            normalized,
+        )
+        for part in parts:
+            sentence = part.strip()
+            key = sentence.casefold()
+            if not sentence or key in seen:
+                continue
+            seen.add(key)
             sentences.append(sentence)
+            if len(sentences) >= _DAILY_RECALL_SENTENCE_COUNT:
+                break
+        if len(sentences) >= _DAILY_RECALL_SENTENCE_COUNT:
+            break
     if not sentences:
         return {}
     return {
         "topic": str(parsed.get("topic") or "").strip(),
-        "sentences": sentences[:5],
+        "sentences": sentences[:_DAILY_RECALL_SENTENCE_COUNT],
     }
 
 
@@ -1713,7 +1731,8 @@ async def _generate_daily_recall_material(
     prompt = (
         f"Create one fresh oral recall mini-dialogue for a {target_level or 'Intermediate'} "
         f"learner of {target_language}. Generate exactly {_DAILY_RECALL_SENTENCE_COUNT} "
-        f"short first-person sentences the learner can say in sequence. The sentences must "
+        f"short first-person sentences the learner can say in sequence. Keep each sentence "
+        f"to at most 16 words (or 30 characters for languages without spaces). The sentences must "
         "form one coherent real-life response, progress naturally, and practise the learner's "
         "unfinished or weaker skills without copying their task descriptions.\n\n"
         f"Current learning progress:\n{(progress_context or 'No progress data')[:1200]}\n\n"
@@ -1789,8 +1808,8 @@ async def handle_daily_recall(redis, user_context: dict, variant: int = 0) -> di
     date_str = _today_utc_str()
     variant = max(0, min(int(variant or 0), 20))
     cache_key = (
-        # v2 invalidates variants cached before duplicate rejection existed.
-        f"daily_recall:v2:{user_id}:{goal_id}:{_lang_cache_slug(target_language)}:"
+        # v3 invalidates material cached before paragraph splitting/capping.
+        f"daily_recall:v3:{user_id}:{goal_id}:{_lang_cache_slug(target_language)}:"
         f"{date_str}:{variant}"
     )
 

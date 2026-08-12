@@ -1,6 +1,7 @@
 import {
   getLocalDateKey,
   pickProgressAwareRecallScenario,
+  toRecallSentences,
 } from '../utils/dailyTaskMaterial';
 
 const scenario = (title, status = 'in_progress') => ({
@@ -9,6 +10,12 @@ const scenario = (title, status = 'in_progress') => ({
 });
 
 describe('daily recall material selection', () => {
+  test('normalizes model paragraphs into at most three recall sentences', () => {
+    expect(toRecallSentences([
+      'First sentence. Second sentence. Third sentence. Fourth sentence.',
+    ])).toEqual(['First sentence.', 'Second sentence.', 'Third sentence.']);
+  });
+
   test('uses a local calendar date key', () => {
     expect(getLocalDateKey(new Date(2026, 7, 2, 0, 5))).toBe('2026-08-02');
   });

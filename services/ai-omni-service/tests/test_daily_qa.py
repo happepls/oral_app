@@ -444,6 +444,35 @@ class TestProgressAwareDailyMaterial:
         }
         assert len(samples) > 1
 
+    def test_daily_recall_parser_splits_paragraph_and_caps_three_sentences(self):
+        parse = getattr(_main_module, "_parse_daily_recall_text")
+        payload = json.dumps({
+            "topic": "Halloween",
+            "sentences": [
+                "Halloween began long ago. People wore costumes. "
+                "Children collected candy. This fourth sentence is omitted."
+            ],
+        })
+
+        assert parse(payload)["sentences"] == [
+            "Halloween began long ago.",
+            "People wore costumes.",
+            "Children collected candy.",
+        ]
+
+    def test_daily_recall_parser_splits_cjk_without_spaces(self):
+        parse = getattr(_main_module, "_parse_daily_recall_text")
+        payload = json.dumps({
+            "topic": "買い物",
+            "sentences": ["店員に挨拶します。値段を聞きます。最後にお礼を言います。余分です。"],
+        })
+
+        assert parse(payload)["sentences"] == [
+            "店員に挨拶します。",
+            "値段を聞きます。",
+            "最後にお礼を言います。",
+        ]
+
     @pytest.mark.asyncio
     async def test_daily_recall_is_cached_and_avoids_today_question(
         self, fake_redis, user_id

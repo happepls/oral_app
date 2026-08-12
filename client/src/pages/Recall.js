@@ -7,6 +7,7 @@ import {
   getLocalDateKey,
   pickProgressAwareRecallScenario,
   rotateSentencesForVariant,
+  toRecallSentences,
 } from '../utils/dailyTaskMaterial';
 
 // Per-sentence flow on /recall:
@@ -74,10 +75,11 @@ function similarity(a, b) {
 
 function extractSentences(tasks) {
   if (!Array.isArray(tasks)) return [];
-  return tasks
+  const values = tasks
     .map(t => (typeof t === 'string' ? t : (t?.text || t?.description || t?.title || '')))
-    .map(s => s.trim())
+    .map(s => String(s || '').trim())
     .filter(Boolean);
+  return toRecallSentences(values);
 }
 
 // Per-sentence record: which steps passed, last score, last transcript, peek count.
@@ -151,14 +153,15 @@ function Recall() {
         const generated = await aiAPI.getDailyRecall(recallVariant, { signal: controller.signal });
         if (loadSequence !== loadSequenceRef.current) return false;
         const generatedSentences = generated?.sentences || generated?.data?.sentences;
-        if (Array.isArray(generatedSentences) && generatedSentences.length > 0) {
+        const compactSentences = toRecallSentences(generatedSentences);
+        if (compactSentences.length > 0) {
           const topic = generated?.topic || generated?.data?.topic;
           setScenario({
             ...(picked || {}),
             title: topic || picked?.title || 'Daily Recall',
             generated: true,
           });
-          setSentences(generatedSentences.map(s => String(s).trim()).filter(Boolean));
+          setSentences(compactSentences);
           setTargetLang(lang);
           setIdx(0);
           setRows({});
@@ -174,7 +177,7 @@ function Recall() {
       // Offline/model-failure fallback: translate the existing scenario tasks.
       const raw = extractSentences(picked?.tasks || []);
       const titleSlug = (picked?.title || '').replace(/[^a-zA-Z0-9一-鿿-]/g, '_').slice(0, 40);
-      const cacheKey = `recall_translated_${goal?.id || 'x'}_${titleSlug}_${lang.code}`;
+      const cacheKey = `recall_translated_v2_${goal?.id || 'x'}_${titleSlug}_${lang.code}`;
       let translated = null;
       try {
         const cached = localStorage.getItem(cacheKey);
@@ -217,7 +220,7 @@ function Recall() {
       if (loadSequence !== loadSequenceRef.current) return false;
       setScenario(picked);
       setTargetLang(lang);
-      setSentences(rotateSentencesForVariant(translated, recallVariant));
+      setSentences(rotateSentencesForVariant(toRecallSentences(translated), recallVariant));
       setIdx(0);
       setRows({});
       setIsPeeking(false);
