@@ -2544,6 +2544,7 @@ function Conversation() {
       const urlSessionId = searchParams.get('sessionId') || searchParams.get('session'); // Support both
       const scenario = searchParams.get('scenario') || location.state?.scenario;
       const topic = searchParams.get('topic');
+      let activeGoalId = location.state?.goalId || null;
 
       // Load daily QA question if in daily_qa mode
       if (isDailyQAMode) {
@@ -2573,6 +2574,7 @@ function Conversation() {
               let scenarios = [];
               let activeScenario = null;
 
+              if (goalRes?.goal?.id) activeGoalId = goalRes.goal.id;
               if (goalRes && goalRes.goal && goalRes.goal.scenarios) {
                   console.log('Available Scenarios:', goalRes.goal.scenarios.map(s => s.title));
                   console.log('Requested Scenario:', scenario);
@@ -2653,23 +2655,23 @@ function Conversation() {
           }
       }
 
-      // Determine session ID priority: URL > user-scoped localStorage > new session
-      let effectiveSessionId = urlSessionId;
+      // Determine session ID priority: URL > user-scoped localStorage > server-created session.
+      // New IDs must come from conversation-service so the matching history
+      // document exists before a refresh attempts to restore it.
+      const sessionKey = scenario && user?.id ? _lsSessionKey(user.id, scenario) : null;
+      const legacySessionKey = scenario ? _lsScenarioKey('session_', scenario) : null;
+      const storedSessionId = sessionKey
+        ? (localStorage.getItem(sessionKey) || localStorage.getItem(legacySessionKey))
+        : null;
+      let effectiveSessionId = urlSessionId || storedSessionId;
       let restoredHistory = false;
 
-      // If no URL session ID, check localStorage for persisted session
-      if (!effectiveSessionId && scenario && user?.id) {
-          const sessionKey = _lsSessionKey(user.id, scenario);
-          const legacySessionKey = _lsScenarioKey('session_', scenario);
-          let storedSessionId = localStorage.getItem(sessionKey) || null;
-          if (!storedSessionId) {
-              storedSessionId = localStorage.getItem(legacySessionKey);
-          }
-          if (storedSessionId) {
-              effectiveSessionId = storedSessionId;
-              // Load history messages for this session
+      // Restore both URL-selected sessions and locally persisted sessions.
+      // Previously URL sessions skipped this branch, so opening an existing
+      // conversation connected the socket without rendering its messages.
+      if (effectiveSessionId) {
               try {
-                  const historyRes = await conversationAPI.getHistory(storedSessionId, { signal: abortController.signal });
+                  const historyRes = await conversationAPI.getHistory(effectiveSessionId, { signal: abortController.signal });
                   if (historyRes?.success && historyRes.messages) {
                       // Load history messages into state
                       // Set audioPlayed: true to prevent auto-play on page refresh
@@ -2708,35 +2710,45 @@ function Conversation() {
                           return systemMsg ? [systemMsg, ...historyMessages] : historyMessages;
                       });
                       console.log('Loaded history messages:', historyMessages.length);
-                      localStorage.setItem(sessionKey, storedSessionId);
-                      if (localStorage.getItem(legacySessionKey) === storedSessionId) {
+                      if (sessionKey) localStorage.setItem(sessionKey, effectiveSessionId);
+                      if (legacySessionKey && localStorage.getItem(legacySessionKey) === effectiveSessionId) {
                         localStorage.removeItem(legacySessionKey);
                       }
                   } else if (historyRes?.status === 403 || historyRes?.status === 404) {
-                      localStorage.removeItem(sessionKey);
-                      localStorage.removeItem(legacySessionKey);
+                      if (sessionKey) localStorage.removeItem(sessionKey);
+                      if (legacySessionKey) localStorage.removeItem(legacySessionKey);
                       effectiveSessionId = null;
                   }
               } catch (err) {
                   console.log('Failed to load history:', err);
                   if (err?.status === 403 || err?.status === 404) {
-                      localStorage.removeItem(sessionKey);
-                      localStorage.removeItem(legacySessionKey);
+                      if (sessionKey) localStorage.removeItem(sessionKey);
+                      if (legacySessionKey) localStorage.removeItem(legacySessionKey);
                       effectiveSessionId = null;
                   }
               }
+      }
+
+      // If still no session ID, create and initialize it on the server. Keep a
+      // local UUID only as an availability fallback when session creation is
+      // temporarily unreachable; autosave will still persist that fallback.
+      if (!effectiveSessionId) {
+          try {
+              const created = await conversationAPI.startSession(
+                { goalId: activeGoalId, forceNew: true },
+                { signal: abortController.signal }
+              );
+              if (!created?.sessionId) throw new Error('Session service returned no sessionId');
+              effectiveSessionId = created.sessionId;
+          } catch (err) {
+              if (abortController.signal.aborted) return;
+              console.error('Failed to initialize conversation session:', err);
+              effectiveSessionId = crypto.randomUUID();
           }
       }
 
-      // If still no session ID, create a new one
-      if (!effectiveSessionId) {
-          effectiveSessionId = crypto.randomUUID();
-      }
-
       // Persist session ID for this scenario
-      if (scenario && user?.id) {
-          localStorage.setItem(_lsSessionKey(user.id, scenario), effectiveSessionId);
-      }
+      if (sessionKey) localStorage.setItem(sessionKey, effectiveSessionId);
 
       setSessionId(effectiveSessionId);
       

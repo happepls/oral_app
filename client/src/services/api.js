@@ -685,11 +685,12 @@ export const aiAPI = {
 };
 
 export const conversationAPI = {
-  async startSession(data) {
+  async startSession(data = {}, options = {}) {
     const response = await fetch(`${V1_BASE_URL}/conversations`, {
       method: 'POST',
       headers: { ...getAuthHeaders(), 'Idempotency-Key': idempotencyKey() },
       credentials: 'include',
+      ...(options.signal && { signal: options.signal }),
       body: JSON.stringify({ goal_id: data?.goalId ?? data?.goal_id, force_new: data?.forceNew ?? data?.force_new })
     });
     return handleResponse(response);
@@ -717,7 +718,7 @@ export const conversationAPI = {
 
   async saveHistory(sessionId, messages, userId, options = {}) {
     // Use conversation-service for saving history (history-analytics-service is for GET only)
-    const response = await fetch(`${API_BASE_URL}/conversation/history/${sessionId}`, {
+    const response = await fetch(`${API_BASE_URL}/conversation/history/${encodeURIComponent(sessionId)}`, {
       method: 'POST',
       headers: getAuthHeaders(),
       credentials: 'include',
@@ -730,7 +731,7 @@ export const conversationAPI = {
 
   async getHistory(sessionId, options = {}) {
     const { signal } = options;
-    const response = await fetch(`${API_BASE_URL}/history/session/${sessionId}`, {
+    const response = await fetch(`${API_BASE_URL}/history/session/${encodeURIComponent(sessionId)}`, {
       headers: getAuthHeaders(),
       credentials: 'include',
       ...(signal && { signal })

@@ -339,6 +339,27 @@ describe('v1 learning contract', () => {
     expect(fetch.mock.calls[1][1].headers['Idempotency-Key']).toBeTruthy();
   });
 
+  test('conversation session creation requests a server-initialized session', async () => {
+    fetch.mockResolvedValueOnce(response({ sessionId: 'server-session-1' }, 201));
+    const abortController = new AbortController();
+
+    await expect(conversationAPI.startSession(
+      { goalId: 'goal-1', forceNew: true },
+      { signal: abortController.signal }
+    )).resolves.toEqual({ sessionId: 'server-session-1' });
+
+    expect(fetch.mock.calls[0][0]).toBe('/api/v1/conversations');
+    expect(fetch.mock.calls[0][1]).toMatchObject({
+      method: 'POST',
+      credentials: 'include',
+      signal: abortController.signal,
+    });
+    expect(JSON.parse(fetch.mock.calls[0][1].body)).toEqual({
+      goal_id: 'goal-1',
+      force_new: true,
+    });
+  });
+
   test('conversation history save returns explicit success and 404 lookup stays falsy', async () => {
     fetch.mockResolvedValueOnce(response({ message: 'Messages saved successfully.' }, 201));
     await expect(conversationAPI.saveHistory('session-1', [{ role: 'user', content: 'hi' }], 'user-1')).resolves.toMatchObject({ success: true });
