@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { useLocation } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
+import { Headset, LoaderCircle } from 'lucide-react';
 
 const VISIBLE_PATHS = ['/', '/login', '/register', '/welcome'];
 const LOAD_TIMEOUT_MS = 15000;
@@ -154,9 +155,9 @@ export default function SupportChat() {
         }}
         className="flex h-14 w-14 items-center justify-center rounded-full bg-primary text-white shadow-lg transition-transform hover:scale-105 focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-2 disabled:opacity-70 max-sm:h-11 max-sm:w-11"
       >
-        <span className={`material-symbols-outlined ${loadState === 'loading' ? 'animate-spin' : ''}`} aria-hidden="true">
-          {loadState === 'loading' ? 'progress_activity' : 'support_agent'}
-        </span>
+        {loadState === 'loading'
+          ? <LoaderCircle className="h-6 w-6 animate-spin" aria-hidden="true" />
+          : <Headset className="h-6 w-6" aria-hidden="true" />}
       </button>
     </div>
   );
