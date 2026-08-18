@@ -15,6 +15,7 @@ import {
   collapseAdjacentHistoryDuplicates,
   historyContentKey,
   prepareHistorySnapshot,
+  reconcileUserTranscript,
 } from '../utils/conversationHistory';
 import NetworkAdaptiveManager from '../utils/network-adaptive-manager';
 import OptimizedWebSocket from '../utils/websocket-optimized';
@@ -1754,24 +1755,11 @@ function Conversation() {
            // Display user's speech transcription in chat
            if (data.payload && data.payload.text) {
              restoredAiContentKeysRef.current.clear();
-             setMessages(prev => {
-               // Find any in-progress AI message and ensure user transcript is inserted BEFORE it
-               const newMessages = [...prev];
-               let insertIdx = newMessages.length;
-
-               // If the last message is an in-progress AI message, insert BEFORE it
-               for (let i = newMessages.length - 1; i >= 0; i--) {
-                 if (newMessages[i].type === 'ai' && !newMessages[i].isFinal) {
-                   insertIdx = i;
-                   break;
-                 }
-               }
-
-               const userMsg = { type: 'user', content: data.payload.text, isFinal: true };
-               newMessages.splice(insertIdx, 0, userMsg);
-               console.log('Inserted user transcript:', userMsg);
-               return newMessages;
-             });
+             setMessages(prev => reconcileUserTranscript(prev, {
+               text: data.payload.text,
+               messageId: data.payload.messageId || data.payload.message_id,
+               currentMessageId: currentUserMessageIdRef.current,
+             }));
            }
            break;
         case 'error': {

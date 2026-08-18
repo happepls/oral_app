@@ -3094,6 +3094,7 @@ class WebSocketCallback(OmniRealtimeCallback):
                     if user_transcript:
                         # Check for magic passcode "急急如律令" (support both Chinese and English punctuation)
                         transcription_id = str(response.get("item_id") or response.get("id") or "")
+                        message_id = transcription_id or str(uuid.uuid4())
                         # SECURITY: this learning-flow shortcut bypasses proficiency_scoring.
                         # It only triggers from a trusted final ASR transcript; browser text frames
                         # cannot reach this branch.
@@ -3249,7 +3250,10 @@ class WebSocketCallback(OmniRealtimeCallback):
                                     logger.error(f"Failed to auto-complete task: {e}")
 
                             # Send user transcript to frontend (for display)
-                            await self._safe_send({"type": "user_transcript", "payload": {"text": user_transcript}})
+                            await self._safe_send({
+                                "type": "user_transcript",
+                                "payload": {"text": user_transcript, "messageId": message_id},
+                            })
 
                             # Cancel AI response to prevent it from replying to the magic passcode
                             # This must be done AFTER sending user_transcript to frontend
@@ -3265,13 +3269,16 @@ class WebSocketCallback(OmniRealtimeCallback):
                             return  # Exit early
                         else:
                             # Normal input (not magic passcode) - send transcript and add to history
-                            await self._safe_send({"type": "user_transcript", "payload": {"text": user_transcript}})
                             msg = {
-                                "id": transcription_id or str(uuid.uuid4()),
+                                "id": message_id,
                                 "role": "user",
                                 "content": user_transcript,
                                 "timestamp": datetime.utcnow().isoformat(),
                             }
+                            await self._safe_send({
+                                "type": "user_transcript",
+                                "payload": {"text": user_transcript, "messageId": msg["id"]},
+                            })
                             if self.last_user_audio_url: msg['audioUrl'] = self.last_user_audio_url; self.last_user_audio_url = None
                             self.messages.append(msg)
                             await save_single_message(

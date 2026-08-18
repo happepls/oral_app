@@ -16,6 +16,54 @@ function normalizeMessage(sessionId, msg) {
   return { id, role: msg.role, content, ...(audioUrl ? { audioUrl } : {}), timestamp: safeTimestamp };
 }
 
+function normalizedContent(value) {
+  return String(value || '').trim().replace(/\s+/g, ' ');
+}
+
+function collapseLegacySnapshotDuplicates(messages) {
+  return (messages || []).reduce((result, rawMessage) => {
+    const message = typeof rawMessage?.toObject === 'function'
+      ? rawMessage.toObject()
+      : { ...rawMessage };
+    const key = `${message.role || ''}\0${normalizedContent(message.content)}`;
+    const legacyId = /^conversation-turn-\d+-(?:user|assistant)$/;
+    const matchIndex = result.findIndex(existing => (
+      `${existing.role || ''}\0${normalizedContent(existing.content)}` === key
+      && (legacyId.test(String(existing.id || '')) || legacyId.test(String(message.id || '')))
+    ));
+
+    if (matchIndex === -1) {
+      result.push(message);
+      return result;
+    }
+
+    const existing = result[matchIndex];
+    const existingIsLegacy = legacyId.test(String(existing.id || ''));
+    const messageIsLegacy = legacyId.test(String(message.id || ''));
+    const canonical = existingIsLegacy && !messageIsLegacy ? message : existing;
+    const richer = message.audioUrl ? message : existing;
+    result[matchIndex] = {
+      ...existing,
+      ...richer,
+      id: canonical.id,
+      role: canonical.role,
+      content: canonical.content || richer.content,
+      timestamp: canonical.timestamp || richer.timestamp,
+      ...(existing.audioUrl || message.audioUrl
+        ? { audioUrl: message.audioUrl || existing.audioUrl }
+        : {}),
+    };
+    return result;
+  }, []);
+}
+
+function pruneLegacySnapshotDuplicates(conversation) {
+  const collapsed = collapseLegacySnapshotDuplicates(conversation.messages);
+  const changed = collapsed.length !== conversation.messages.length;
+  if (changed) conversation.messages = collapsed;
+  return changed;
+}
+
 function mergeMessages(conversation, messages) {
   let changed = 0;
   for (const incoming of messages) {
@@ -64,6 +112,7 @@ exports.saveConversation = async (req, res) => {
         mergeMessages(conversation, validMessages);
         console.log(`Upserted ${validMessages.length} messages in session ${sessionId}, total: ${conversation.messages.length}`);
       }
+      pruneLegacySnapshotDuplicates(conversation);
       conversation.metrics = metrics || conversation.metrics;
       conversation.endTime = endTime || conversation.endTime;
       conversation.topic = topic || conversation.topic;
@@ -132,6 +181,7 @@ exports.saveSessionMessages = async (req, res) => {
     if (conversation) {
       if (String(conversation.userId) !== String(userId)) return res.status(403).json({ success: false, message: 'Forbidden' });
       mergeMessages(conversation, validMessages);
+      pruneLegacySnapshotDuplicates(conversation);
       conversation.endTime = new Date();
       await conversation.save();
       console.log(`Upserted ${validMessages.length} messages in existing session ${sessionId}`);
@@ -203,8 +253,10 @@ exports.getConversationDetail = async (req, res) => {
       return res.status(404).json({ success: false, message: 'Conversation not found' });
     }
 
-    console.log(`Found conversation with ${conversation.messages ? conversation.messages.length : 0} messages`);
-    res.status(200).json({ success: true, data: conversation });
+    const data = typeof conversation.toObject === 'function' ? conversation.toObject() : { ...conversation };
+    data.messages = collapseLegacySnapshotDuplicates(conversation.messages);
+    console.log(`Found conversation with ${data.messages.length} messages`);
+    res.status(200).json({ success: true, data });
   } catch (error) {
     console.error('Get Detail Error:', error);
     res.status(500).json({ success: false, message: 'Server Error' });
@@ -221,8 +273,9 @@ exports.getSessionHistory = async (req, res) => {
       return res.status(404).json({ success: false, message: 'Conversation not found' });
     }
 
-    console.log(`Found conversation with ${conversation.messages ? conversation.messages.length : 0} messages for session ${sessionId}`);
-    res.status(200).json({ success: true, data: { messages: conversation.messages || [] } });
+    const messages = collapseLegacySnapshotDuplicates(conversation.messages);
+    console.log(`Found conversation with ${messages.length} messages for session ${sessionId}`);
+    res.status(200).json({ success: true, data: { messages } });
   } catch (error) {
     console.error('Get Session History Error:', error);
     res.status(500).json({ success: false, message: 'Server Error' });
