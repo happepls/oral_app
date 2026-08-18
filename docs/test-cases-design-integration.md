@@ -4,12 +4,11 @@
 **前置条件**: Zeabur云上服务已启动 
 
 ---
-
 ## 1. Landing 页面 (`/`)
 
 | # | 测试项 | 操作步骤                        | 预期结果 | 通过  | 修改点                     |
 |---|-------|-----------------------------|---------|-----|-------------------------|
-| 1.1 | 页面加载 | 打开 `http://localhost:5001/` | 暗蓝 hero 区 + 渐变 CTA 按钮 + GuaJi logo 正常渲染 | [☑] | Guaji AI去掉AI，只保留“Guaji” |
+| 1.1 | 页面加载 | 打开 `http://guajiguaji.top/` | 暗蓝 hero 区 + 渐变 CTA 按钮 + GuaJi logo 正常渲染 | [☑] | Guaji AI去掉AI，只保留“Guaji” |
 | 1.2 | 导航栏 logo | 查看左上角                       | 显示 GuaJi 猫头鹰图标 + "GuaJi" 文字 | [☑] |去掉AI，只保留“Guaji” |
 | 1.3 | 语言切换 | 点击语言下拉 → 切换英语               | 页面文案切换为英语，布局不错位 | [☑] |  
 | 1.4 | 登录按钮 | 点击 "登录"                     | 跳转到 `/login` 页面 | [☑] |
@@ -239,16 +238,3 @@
 > **生产验证方法（§11）**：`curl` 验证 HTTP/header/API（本地经 `HTTPS_PROXY=127.0.0.1:7890` 访 Zeabur API；公网 curl `guajiguaji.top` 直连）；claude-in-chrome MCP 连真实浏览器读 console 验证 CSP/资源加载（`read_console_messages` + `javascript_tool` 查 bundle hash）。Zeabur CLI 0.19.0 二进制（npm 上限 0.5.4）+ proxy。**[☐] 项需登录后真实交互复测**（录音/付款/语音）。部署细节见 [memory] `project_zeabur_backend_deploy_complete`。
 
 ---
-
-## 12. Jun 24 二轮遗留问题修复（5 项）
-
-| # | 问题 | 根因 | 修复 | 归属 | 状态 |
-|---|------|------|------|------|------|
-| 12.1 | /goal-setting `font-src` 拦字体 | Tawk.to widget 字体从 `*.tawk.to` 加载，CSP `font-src` 未列 | `font-src` 加 `https://*.tawk.to`（`client.nginx.zeabur.conf` + `client.nginx.conf` 各 4 处 server+location） | nginx | ✅ 已改 |
-| 12.2 | blob 点播失败（`Conversation.js:796` `fetch(blob:)` 被拦） | CSP `connect-src` 缺 `blob:` | `connect-src` 加 `blob:`（同两文件 4 处） | nginx | ✅ 已改 |
-| 12.3 | 切目标后对话卡"连接中"听不到 AI | `ai-omni main.py` `_SCENARIO_RE` 白名单过窄 → 新 LLM 场景标题（em-dash/弯引号/emoji/分号）被拒 → `close(1000)` clean close → 前端 `Conversation.js:2148` 静默吞 | 后端：删白名单→黑名单净化 `_is_valid_scenario`（长度≤200 + 拒 `\x00-\x1f`/`<>`）+ close code 1000→**1008** + error `{payload:{message}}`；前端：读 `data.payload?.message` + 识别 1008/4400 拒绝分支不重连 + `setWebSocketError` + "返回发现页"出口 + header 红色"已断开"（双保险：error 帧先到也触发） | backend+frontend | ✅ 已改（py_compile+build 通过；待 Zeabur 部署） |
-| 12.4 | Stripe webhook 远程主机连接失败（订阅状态不更新） | **Cloudflare 边缘拦 Stripe 服务器到服务器 POST**（连接层 reset）。浏览器测端点→400 正确（应用层+nginx 全对），Stripe 机器 IP 被 Bot Fight Mode/WAF 挑战 | **无代码改**。需 Cloudflare Dashboard：①WAF 加规则 `URI Path = /api/stripe/webhook` → Skip；②关 Bot Fight Mode；③SSL=Full(strict)、关 Under Attack Mode；④核对 Stripe webhook URL 精确 = `https://guajiguaji.top/api/stripe/webhook` | **Cloudflare（用户）** | ⚠️ 待用户配置 |
-| 12.5 | manifest.json `ERR_CONNECTION_CLOSED` + SSE 每 10min 警告 | Cloudflare 边缘对低优先级/长连接 same-origin 请求偶发 connection reset。配置无误 | 无代码改（边缘噪声）。关 Bot Fight Mode / 加 webhook bypass 后应一并缓解 | Cloudflare（用户） | ℹ️ 良性 |
-| 11.13 | 文生图未接入场景卡 | t2i 代码已存在但只用于 scene_theater 背景图；`generate-scenarios` 无 image 字段；且 `_try_wanx_image` 错走 maas 专属网关 | 懒加载方案：`POST /generate-scenario-image`（走通用 intl 网关，新 env `DASHSCOPE_IMAGE_BASE` 默认回退 `DASHSCOPE_CHAT_BASE`）+ Discovery 仅对已解锁场景按需生成（sessionStorage 缓存，免费3/Pro逐步10）+ ScenarioCard `imageUrl` prop（onError 回退 emoji）。**临时 URL（24h TTL，未转 COS）——若要封面长期稳定需追加 COS 转存（决策点）** | backend+frontend | ✅ 已改（待 Zeabur 验真实出图） |
-
-> **部署（Jun 24 二轮修复）**：① 前端 src 改动（Conversation/Discovery/ScenarioCard/api.js/i18n）→ `cd client && npm run build`（已 build `main.97b36ace.js`）。② CSP 在 nginx conf（不进 webpack）→ 须 **Zeabur rebuild client-app image**（Dockerfile COPY `client.nginx.zeabur.conf` + RUN grep 断言会校验 media-src/cloudflareinsights，新加的 tawk font-src/blob 不影响断言）。③ ai-omni `main.py` Python 源改动 → `docker compose build ai-omni-service`（无 --no-cache）或热补丁 `docker cp`。④ Cloudflare Dashboard 配 webhook bypass（12.4）。

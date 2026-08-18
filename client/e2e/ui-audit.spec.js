@@ -10,10 +10,12 @@ const pages = [
   ['conversation', '/conversation?mode=tour'], ['history', '/history'], ['subscription', '/subscription'],
 ];
 const user = { id: '00000000-0000-4000-8000-000000000001', username: 'quality_user', nickname: 'Quality User', native_language: 'zh', target_language: 'en', onboarding_tour_completed: true };
+const onboardingUser = { ...user, nickname: '', native_language: 'Chinese' };
 const activeGoal = { id: 1, target_language: 'en', target_level: 'Beginner', current_proficiency: 10, status: 'active', scenarios: [{ title: 'Airport Check-in', tasks: [{ id: 1, text: 'Ask where the counter is', status: 'pending', score: 0 }] }] };
 
 test.beforeEach(async ({ page }, testInfo) => {
   const isPublic = /\b(landing|welcome|login|register)\b/.test(testInfo.title);
+  const seededUser = /\bonboarding\b/.test(testInfo.title) ? onboardingUser : user;
   const darkEnglish = testInfo.project.name.endsWith('-dark-en');
   // Visual baselines must not drift when calendar widgets render today's date.
   await page.clock.setFixedTime(new Date('2026-07-22T12:00:00+08:00'));
@@ -24,19 +26,19 @@ test.beforeEach(async ({ page }, testInfo) => {
     document.documentElement.classList.toggle('dark', useDarkEnglish);
     localStorage.setItem('onboardingTourCompleted', 'true');
     sessionStorage.setItem('hasSeenSplash', 'true');
-  }, { seededUser: user, publicPage: isPublic, useDarkEnglish: darkEnglish });
+  }, { seededUser, publicPage: isPublic, useDarkEnglish: darkEnglish });
   await page.route(/tawk\.to|stripe\.com|dashscope|myqcloud|google/i, (route) => route.abort('blockedbyclient'));
   await page.route('**/api/**', async (route) => {
     const url = route.request().url();
     let data = {};
-    if (url.includes('/v1/profile')) data = user;
+    if (url.includes('/v1/profile')) data = seededUser;
     else if (url.includes('/v1/goals')) data = [activeGoal];
     else if (url.includes('/v1/tasks')) data = [];
     else if (url.includes('/v1/conversations')) data = [];
     else if (url.includes('/v1/realtime/tickets')) data = { ticket: 'test-ticket', websocket_url: '/api/v1/realtime' };
     else if (url.includes('/v1/oauth/authorize')) data = { client: { id: 'partner', name: 'Local Partner' }, redirect_uri: 'http://localhost:4173/callback', scopes: ['profile:read'], state: 'test-state' };
     else if (url.includes('/users/profile') && isPublic) return route.fulfill({ status: 401, contentType: 'application/json', body: JSON.stringify({ message: 'No local session' }) });
-    else if (url.includes('/users/profile')) data = { user };
+    else if (url.includes('/users/profile')) data = { user: seededUser };
     else if (url.includes('/goals/active')) data = { goal: activeGoal };
     else if (url.endsWith('/users/goals')) data = { goals: [activeGoal] };
     else if (url.includes('/checkin/history')) data = [];
@@ -82,6 +84,25 @@ for (const [name, url] of pages) {
     const consoleErrors = [];
     page.on('console', (message) => { if (message.type() === 'error' && !message.text().includes('ERR_BLOCKED_BY_CLIENT')) consoleErrors.push(message.text()); });
     await page.goto(url);
+    if (name === 'landing') {
+      // Landing owns a one-per-session Splash. Reload after explicitly marking
+      // it seen so the visual baseline always captures the page beneath it.
+      await page.evaluate(() => sessionStorage.setItem('hasSeenSplash', 'true'));
+      await page.reload();
+      await expect(page.getByRole('progressbar', { name: '正在加载' })).toHaveCount(0);
+    }
+    if (name === 'onboarding') {
+      // Lazy loading lets auth hydration finish before Onboarding mounts. Use
+      // the dedicated new-user fixture and wait for Motion's entrance effects
+      // so screenshot and contrast checks observe the settled form.
+      await expect(page.locator('input[type="text"]').first()).toHaveValue('');
+      await expect(page.locator('button').filter({ hasText: '中文' }).first()).toHaveClass(/text-white/);
+      await page.waitForFunction(() => {
+        let node = document.querySelector('h1')?.parentElement;
+        while (node && !node.style.opacity) node = node.parentElement;
+        return node?.style.opacity === '1' && (!node.style.transform || node.style.transform === 'none');
+      });
+    }
     const darkEnglish = testInfo.project.name.endsWith('-dark-en');
     await page.evaluate((useDark) => document.documentElement.classList.toggle('dark', useDark), darkEnglish);
     await expect(page.locator('html')).toHaveClass(darkEnglish ? /\bdark\b/ : /^(?!.*\bdark\b)/);
@@ -91,7 +112,8 @@ for (const [name, url] of pages) {
     await page.screenshot({ path: target, fullPage: true, animations: 'disabled' });
     const linuxSnapshot = `${name}-linux.png`;
     const linuxSnapshotPath = path.resolve(testInfo.config.rootDir, '../../quality/baselines/ui', testInfo.project.name, linuxSnapshot);
-    const snapshot = process.platform === 'linux' && fs.existsSync(linuxSnapshotPath) ? linuxSnapshot : `${name}.png`;
+    const useLinuxBaseline = process.platform === 'linux' || process.env.PLAYWRIGHT_USE_LINUX_BASELINES === '1';
+    const snapshot = useLinuxBaseline && fs.existsSync(linuxSnapshotPath) ? linuxSnapshot : `${name}.png`;
     await expect(page).toHaveScreenshot(snapshot, {
       animations: 'disabled',
       fullPage: true,
