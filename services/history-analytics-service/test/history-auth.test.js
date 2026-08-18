@@ -98,6 +98,52 @@ test('history message writes are idempotent by stable id and can patch audioUrl'
   }
 });
 
+test('session history hides non-adjacent legacy snapshot copies but preserves real repeated turns', async () => {
+  const original = Conversation.findOne;
+  Conversation.findOne = async () => ({
+    userId: 'user-a',
+    messages: [
+      { id: 'asr-1', role: 'user', content: 'Start again' },
+      { id: 'ai-1', role: 'assistant', content: 'Ready when you are' },
+      { id: 'conversation-turn-2-user', role: 'user', content: 'Start again' },
+      { id: 'asr-2', role: 'user', content: 'Start again', audioUrl: 'attempt-2.mp3' },
+    ],
+  });
+  try {
+    const res = response();
+    await controller.getSessionHistory({ params: { sessionId: 'session-a' }, authUserId: 'user-a' }, res);
+    assert.equal(res.statusCode, 200);
+    assert.deepEqual(res.body.data.messages.map(message => message.id), ['asr-1', 'ai-1', 'asr-2']);
+  } finally {
+    Conversation.findOne = original;
+  }
+});
+
+test('history writes physically prune legacy snapshot copies', async () => {
+  const original = Conversation.findOne;
+  const conversation = {
+    userId: 'trusted-user',
+    messages: [
+      { id: 'asr-1', role: 'user', content: 'Start again', timestamp: new Date('2026-01-01') },
+      { id: 'ai-1', role: 'assistant', content: 'Ready', timestamp: new Date('2026-01-01') },
+      { id: 'conversation-turn-2-user', role: 'user', content: 'Start again', timestamp: new Date('2026-01-01') },
+    ],
+    save: async () => {},
+  };
+  Conversation.findOne = async () => conversation;
+  try {
+    const res = response();
+    await controller.saveSessionMessages({
+      params: { sessionId: 'session-a' },
+      body: { userId: 'trusted-user', messages: [{ id: 'ai-1', role: 'assistant', content: 'Ready' }] },
+    }, res);
+    assert.equal(res.statusCode, 201);
+    assert.deepEqual(conversation.messages.map(message => message.id), ['asr-1', 'ai-1']);
+  } finally {
+    Conversation.findOne = original;
+  }
+});
+
 test('summary update rejects a session owned by another user', async () => {
   const original = Conversation.findOne;
   let saved = false;
