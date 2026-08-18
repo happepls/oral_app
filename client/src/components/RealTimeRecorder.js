@@ -38,7 +38,6 @@ const RealTimeRecorder = forwardRef(({
   const { t } = useTranslation();
   const [isRecording, setIsRecording] = useState(false);
   const [recordingTime, setRecordingTime] = useState(0);
-  const [audioLevel, setAudioLevel] = useState(0);
   const [showControls, setShowControls] = useState(false);
   const [waveformBars, setWaveformBars] = useState(Array(BAR_COUNT).fill(6));
 
@@ -118,7 +117,6 @@ const RealTimeRecorder = forwardRef(({
       const avg = sum / dataArray.length;
       const level = Math.min(1, avg / 80); // /80 makes it more sensitive than /128
       audioLevelRef.current = level;
-      setAudioLevel(level);
       setWaveformBars(prev => generateBars(level, prev));
 
       waveformRafRef.current = requestAnimationFrame(loop);
@@ -132,7 +130,6 @@ const RealTimeRecorder = forwardRef(({
       cancelAnimationFrame(waveformRafRef.current);
       waveformRafRef.current = null;
     }
-    setAudioLevel(0);
     setWaveformBars(Array(BAR_COUNT).fill(6));
   };
 
@@ -226,6 +223,7 @@ const RealTimeRecorder = forwardRef(({
     setShowControls(false);
     setRecordingTime(0);
     isStartingRef.current = false;
+    if (onCancel) onCancel();
   };
 
   // Bar color: interpolate from indigo-400 (silence) → rose-500 (loud)
@@ -238,7 +236,7 @@ const RealTimeRecorder = forwardRef(({
   };
 
   return (
-    <div className="flex flex-col items-center gap-2 w-full">
+    <div className="flex flex-col items-center gap-2 w-full min-w-0" data-testid="real-time-recorder">
       <AnimatePresence mode="wait">
         {isRecording && showControls ? (
           /* ── Recording state ── */
@@ -248,18 +246,28 @@ const RealTimeRecorder = forwardRef(({
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: 6 }}
             transition={{ duration: 0.18 }}
-            className="flex items-center gap-2 w-full"
+            className="flex items-center gap-2 w-full min-w-0"
+            data-testid="recording-controls"
           >
             {/* Waveform + timer pill */}
-            <div className="flex-1 bg-white border border-gray-200 rounded-2xl px-4 py-3 flex items-center gap-3 shadow-md overflow-hidden">
+            <div
+              className="flex-1 min-w-0 bg-white border border-gray-200 rounded-2xl px-3 sm:px-4 py-3 flex items-center gap-2 sm:gap-3 shadow-md overflow-hidden"
+              data-testid="recording-pill"
+            >
               {/* Pulse dot */}
               <div className="w-2 h-2 rounded-full bg-rose-500 animate-pulse shrink-0" />
 
               {/* Waveform bars */}
-              <div className="flex items-center gap-[2px] flex-1 h-9">
+              <div
+                className="flex items-center gap-px sm:gap-[2px] flex-1 min-w-0 h-9"
+                data-testid="recording-waveform"
+                aria-hidden="true"
+              >
                 {waveformBars.map((h, idx) => (
                   <div
                     key={idx}
+                    data-waveform-bar="true"
+                    className={idx >= 16 ? 'hidden sm:block' : 'block'}
                     style={{
                       height: `${h}%`,
                       minHeight: '3px',
@@ -273,7 +281,7 @@ const RealTimeRecorder = forwardRef(({
               </div>
 
               {/* Timer */}
-              <span className="text-sm font-mono font-semibold text-gray-700 tabular-nums shrink-0">
+              <span className="text-xs sm:text-sm font-mono font-semibold text-gray-700 tabular-nums shrink-0">
                 {formatTime(recordingTime)}
               </span>
             </div>
