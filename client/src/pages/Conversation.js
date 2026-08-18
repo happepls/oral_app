@@ -3035,12 +3035,6 @@ function Conversation() {
     console.log('🚫 Recording cancelled, clearing session ID:', currentRecordingSessionIdRef.current);
     currentRecordingSessionIdRef.current = null; // Clear session ID to ignore any pending audio data
 
-    // Clear session ID in recorder
-    if (recorderRef.current) {
-        // 直接调用 internalCancelRecording 方法，它会清空缓存
-        recorderRef.current.cancelRecording();
-    }
-
     const wsReadyState = socketRef.current?.getReadyState?.() || socketRef.current?.readyState;
     if (wsReadyState === WebSocket.OPEN || wsReadyState === WebSocket.CONNECTING) {
         socketRef.current.send(JSON.stringify({ type: 'user_audio_cancelled' }));
@@ -3650,8 +3644,8 @@ function Conversation() {
       <footer className="pb-4 pt-3 px-4 bg-white dark:bg-slate-900 border-t border-slate-100 dark:border-slate-800 shrink-0 shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.05)]">
         <div className="flex flex-col items-center gap-3">
             {/* Main Controls: Recorder + Restart Button */}
-            <div className="flex items-center gap-3 w-full max-w-md">
-                <div className="flex-1 relative" data-tour="mic">
+            <div className="flex items-center gap-3 w-full max-w-md" data-testid="conversation-footer-controls">
+                <div className="flex-1 min-w-0 relative" data-tour="mic">
                     {/* 3-场景仅为软性鼓励，不再禁用录音；硬护栏由后端 daily_limit_reached 负责 */}
                     <RealTimeRecorder
                       ref={recorderRef}
@@ -3671,7 +3665,7 @@ function Conversation() {
                   onClick={() => setCcMode(value => !value)}
                   aria-label={ccMode ? '退出 CC 沉浸模式' : '进入 CC 沉浸模式'}
                   aria-pressed={ccMode}
-                  className="flex-shrink-0 w-12 h-12 rounded-xl flex items-center justify-center transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50"
+                  className={`${isUserRecording ? 'hidden sm:flex' : 'flex'} flex-shrink-0 w-12 h-12 rounded-xl items-center justify-center transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50`}
                   style={{
                     border: `1.5px solid ${ccMode ? 'var(--primary)' : 'var(--border-solid)'}`,
                     background: ccMode ? 'rgba(99,127,241,0.12)' : 'var(--card)',
@@ -3690,7 +3684,7 @@ function Conversation() {
                           handleRetryCurrentScenario({ keepHistory: false, resetProgress: true });
                         }
                       }}
-                      className="flex-shrink-0 w-12 h-12 bg-amber-100 dark:bg-amber-900/30 hover:bg-amber-200 dark:hover:bg-amber-900/50 text-amber-700 dark:text-amber-300 rounded-xl flex items-center justify-center transition border border-amber-200 dark:border-amber-700"
+                      className={`${isUserRecording ? 'hidden sm:flex' : 'flex'} flex-shrink-0 w-12 h-12 bg-amber-100 dark:bg-amber-900/30 hover:bg-amber-200 dark:hover:bg-amber-900/50 text-amber-700 dark:text-amber-300 rounded-xl items-center justify-center transition border border-amber-200 dark:border-amber-700`}
                       aria-label="重新练习当前场景"
                       title="重新练习"
                     >
