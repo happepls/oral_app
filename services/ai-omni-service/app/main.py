@@ -68,7 +68,7 @@ if DASHSCOPE_HTTP_BASE != _DASHSCOPE_HTTP_CHINA:
 _DASHSCOPE_CHAT_BASE_CHINA = "https://dashscope.aliyuncs.com"
 DASHSCOPE_CHAT_BASE = DASHSCOPE_CONFIG.chat_base
 # Model names differ between China and the Singapore dedicated workspace.
-QWEN_TEXT_MODEL = os.getenv("QWEN_TEXT_MODEL", "qwen-turbo")   # intl: qwen-flash
+QWEN_TEXT_MODEL = os.getenv("QWEN_TEXT_MODEL", "qwen-flash")
 QWEN_IMAGE_MODEL = os.getenv("QWEN_IMAGE_MODEL", "wanx2.1-t2i-turbo")  # intl: wan2.2-t2i-flash
 
 # Text-to-image (Wanx) base host. wan2.2-t2i-flash is a PUBLIC model served by the
@@ -233,7 +233,11 @@ async def get_user_context(token: str, scenario: str = None):
                                 active_goal['current_task'] = {
                                     'id': current_task.get('id'),
                                     'task_description': current_task.get('text'),
-                                    'scenario_title': matched_scenario.get('title', '')
+                                    'scenario_title': matched_scenario.get('title', ''),
+                                    'score': current_task.get('score', 0),
+                                    'interaction_count': current_task.get('interaction_count', 0),
+                                    'keywords': current_task.get('keywords', []),
+                                    'status': current_task.get('status'),
                                 }
                                 logger.info(f"Found scenario-matched current task: {current_task.get('text')} in {matched_scenario.get('title')}")
                     else:
@@ -251,7 +255,11 @@ async def get_user_context(token: str, scenario: str = None):
                                 active_goal['current_task'] = {
                                     'id': current_task.get('id'),
                                     'task_description': current_task.get('text'),
-                                    'scenario_title': current_scenario.get('title', '')
+                                    'scenario_title': current_scenario.get('title', ''),
+                                    'score': current_task.get('score', 0),
+                                    'interaction_count': current_task.get('interaction_count', 0),
+                                    'keywords': current_task.get('keywords', []),
+                                    'status': current_task.get('status'),
                                 }
 
                     data['active_goal'] = active_goal
@@ -271,6 +279,9 @@ async def save_single_message(
     audio_url: str = None,
     message_id: str = None,
     timestamp: str = None,
+    scenario: str = None,
+    task_id: int = None,
+    turn_id: str = None,
 ):
     """Idempotently upsert one realtime message through the internal API."""
     conv_service_url = os.getenv("CONVERSATION_SERVICE_URL", "http://localhost:8083")
@@ -286,6 +297,9 @@ async def save_single_message(
             "content": content,
             "audioUrl": audio_url,
             "timestamp": timestamp or datetime.utcnow().isoformat(),
+            "scenario": scenario,
+            "task_id": str(task_id) if task_id is not None else None,
+            "turn_id": turn_id,
         }],
     }
     headers = {"X-Guaji-Internal-Auth": internal_secret}
@@ -307,6 +321,25 @@ async def save_single_message(
         if attempt < 2:
             await asyncio.sleep(0.15 * (2 ** attempt))
     return False
+
+
+def _current_task_history(history_messages, current_task_id, current_scenario):
+    """Return the latest ten messages belonging to the active task.
+
+    Legacy records without metadata remain usable when they are not explicitly
+    associated with another scenario.
+    """
+    def belongs(message):
+        message_task_id = message.get("task_id")
+        if message_task_id is not None and current_task_id is not None:
+            return str(message_task_id) == str(current_task_id)
+        message_scenario = message.get("scenario")
+        return not message_scenario or not current_scenario or message_scenario == current_scenario
+
+    return [
+        message for message in (history_messages or [])
+        if isinstance(message, dict) and belongs(message)
+    ][-10:]
 
 async def execute_action_with_response(action_name: str, params: dict, token: str, user_id: str, session_id: str, context: dict = None):
     """Executes a system action (like updating goals) by calling the appropriate microservice."""
@@ -470,152 +503,135 @@ async def _handle_turn_with_accumulator(
     native_language: str,
     token: str,
 ):
-    """Accumulate turns; dynamically trigger batch evaluation via workflow-service.
-
-    Window size: 3 turns for the first 2 evals (faster initial feedback),
-    then 4 turns for subsequent evals (deeper practice).
-
-    Returns None when still accumulating; returns a dict shaped like the old
-    `call_proficiency_workflow` result when a batch evaluation was performed,
-    so the caller can reuse the existing task_completed side-effects.
-    """
-    # Task-switch reset
-    if callback.current_eval_task_id != task_id:
-        callback.turn_accumulator = []
-        callback.current_eval_task_id = task_id
-        callback.batch_eval_count = 0
-
-    # Append current turn
-    callback.turn_accumulator.append({
-        "turn_index": len(callback.turn_accumulator) + 1,
-        "user_content": user_content or "",
-        "ai_response": ai_response or "",
-        "timestamp": datetime.utcnow().isoformat() + "Z",
-    })
-
-    # Dynamic window: 3 turns for first 2 evals, then 4
-    window_threshold = 3 if callback.batch_eval_count < 2 else 4
-
-    # Below threshold → inline tips only, no batch eval
-    if len(callback.turn_accumulator) < window_threshold:
-        tips = _extract_inline_tips(ai_response)
-        # Populate `total` from cache (last batch eval) or initial proficiency
-        # from user_context. Avoids a DB query on every inline turn.
-        if callback.last_total_proficiency is None:
-            try:
-                active_goal = (callback.user_context or {}).get('active_goal') or {}
-                callback.last_total_proficiency = int(active_goal.get('current_proficiency') or 0)
-            except (TypeError, ValueError):
-                callback.last_total_proficiency = 0
-        total_proficiency = callback.last_total_proficiency
-        await callback._safe_send({
-            "type": "proficiency_update",
-            "payload": {
-                "delta": 0,
-                "total": total_proficiency,
-                "task_id": task_id,
-                "task_score": 0,
-                "message": "",
-                "improvement_tips": tips,
-                "tips": tips,
-                "tip_source": "inline",
-            },
-        })
-        logger.info(f"[BATCH_EVAL] accumulating turn {len(callback.turn_accumulator)}/{window_threshold}, inline tips={len(tips)}, total={total_proficiency}")
+    """Evaluate exactly one completed turn through the idempotent workflow."""
+    latest_user_message = next(
+        (message for message in reversed(callback.messages) if message.get("role") == "user"),
+        {},
+    )
+    turn_id = str(
+        latest_user_message.get("turn_id")
+        or latest_user_message.get("id")
+        or callback.current_turn_id
+        or uuid.uuid4()
+    )
+    if turn_id in callback.processed_turn_ids or turn_id in callback.turn_evaluations_inflight:
+        logger.info("[TURN_EVAL] duplicate local event ignored turn=%s", turn_id[:16])
         return None
 
-    # ≥threshold turns — trigger batch eval
-    logger.info(f"[BATCH_EVAL] triggering eval #{callback.batch_eval_count + 1} with {len(callback.turn_accumulator)} turns (threshold={window_threshold})")
+    callback.turn_evaluations_inflight.add(turn_id)
+    current_score = int(current_task.get("score") or 0)
+    interaction_count = int(current_task.get("interaction_count") or 0)
     payload = {
         "user_id": user_id,
         "goal_id": goal_id,
         "task_id": task_id,
         "current_task": current_task,
         "native_language": native_language,
-        "turn_window": callback.turn_accumulator,
-        "window_size": len(callback.turn_accumulator),
+        "user_content": user_content or "",
+        "ai_response": ai_response or "",
+        "score": current_score,
+        "interaction_count": interaction_count,
+        "turn_id": turn_id,
     }
-    # Reset accumulator and increment eval counter
-    callback.turn_accumulator = []
-    callback.batch_eval_count += 1
-
-    result = None
     try:
         async with httpx.AsyncClient(timeout=30.0) as client:
             resp = await client.post(
-                f"{WORKFLOW_SERVICE_URL}/api/workflows/proficiency-scoring/batch-evaluate",
+                f"{WORKFLOW_SERVICE_URL}/api/workflows/proficiency-scoring/turn-evaluate",
                 json=payload,
                 headers={"Authorization": f"Bearer {token}"} if token else None,
             )
             if resp.status_code == 200:
                 result = resp.json().get("data", {}) or {}
                 logger.info(
-                    f"[BATCH_EVAL] batch_evaluate called → delta={result.get('delta')} "
-                    f"mode={result.get('teaching_mode')} "
-                    f"task_completed={result.get('task_completed')}"
+                    "[TURN_EVAL] model=%s turn=%s quality=%s delta=%s score=%s fallback=%s",
+                    result.get("model_id"),
+                    turn_id[:16],
+                    result.get("quality"),
+                    result.get("delta"),
+                    result.get("score"),
+                    result.get("fallback_used"),
                 )
             else:
-                logger.error(f"[BATCH_EVAL] workflow returned {resp.status_code}: {resp.text[:300]}")
+                logger.error("[TURN_EVAL] workflow returned status=%s", resp.status_code)
                 return None
     except Exception as e:
-        logger.error(f"[BATCH_EVAL] HTTP error: {e}")
+        logger.error("[TURN_EVAL] HTTP error: %s", type(e).__name__)
         return None
+    finally:
+        callback.turn_evaluations_inflight.discard(turn_id)
+
+    callback.processed_turn_ids.add(turn_id)
 
     delta = int(result.get("delta", 0) or 0)
     task_completed = bool(result.get("task_completed", False))
-    improvement_tips = result.get("improvement_tips", []) or []
-    target_language = current_task.get("target_language") or callback.user_context.get("target_language", "English")
+    score = int(result.get("score", current_score) or 0)
+    count = int(result.get("interaction_count", interaction_count) or 0)
+    reason = result.get("reason", "") or ""
+    total = int(((callback.user_context or {}).get("active_goal") or {}).get("current_proficiency") or 0) + delta
+    current_task["score"] = score
+    current_task["interaction_count"] = count
 
-    # Refresh cached total so subsequent inline turns reflect latest DB value
-    try:
-        callback.last_total_proficiency = int(result.get("total_proficiency", 0) or 0)
-    except (TypeError, ValueError):
-        pass
-
-    # Send proficiency_update (backward-compatible shape + new fields)
     await callback._safe_send({
         "type": "proficiency_update",
         "payload": {
             "delta": delta,
-            "total": result.get("total_proficiency", 0),
-            "task_id": result.get("task_id", task_id),
-            "task_score": result.get("task_score", 0),
-            "message": "",
-            "improvement_tips": improvement_tips,
-            "tips": improvement_tips,
-            "tip_source": "batch_eval",
-            "scores": result.get("scores"),
-            "teaching_mode": result.get("teaching_mode"),
+            "total": total,
+            "task_id": task_id,
+            "task_score": score,
+            "interaction_count": count,
+            "message": reason,
+            "reason": reason,
+            "quality": result.get("quality"),
+            "model_id": result.get("model_id"),
+            "fallback_used": bool(result.get("fallback_used")),
+            "turn_id": turn_id,
             "task_completed": task_completed,
         },
     })
+    if task_completed:
+        refreshed = await get_user_context(token, callback.scenario)
+        if refreshed:
+            callback.user_context = refreshed
+        next_task = (((callback.user_context or {}).get("active_goal") or {}).get("current_task") or {})
+        has_next_task = (
+            next_task.get("id")
+            and str(next_task.get("id")) != str(task_id)
+            and next_task.get("status") != "completed"
+        )
+        await callback._safe_send({
+            "type": "task_completed",
+            "payload": {
+                "task_id": task_id,
+                "task_title": current_task.get("task_description", "Task"),
+                "scenario_title": current_task.get("scenario_title", ""),
+                "next_task": (next_task.get("task_description") or next_task.get("text")) if has_next_task else None,
+                "score": score,
+                "interaction_count": count,
+                "turn_id": turn_id,
+            },
+        })
+        if has_next_task:
+            callback._clear_dashscope_items("dynamic_task_complete")
+            callback.messages = []
+            callback.task_history_cutoff = 0
+            callback.current_turn_id = None
+            callback.just_switched_task = True
+            callback.user_context["next_task_text"] = next_task.get("task_description") or next_task.get("text")
+            callback._update_session_prompt()
 
-    # Inject teaching directive (only if task NOT completed — on completion we'll
-    # refresh the whole prompt anyway)
-    if not task_completed:
-        try:
-            directive = _format_teaching_directive(result, target_language, native_language)
-            if directive:
-                callback.pending_directive = directive
-                # Refresh session prompt WITH directive appended
-                callback._update_session_prompt(extra_directive=directive)
-                logger.info(f"[BATCH_EVAL] directive injected (mode={result.get('teaching_mode')})")
-        except Exception as e:
-            logger.warning(f"[BATCH_EVAL] directive injection failed: {e}")
-
-    # Return in the shape expected by the existing call-site (so task_completed
-    # side-effects — next-task fetch, prompt refresh — work unchanged).
     return {
         "proficiency_delta": delta,
-        "total_proficiency": result.get("total_proficiency", 0),
+        "total_proficiency": total,
         "task_completed": task_completed,
-        "task_ready_to_complete": bool(result.get("task_ready_to_complete", False)),
-        "task_score": result.get("task_score", 0),
-        "improvement_tips": improvement_tips,
-        "task_id": result.get("task_id", task_id),
+        "task_ready_to_complete": False,
+        "task_score": score,
+        "interaction_count": count,
+        "improvement_tips": [reason] if reason else [],
+        "task_id": task_id,
         "task_title": result.get("task_title", current_task.get("task_description", "Task")),
         "scenario_title": result.get("scenario_title", current_task.get("scenario_title", "")),
-        "message": "",
+        "message": reason,
+        "turn_id": turn_id,
     }
 
 
@@ -642,6 +658,8 @@ async def _evaluate_scene_turn_progress(
         return None
     if phase_info.get("phase") == "magic_repetition":
         return None
+    if getattr(callback, "mode", None) in ("recall", "daily_qa") or getattr(callback, "is_daily_qa_mode", False) is True:
+        return None
 
     active_goal = (callback.user_context or {}).get("active_goal") or {}
     current = active_goal.get("current_task") or {}
@@ -663,6 +681,9 @@ async def _evaluate_scene_turn_progress(
         "task_description": task_description,
         "scenario_title": scenario_title,
         "target_language": active_goal.get("target_language", "English"),
+        "score": current.get("score", 0),
+        "interaction_count": current.get("interaction_count", 0),
+        "keywords": current.get("keywords", []),
     }
     native_language = (
         callback.user_context.get("native_language")
@@ -1085,7 +1106,7 @@ def _is_daily_qa_injection(user_text: str) -> bool:
 
 
 def _parse_daily_qa_pool_text(text: str) -> list:
-    """Parse a qwen-turbo reply (possibly markdown-wrapped) into a list of question dicts."""
+    """Parse a Qwen text-model reply into a list of question dicts."""
     if not text:
         return []
     stripped = text.strip()
@@ -1116,7 +1137,7 @@ async def _generate_daily_question_pool(target_language: str, native_language: s
                                         goal_type: str = "", interests: str = "",
                                         goal_description: str = "", avoid_questions: list = None,
                                         progress_context: str = "") -> list:
-    """Call qwen-turbo to generate a pool of daily practice questions with reference answers.
+    """Call the configured Qwen text model to generate daily practice questions.
 
     Single-call generation: questions in target_language + reference answers in native_language
     are produced together in one JSON payload. On any error falls back to _DAILY_QA_FALLBACK_POOL.
@@ -2155,9 +2176,17 @@ class WebSocketCallback(OmniRealtimeCallback):
         self.current_response_id = None
         self.ignored_response_ids = set()
         self.messages = history_messages
-        # Mark the boundary of pre-loaded history so we never inject old task context into prompts.
-        # Only messages appended AFTER this index (new turns in current session) go into system prompt.
-        self.task_history_cutoff = len(history_messages)
+        # history_messages is already restricted to the current task. Restored
+        # context must be included in the prompt so reconnects remain coherent.
+        self.task_history_cutoff = 0
+        self.current_turn_id = None
+        self.processed_turn_ids = {
+            str(message.get("turn_id"))
+            for message in history_messages
+            if message.get("role") == "assistant" and message.get("turn_id")
+        }
+        self.turn_evaluations_inflight = set()
+        self.restored_state = None
         self.user_audio_buffer = bytearray()
         self.ai_audio_buffer = bytearray()
         self.last_user_audio_url = None
@@ -2176,10 +2205,7 @@ class WebSocketCallback(OmniRealtimeCallback):
         self._reconnect_failures = 0   # Count of "opened then closed quickly" events
         self._last_open_time = 0       # Timestamp of last on_open
         self.auth_denied = False        # Set True after too many quick-close failures (rate-limit / access-denied)
-        # Batch evaluation state (Feature 1 — 批量评估 Agent)
-        self.turn_accumulator = []          # [{turn_index, user_content, ai_response, timestamp}, ...]
-        self.current_eval_task_id = None    # Reset accumulator on task switch
-        self.batch_eval_count = 0           # How many batch evals done for current task (dynamic window: 3 for first 2, then 4)
+        # One-turn evaluation state. turn_id remains stable across reconnects.
         self.pending_directive = None       # One-turn teaching directive (consumed at upload_ai_task head)
         self.last_total_proficiency = None  # Cache of last known total; inline turns reuse to avoid DB query
         # Daily Q&A state (Feature 2)
@@ -2281,6 +2307,11 @@ class WebSocketCallback(OmniRealtimeCallback):
                 # Double-check if WebSocket is still connected before sending
                 if self.websocket.client_state.name == 'CONNECTED':
                     try:
+                        if self.restored_state:
+                            await self.websocket.send_json({
+                                "type": "session_restored",
+                                "payload": self.restored_state,
+                            })
                         await self.websocket.send_json({
                             "type": "connection_established",
                             "payload": {
@@ -2479,7 +2510,8 @@ class WebSocketCallback(OmniRealtimeCallback):
                 self.just_switched_task = False
                 logger.info(f"[TASK_SWITCH] Injected override directive for new task: {new_task}")
             else:
-                # Only inject messages from the current task period (after the cutoff)
+                # Inject at most the latest ten messages for the current task,
+                # including restored history after a reconnect.
                 cutoff = getattr(self, 'task_history_cutoff', 0)
                 current_task_msgs = self.messages[cutoff:][-10:]  # max 10 from current task
                 if current_task_msgs:
@@ -2763,6 +2795,9 @@ class WebSocketCallback(OmniRealtimeCallback):
                                             url,
                                             message_id=msg.get("id") or msg.get("responseId"),
                                             timestamp=msg.get("timestamp"),
+                                            scenario=msg.get("scenario"),
+                                            task_id=msg.get("task_id"),
+                                            turn_id=msg.get("turn_id"),
                                         )
                                         logger.info(f"Saved AI message with audio URL to history: {msg.get('content', '')[:50]}...")
                                         break
@@ -3269,15 +3304,21 @@ class WebSocketCallback(OmniRealtimeCallback):
                             return  # Exit early
                         else:
                             # Normal input (not magic passcode) - send transcript and add to history
+                            current_task = (self.user_context.get("active_goal") or {}).get("current_task") or {}
+                            turn_id = message_id
+                            self.current_turn_id = turn_id
                             msg = {
                                 "id": message_id,
                                 "role": "user",
                                 "content": user_transcript,
                                 "timestamp": datetime.utcnow().isoformat(),
+                                "scenario": self.scenario,
+                                "task_id": current_task.get("id"),
+                                "turn_id": turn_id,
                             }
                             await self._safe_send({
                                 "type": "user_transcript",
-                                "payload": {"text": user_transcript, "messageId": msg["id"]},
+                                "payload": {"text": user_transcript, "messageId": msg["id"], "turn_id": turn_id},
                             })
                             if self.last_user_audio_url: msg['audioUrl'] = self.last_user_audio_url; self.last_user_audio_url = None
                             self.messages.append(msg)
@@ -3289,6 +3330,9 @@ class WebSocketCallback(OmniRealtimeCallback):
                                 msg.get("audioUrl"),
                                 message_id=msg["id"],
                                 timestamp=msg["timestamp"],
+                                scenario=msg.get("scenario"),
+                                task_id=msg.get("task_id"),
+                                turn_id=msg.get("turn_id"),
                             )
                 elif event_name in ['response.audio_transcript.done', 'response.text.done']:
                     if not self.full_response_text:
@@ -3308,6 +3352,9 @@ class WebSocketCallback(OmniRealtimeCallback):
                             "content": self.full_response_text,
                             "timestamp": datetime.utcnow().isoformat(),
                             "responseId": response_id,
+                            "scenario": self.scenario,
+                            "task_id": ((self.user_context.get("active_goal") or {}).get("current_task") or {}).get("id"),
+                            "turn_id": self.current_turn_id,
                         }
                         if self.last_ai_audio_url: msg['audioUrl'] = self.last_ai_audio_url; self.last_ai_audio_url = None
                         self.messages.append(msg)
@@ -3319,6 +3366,9 @@ class WebSocketCallback(OmniRealtimeCallback):
                             msg.get("audioUrl"),
                             message_id=msg["id"],
                             timestamp=msg["timestamp"],
+                            scenario=msg.get("scenario"),
+                            task_id=msg.get("task_id"),
+                            turn_id=msg.get("turn_id"),
                         ))
 
                         # Send complete message to frontend with responseId
@@ -3327,11 +3377,21 @@ class WebSocketCallback(OmniRealtimeCallback):
                             "payload": {
                                 "content": self.full_response_text,
                                 "responseId": self.current_response_id or f"ai-{int(time.time() * 1000)}",
-                                "audioUrl": msg.get('audioUrl')
+                                "audioUrl": msg.get('audioUrl'),
+                                "turn_id": msg.get("turn_id"),
                             },
                             "timestamp": int(time.time() * 1000)
                         })
                         logger.info(f"Sent complete AI message: {self.full_response_text[:50]}...")
+
+                        active_goal = self.user_context.get("active_goal") or {}
+                        current_task = active_goal.get("current_task") or {}
+                        asyncio.create_task(_evaluate_scene_turn_progress(
+                            self,
+                            active_goal.get("id"),
+                            current_task.get("id"),
+                            self.full_response_text,
+                        ))
 
                     # Note: Task scoring is handled by proficiency_scoring workflow after each user interaction
                     # No need to manually update score here based on AI response keywords
@@ -3476,9 +3536,27 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query(None), ses
     except Exception as e: 
         logger.warning(f"Failed to fetch history: {e}")
         logger.error(f"Error details: {str(e)}")
+
+    active_goal = user_context.get("active_goal") or {}
+    current_task = active_goal.get("current_task") or {}
+    current_task_id = current_task.get("id")
+    current_scenario = scenario or current_task.get("scenario_title")
+
+    had_persisted_history = bool(history_messages)
+    history_messages = _current_task_history(
+        history_messages, current_task_id, current_scenario
+    )
     loop = asyncio.get_running_loop()
     
     callback = WebSocketCallback(websocket, loop, user_context, token, user_id, session_id, history_messages, scenario, mode)
+    if had_persisted_history:
+        callback.restored_state = {
+            "session_id": session_id,
+            "task_id": current_task_id,
+            "score": int(current_task.get("score") or 0),
+            "interaction_count": int(current_task.get("interaction_count") or 0),
+            "restored_message_count": len(history_messages),
+        }
     phase_key = callback.phase_key  # f"{user_id}:{scenario or ''}" — 每个场景独立
 
     # ── Daily Q&A mode bootstrap (Feature 2) ──
@@ -3780,6 +3858,13 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query(None), ses
                             "content": text,
                             "timestamp": datetime.utcnow().isoformat(),
                         }
+                        current_task = (callback.user_context.get("active_goal") or {}).get("current_task") or {}
+                        callback.current_turn_id = text_message["id"]
+                        text_message.update({
+                            "scenario": callback.scenario,
+                            "task_id": current_task.get("id"),
+                            "turn_id": callback.current_turn_id,
+                        })
                         callback.messages.append(text_message)
                         asyncio.create_task(save_single_message(
                             callback.session_id,
@@ -3788,6 +3873,9 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query(None), ses
                             text,
                             message_id=text_message["id"],
                             timestamp=text_message["timestamp"],
+                            scenario=text_message.get("scenario"),
+                            task_id=text_message.get("task_id"),
+                            turn_id=text_message.get("turn_id"),
                         ))
                         if callback.is_connected:
                             try:
@@ -4564,7 +4652,7 @@ async def generate_scene_image(payload: dict = Body(...)):
 
 @app.post("/generate-scenarios")
 async def generate_scenarios(payload: dict = Body(...)):
-    """Dynamically generate 10 oral-practice scenarios via qwen-turbo LLM."""
+    """Dynamically generate 10 oral-practice scenarios via the configured text model."""
     target_language = (payload.get("target_language") or "English").strip()[:50]
     target_level    = (payload.get("target_level")    or "Intermediate").strip()[:30]
     goal_type       = (payload.get("type")            or "daily_conversation").strip()[:50]
@@ -4634,7 +4722,7 @@ async def generate_scenarios(payload: dict = Body(...)):
 # across a goal's lifetime — not 10 up-front on goal creation.
 #
 # The scenario title may be in the user's native language (zh/ja/...). We ask
-# qwen-turbo for a short English visual prompt first (cheap text call), then run
+# Use the configured Qwen text model for a short English visual prompt, then run
 # wan2.2-t2i-flash. The returned URL is a DashScope/OSS temp URL (TTL ~24h),
 # which is fine for a lazily-regenerated cover; the frontend falls back to the
 # emoji placeholder on any failure/timeout.

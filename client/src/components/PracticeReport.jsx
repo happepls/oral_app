@@ -312,7 +312,7 @@ export function PracticeReport({
       : scenarioScore * 0.95
   ));
 
-  // Prefer backend detail_scores from qwen-turbo deep evaluation
+  // Prefer backend detail_scores from the configured deep-evaluation model
   const backendScores = analysis?.detail_scores;
   const hasDetailedScores = backendScores && ['pronunciation', 'fluency', 'intonation', 'vocabulary']
     .every(key => Number.isFinite(Number(backendScores[key])));

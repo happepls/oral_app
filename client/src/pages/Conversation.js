@@ -440,6 +440,7 @@ function Conversation() {
   // UI States
   const [messages, setMessages] = useState([]);
   const [isConnected, setIsConnected] = useState(false);
+  const [isRestoringSession, setIsRestoringSession] = useState(false);
   const [currentRole, setCurrentRole] = useState('OralTutor'); // Default role
   const [isAISpeaking, setIsAISpeaking] = useState(false);
   const [isUserRecording, setIsUserRecording] = useState(false);
@@ -469,7 +470,7 @@ function Conversation() {
   // WebSocket connection control states
   const [isManualDisconnect, setIsManualDisconnect] = useState(false); // Track if user manually disconnected
   const [reconnectAttempts, setReconnectAttempts] = useState(0); // Track reconnection attempts
-  const MAX_RECONNECT_ATTEMPTS = 3; // Maximum automatic reconnect attempts before requiring manual intervention
+  const MAX_RECONNECT_ATTEMPTS = 5; // Backoff schedule: 1, 2, 4, 8, 10 seconds
   // Ref mirrors of the two reconnect-control states. The close-handler's
   // setTimeout (and connectWebSocket's useCallback, which omits these from its
   // deps) would otherwise read stale snapshots — causing a spurious reconnect
@@ -477,6 +478,7 @@ function Conversation() {
   const isManualDisconnectRef = useRef(false);
   const reconnectAttemptsRef = useRef(0);
   const reconnectTimerRef = useRef(null); // pending auto-reconnect setTimeout id; cleared on manual retry / reject
+  const isRestoringSessionRef = useRef(false);
 
   // Default scenario templates are hoisted to module scope (see DEFAULT_SCENARIOS above).
 
@@ -1213,22 +1215,8 @@ function Conversation() {
         if (sessionId) {
           // Properly cleanup WebSocket connection
           if (socketRef.current) {
-            // Clear ping interval first to prevent errors - use optional chaining
-            if (socketRef.current?.pingInterval) {
-              clearInterval(socketRef.current.pingInterval);
-              socketRef.current.pingInterval = null;
-            }
-
-            // Stop heartbeat if the method exists
-            if (socketRef.current._stopHeartbeat) {
-              socketRef.current._stopHeartbeat();
-            }
-
-            // Remove all event listeners to prevent callbacks after close
             socketRef.current.removeAllListeners();
-
-            // Close the connection
-            socketRef.current.close();
+            socketRef.current.destroy();
             socketRef.current = null;
           }
 
@@ -1358,24 +1346,26 @@ function Conversation() {
   const handleJsonMessage = useCallback((data) => {
       console.log('Received JSON message:', data);
 
-      // Handle ping/pong messages for connection health
-      if (data.type === 'ping') {
-        // Send pong response
-        if (socketRef.current && socketRef.current.readyState === WebSocket.OPEN) {
-          socketRef.current.send(JSON.stringify({
-            type: 'pong',
-            timestamp: data.timestamp,
-            sequence: data.sequence
-          }));
-        }
-        return;
-      } else if (data.type === 'pong') {
-        console.log('Pong received, connection healthy');
-        return;
-      }
-
       // Handle different message types
       switch (data.type) {
+        case 'session_restored': {
+           const restored = data.payload || {};
+           const restoredScore = Number(restored.score || 0);
+           const restoredCount = Number(restored.interaction_count || 0);
+           const restoredProgress = restoredScore >= 9 && restoredCount < 3
+             ? 99
+             : Math.min(100, Math.round((restoredScore / 9) * 100));
+           setCurrentTaskScore(restoredScore);
+           setCurrentTaskProgress(restoredProgress);
+           previousProgressRef.current = restoredProgress;
+           if (restored.task_id) lastSeenTaskIdRef.current = restored.task_id;
+           isRestoringSessionRef.current = false;
+           setIsRestoringSession(false);
+           setIsConnected(true);
+           setWebSocketError(null);
+           console.log('Session restored:', restored);
+           break;
+        }
         case 'connection_established':
            console.log('Connection established:', data.payload);
            // Only show toast once per page session to avoid spam
@@ -1430,8 +1420,12 @@ function Conversation() {
                                    } else if (t.status === 'pending' || t.status === 'in_progress') {
                                        // Get progress from the first incomplete task
                                        if (currentTaskProgress === 0) {
-                                           currentTaskProgress = t.progress || 0;
-                                           currentTaskScore = t.score || 0;
+                                           currentTaskScore = Number(t.score || 0);
+                                           const interactionCount = Number(t.interaction_count || 0);
+                                           const scoreProgress = Math.min(100, Math.round((currentTaskScore / 9) * 100));
+                                           currentTaskProgress = interactionCount < 3
+                                             ? Math.min(99, scoreProgress)
+                                             : scoreProgress;
                                        }
                                    }
                                }
@@ -1607,6 +1601,7 @@ function Conversation() {
            const msgPayload = data.payload || data;
            const aiContent = msgPayload.content || data.content || data.text || msgPayload.text || '';
            const responseId = msgPayload.responseId || data.responseId;
+           const responseTurnId = msgPayload.turn_id || data.turn_id;
 
            // 检测文本标记（降级方案）
            let cleanContent = aiContent;
@@ -1666,7 +1661,8 @@ function Conversation() {
                                ...last,
                                content: cleanContent,
                                isFinal: true,
-                               responseId: responseId || last.responseId
+                               responseId: responseId || last.responseId,
+                               turn_id: responseTurnId || last.turn_id
                            }
                        ];
                    }
@@ -1675,7 +1671,8 @@ function Conversation() {
                        type: 'ai',
                        content: cleanContent,
                        isFinal: true,
-                       responseId: responseId
+                       responseId: responseId,
+                       turn_id: responseTurnId
                    }];
                });
            } else {
@@ -1798,7 +1795,7 @@ function Conversation() {
         case 'proficiency_update':
            // Handle proficiency update notification with deduplication
            const profPayload = data.payload || {};
-           const updateKey = `${profPayload.task_id}-${profPayload.task_score}-${profPayload.delta}`;
+           const updateKey = profPayload.turn_id || `${profPayload.task_id}-${profPayload.task_score}-${profPayload.delta}`;
 
            // Skip if we've already processed this exact update
            if (lastProficiencyUpdateRef.current === updateKey) {
@@ -1839,7 +1836,18 @@ function Conversation() {
                }]);
            }
 
-           // Update proficiency and progress bar only if delta > 0
+           const interactionCount = Number(profPayload.interaction_count || 0);
+           const taskCompleted = Boolean(profPayload.task_completed);
+           const uncappedProgress = Math.min(100, Math.round((taskScore / 9) * 100));
+           const newProgress = !taskCompleted && interactionCount < 3
+             ? Math.min(99, uncappedProgress)
+             : uncappedProgress;
+           setCurrentTaskProgress(newProgress);
+           previousProgressRef.current = newProgress;
+           setCurrentTaskScore(taskScore);
+
+           // Zero-point turns still update interaction_count, but do not show a
+           // misleading positive-score toast.
            if (delta > 0) {
                const total = profPayload.total || profPayload.current_proficiency || 0;
                const taskScore = profPayload.task_score || 0;
@@ -1857,21 +1865,6 @@ function Conversation() {
                    isFinal: true
                }]);
 
-               // Update progress bar with safeguard against unreasonable jumps
-               // Task completion threshold: score >= 9 (100% progress at 9 points)
-               const rawProgress = Math.min(100, Math.round((taskScore / 9) * 100));
-               // Prevent progress from jumping more than 34% (which would be +1 score jump)
-               // If the jump is larger, it might be due to duplicate workflow calls
-               const maxAllowedProgress = previousProgressRef.current + 34;
-               const newProgress = Math.min(rawProgress, maxAllowedProgress);
-
-               // Only update if there's a valid delta (progress increased or stayed same)
-               if (newProgress >= previousProgressRef.current) {
-                   setCurrentTaskProgress(newProgress);
-                   previousProgressRef.current = newProgress;
-               }
-               setCurrentTaskScore(taskScore);
-               
                // Update engagement level based on delta
                if (delta >= 3) {
                    setEngagementLevel('高');
@@ -2260,9 +2253,18 @@ function Conversation() {
     // Store in ref for later use
     connectWebSocketRef.current = connectWebSocket;
 
-    // Close existing if any
+    if (reconnectTimerRef.current) {
+      clearTimeout(reconnectTimerRef.current);
+      reconnectTimerRef.current = null;
+    }
+
+    // Destroy the previous wrapper before replacing it. This removes its close
+    // listener, heartbeat and timeout callbacks so it cannot schedule a second
+    // reconnect after the new socket starts.
     if (socketRef.current) {
-        socketRef.current.close();
+        socketRef.current.removeAllListeners();
+        socketRef.current.destroy();
+        socketRef.current = null;
     }
 
     // Initialize network adaptive manager
@@ -2330,7 +2332,9 @@ function Conversation() {
     // Register event listeners BEFORE connecting to avoid missing events
     socketRef.current.addEventListener('open', () => {
     console.log('WS Open (Optimized)');
-    setIsConnected(true);
+    setReconnectAttempts(0);
+    reconnectAttemptsRef.current = 0;
+    setIsConnected(!isRestoringSessionRef.current);
     setWebSocketError(null);
     // A successful open clears any prior rejection state.
     wsRejectedRef.current = false;
@@ -2414,12 +2418,6 @@ function Conversation() {
         console.log('WebSocket Closed (Optimized):', event.code, event.reason);
         setIsConnected(false);
 
-        // Clear ping interval - safely check socketRef.current first
-        if (socketRef.current?.pingInterval) {
-          clearInterval(socketRef.current.pingInterval);
-          socketRef.current.pingInterval = null;
-        }
-
         // Save conversation history when connection closes
         void saveConversationHistory(null, null, { keepalive: true });
 
@@ -2441,7 +2439,9 @@ function Conversation() {
         // 4. The connection was rejected by the backend
         const isCleanClose = event.code === 1000 || event.code === 1001;
 
-        if (isCleanClose || isRejectedClose || isManualDisconnect || wsRejectedRef.current || reconnectAttempts >= MAX_RECONNECT_ATTEMPTS) {
+        const manualDisconnect = isManualDisconnectRef.current;
+        const attempts = reconnectAttemptsRef.current;
+        if (isCleanClose || isRejectedClose || manualDisconnect || wsRejectedRef.current || attempts >= MAX_RECONNECT_ATTEMPTS) {
             if (isRejectedClose || wsRejectedRef.current) {
                 // A rejection. The 'error' message frame usually arrives BEFORE this
                 // close and has already set webSocketError — only fill it in if it's
@@ -2449,32 +2449,32 @@ function Conversation() {
                 wsRejectedRef.current = true;
                 setWsRejected(true);
                 setWebSocketError(prev => prev || t('ws_error_rejected', '无法开始本次对话，请返回重新选择场景'));
-            } else if (!isCleanClose && !isManualDisconnect) {
+            } else if (!isCleanClose && !manualDisconnect && attempts < MAX_RECONNECT_ATTEMPTS) {
                 setWebSocketError(`连接已关闭 (${event.code})`);
-            } else if (reconnectAttempts >= MAX_RECONNECT_ATTEMPTS) {
+            } else if (attempts >= MAX_RECONNECT_ATTEMPTS) {
                 setWebSocketError(`已达到最大重试次数 (${MAX_RECONNECT_ATTEMPTS})，请刷新页面或点击重试`);
             }
             return;
         }
 
         // Auto-reconnect with exponential backoff for unexpected disconnections
-        if (!isManualDisconnect && reconnectAttempts < MAX_RECONNECT_ATTEMPTS) {
-            const attemptNum = reconnectAttempts + 1;
+        if (!manualDisconnect && attempts < MAX_RECONNECT_ATTEMPTS) {
+            if (reconnectTimerRef.current) return;
+            const attemptNum = attempts + 1;
             console.log(`Attempting automatic reconnection ${attemptNum}/${MAX_RECONNECT_ATTEMPTS}...`);
-            setReconnectAttempts(prev => prev + 1);
-            reconnectAttemptsRef.current = reconnectAttempts + 1;
+            setReconnectAttempts(attemptNum);
+            reconnectAttemptsRef.current = attemptNum;
 
-            // Exponential backoff: 1s, 2s, 4s
-            const delay = Math.min(1000 * Math.pow(2, reconnectAttempts), 10000);
+            // Exponential backoff: 1s, 2s, 4s, 8s, 10s
+            const delay = Math.min(1000 * Math.pow(2, attempts), 10000);
 
-            if (reconnectTimerRef.current) clearTimeout(reconnectTimerRef.current);
             reconnectTimerRef.current = setTimeout(() => {
                 reconnectTimerRef.current = null;
                 // Check if we should still reconnect — read the ref .current (not the
                 // stale closure snapshot) so a manual retry during the backoff window
                 // cancels this pending reconnect instead of firing a spurious one.
                 if (!isManualDisconnectRef.current && reconnectAttemptsRef.current <= MAX_RECONNECT_ATTEMPTS) {
-                    connectWebSocket(sessionId);
+                    connectWebSocketRef.current?.(effectiveSessionId);
                 }
             }, delay);
         }
@@ -2679,7 +2679,10 @@ function Conversation() {
                               audioUrl: msg.audioUrl,
                               isFinal: true,
                               audioPlayed: true,
-                              historyId: msg.id || msg._id
+                              historyId: msg.id || msg._id,
+                              scenario: msg.scenario,
+                              task_id: msg.task_id,
+                              turn_id: msg.turn_id
                           };
                       });
                       const historyMessages = collapseAdjacentHistoryDuplicates(mappedHistoryMessages);
@@ -2721,6 +2724,7 @@ function Conversation() {
       // local UUID only as an availability fallback when session creation is
       // temporarily unreachable; autosave will still persist that fallback.
       if (!effectiveSessionId) {
+          restoredHistory = false;
           try {
               const created = await conversationAPI.startSession(
                 { goalId: activeGoalId, forceNew: true },
@@ -2739,6 +2743,8 @@ function Conversation() {
       if (sessionKey) localStorage.setItem(sessionKey, effectiveSessionId);
 
       setSessionId(effectiveSessionId);
+      isRestoringSessionRef.current = restoredHistory;
+      setIsRestoringSession(restoredHistory);
       
       // Set current scenario info
       if (scenario) {
@@ -2770,8 +2776,13 @@ function Conversation() {
       // Close WebSocket connection
       if (socketRef.current) {
         console.log('[Cleanup] Closing WebSocket connection');
-        socketRef.current.close(1000, 'Component unmounting');
+        socketRef.current.removeAllListeners();
+        socketRef.current.destroy();
         socketRef.current = null;
+      }
+      if (reconnectTimerRef.current) {
+        clearTimeout(reconnectTimerRef.current);
+        reconnectTimerRef.current = null;
       }
 
       // Stop any ongoing audio playback
@@ -3186,12 +3197,13 @@ function Conversation() {
             <span role="status" className={`text-xs px-2 py-0.5 rounded-full flex items-center gap-1 ${
               isTourMode ? 'bg-violet-50 text-violet-600'
                 : wsRejected ? 'bg-red-50 text-red-600'
+                : isRestoringSession ? 'bg-amber-50 text-amber-700'
                 : isConnected ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'
             }`}>
               <span className={`w-1.5 h-1.5 rounded-full ${
                 isTourMode ? 'bg-violet-500' : wsRejected ? 'bg-red-500' : isConnected ? 'bg-emerald-500' : 'bg-amber-400'
               }`} />
-              {isTourMode ? t('qa_ui.conversation_demo') : wsRejected ? t('ws_status_rejected', '已断开') : isConnected ? t('qa_ui.conversation_online') : t('qa_ui.conversation_connecting')}
+              {isTourMode ? t('qa_ui.conversation_demo') : wsRejected ? t('ws_status_rejected', '已断开') : isRestoringSession ? t('ws_status_restoring', '正在恢复对话') : isConnected ? t('qa_ui.conversation_online') : t('qa_ui.conversation_connecting')}
             </span>
           </div>
         </header>

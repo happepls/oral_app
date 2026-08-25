@@ -119,3 +119,40 @@ test('realtime endpoint rejects a non-realtime token', async () => {
     await new Promise((resolve) => aiWss.close(() => aiHttp.close(resolve)));
   }
 });
+
+test('new socket replaces the old user session and heartbeat gets one local pong', async () => {
+  const aiHttp = http.createServer();
+  const aiWss = new WebSocketServer({ server: aiHttp });
+  aiHttp.listen(0, '127.0.0.1');
+  await once(aiHttp, 'listening');
+  const aiMessages = [];
+  aiWss.on('connection', (socket) => {
+    socket.on('message', (message) => aiMessages.push(JSON.parse(message.toString())));
+    socket.send(JSON.stringify({ type: 'connection_established' }));
+  });
+  const comms = await startComms(`ws://127.0.0.1:${aiHttp.address().port}/stream`);
+  try {
+    const url = `ws://127.0.0.1:${comms.port}/api/v1/realtime?ticket=${encodeURIComponent(ticket())}&sessionId=single-session`;
+    const first = new WebSocket(url);
+    await once(first, 'open');
+    await once(first, 'message');
+
+    const firstClosed = once(first, 'close');
+    const second = new WebSocket(url);
+    await once(second, 'open');
+    await once(second, 'message');
+    const [closeCode] = await firstClosed;
+    assert.equal(closeCode, 4001);
+
+    const beforeHeartbeat = aiMessages.length;
+    second.send(JSON.stringify({ type: 'ping', timestamp: 1234, sequence: 9 }));
+    const [pong] = await once(second, 'message');
+    assert.deepEqual(JSON.parse(pong.toString()), { type: 'pong', timestamp: 1234, sequence: 9 });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    assert.equal(aiMessages.length, beforeHeartbeat);
+    second.close();
+  } finally {
+    comms.stop();
+    await new Promise((resolve) => aiWss.close(() => aiHttp.close(resolve)));
+  }
+});

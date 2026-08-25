@@ -39,6 +39,8 @@ class OptimizedWebSocket {
     this.heartbeatInterval = null;
     this.lastPingTime = 0;
     this.pingTimeout = null;
+    this.connectionTimeoutTimer = null;
+    this.reconnectTimer = null;
     
     // Performance metrics
     this.metrics = {
@@ -162,6 +164,7 @@ class OptimizedWebSocket {
     this.reconnectAttempts = 0;
     this.reconnectDelay = this.options.reconnectInterval;
     this.lastMessageTime = Date.now();
+    this._clearConnectionTimeout();
     
     // Update metrics
     this.metrics.connectionTime = Date.now() - this.connectionStartTime;
@@ -304,15 +307,20 @@ class OptimizedWebSocket {
     });
 
     this.readyState = WebSocket.CLOSED;
+    this._clearConnectionTimeout();
     this._stopHeartbeat();
+    const rejectConnection = this.connectionReject;
+    this.connectionPromise = null;
+    this.connectionResolve = null;
+    this.connectionReject = null;
 
     // Emit close event
     this._emit('close', event);
 
     // Don't auto-reconnect - let the application control reconnection
     // This prevents infinite reconnection loops when backend is unstable
-    if (!event.wasClean && this.connectionReject) {
-      this.connectionReject(new Error(`WebSocket closed: ${event.code} ${event.reason}`));
+    if (!event.wasClean && rejectConnection) {
+      rejectConnection(new Error(`WebSocket closed: ${event.code} ${event.reason}`));
     }
   }
   
@@ -371,7 +379,9 @@ class OptimizedWebSocket {
       delay: this.reconnectDelay
     });
 
-    setTimeout(() => {
+    if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
+    this.reconnectTimer = setTimeout(() => {
+      this.reconnectTimer = null;
       // Double-check we're not already connecting before attempting reconnection
       if (this.readyState !== WebSocket.CONNECTING) {
         this.log('info', 'Attempting reconnection', { attempt: this.reconnectAttempts });
@@ -389,12 +399,24 @@ class OptimizedWebSocket {
   
   // Set connection timeout
   _setConnectionTimeout() {
-    setTimeout(() => {
+    this._clearConnectionTimeout();
+    this.connectionTimeoutTimer = setTimeout(() => {
+      this.connectionTimeoutTimer = null;
       if (this.readyState === WebSocket.CONNECTING) {
         this.log('error', 'Connection timeout');
         this._handleConnectionFailure(new Error('Connection timeout'));
+        if (this.ws && this.ws.readyState === WebSocket.CONNECTING) {
+          this.ws.close();
+        }
       }
     }, this.options.connectionTimeout);
+  }
+
+  _clearConnectionTimeout() {
+    if (this.connectionTimeoutTimer) {
+      clearTimeout(this.connectionTimeoutTimer);
+      this.connectionTimeoutTimer = null;
+    }
   }
   
   // Start heartbeat
@@ -436,7 +458,7 @@ class OptimizedWebSocket {
         timeSinceLastMessage,
         heartbeatInterval: this.options.heartbeatInterval 
       });
-      this.close();
+      this.close(4000, 'Heartbeat timeout');
       return;
     }
     
@@ -452,9 +474,11 @@ class OptimizedWebSocket {
 
     // Set ping timeout - increased to 45 seconds to prevent premature disconnection
     // With 15s heartbeat interval, 45s gives us 3x buffer
+    if (this.pingTimeout) clearTimeout(this.pingTimeout);
     this.pingTimeout = setTimeout(() => {
+      this.pingTimeout = null;
       this.log('warn', 'Ping timeout, closing connection');
-      this.close();
+      this.close(4000, 'Heartbeat timeout');
     }, 45000);
   }
   
@@ -555,6 +579,11 @@ class OptimizedWebSocket {
     this.log('info', 'Closing WebSocket', { code, reason });
     
     this._stopHeartbeat();
+    this._clearConnectionTimeout();
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
     
     if (this.ws) {
       this.ws.close(code, reason);
@@ -633,6 +662,13 @@ class OptimizedWebSocket {
     this.log('info', 'Destroying WebSocket connection');
     
     this.close();
+    if (this.ws) {
+      this.ws.onopen = null;
+      this.ws.onmessage = null;
+      this.ws.onclose = null;
+      this.ws.onerror = null;
+      this.ws = null;
+    }
     this.eventHandlers = {};
     this.messageQueue = [];
     this.connectionPromise = null;

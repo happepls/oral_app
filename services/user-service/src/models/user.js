@@ -1083,10 +1083,10 @@ User.deleteTaskKeywords = async (taskId) => {
 User.generateTaskKeywords = async (taskDescription, scenarioTitle, targetLanguage = 'English') => {
   console.log(`Generating keywords for task: ${taskDescription}, scenario: ${scenarioTitle}`);
   try {
-    const apiKey = process.env.QWEN3_OMNI_API_KEY;
+    const apiKey = process.env.DASHSCOPE_API_KEY || process.env.QWEN3_OMNI_API_KEY;
     console.log(`API Key present: ${!!apiKey}`);
     if (!apiKey) {
-      console.warn('QWEN3_OMNI_API_KEY not set, using fallback keywords');
+      console.warn('Qwen API key not set, using fallback keywords');
       return User._getFallbackKeywords(taskDescription, scenarioTitle);
     }
 
@@ -1104,8 +1104,9 @@ The keywords should be:
 - Appropriate for the task context
 - Easy to remember and use in conversation`;
 
+    const textBaseUrl = (process.env.QWEN_TEXT_BASE_URL || 'https://dashscope.aliyuncs.com/compatible-mode/v1').replace(/\/$/, '');
     const response = await fetch(
-      'https://dashscope.aliyuncs.com/api/v1/services/aigc/text-generation/generation',
+      `${textBaseUrl}/chat/completions`,
       {
         method: 'POST',
         headers: {
@@ -1113,10 +1114,10 @@ The keywords should be:
           'Content-Type': 'application/json'
         },
         body: JSON.stringify({
-          model: 'qwen-turbo',
-          input: {
-            messages: [{ role: 'user', content: prompt }]
-          }
+          model: process.env.QWEN_TEXT_MODEL || 'qwen3.7-flash',
+          messages: [{ role: 'user', content: prompt }],
+          stream: false,
+          enable_thinking: false
         })
       }
     );
@@ -1124,8 +1125,7 @@ The keywords should be:
 
     if (response.status === 200) {
       const result = await response.json();
-      // Qwen API returns text in output.text, not output.choices[0].message.content
-      const content = result.output?.text || result.output?.choices?.[0]?.message?.content || '[]';
+      const content = result.choices?.[0]?.message?.content || '[]';
       console.log(`AI API response content: ${content.substring(0, 200)}`);
       
       // Extract JSON array from response

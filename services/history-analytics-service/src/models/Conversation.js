@@ -12,6 +12,9 @@ const MessageSchema = new mongoose.Schema({
   role: { type: String, enum: ['user', 'assistant', 'system'], required: true },
   content: { type: String, default: '' },
   audioUrl: { type: String },
+  scenario: { type: String },
+  task_id: { type: String },
+  turn_id: { type: String },
   timestamp: { type: Date, default: Date.now }
 });
 
