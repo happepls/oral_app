@@ -109,6 +109,7 @@ export function reconcileUserTranscript(messages, { text, messageId, currentMess
       content,
       isFinal: true,
       ...(stableId ? { historyId: stableId } : {}),
+      ...(stableId ? { turn_id: stableId } : {}),
     };
     return next;
   }
@@ -126,6 +127,7 @@ export function reconcileUserTranscript(messages, { text, messageId, currentMess
     isFinal: true,
     ...(currentMessageId ? { id: currentMessageId } : {}),
     ...(stableId ? { historyId: stableId } : {}),
+    ...(stableId ? { turn_id: stableId } : {}),
   });
   return next;
 }
@@ -146,6 +148,9 @@ export function prepareHistorySnapshot(messages) {
         role,
         content: message.content,
         audioUrl: message.audioUrl || null,
+        ...(message.scenario ? { scenario: message.scenario } : {}),
+        ...(message.task_id != null ? { task_id: String(message.task_id) } : {}),
+        ...(message.turn_id ? { turn_id: message.turn_id } : {}),
       };
     });
 }

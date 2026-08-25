@@ -13,7 +13,25 @@ function normalizeMessage(sessionId, msg) {
     .createHash('sha256')
     .update(`${sessionId}\0${msg.role}\0${content}\0${msg.audioUrl || ''}\0${msg.timestamp || ''}`)
     .digest('hex');
-  return { id, role: msg.role, content, ...(audioUrl ? { audioUrl } : {}), timestamp: safeTimestamp };
+  const scenario = typeof msg.scenario === 'string' && msg.scenario.trim()
+    ? msg.scenario.trim().slice(0, 256)
+    : undefined;
+  const taskId = msg.task_id != null && String(msg.task_id).trim()
+    ? String(msg.task_id).trim().slice(0, 128)
+    : undefined;
+  const turnId = typeof msg.turn_id === 'string' && msg.turn_id.trim()
+    ? msg.turn_id.trim().slice(0, 128)
+    : undefined;
+  return {
+    id,
+    role: msg.role,
+    content,
+    ...(audioUrl ? { audioUrl } : {}),
+    ...(scenario ? { scenario } : {}),
+    ...(taskId ? { task_id: taskId } : {}),
+    ...(turnId ? { turn_id: turnId } : {}),
+    timestamp: safeTimestamp,
+  };
 }
 
 function normalizedContent(value) {
@@ -73,6 +91,9 @@ function mergeMessages(conversation, messages) {
       existing.content = incoming.content;
       existing.timestamp = incoming.timestamp;
       if (incoming.audioUrl) existing.audioUrl = incoming.audioUrl;
+      if (incoming.scenario) existing.scenario = incoming.scenario;
+      if (incoming.task_id) existing.task_id = incoming.task_id;
+      if (incoming.turn_id) existing.turn_id = incoming.turn_id;
     } else {
       conversation.messages.push(incoming);
     }

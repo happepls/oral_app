@@ -288,7 +288,8 @@ services:
       - REDIS_HOST=redis
       - REDIS_PORT=6379
       - REDIS_DB=0
-      - BATCH_EVAL_MODEL=qwen-turbo
+      - BATCH_EVAL_MODEL=qwen3.7-flash
+      - QWEN_TEXT_MODEL=qwen3.7-flash
       - INTERNAL_AUTH_SECRET=${INTERNAL_AUTH_SECRET:?Set INTERNAL_AUTH_SECRET in the root .env}
     env_file:
       - ./.env

@@ -1,7 +1,7 @@
 """
 Workflow: Batch Evaluation Agent (批量评估 Agent)
 
-Accumulates 4 conversation turns, then calls qwen-turbo LLM to perform
+Accumulates 4 conversation turns, then calls the configured Qwen text model to perform
 a holistic evaluation. Outputs:
 - delta: proficiency score delta (0 | 1 | 2)
 - teaching_mode: "guide" | "correct"
@@ -21,15 +21,9 @@ import re
 import json
 import logging
 from typing import Dict, List, Any, Optional
+from urllib.parse import urlparse
 
-try:
-    import dashscope
-    from dashscope import Generation
-    _DASHSCOPE_AVAILABLE = True
-except ImportError:
-    dashscope = None
-    Generation = None
-    _DASHSCOPE_AVAILABLE = False
+import httpx
 
 from workflows.proficiency_scoring import ProficiencyScoringWorkflow
 
@@ -52,19 +46,30 @@ class BatchEvaluationWorkflow:
     """
     批量评估工作流
     - 窗口大小默认 4 轮
-    - 调用 qwen-turbo 做综合打分 + 教学策略决策
+    - 调用配置的 Qwen 文本模型做综合打分 + 教学策略决策
     - LLM 失败时降级到规则打分
     - delta > 0 时复用 ProficiencyScoringWorkflow._update_user_proficiency 写库
     """
 
     def __init__(self):
         self.proficiency_workflow = ProficiencyScoringWorkflow()
-        # Generation.call targets the public DashScope gateway. A MaaS workspace
-        # credential must never be used as a fallback for this request.
-        self._api_key = os.getenv("QWEN3_OMNI_API_KEY")
-        if _DASHSCOPE_AVAILABLE and self._api_key:
-            dashscope.api_key = self._api_key
-        self._model = os.getenv("BATCH_EVAL_MODEL", "qwen-turbo")
+        self._model = os.getenv(
+            "BATCH_EVAL_MODEL",
+            os.getenv("QWEN_TEXT_MODEL", "qwen3.7-flash"),
+        )
+        self._base_url = os.getenv(
+            "QWEN_TEXT_BASE_URL",
+            "https://dashscope.aliyuncs.com/compatible-mode/v1",
+        ).rstrip("/")
+        self._chat_completions_url = self._validated_chat_completions_url(
+            self._base_url
+        )
+        hostname = (urlparse(self._base_url).hostname or "").lower().rstrip(".")
+        self._api_key = os.getenv(
+            "DASHSCOPE_API_KEY"
+            if hostname.endswith(".maas.aliyuncs.com")
+            else "QWEN3_OMNI_API_KEY"
+        )
 
     async def evaluate_window(
         self,
@@ -172,11 +177,9 @@ class BatchEvaluationWorkflow:
         native_language: str,
         target_language: str,
     ) -> Dict[str, Any]:
-        """Call dashscope qwen-turbo with batch-evaluation prompt."""
-        if not _DASHSCOPE_AVAILABLE:
-            raise RuntimeError("dashscope SDK not available")
+        """Call Qwen through the OpenAI-compatible Chat Completions API."""
         if not self._api_key:
-            raise RuntimeError("QWEN3_OMNI_API_KEY not configured")
+            raise RuntimeError("DashScope API key not configured for QWEN_TEXT_BASE_URL")
 
         prompt = self._build_prompt(
             turn_window=turn_window,
@@ -185,27 +188,9 @@ class BatchEvaluationWorkflow:
             target_language=target_language,
         )
 
-        # dashscope Generation.call is sync — wrap in executor to not block loop
-        import asyncio
-        loop = asyncio.get_event_loop()
-        response = await loop.run_in_executor(
-            None,
-            lambda: Generation.call(
-                model=self._model,
-                messages=[{"role": "user", "content": prompt}],
-                result_format="message",
-                api_key=self._api_key,
-            ),
+        content = await self._post_chat_completion(
+            messages=[{"role": "user", "content": prompt}],
         )
-
-        if not response or not getattr(response, "output", None):
-            raise RuntimeError(f"Empty dashscope response: {response}")
-
-        # Parse message content
-        try:
-            content = response.output.choices[0].message.content
-        except (AttributeError, IndexError, KeyError) as e:
-            raise RuntimeError(f"Unexpected dashscope response shape: {e}") from e
 
         if isinstance(content, list):
             # Some qwen variants return list[{'text': ...}]
@@ -221,6 +206,58 @@ class BatchEvaluationWorkflow:
 
         parsed = json.loads(content)
         return self._validate_llm_result(parsed)
+
+    async def _post_chat_completion(self, *, messages: List[Dict[str, str]]) -> str:
+        """Send one non-streaming request without exposing credentials in logs."""
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.post(
+                self._chat_completions_url,
+                headers={
+                    "Authorization": f"Bearer {self._api_key}",
+                    "Content-Type": "application/json",
+                },
+                json={
+                    "model": self._model,
+                    "messages": messages,
+                    "stream": False,
+                    "enable_thinking": False,
+                    "response_format": {"type": "json_object"},
+                },
+            )
+            response.raise_for_status()
+            payload = response.json()
+
+        try:
+            return payload["choices"][0]["message"]["content"]
+        except (KeyError, IndexError, TypeError) as exc:
+            raise RuntimeError("Unexpected Chat Completions response shape") from exc
+
+    @staticmethod
+    def _validated_chat_completions_url(base_url: str) -> str:
+        """Allow only official DashScope HTTPS endpoints."""
+        parsed = urlparse(base_url)
+        hostname = (parsed.hostname or "").lower().rstrip(".")
+        if (
+            parsed.scheme != "https"
+            or parsed.username
+            or parsed.password
+            or parsed.query
+            or parsed.fragment
+            or not (
+                hostname in {
+                    "dashscope.aliyuncs.com",
+                    "dashscope-intl.aliyuncs.com",
+                    "dashscope-us.aliyuncs.com",
+                }
+                or hostname.endswith(".maas.aliyuncs.com")
+            )
+        ):
+            raise ValueError("QWEN_TEXT_BASE_URL must be an official DashScope HTTPS endpoint")
+
+        normalized_path = parsed.path.rstrip("/")
+        if not normalized_path.endswith("/compatible-mode/v1"):
+            raise ValueError("QWEN_TEXT_BASE_URL must end with /compatible-mode/v1")
+        return f"{base_url.rstrip('/')}/chat/completions"
 
     def _build_prompt(
         self,

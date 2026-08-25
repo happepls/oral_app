@@ -17,26 +17,12 @@ When the module lands, remove the skip guard and they should run clean.
 import json
 import os
 import sys
-import types
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 # --- Ensure src on path ---------------------------------------------------
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
-
-# --- Stub 'dashscope' so import of batch_evaluation does not blow up -----
-# dashscope is not installed in the host test env; the real container has it.
-if "dashscope" not in sys.modules:
-    _ds = types.ModuleType("dashscope")
-
-    class _Generation:
-        @staticmethod
-        def call(*args, **kwargs):
-            raise RuntimeError("stub: override with patch in tests")
-
-    _ds.Generation = _Generation
-    sys.modules["dashscope"] = _ds
 
 # --- Defensive import ----------------------------------------------------
 try:
@@ -177,13 +163,13 @@ class TestEvaluateWindowLLMExceptions:
     async def test_dashscope_raises_falls_back_to_rule_based(
         self, workflow, window_diverse, current_task
     ):
-        """When qwen-turbo throws, fallback path computes result locally."""
+        """When the configured model throws, fallback computes locally."""
         workflow._api_key = "fake-key-for-test"
         fallback_spy = MagicMock(wraps=workflow._rule_based_fallback)
         db = AsyncMock()
 
-        with patch("workflows.batch_evaluation.Generation.call",
-                   side_effect=RuntimeError("boom")), \
+        with patch.object(workflow, "_post_chat_completion",
+                          new=AsyncMock(side_effect=RuntimeError("boom"))), \
              patch.object(workflow, "_rule_based_fallback", fallback_spy), \
              patch.object(workflow, "_update_user_proficiency", new=AsyncMock(return_value={})):
             result = await workflow.evaluate_window(
@@ -200,10 +186,9 @@ class TestEvaluateWindowLLMExceptions:
 
     @pytest.mark.asyncio
     async def test_dashscope_timeout_falls_back(self, workflow, window_diverse, current_task):
-        import socket
         workflow._api_key = "fake-key-for-test"
-        with patch("workflows.batch_evaluation.Generation.call",
-                   side_effect=socket.timeout("slow")), \
+        with patch.object(workflow, "_post_chat_completion",
+                          new=AsyncMock(side_effect=TimeoutError("slow"))), \
              patch.object(workflow, "_update_user_proficiency", new=AsyncMock(return_value={})):
             result = await workflow.evaluate_window(
                 user_id="u1",
@@ -236,20 +221,6 @@ class TestEvaluateWindowLLMExceptions:
 # =========================================================================
 
 
-def _fake_dashscope_response(payload: str):
-    """Mimic dashscope.Generation.call() return shape."""
-    resp = MagicMock()
-    resp.status_code = 200
-    # dashscope returns output.choices[0].message.content OR output.text depending on ver
-    resp.output = MagicMock()
-    resp.output.text = payload
-    choice = MagicMock()
-    choice.message = MagicMock()
-    choice.message.content = payload
-    resp.output.choices = [choice]
-    return resp
-
-
 class TestJSONParseTolerance:
     @pytest.mark.asyncio
     async def test_markdown_wrapped_json_parses(self, workflow, window_diverse, current_task):
@@ -275,8 +246,8 @@ class TestJSONParseTolerance:
         wrapped = f"```json\n{json.dumps(body, ensure_ascii=False)}\n```"
 
         workflow._api_key = "fake-key-for-test"
-        with patch("workflows.batch_evaluation.Generation.call",
-                   return_value=_fake_dashscope_response(wrapped)), \
+        with patch.object(workflow, "_post_chat_completion",
+                          new=AsyncMock(return_value=wrapped)), \
              patch.object(workflow, "_update_user_proficiency",
                           new=AsyncMock(return_value={"task_completed": False})):
             result = await workflow.evaluate_window(
@@ -306,8 +277,8 @@ class TestJSONParseTolerance:
                                         "missed": ["available"], "coverage_ratio": 0.75},
         }
         workflow._api_key = "fake-key-for-test"
-        with patch("workflows.batch_evaluation.Generation.call",
-                   return_value=_fake_dashscope_response(json.dumps(body))), \
+        with patch.object(workflow, "_post_chat_completion",
+                          new=AsyncMock(return_value=json.dumps(body))), \
              patch.object(workflow, "_update_user_proficiency",
                           new=AsyncMock(return_value={})):
             result = await workflow.evaluate_window(
@@ -321,8 +292,8 @@ class TestJSONParseTolerance:
     @pytest.mark.asyncio
     async def test_malformed_json_falls_back(self, workflow, window_diverse, current_task):
         workflow._api_key = "fake-key-for-test"
-        with patch("workflows.batch_evaluation.Generation.call",
-                   return_value=_fake_dashscope_response("not-json-at-all {{{")), \
+        with patch.object(workflow, "_post_chat_completion",
+                          new=AsyncMock(return_value="not-json-at-all {{{")), \
              patch.object(workflow, "_update_user_proficiency",
                           new=AsyncMock(return_value={})):
             result = await workflow.evaluate_window(
@@ -336,7 +307,61 @@ class TestJSONParseTolerance:
 
 
 # =========================================================================
-# 4. delta=0 → no DB update
+# 4. OpenAI-compatible transport contract
+# =========================================================================
+
+
+class TestChatCompletionsTransport:
+    def test_accepts_official_workspace_endpoint(self):
+        url = BatchEvaluationWorkflow._validated_chat_completions_url(
+            "https://llm-example.cn-beijing.maas.aliyuncs.com/compatible-mode/v1"
+        )
+        assert url.endswith("/compatible-mode/v1/chat/completions")
+
+    @pytest.mark.parametrize(
+        "base_url",
+        [
+            "http://dashscope.aliyuncs.com/compatible-mode/v1",
+            "https://example.com/compatible-mode/v1",
+            "https://dashscope.aliyuncs.com/api/v1",
+            "https://user@example.maas.aliyuncs.com/compatible-mode/v1",
+        ],
+    )
+    def test_rejects_unapproved_or_malformed_endpoint(self, base_url):
+        with pytest.raises(ValueError):
+            BatchEvaluationWorkflow._validated_chat_completions_url(base_url)
+
+    @pytest.mark.asyncio
+    async def test_non_streaming_json_request_uses_selected_model(self, workflow):
+        workflow._api_key = "fake-key-for-test"
+        workflow._model = "qwen3.7-flash"
+        response = MagicMock()
+        response.raise_for_status.return_value = None
+        response.json.return_value = {
+            "choices": [{"message": {"content": '{"delta": 0}'}}]
+        }
+        client = AsyncMock()
+        client.post.return_value = response
+        context = MagicMock()
+        context.__aenter__ = AsyncMock(return_value=client)
+        context.__aexit__ = AsyncMock(return_value=None)
+
+        with patch("workflows.batch_evaluation.httpx.AsyncClient", return_value=context):
+            content = await workflow._post_chat_completion(
+                messages=[{"role": "user", "content": "evaluate"}]
+            )
+
+        assert content == '{"delta": 0}'
+        request = client.post.await_args.kwargs
+        assert request["json"]["model"] == "qwen3.7-flash"
+        assert request["json"]["stream"] is False
+        assert request["json"]["enable_thinking"] is False
+        assert request["json"]["response_format"] == {"type": "json_object"}
+        assert request["headers"]["Authorization"] == "Bearer fake-key-for-test"
+
+
+# =========================================================================
+# 5. delta=0 → no DB update
 # =========================================================================
 
 
@@ -349,8 +374,8 @@ class TestDBUpdateGate:
         workflow._api_key = "fake-key-for-test"
 
         # Force fallback path (no LLM) by raising
-        with patch("workflows.batch_evaluation.Generation.call",
-                   side_effect=RuntimeError("skip-llm")), \
+        with patch.object(workflow, "_post_chat_completion",
+                          new=AsyncMock(side_effect=RuntimeError("skip-llm"))), \
              patch.object(workflow, "_update_user_proficiency", new=update_spy):
             result = await workflow.evaluate_window(
                 user_id="u1", goal_id=5, current_task=current_task,
@@ -379,8 +404,8 @@ class TestDBUpdateGate:
         update_spy = AsyncMock(return_value={"task_completed": False, "total_proficiency": 7})
         workflow._api_key = "fake-key-for-test"
 
-        with patch("workflows.batch_evaluation.Generation.call",
-                   return_value=_fake_dashscope_response(json.dumps(body))), \
+        with patch.object(workflow, "_post_chat_completion",
+                          new=AsyncMock(return_value=json.dumps(body))), \
              patch.object(workflow, "_update_user_proficiency", new=update_spy):
             await workflow.evaluate_window(
                 user_id="u1", goal_id=5, current_task=current_task,

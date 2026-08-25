@@ -4,6 +4,7 @@ const url = require('url');
 const http = require('http');
 
 const sessions = new Map();
+const activeConnections = new Map();
 
 const server = http.createServer((req, res) => {
   const parsedUrl = url.parse(req.url, true);
@@ -103,6 +104,20 @@ wss.on('connection', async function connection(clientWs, req) {
       return;
     }
 
+    const connectionKey = `${userId}:${sessionId}`;
+    const previousConnection = activeConnections.get(connectionKey);
+    if (previousConnection && previousConnection !== clientWs) {
+      console.log(`[TAKEOVER] Replacing prior connection user=${userId} session=${sessionId}`);
+      try {
+        if (previousConnection.readyState === WebSocket.OPEN || previousConnection.readyState === WebSocket.CONNECTING) {
+          previousConnection.close(4001, 'Session connection replaced');
+        }
+      } catch (error) {
+        console.error(`[TAKEOVER] Failed to close prior connection: ${error.message}`);
+      }
+    }
+    activeConnections.set(connectionKey, clientWs);
+
     sessions.set(sessionId, {
       userId,
       status: 'active',
@@ -163,6 +178,23 @@ wss.on('connection', async function connection(clientWs, req) {
     };
 
     clientWs.on('message', (message, isBinary) => {
+      if (!isBinary) {
+        try {
+          const heartbeat = JSON.parse(message.toString());
+          if (heartbeat.type === 'ping') {
+            if (clientWs.readyState === WebSocket.OPEN) {
+              clientWs.send(JSON.stringify({
+                type: 'pong',
+                timestamp: heartbeat.timestamp,
+                sequence: heartbeat.sequence,
+              }));
+            }
+            return;
+          }
+        } catch (_) {
+          // Non-JSON text is forwarded to the AI bridge below.
+        }
+      }
       if (bridgeReady && aiServiceWs && aiServiceWs.readyState === WebSocket.OPEN) {
         forwardToAI(message, isBinary);
       } else {
@@ -311,15 +343,8 @@ wss.on('connection', async function connection(clientWs, req) {
       // Remove duplicate error handler - already handled above
       // aiServiceWs.on('error', ...) is already registered
 
-      // Add ping/pong mechanism to keep connection alive
-      aiServiceWs.on('ping', () => {
-        console.log(`Ping received from AI service for user ${userId}`);
-        aiServiceWs.pong();
-      });
-
-      aiServiceWs.on('pong', () => {
-        console.log(`Pong sent to AI service for user ${userId}`);
-      });
+      // `ws` automatically replies to protocol-level ping frames. Do not send
+      // a second manual pong here; application heartbeat is owned by the browser.
 
     } catch (error) {
       console.error('Failed to connect to AI service:', error.message);
@@ -331,7 +356,10 @@ wss.on('connection', async function connection(clientWs, req) {
 
     clientWs.on('close', () => {
       console.log(`Client connection closed for user ${userId}.`);
-      sessions.delete(sessionId);
+      if (activeConnections.get(connectionKey) === clientWs) {
+        activeConnections.delete(connectionKey);
+        sessions.delete(sessionId);
+      }
       if (aiServiceWs) {
         try {
           if (aiServiceWs.readyState === WebSocket.OPEN || aiServiceWs.readyState === WebSocket.CONNECTING) {

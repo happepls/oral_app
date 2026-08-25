@@ -166,7 +166,7 @@ app.use('/api/ai/generate-scenarios',
 {"scenarios":[{"title":"场景标题","tasks":["子任务1","子任务2","子任务3"]}]}`;
 
       const response = await dashscope.chat.completions.create({
-        model: 'qwen-turbo',
+        model: process.env.QWEN_TEXT_MODEL || 'qwen3.7-flash',
         messages: [{ role: 'user', content: prompt }],
         max_tokens: 2048,
         response_format: { type: 'json_object' }

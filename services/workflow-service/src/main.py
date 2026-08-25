@@ -23,6 +23,7 @@ from workflows.proficiency_scoring import proficiency_scoring_workflow
 from workflows.scenario_review import scenario_review_workflow
 from workflows.goal_planning import goal_planning_workflow
 from workflows.batch_evaluation import batch_evaluation_workflow
+from workflows.turn_evaluation import turn_evaluation_workflow
 from cache import cache, get_user_language_with_cache
 
 
@@ -200,6 +201,19 @@ class BatchEvaluateRequest(BaseModel):
     window_size: int = 4
 
 
+class TurnEvaluateRequest(BaseModel):
+    user_id: str
+    goal_id: int
+    task_id: int
+    current_task: Dict[str, Any]
+    user_content: str
+    ai_response: str
+    score: int = 0
+    interaction_count: int = 0
+    turn_id: str
+    native_language: str = "English"
+
+
 # ============== API Endpoints ==============
 
 @app.get("/health")
@@ -266,7 +280,7 @@ async def batch_evaluate_proficiency(
 ):
     """
     Workflow: Batch Evaluation — analyze a window of N turns (default 4)
-    with qwen-turbo LLM and update proficiency when delta > 0.
+    with the configured Qwen text model and update proficiency when delta > 0.
     Falls back to rule-based scoring on LLM failure.
 
     Design: docs/batch-evaluation-agent-design.md
@@ -293,6 +307,43 @@ async def batch_evaluate_proficiency(
     except Exception as e:
         logger.error(f"[BATCH_EVAL] Error: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/workflows/proficiency-scoring/turn-evaluate")
+async def turn_evaluate_proficiency(
+    request: TurnEvaluateRequest,
+    conn = Depends(get_db_connection),
+):
+    """Evaluate and idempotently persist exactly one completed user/AI turn."""
+    try:
+        logger.info(
+            "[TURN_EVAL] model=%s user=%s goal=%s task=%s turn=%s",
+            turn_evaluation_workflow._model_client._model,
+            request.user_id,
+            request.goal_id,
+            request.task_id,
+            request.turn_id[:16],
+        )
+        result = await turn_evaluation_workflow.evaluate_turn(
+            user_id=request.user_id,
+            goal_id=request.goal_id,
+            task_id=request.task_id,
+            user_content=request.user_content,
+            ai_response=request.ai_response,
+            current_task=request.current_task,
+            native_language=request.native_language,
+            turn_id=request.turn_id,
+            db_connection=conn,
+            redis_client=cache.client if cache.is_connected() else None,
+        )
+        return {"success": True, "data": result}
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+    except Exception as exc:
+        logger.error("[TURN_EVAL] failed: %s", type(exc).__name__, exc_info=True)
+        raise HTTPException(status_code=500, detail="turn evaluation failed")
 
 
 @app.post("/api/workflows/scenario-review/generate")

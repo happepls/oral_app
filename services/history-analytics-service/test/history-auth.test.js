@@ -86,6 +86,9 @@ test('history message writes are idempotent by stable id and can patch audioUrl'
           role: 'assistant',
           content: 'hello',
           audioUrl: 'https://example.test/audio.mp3',
+          scenario: 'Coffee Shop',
+          task_id: 42,
+          turn_id: 'turn-42',
           timestamp: '2026-01-01T00:00:00.000Z',
         }],
       },
@@ -93,6 +96,9 @@ test('history message writes are idempotent by stable id and can patch audioUrl'
     assert.equal(res.statusCode, 201);
     assert.equal(conversation.messages.length, 1);
     assert.equal(conversation.messages[0].audioUrl, 'https://example.test/audio.mp3');
+    assert.equal(conversation.messages[0].scenario, 'Coffee Shop');
+    assert.equal(conversation.messages[0].task_id, '42');
+    assert.equal(conversation.messages[0].turn_id, 'turn-42');
   } finally {
     Conversation.findOne = original;
   }

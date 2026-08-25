@@ -1412,22 +1412,28 @@ Target Language: {target_language}
 
 Return ONLY a JSON array of {target_language} keywords/phrases: ["keyword1", "keyword2", ...]"""
 
-            api_key = os.getenv("QWEN3_OMNI_API_KEY")
+            text_base_url = os.getenv(
+                "QWEN_TEXT_BASE_URL",
+                "https://dashscope.aliyuncs.com/compatible-mode/v1",
+            ).rstrip("/")
+            api_key = os.getenv("DASHSCOPE_API_KEY") or os.getenv("QWEN3_OMNI_API_KEY")
             if api_key:
                 headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
                 payload = {
-                    "model": "qwen-turbo",
-                    "input": {"messages": [{"role": "user", "content": prompt}]}
+                    "model": os.getenv("QWEN_TEXT_MODEL", "qwen3.7-flash"),
+                    "messages": [{"role": "user", "content": prompt}],
+                    "stream": False,
+                    "enable_thinking": False,
                 }
 
                 response = httpx.post(
-                    "https://dashscope.aliyuncs.com/api/v1/services/aigc/text-generation/generation",
+                    f"{text_base_url}/chat/completions",
                     headers=headers, json=payload, timeout=30.0
                 )
 
                 if response.status_code == 200:
                     result = response.json()
-                    content = result.get("output", {}).get("choices", [{}])[0].get("message", {}).get("content", "[]")
+                    content = result.get("choices", [{}])[0].get("message", {}).get("content", "[]")
                     import json
                     json_match = re.search(r'\[.*\]', content, re.DOTALL)
                     if json_match:

@@ -15,13 +15,13 @@ def test_ai_omni_call_sites_use_resolved_endpoint_credentials():
         assert f"DASHSCOPE_CONFIG.{credential}" in source
 
 
-def test_workflow_public_calls_never_fall_back_to_maas_key():
+def test_workflow_text_calls_support_the_configured_workspace_key():
     workflows = ROOT / "services/workflow-service/src/workflows"
     files = ("batch_evaluation.py", "scenario_review.py", "proficiency_scoring.py")
     for filename in files:
         source = (workflows / filename).read_text()
-        assert 'os.getenv("DASHSCOPE_API_KEY")' not in source
-        assert 'os.getenv("QWEN3_OMNI_API_KEY")' in source
+        assert "QWEN_TEXT_MODEL" in source
+        assert "QWEN3_OMNI_API_KEY" in source or "DASHSCOPE_API_KEY" in source
 
 
 def test_realtime_connect_retries_async_and_never_forwards_raw_errors():

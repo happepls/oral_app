@@ -2,7 +2,7 @@
 Tests for Daily QA feature (Feature 2 — 今日问答)
 
 Scope:
-- _generate_daily_question_pool(): qwen-turbo happy path + fallback to hardcoded pool
+- _generate_daily_question_pool(): configured Qwen model happy path + fallback
 - Redis key lifecycle: first /daily-question → generate + write; second call → cache hit
 - [DAILY_QA_PASSED] marker detection in AI reply → Redis write + WebSocket push
 
@@ -577,6 +577,9 @@ class TestSceneProgressWithoutMedia:
             "task_description": "询问菜单上的菜品名称和价格。",
             "scenario_title": "在餐厅点餐",
             "target_language": "Japanese",
+            "score": 0,
+            "interaction_count": 0,
+            "keywords": [],
         }
 
     @pytest.mark.asyncio
