@@ -4,6 +4,7 @@ import os
 import json
 import base64
 import asyncio
+import hashlib
 import logging
 import httpx
 import time
@@ -514,6 +515,13 @@ async def _handle_turn_with_accumulator(
         or callback.current_turn_id
         or uuid.uuid4()
     )
+    raw_turn_timestamp = str(latest_user_message.get("timestamp") or "")
+    try:
+        turn_order = int(datetime.fromisoformat(
+            raw_turn_timestamp.replace("Z", "+00:00")
+        ).timestamp() * 1_000_000)
+    except (TypeError, ValueError):
+        turn_order = time.time_ns() // 1000
     if turn_id in callback.processed_turn_ids or turn_id in callback.turn_evaluations_inflight:
         logger.info("[TURN_EVAL] duplicate local event ignored turn=%s", turn_id[:16])
         return None
@@ -532,6 +540,7 @@ async def _handle_turn_with_accumulator(
         "score": current_score,
         "interaction_count": interaction_count,
         "turn_id": turn_id,
+        "turn_order": turn_order,
     }
     try:
         async with httpx.AsyncClient(timeout=30.0) as client:
@@ -564,6 +573,7 @@ async def _handle_turn_with_accumulator(
 
     delta = int(result.get("delta", 0) or 0)
     task_completed = bool(result.get("task_completed", False))
+    task_ready_to_complete = bool(result.get("task_ready_to_complete", False))
     score = int(result.get("score", current_score) or 0)
     count = int(result.get("interaction_count", interaction_count) or 0)
     reason = result.get("reason", "") or ""
@@ -586,6 +596,8 @@ async def _handle_turn_with_accumulator(
             "fallback_used": bool(result.get("fallback_used")),
             "turn_id": turn_id,
             "task_completed": task_completed,
+            "task_ready_to_complete": task_ready_to_complete,
+            "ready_token": result.get("ready_token"),
         },
     })
     if task_completed:
@@ -623,7 +635,8 @@ async def _handle_turn_with_accumulator(
         "proficiency_delta": delta,
         "total_proficiency": total,
         "task_completed": task_completed,
-        "task_ready_to_complete": False,
+        "task_ready_to_complete": task_ready_to_complete,
+        "ready_token": result.get("ready_token"),
         "task_score": score,
         "interaction_count": count,
         "improvement_tips": [reason] if reason else [],
@@ -725,6 +738,7 @@ async def _evaluate_scene_turn_progress(
                 "scenario_title": scenario_title,
                 "score": result.get("task_score", 0),
                 "message": result.get("message", "You have mastered this task!"),
+                "ready_token": result.get("ready_token"),
             },
         })
     return result
@@ -869,6 +883,7 @@ def is_magic_passcode_transcript(text: str) -> bool:
     """Only an exact trusted ASR transcript may activate the task-completion command."""
     return re.sub(r"[\s,，.。!！?？;；:：]+", "", text or "") == "急急如律令"
 _DAILY_TURN_TTL_SECONDS = 48 * 3600  # 容忍跨日，与 daily_qa 一致
+_DAILY_TURN_DEDUPE_TTL_SECONDS = 72 * 3600
 
 def _daily_turn_key(user_id: str) -> str:
     return f"daily_turns:{user_id}:{_today_utc_str()}"
@@ -897,6 +912,34 @@ async def _incr_daily_turns(rc, user_id: str) -> int:
         logger.warning(f"[DailyLimit] _incr_daily_turns failed: {e}")
         return 0
 
+async def _incr_daily_turn_once(rc, user_id: str, turn_id: str):
+    """Atomically dedupe and count a completed real turn across reconnects."""
+    if rc is None or not user_id or not turn_id:
+        return None
+    marker = hashlib.sha256(f"{user_id}\0{turn_id}".encode("utf-8")).hexdigest()
+    marker_key = f"daily_turn_seen:v1:{marker}"
+    counter_key = _daily_turn_key(user_id)
+    script = """
+    if redis.call('SET', KEYS[1], '1', 'NX', 'EX', ARGV[1]) then
+      local count = redis.call('INCR', KEYS[2])
+      redis.call('EXPIRE', KEYS[2], ARGV[2])
+      return count
+    end
+    return tonumber(redis.call('GET', KEYS[2]) or '0')
+    """
+    try:
+        return int(await rc.eval(
+            script,
+            2,
+            marker_key,
+            counter_key,
+            _DAILY_TURN_DEDUPE_TTL_SECONDS,
+            _DAILY_TURN_TTL_SECONDS,
+        ))
+    except Exception as e:
+        logger.warning("[DailyLimit] atomic turn increment failed: %s", type(e).__name__)
+        return None
+
 def _daily_turn_limit(user_ctx: dict) -> int:
     status = (user_ctx or {}).get("subscription_status")
     return PRO_DAILY_TURNS if status == "active" else FREE_DAILY_TURNS
@@ -907,6 +950,16 @@ async def _check_daily_limit(rc, user_id: str, user_ctx: dict):
     used = await _get_daily_turns(rc, user_id)
     tier = "pro" if (user_ctx or {}).get("subscription_status") == "active" else "free"
     return (used >= limit, {"tier": tier, "used": used, "limit": limit})
+
+
+def _is_quota_exempt_mode(callback) -> bool:
+    """Modes that must never consume a real scene-conversation turn."""
+    phase = session_phases.get(callback.phase_key, {}).get("phase")
+    return bool(
+        callback.is_daily_qa_mode
+        or callback.mode in ("daily_qa", "recall", "tour")
+        or phase == "magic_repetition"
+    )
 
 
 def _strip_daily_qa_marker(text: str) -> str:
@@ -1564,6 +1617,72 @@ async def _handle_daily_qa_marker(redis, user_id: str, websocket, ai_text: str) 
     return True
 
 
+async def _maybe_finalize_daily_qa_answer(callback, ai_text: str) -> bool:
+    """Evaluate one real Daily-QA answer independently of audio/COS delivery."""
+    if not callback.is_daily_qa_mode or callback.daily_qa_completed:
+        return False
+
+    turn_id = str(callback.current_turn_id or "")
+    if not turn_id or turn_id in callback.processed_daily_qa_turn_ids:
+        return False
+
+    latest_user_text = next(
+        (
+            (message.get("content") or "").strip()
+            for message in reversed(callback.messages)
+            if message.get("role") == "user" and (message.get("content") or "").strip()
+        ),
+        "",
+    )
+    if not latest_user_text:
+        return False
+
+    callback.processed_daily_qa_turn_ids.add(turn_id)
+    callback.daily_qa_ai_response_count += 1
+
+    # The historical threshold counted the welcome question as response one.
+    # Count only real answer turns in state, while preserving the intended
+    # requirement of two evaluated answers before the positive fallback passes.
+    marker_pass = bool(_DAILY_QA_PASSED_RE.search(ai_text or ""))
+    auto_pass = marker_pass or _check_auto_pass(
+        ai_text, callback.daily_qa_ai_response_count + 1
+    )
+    if auto_pass and _is_daily_qa_injection(latest_user_text):
+        logger.warning("[DAILY_QA] Auto-pass vetoed for injection-like answer")
+        auto_pass = False
+
+    target_language = (
+        (callback.user_context.get("active_goal") or {}).get("target_language")
+        or callback.user_context.get("target_language")
+        or "English"
+    )
+    if auto_pass and not _user_answer_matches_target(latest_user_text, target_language):
+        auto_pass = False
+        await callback._safe_send({
+            "type": "language_gate_warning",
+            "payload": {
+                "target_language": target_language,
+                "message": (
+                    f"请用 {target_language} 回答这道题才能算作完成。"
+                    f"试着把上一句换成 {target_language} 再说一遍。"
+                ),
+            },
+        })
+
+    if not auto_pass:
+        return False
+
+    callback.daily_qa_completed = True
+    await _finalize_daily_qa_pass(
+        _get_redis_client(),
+        callback.user_id,
+        callback.websocket,
+        ai_text,
+        is_bonus=callback.daily_qa_suppress_modal,
+    )
+    return True
+
+
 async def _advance_daily_qa_pool(redis, user_id: str, date_str: str, *,
                                  target_language: str, native_language: str,
                                  goal_type: str = "", interests: str = "",
@@ -2193,6 +2312,8 @@ class WebSocketCallback(OmniRealtimeCallback):
         self._skip_next_magic_pass = False  # Set True after task-switch trigger to avoid false detection
         self.last_ai_audio_url = None
         self.counts_against_quota = False  # 仅真用户练习输入触发的轮才计入每日额度
+        self.processed_quota_turn_ids = set()
+        self.quota_turns_inflight = set()
         self.welcome_sent = False
         self.welcome_muted = False  # Flag to suppress welcome message after retry
         self.session_ready = False
@@ -2212,8 +2333,17 @@ class WebSocketCallback(OmniRealtimeCallback):
         self.is_daily_qa_mode = False
         self.daily_qa_question = ""
         self.daily_qa_completed = False   # Set True after [DAILY_QA_PASSED] detected, suppresses retriggers
-        self.daily_qa_ai_response_count = 0  # Counts AI responses; auto-pass fallback after 2nd
+        self.daily_qa_ai_response_count = 0  # Counts evaluated real user answers only
+        self.processed_daily_qa_turn_ids = set()
         self.daily_qa_suppress_modal = False  # True when user already passed today; skip WS event
+        # Preserve upstream event order across awaits and gate PCM until a text
+        # frame for the same response has reached the browser.
+        self._event_lock = asyncio.Lock()
+        self._audio_gate_response_id = None
+        self._audio_gate_text_sent = False
+        self._pending_audio_frames = []
+        self._pending_audio_done = None
+        self._audio_gate_grace_task = None
         # Track DashScope server-side conversation items so we can delete them
         # on task switch (otherwise the AI keeps hearing prior-task transcripts).
         self.item_ids = []
@@ -2248,6 +2378,91 @@ class WebSocketCallback(OmniRealtimeCallback):
             await self.websocket.send_json(message)
         except (WebSocketDisconnect, Exception):
             pass  # Ignore errors if WebSocket is already closed
+
+    async def _flush_audio_gate(self, response_id, *, use_placeholder=False):
+        """Flush one response in strict text -> PCM -> done order."""
+        if response_id != self._audio_gate_response_id:
+            return
+        if not self._audio_gate_text_sent and use_placeholder:
+            await self._safe_send({
+                "type": "ai_turn_started",
+                "payload": {"responseId": response_id},
+            })
+            self._audio_gate_text_sent = True
+        if not self._audio_gate_text_sent:
+            return
+
+        grace_task = self._audio_gate_grace_task
+        if grace_task is not None and grace_task is not asyncio.current_task():
+            grace_task.cancel()
+        self._audio_gate_grace_task = None
+
+        pending_frames, self._pending_audio_frames = self._pending_audio_frames, []
+        for frame in pending_frames:
+            await self._safe_send(frame)
+        if self._pending_audio_done is not None:
+            done_frame, self._pending_audio_done = self._pending_audio_done, None
+            await self._safe_send(done_frame)
+
+    def _schedule_audio_gate_grace(self, response_id, delay_seconds=0.35):
+        """Release a completed short audio response if transcript events stall."""
+        if self._audio_gate_grace_task is not None:
+            self._audio_gate_grace_task.cancel()
+
+        async def release_after_grace():
+            try:
+                await asyncio.sleep(delay_seconds)
+                async with self._event_lock:
+                    if (
+                        response_id == self._audio_gate_response_id
+                        and not self._audio_gate_text_sent
+                        and self._pending_audio_done is not None
+                    ):
+                        logger.warning(
+                            "[AudioGate] transcript missing after audio.done; releasing response=%s",
+                            str(response_id)[:24],
+                        )
+                        await self._flush_audio_gate(response_id, use_placeholder=True)
+            except asyncio.CancelledError:
+                pass
+
+        self._audio_gate_grace_task = asyncio.create_task(release_after_grace())
+
+    def _schedule_real_turn_count(self):
+        """Count one successful real turn once, independent of audio/COS."""
+        turn_id = str(self.current_turn_id or "")
+        if (
+            not self.counts_against_quota
+            or not turn_id
+            or turn_id in self.processed_quota_turn_ids
+            or turn_id in self.quota_turns_inflight
+        ):
+            return
+        self.quota_turns_inflight.add(turn_id)
+
+        async def count_turn():
+            try:
+                count = None
+                for attempt, delay in enumerate((0, 0.2, 0.5), start=1):
+                    if delay:
+                        await asyncio.sleep(delay)
+                    count = await _incr_daily_turn_once(
+                        _get_redis_client(), self.user_id, turn_id
+                    )
+                    if count is not None:
+                        break
+                    logger.warning(
+                        "[DailyLimit] retrying turn increment turn=%s attempt=%s",
+                        turn_id[:16], attempt,
+                    )
+                if count is not None:
+                    self.processed_quota_turn_ids.add(turn_id)
+                    if str(self.current_turn_id or "") == turn_id:
+                        self.counts_against_quota = False
+            finally:
+                self.quota_turns_inflight.discard(turn_id)
+
+        asyncio.create_task(count_turn())
 
     def _clear_dashscope_items(self, reason: str = "task_switch"):
         """Delete all tracked server-side DashScope conversation.items.
@@ -2601,12 +2816,22 @@ class WebSocketCallback(OmniRealtimeCallback):
                 # an extra timer only delays first audio and races teardown on
                 # short-lived connections. Trigger on the callback thread now.
                 self._trigger_welcome_message()
-        # Always update current_response_id if we have a new one
-        if rid and rid not in self.ignored_response_ids:
-            self.current_response_id = rid
-
-        async def process_event():
+        async def process_event_unlocked():
             try:
+                # `rid` is captured by this event closure. Update all shared
+                # response/gate state only while holding the event lock so an
+                # older coroutine cannot read a newer callback's response ID.
+                if rid and rid not in self.ignored_response_ids:
+                    self.current_response_id = rid
+                if rid and rid != self._audio_gate_response_id:
+                    if self._audio_gate_grace_task is not None:
+                        self._audio_gate_grace_task.cancel()
+                        self._audio_gate_grace_task = None
+                    self._audio_gate_response_id = rid
+                    self._audio_gate_text_sent = False
+                    self._pending_audio_frames = []
+                    self._pending_audio_done = None
+
                 if self.interrupted_turn and event_name in ['response.audio.delta', 'response.audio_transcript.delta', 'response.text.done', 'response.audio_transcript.done']: return
                 elif event_name == 'response.audio.delta':
                     audio_data = response.get('delta')
@@ -2614,7 +2839,16 @@ class WebSocketCallback(OmniRealtimeCallback):
                         self._mark_latency_stage("first_audio")
                         try: self.ai_audio_buffer.extend(base64.b64decode(audio_data))
                         except: pass
-                        await self._safe_send({"type": "audio_response", "payload": audio_data, "role": self.role, "responseId": self.current_response_id})
+                        frame = {"type": "audio_response", "payload": audio_data, "role": self.role, "responseId": self.current_response_id}
+                        if self._audio_gate_text_sent:
+                            await self._safe_send(frame)
+                        else:
+                            self._pending_audio_frames.append(frame)
+                            if len(self._pending_audio_frames) >= 1024:
+                                await self._flush_audio_gate(
+                                    self._audio_gate_response_id,
+                                    use_placeholder=True,
+                                )
                 elif event_name == 'response.audio_transcript.delta':
                     text = response.get('delta')
                     if text:
@@ -2629,19 +2863,12 @@ class WebSocketCallback(OmniRealtimeCallback):
                         # Stream text chunks so frontend text appears in sync with streaming audio;
                         # transcript.done still sends the authoritative ai_message for final replacement.
                         await self._safe_send({"type": "ai_text_delta", "payload": {"delta": text, "responseId": self.current_response_id}})
+                        self._audio_gate_text_sent = True
+                        await self._flush_audio_gate(self._audio_gate_response_id)
                 elif event_name == 'response.audio.done':
                     if self.ai_audio_buffer:
                         data = bytes(self.ai_audio_buffer)
                         self.ai_audio_buffer = bytearray()
-
-                        # ── 每日轮次记账：仅对真用户输入触发的轮，且在慢 COS 上传之前 ──
-                        if self.counts_against_quota:
-                            self.counts_against_quota = False  # 立即清零，防系统续轮误计
-                            try:
-                                _rc_incr = _get_redis_client()
-                                await _incr_daily_turns(_rc_incr, self.user_id)
-                            except Exception as _e:
-                                logger.warning(f"[DailyLimit] incr on audio.done failed: {_e}")
 
                         # 获取goal_id和task_id用于工作流调用
                         goal_id = self.user_context.get('active_goal', {}).get('id')
@@ -2663,7 +2890,8 @@ class WebSocketCallback(OmniRealtimeCallback):
                                     logger.warning(f"[BATCH_EVAL] Failed to restore base prompt: {_de}")
 
                             # ── Daily Q&A: detect [DAILY_QA_PASSED] (Feature 2) ──
-                            if self.is_daily_qa_mode and not self.daily_qa_completed:
+                            daily_qa_from_audio_upload = False
+                            if daily_qa_from_audio_upload and self.is_daily_qa_mode and not self.daily_qa_completed:
                                 self.daily_qa_ai_response_count += 1
                                 _latest_ai_for_marker = self.full_response_text or ""
                                 if not _latest_ai_for_marker:
@@ -2980,11 +3208,24 @@ class WebSocketCallback(OmniRealtimeCallback):
 
                                 # [TASK_N_COMPLETE] markers removed — task completion handled by proficiency_scoring workflow
 
-                                # 调用批量评估 Agent（F1）- 只在用户有输入后才调用
+                                # Scoring now runs only from the authoritative
+                                # text-final event below. Keeping this legacy
+                                # branch disabled avoids an audio.done/COS race
+                                # caching an evaluation before the transcript
+                                # has arrived.
+                                score_from_audio_upload = False
+                                # 调用批量评估 Agent（legacy audio-coupled path）
                                 # Skip if this is the welcome message (no user input yet)
                                 user_message_count = sum(1 for m in self.messages if m.get("role") == "user")
                                 _magic_phase_info = session_phases.get(self.phase_key, {})
-                                if goal_id and user_message_count > 0 and _magic_phase_info.get("phase") != "magic_repetition":
+                                if (
+                                    score_from_audio_upload
+                                    and goal_id
+                                    and user_message_count > 0
+                                    and _magic_phase_info.get("phase") != "magic_repetition"
+                                    and self.mode not in ("recall", "daily_qa", "tour")
+                                    and not self.is_daily_qa_mode
+                                ):
                                     # Extract last user message content
                                     _last_user_content = ""
                                     for _msg in reversed(self.messages):
@@ -3095,7 +3336,7 @@ class WebSocketCallback(OmniRealtimeCallback):
                                 # Scoring must not depend on COS/media success. The
                                 # successful-upload branch above keeps its existing
                                 # evaluation flow; this fallback covers upload errors.
-                                if not url:
+                                if score_from_audio_upload and not url:
                                     await _evaluate_scene_turn_progress(
                                         self, goal_id, task_id, latest_ai_text
                                     )
@@ -3104,13 +3345,18 @@ class WebSocketCallback(OmniRealtimeCallback):
 
                     # Send response.audio.done to client so it knows AI finished speaking
                     # This should be sent regardless of whether there's audio in the buffer
-                    await self._safe_send({
+                    done_frame = {
                         "type": "response.audio.done",
                         "payload": {
                             "responseId": self.current_response_id
                         }
-                    })
-                    logger.info(f"Sent response.audio.done to client for response {self.current_response_id}")
+                    }
+                    if self._audio_gate_text_sent:
+                        await self._safe_send(done_frame)
+                    else:
+                        self._pending_audio_done = done_frame
+                        self._schedule_audio_gate_grace(self._audio_gate_response_id)
+                    logger.info(f"Queued response.audio.done for response {self.current_response_id}")
                 elif event_name == 'conversation.item.created':
                     # Track DashScope server-side conversation item IDs so we
                     # can delete them on task switch and stop prior-task
@@ -3322,7 +3568,7 @@ class WebSocketCallback(OmniRealtimeCallback):
                             })
                             if self.last_user_audio_url: msg['audioUrl'] = self.last_user_audio_url; self.last_user_audio_url = None
                             self.messages.append(msg)
-                            await save_single_message(
+                            asyncio.create_task(save_single_message(
                                 self.session_id,
                                 self.user_id,
                                 "user",
@@ -3333,7 +3579,7 @@ class WebSocketCallback(OmniRealtimeCallback):
                                 scenario=msg.get("scenario"),
                                 task_id=msg.get("task_id"),
                                 turn_id=msg.get("turn_id"),
-                            )
+                            ))
                 elif event_name in ['response.audio_transcript.done', 'response.text.done']:
                     if not self.full_response_text:
                         transcript = response.get('transcript') or response.get('text')
@@ -3382,7 +3628,12 @@ class WebSocketCallback(OmniRealtimeCallback):
                             },
                             "timestamp": int(time.time() * 1000)
                         })
+                        self._audio_gate_text_sent = True
+                        await self._flush_audio_gate(self._audio_gate_response_id)
                         logger.info(f"Sent complete AI message: {self.full_response_text[:50]}...")
+
+                        self._schedule_real_turn_count()
+                        await _maybe_finalize_daily_qa_answer(self, self.full_response_text)
 
                         active_goal = self.user_context.get("active_goal") or {}
                         current_task = active_goal.get("current_task") or {}
@@ -3413,10 +3664,22 @@ class WebSocketCallback(OmniRealtimeCallback):
                         await self._safe_send({"type": "error", "payload": response})
             except Exception as e:
                 logger.error(f"Error processing event: {e}")
+        async def process_event():
+            async with self._event_lock:
+                await process_event_unlocked()
+
         asyncio.run_coroutine_threadsafe(process_event(), self.loop)
 
     def on_close(self, code: int, message: str) -> None:
         self.is_connected = False
+        if self._audio_gate_grace_task is not None:
+            grace_task = self._audio_gate_grace_task
+            try:
+                if not self.loop.is_closed():
+                    self.loop.call_soon_threadsafe(grace_task.cancel)
+            except RuntimeError:
+                pass
+            self._audio_gate_grace_task = None
         logger.info(f"DashScope connection closed for session {self.session_id}, code={code}, message={message}")
         # If connection closed within 5 seconds of opening, treat as a failure (rate-limit / access-denied)
         _open_duration = time.time() - getattr(self, '_last_open_time', 0)
@@ -3588,6 +3851,8 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query(None), ses
             }
         callback.daily_qa_question = _qa_payload.get("question_text", "")
         callback.daily_qa_completed = False  # Always allow detection for new questions
+        callback.daily_qa_ai_response_count = 0
+        callback.processed_daily_qa_turn_ids.clear()
         callback.daily_qa_suppress_modal = bool(_qa_payload.get("passed"))  # Suppress WS event if already passed today
         try:
             await websocket.send_json({
@@ -3809,14 +4074,16 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query(None), ses
                         except Exception as e:
                             logger.error(f"Error decoding audio data: {e}")
                 elif msg_type == 'user_audio_ended':
-                    _rc = _get_redis_client()
-                    _blocked, _info = await _check_daily_limit(_rc, callback.user_id, callback.user_context)
-                    if _blocked:
-                        callback.user_audio_buffer = bytearray()  # 丢弃未提交的本地音频
-                        await websocket.send_json({"type": "daily_limit_reached", **_info})
-                        logger.info(f"[DailyLimit] blocked(audio) user={callback.user_id} {_info}")
-                        continue
-                    callback.counts_against_quota = True  # 本轮是真用户练习输入 → 记入额度
+                    quota_exempt = _is_quota_exempt_mode(callback)
+                    if not quota_exempt:
+                        _rc = _get_redis_client()
+                        _blocked, _info = await _check_daily_limit(_rc, callback.user_id, callback.user_context)
+                        if _blocked:
+                            callback.user_audio_buffer = bytearray()  # 丢弃未提交的本地音频
+                            await websocket.send_json({"type": "daily_limit_reached", **_info})
+                            logger.info(f"[DailyLimit] blocked(audio) user={callback.user_id} {_info}")
+                            continue
+                    callback.counts_against_quota = not quota_exempt
                     # New user turn: the previous turn's interruption is over —
                     # without this reset the delta gate at on-event drops ALL
                     # audio/text deltas of every response after the first interrupt.
@@ -3844,13 +4111,15 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query(None), ses
                 elif msg_type in ['text_message', 'input_text']:
                     text = payload.get('text')
                     if text:
-                        _rc = _get_redis_client()
-                        _blocked, _info = await _check_daily_limit(_rc, callback.user_id, callback.user_context)
-                        if _blocked:
-                            await websocket.send_json({"type": "daily_limit_reached", **_info})
-                            logger.info(f"[DailyLimit] blocked(text) user={callback.user_id} {_info}")
-                            continue
-                        callback.counts_against_quota = True
+                        quota_exempt = _is_quota_exempt_mode(callback)
+                        if not quota_exempt:
+                            _rc = _get_redis_client()
+                            _blocked, _info = await _check_daily_limit(_rc, callback.user_id, callback.user_context)
+                            if _blocked:
+                                await websocket.send_json({"type": "daily_limit_reached", **_info})
+                                logger.info(f"[DailyLimit] blocked(text) user={callback.user_id} {_info}")
+                                continue
+                        callback.counts_against_quota = not quota_exempt
                         callback.interrupted_turn = False  # new user turn ends the interruption
                         text_message = {
                             "id": str(uuid.uuid4()),
@@ -3983,6 +4252,7 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query(None), ses
                     # 用户确认切换到下一个任务 → 调用 user-service 真正完成 + 加载下一个任务
                     try:
                         confirm_task_id = payload.get('task_id') or callback.user_context.get('current_task', {}).get('id')
+                        ready_token = str(payload.get('ready_token') or '')
                         if not confirm_task_id:
                             logger.warning("[TASK_CONFIRM] Missing task_id in user_confirmed_complete payload")
                             continue
@@ -3993,7 +4263,7 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query(None), ses
                             confirm_resp = await client.post(
                                 f"{user_service_url}/api/users/tasks/{confirm_task_id}/confirm-complete",
                                 headers={"Authorization": f"Bearer {callback.token}"},
-                                json={"mode": _confirm_mode},
+                                json={"mode": _confirm_mode, "ready_token": ready_token},
                                 timeout=5.0,
                             )
                             if confirm_resp.status_code != 200:

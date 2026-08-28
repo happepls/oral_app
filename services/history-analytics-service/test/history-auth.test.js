@@ -99,6 +99,21 @@ test('history message writes are idempotent by stable id and can patch audioUrl'
     assert.equal(conversation.messages[0].scenario, 'Coffee Shop');
     assert.equal(conversation.messages[0].task_id, '42');
     assert.equal(conversation.messages[0].turn_id, 'turn-42');
+
+    const originalTimestamp = conversation.messages[0].timestamp.getTime();
+    await controller.saveSessionMessages({
+      params: { sessionId: 'session-a' },
+      body: {
+        userId: 'trusted-user',
+        messages: [{
+          id: 'ai-1',
+          role: 'assistant',
+          content: 'hello updated',
+        }],
+      },
+    }, response());
+    assert.equal(conversation.messages[0].content, 'hello updated');
+    assert.equal(conversation.messages[0].timestamp.getTime(), originalTimestamp);
   } finally {
     Conversation.findOne = original;
   }

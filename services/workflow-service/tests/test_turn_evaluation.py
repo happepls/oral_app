@@ -29,6 +29,14 @@ class FakeRedis:
     def delete(self, key):
         self.values.pop(key, None)
 
+    def eval(self, script, numkeys, key, order, ttl, value):
+        current = str(self.values.get(key) or "")
+        current_order = int(current.split(":", 1)[0] or 0) if ":" in current else 0
+        if current and current_order > int(order):
+            return 0
+        self.values[key] = value
+        return 1
+
 
 class FakeDB:
     def __init__(self, score=0, interaction_count=0, status="pending"):
@@ -49,11 +57,10 @@ class FakeDB:
 
     async def execute(self, query, *args):
         if "UPDATE user_tasks" in query:
-            score, count, completed = args[:3]
+            score, count = args[:2]
             self.task.update(
                 score=score,
                 interaction_count=count,
-                status="completed" if completed else self.task["status"],
             )
             self.task_updates += 1
         elif "UPDATE user_goals" in query:
@@ -84,6 +91,12 @@ async def evaluate(workflow, db, redis, quality, turn_id):
             current_task=TASK,
             native_language="Chinese",
             turn_id=turn_id,
+            turn_order={
+                "ready-turn": 10,
+                "bad-turn": 20,
+                "older-good": 10,
+                "newer-bad": 20,
+            }.get(turn_id, 1),
             db_connection=db,
             redis_client=redis,
         )
@@ -100,7 +113,7 @@ async def test_every_quality_uses_fixed_delta(quality, delta):
 
 
 @pytest.mark.asyncio
-async def test_three_satisfactory_turns_complete_task():
+async def test_three_satisfactory_turns_make_task_ready_for_confirmation():
     workflow = TurnEvaluationWorkflow()
     db = FakeDB()
     redis = FakeRedis()
@@ -110,7 +123,43 @@ async def test_three_satisfactory_turns_complete_task():
     ]
     assert [result["score"] for result in results] == [3, 6, 9]
     assert results[-1]["interaction_count"] == 3
-    assert results[-1]["task_completed"] is True
+    assert results[-1]["task_ready_to_complete"] is True
+    assert len(results[-1]["ready_token"]) >= 20
+    assert results[-1]["task_completed"] is False
+    assert db.task["status"] == "pending"
+
+
+@pytest.mark.asyncio
+async def test_later_low_quality_turn_revokes_ready_capability():
+    workflow = TurnEvaluationWorkflow()
+    db = FakeDB(score=6, interaction_count=2)
+    redis = FakeRedis()
+    ready = await evaluate(workflow, db, redis, "satisfactory", "ready-turn")
+    ready_key = workflow._ready_key("u1", 42)
+    assert redis.values[ready_key].endswith(f":{ready['ready_token']}")
+
+    revoked = await evaluate(workflow, db, redis, "off_topic", "bad-turn")
+    assert revoked["task_ready_to_complete"] is False
+    assert revoked["ready_token"] is None
+    assert redis.values[ready_key] == "20:"
+
+    replayed_old_ready = await evaluate(
+        workflow, db, redis, "satisfactory", "ready-turn"
+    )
+    assert replayed_old_ready["task_ready_to_complete"] is False
+    assert replayed_old_ready["ready_token"] is None
+
+
+@pytest.mark.asyncio
+async def test_older_good_result_cannot_restore_readiness_after_newer_bad_turn():
+    workflow = TurnEvaluationWorkflow()
+    db = FakeDB(score=8, interaction_count=2)
+    redis = FakeRedis()
+    newer = await evaluate(workflow, db, redis, "off_topic", "newer-bad")
+    older = await evaluate(workflow, db, redis, "satisfactory", "older-good")
+    assert newer["task_ready_to_complete"] is False
+    assert older["task_ready_to_complete"] is False
+    assert redis.values[workflow._ready_key("u1", 42)] == "20:"
 
 
 @pytest.mark.asyncio
@@ -120,6 +169,7 @@ async def test_low_quality_turn_cannot_complete_even_at_nine_points():
     result = await evaluate(workflow, db, FakeRedis(), "needs_work", "bad-third")
     assert result["score"] == 9
     assert result["interaction_count"] == 3
+    assert result["task_ready_to_complete"] is False
     assert result["task_completed"] is False
 
 
@@ -138,6 +188,7 @@ async def test_model_failure_uses_safe_fallback():
             current_task=TASK,
             native_language="Chinese",
             turn_id="fallback-turn",
+            turn_order=1,
             db_connection=FakeDB(),
             redis_client=FakeRedis(),
         )
@@ -157,3 +208,19 @@ async def test_duplicate_turn_id_returns_cached_result_without_second_write():
     assert db.task_updates == 1
     assert db.task["score"] == 4
     assert db.task["interaction_count"] == 1
+
+
+@pytest.mark.asyncio
+async def test_duplicate_ready_turn_returns_cached_result_without_completing_task():
+    workflow = TurnEvaluationWorkflow()
+    db = FakeDB(score=6, interaction_count=2)
+    redis = FakeRedis()
+    first = await evaluate(workflow, db, redis, "satisfactory", "stable-ready-turn")
+    second = await evaluate(workflow, db, redis, "mastered", "stable-ready-turn")
+    assert second == first
+    assert first["task_ready_to_complete"] is True
+    assert first["task_completed"] is False
+    assert db.task_updates == 1
+    assert db.task["score"] == 9
+    assert db.task["interaction_count"] == 3
+    assert db.task["status"] == "pending"

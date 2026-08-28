@@ -6,8 +6,13 @@ function normalizeMessage(sessionId, msg) {
   const content = typeof msg.content === 'string' ? msg.content : '';
   const audioUrl = typeof msg.audioUrl === 'string' && msg.audioUrl ? msg.audioUrl : undefined;
   if (!content.trim() && !audioUrl) return null;
-  const timestamp = msg.timestamp ? new Date(msg.timestamp) : new Date();
-  const safeTimestamp = Number.isNaN(timestamp.getTime()) ? new Date() : timestamp;
+  const timestamp = msg.timestamp ? new Date(msg.timestamp) : null;
+  // An omitted/invalid timestamp means "leave an existing message unchanged".
+  // For a new subdocument, the Message schema supplies Date.now. This avoids a
+  // periodic frontend snapshot moving every historical turn to the save time.
+  const safeTimestamp = timestamp && !Number.isNaN(timestamp.getTime())
+    ? timestamp
+    : null;
   const suppliedId = typeof msg.id === 'string' ? msg.id.trim() : '';
   const id = suppliedId.slice(0, 128) || crypto
     .createHash('sha256')
@@ -30,7 +35,7 @@ function normalizeMessage(sessionId, msg) {
     ...(scenario ? { scenario } : {}),
     ...(taskId ? { task_id: taskId } : {}),
     ...(turnId ? { turn_id: turnId } : {}),
-    timestamp: safeTimestamp,
+    ...(safeTimestamp ? { timestamp: safeTimestamp } : {}),
   };
 }
 
@@ -89,7 +94,7 @@ function mergeMessages(conversation, messages) {
     if (existing) {
       existing.role = incoming.role;
       existing.content = incoming.content;
-      existing.timestamp = incoming.timestamp;
+      if (incoming.timestamp) existing.timestamp = incoming.timestamp;
       if (incoming.audioUrl) existing.audioUrl = incoming.audioUrl;
       if (incoming.scenario) existing.scenario = incoming.scenario;
       if (incoming.task_id) existing.task_id = incoming.task_id;

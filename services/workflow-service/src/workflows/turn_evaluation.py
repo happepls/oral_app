@@ -5,8 +5,9 @@ import hashlib
 import json
 import logging
 import re
+import secrets
 import time
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 from workflows.batch_evaluation import batch_evaluation_workflow
 
@@ -23,6 +24,7 @@ QUALITY_DELTAS = {
 }
 COMPLETION_QUALITIES = {"mastered", "strong", "satisfactory"}
 IDEMPOTENCY_TTL_SECONDS = 72 * 3600
+READY_GATE_TTL_SECONDS = 72 * 3600
 
 
 class TurnEvaluationWorkflow:
@@ -41,12 +43,16 @@ class TurnEvaluationWorkflow:
         current_task: Dict[str, Any],
         native_language: str,
         turn_id: str,
+        turn_order: int,
         db_connection: Any,
         redis_client: Any = None,
     ) -> Dict[str, Any]:
         cache_key = self._cache_key(user_id, goal_id, task_id, turn_id)
         cached = self._get_cached(cache_key, redis_client)
         if cached is not None:
+            current_token = self._read_ready_gate(redis_client, user_id, task_id)
+            cached["task_ready_to_complete"] = bool(current_token)
+            cached["ready_token"] = current_token
             return cached
 
         lock_key = f"{cache_key}:lock"
@@ -91,12 +97,25 @@ class TurnEvaluationWorkflow:
                 delta=delta,
                 quality=quality,
             )
+            ready_token = self._update_ready_gate(
+                redis_client=redis_client,
+                user_id=user_id,
+                task_id=task_id,
+                should_be_ready=persisted["task_ready_to_complete"],
+                turn_order=turn_order,
+            )
+            # Completion confirmation is fail-closed: without the shared Redis
+            # capability, user-service cannot prove that the latest answer met
+            # the satisfactory-or-better requirement.
+            persisted["task_ready_to_complete"] = bool(ready_token)
             result = {
                 "quality": quality,
                 "delta": delta,
                 "score": persisted["score"],
                 "interaction_count": persisted["interaction_count"],
                 "task_completed": persisted["task_completed"],
+                "task_ready_to_complete": persisted["task_ready_to_complete"],
+                "ready_token": ready_token,
                 "reason": assessment["reason"],
                 "model_id": self._model_client._model,
                 "fallback_used": fallback_used,
@@ -181,11 +200,12 @@ Return strict JSON with keys "quality" and "reason". The reason must be one shor
                     "score": current_score,
                     "interaction_count": current_count,
                     "task_completed": True,
+                    "task_ready_to_complete": False,
                 }
 
             score = min(10, current_score + delta)
             interaction_count = current_count + 1
-            task_completed = (
+            task_ready_to_complete = (
                 score >= 9
                 and interaction_count >= 3
                 and quality in COMPLETION_QUALITIES
@@ -195,14 +215,11 @@ Return strict JSON with keys "quality" and "reason". The reason must be one shor
                 UPDATE user_tasks
                 SET score = $1,
                     interaction_count = $2,
-                    status = CASE WHEN $3 THEN 'completed' ELSE status END,
-                    completed_at = CASE WHEN $3 THEN COALESCE(completed_at, NOW()) ELSE completed_at END,
                     updated_at = NOW()
-                WHERE id = $4 AND user_id = $5
+                WHERE id = $3 AND user_id = $4
                 """,
                 score,
                 interaction_count,
-                task_completed,
                 task_id,
                 user_id,
             )
@@ -221,7 +238,8 @@ Return strict JSON with keys "quality" and "reason". The reason must be one shor
             return {
                 "score": score,
                 "interaction_count": interaction_count,
-                "task_completed": task_completed,
+                "task_completed": False,
+                "task_ready_to_complete": task_ready_to_complete,
             }
 
     @staticmethod
@@ -269,6 +287,60 @@ Return strict JSON with keys "quality" and "reason". The reason must be one shor
             f"{user_id}\0{goal_id}\0{task_id}\0{turn_id}".encode("utf-8")
         ).hexdigest()
         return f"turn_eval:v1:{digest}"
+
+    @staticmethod
+    def _ready_key(user_id: str, task_id: int) -> str:
+        digest = hashlib.sha256(f"{user_id}\0{task_id}".encode("utf-8")).hexdigest()
+        return f"task_ready:v1:{digest}"
+
+    def _update_ready_gate(
+        self, *, redis_client: Any, user_id: str, task_id: int,
+        should_be_ready: bool, turn_order: int
+    ) -> Optional[str]:
+        """Update readiness only when this is the newest user turn seen."""
+        if redis_client is None:
+            return None
+        key = self._ready_key(user_id, task_id)
+        try:
+            token = secrets.token_urlsafe(24) if should_be_ready else ""
+            order = max(0, int(turn_order or 0))
+            value = f"{order}:{token}"
+            redis_client.eval(
+                """
+                local current = redis.call('GET', KEYS[1])
+                if current then
+                  local separator = string.find(current, ':')
+                  local current_order = tonumber(separator and string.sub(current, 1, separator - 1) or '0') or 0
+                  if current_order > tonumber(ARGV[1]) then return 0 end
+                end
+                redis.call('SETEX', KEYS[1], ARGV[2], ARGV[3])
+                return 1
+                """,
+                1,
+                key,
+                order,
+                READY_GATE_TTL_SECONDS,
+                value,
+            )
+            current = str(redis_client.get(key) or "")
+            current_token = current.split(":", 1)[1] if ":" in current else ""
+            return current_token or None
+        except Exception as exc:
+            logger.warning("[TURN_EVAL] Redis ready gate failed: %s", type(exc).__name__)
+            return None
+
+    def _read_ready_gate(
+        self, redis_client: Any, user_id: str, task_id: int
+    ) -> Optional[str]:
+        if redis_client is None:
+            return None
+        try:
+            current = str(redis_client.get(self._ready_key(user_id, task_id)) or "")
+            token = current.split(":", 1)[1] if ":" in current else current
+            return token or None
+        except Exception as exc:
+            logger.warning("[TURN_EVAL] Redis ready read failed: %s", type(exc).__name__)
+            return None
 
     def _get_cached(self, key: str, redis_client: Any) -> Any:
         if redis_client is not None:

@@ -211,6 +211,7 @@ class TurnEvaluateRequest(BaseModel):
     score: int = 0
     interaction_count: int = 0
     turn_id: str
+    turn_order: int = 0
     native_language: str = "English"
 
 
@@ -333,6 +334,7 @@ async def turn_evaluate_proficiency(
             current_task=request.current_task,
             native_language=request.native_language,
             turn_id=request.turn_id,
+            turn_order=request.turn_order,
             db_connection=conn,
             redis_client=cache.client if cache.is_connected() else None,
         )

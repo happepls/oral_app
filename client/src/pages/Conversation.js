@@ -25,6 +25,8 @@ import { resolveDailyLimitModal } from './dailyLimitLogic';
 import { shouldUseProgressiveAudio, progressiveAudioSrc, nextProgressiveAttempt } from './audioPlaybackLogic';
 import { cleanStreamingText, appendDelta, aiBubbleRenderState, stripAllMarkers, extractMagicSentence } from './streamingTextLogic';
 import { normalizeConnectionError, shouldShowConnectionError } from './connectionErrorLogic';
+import { calculateTaskProgress } from './conversationProgress';
+import { createPcmStreamScheduler, unpackPcmAudioPacket } from '../utils/pcmStreamScheduler';
 
 const MAGIC_TIPS = [
   '点击消息气泡右侧的喇叭图标，可重听 AI 的示范发音。',
@@ -593,6 +595,7 @@ function Conversation() {
 
   // Task Completion Confirmation State
   const [taskReadyToComplete, setTaskReadyToComplete] = useState(null); // shape: { task_id, task_title } | null
+  const [taskCompletionPending, setTaskCompletionPending] = useState(false);
 
   // 每日对话轮次上限 — daily_limit_reached 事件弹出的模态
   const [dailyLimitModal, setDailyLimitModal] = useState(null);
@@ -807,6 +810,13 @@ function Conversation() {
   const speechStartTimeRef = useRef(0);
   const speechTotalDurationRef = useRef(0);
   const audioQueueRef = useRef([]);
+  const pcmSchedulerRef = useRef(null);
+  const playAudioChunkRef = useRef(null);
+  const pendingStreamAudioRef = useRef([]);
+  const receivedStreamAudioRef = useRef(false);
+  const aiTextReadyForAudioRef = useRef(false);
+  const activeAudioResponseIdRef = useRef(null);
+  const streamAudioDoneRef = useRef(false);
   // Tracks whether streaming PCM chunks have actually played for the CURRENT turn,
   // measured from the last stopAudioPlayback() cut point (which is the natural
   // per-turn boundary: user recording start / auto-play start / magic_pass).
@@ -839,15 +849,45 @@ function Conversation() {
         sampleRate: 24000,
         latencyHint: 'interactive'
       });
+      pcmSchedulerRef.current = createPcmStreamScheduler(audioContextRef.current, {
+        primingMs: 160,
+        onPlaybackStart: () => {
+          const scheduler = pcmSchedulerRef.current;
+          if (!scheduler) return;
+          streamedAudioSinceCutRef.current = true;
+          speechStartTimeRef.current = audioContextRef.current?.currentTime || 0;
+          nextStartTimeRef.current = scheduler.nextStartTime;
+          speechTotalDurationRef.current = Math.max(
+            0,
+            scheduler.nextStartTime - speechStartTimeRef.current
+          );
+          setIsAISpeaking(true);
+          setIsWaitingForAIResponse(false);
+        },
+        onPlaybackIdle: () => {
+          setIsAISpeaking(false);
+          setIsWaitingForAIResponse(false);
+        },
+      });
     }
     if (audioContextRef.current.state === 'suspended') {
-      audioContextRef.current.resume();
+      return audioContextRef.current.resume().catch(error => {
+        console.warn('AudioContext resume rejected:', error?.message || error);
+        throw error;
+      });
     }
+    return Promise.resolve();
   };
 
   // Stop audio playback
   const stopAudioPlayback = () => {
     isInterruptedRef.current = true;
+    pcmSchedulerRef.current?.stop();
+    pendingStreamAudioRef.current = [];
+    receivedStreamAudioRef.current = false;
+    aiTextReadyForAudioRef.current = false;
+    activeAudioResponseIdRef.current = null;
+    streamAudioDoneRef.current = false;
     audioQueueRef.current.forEach(source => {
       try {
         source.stop();
@@ -1273,15 +1313,18 @@ function Conversation() {
 
   // Handle task completion confirmation
   const handleConfirmComplete = () => {
-    if (!taskReadyToComplete) return;
+    if (!taskReadyToComplete || taskCompletionPending) return;
     const wsReadyState = socketRef.current?.getReadyState?.() || socketRef.current?.readyState;
     if (wsReadyState === WebSocket.OPEN) {
       console.log('🏁 Sending user_confirmed_complete:', taskReadyToComplete.task_id);
       socketRef.current.send(JSON.stringify({
         type: 'user_confirmed_complete',
-        payload: { task_id: taskReadyToComplete.task_id }
+        payload: {
+          task_id: taskReadyToComplete.task_id,
+          ready_token: taskReadyToComplete.ready_token,
+        },
       }));
-      setTaskReadyToComplete(null);
+      setTaskCompletionPending(true);
     } else {
       console.error('❌ WebSocket not open, cannot send confirmation');
     }
@@ -1342,6 +1385,33 @@ function Conversation() {
 
   const connectionToastShownRef = useRef(false);
 
+  const releasePendingAudioAfterPaint = (responseId) => {
+    activeAudioResponseIdRef.current = responseId || null;
+    aiTextReadyForAudioRef.current = true;
+    const schedule = window.requestAnimationFrame || ((callback) => setTimeout(callback, 0));
+    schedule(() => {
+      const pending = pendingStreamAudioRef.current.splice(0);
+      pending.forEach(packet => {
+        if (packet.packetPromise) {
+          playAudioChunkRef.current?.(packet.packetPromise.then(resolved => (
+            !resolved.responseId || resolved.responseId === activeAudioResponseIdRef.current
+              ? resolved.pcm
+              : new Uint8Array()
+          )));
+        } else if (!packet.responseId || packet.responseId === activeAudioResponseIdRef.current) {
+          playAudioChunkRef.current?.(packet.pcm);
+        }
+      });
+      if (
+        streamAudioDoneRef.current === true
+        || streamAudioDoneRef.current === activeAudioResponseIdRef.current
+      ) {
+        const scheduler = pcmSchedulerRef.current;
+        scheduler?.flush(scheduler.generation);
+      }
+    });
+  };
+
   // Handle JSON messages from WebSocket
   const handleJsonMessage = useCallback((data) => {
       console.log('Received JSON message:', data);
@@ -1352,9 +1422,11 @@ function Conversation() {
            const restored = data.payload || {};
            const restoredScore = Number(restored.score || 0);
            const restoredCount = Number(restored.interaction_count || 0);
-           const restoredProgress = restoredScore >= 9 && restoredCount < 3
-             ? 99
-             : Math.min(100, Math.round((restoredScore / 9) * 100));
+           const restoredProgress = calculateTaskProgress({
+             score: restoredScore,
+             interactionCount: restoredCount,
+             taskCompleted: Boolean(restored.task_completed),
+           });
            setCurrentTaskScore(restoredScore);
            setCurrentTaskProgress(restoredProgress);
            previousProgressRef.current = restoredProgress;
@@ -1422,10 +1494,11 @@ function Conversation() {
                                        if (currentTaskProgress === 0) {
                                            currentTaskScore = Number(t.score || 0);
                                            const interactionCount = Number(t.interaction_count || 0);
-                                           const scoreProgress = Math.min(100, Math.round((currentTaskScore / 9) * 100));
-                                           currentTaskProgress = interactionCount < 3
-                                             ? Math.min(99, scoreProgress)
-                                             : scoreProgress;
+                                           currentTaskProgress = calculateTaskProgress({
+                                             score: currentTaskScore,
+                                             interactionCount,
+                                             taskCompleted: false,
+                                           });
                                        }
                                    }
                                }
@@ -1444,6 +1517,40 @@ function Conversation() {
                        }
                    }
                }).catch(err => console.error('Failed to sync tasks:', err));
+           }
+           break;
+        case 'connection_closed':
+           // The upstream model socket is gone even if the browser transport
+           // has not emitted close yet. Enter restoration state immediately;
+           // comms will close this socket with a retryable code exactly once.
+           setIsConnected(false);
+           isRestoringSessionRef.current = true;
+           setIsRestoringSession(true);
+           setIsWaitingForAIResponse(false);
+           // DashScope can close while the AI service WebSocket itself remains
+           // open. Force the browser transport through its normal retryable
+           // close handler instead of waiting until the next user utterance.
+           {
+             const affectedSocket = socketRef.current;
+             const reconnectable = data.payload?.reconnectable !== false;
+             if (!reconnectable) {
+               isRestoringSessionRef.current = false;
+               setIsRestoringSession(false);
+               wsRejectedRef.current = true;
+               setWsRejected(true);
+               setWebSocketError(data.payload?.reason || 'AI 服务拒绝连接');
+             }
+             setTimeout(() => {
+               if (
+                 socketRef.current === affectedSocket
+                 && affectedSocket?.getReadyState?.() === WebSocket.OPEN
+               ) {
+                 affectedSocket.close(
+                   reconnectable ? 4002 : 4400,
+                   reconnectable ? 'Upstream model disconnected' : 'Upstream rejected connection'
+                 );
+               }
+             }, 0);
            }
            break;
         case 'transcription':
@@ -1566,6 +1673,10 @@ function Conversation() {
            const deltaResponseId = deltaPayload.responseId;
            if (!delta) break;
 
+           // Commit the transcript bubble before releasing buffered PCM. The
+           // scheduler's priming window then gives React time to paint it.
+           releasePendingAudioAfterPaint(deltaResponseId);
+
            // A text delta means the model has started replying — drop the
            // thinking/ellipsis state so streamed text/audio can show.
            setIsWaitingForAIResponse(false);
@@ -1602,6 +1713,7 @@ function Conversation() {
            const aiContent = msgPayload.content || data.content || data.text || msgPayload.text || '';
            const responseId = msgPayload.responseId || data.responseId;
            const responseTurnId = msgPayload.turn_id || data.turn_id;
+           releasePendingAudioAfterPaint(responseId);
 
            // 检测文本标记（降级方案）
            let cleanContent = aiContent;
@@ -1690,6 +1802,18 @@ function Conversation() {
                });
            }
            break;
+        case 'ai_turn_started': {
+           const startedResponseId = data.payload?.responseId || data.responseId;
+           setMessages(prev => {
+             const last = prev[prev.length - 1];
+             if (last?.type === 'ai' && !last.isFinal) return prev;
+             return [...prev, {
+               type: 'ai', content: '', isFinal: false, responseId: startedResponseId,
+             }];
+           });
+           releasePendingAudioAfterPaint(startedResponseId);
+           break;
+        }
         case 'ai_response': {
            // Handle AI text response from comms-service
            let responseText = data.text || '';
@@ -1838,10 +1962,20 @@ function Conversation() {
 
            const interactionCount = Number(profPayload.interaction_count || 0);
            const taskCompleted = Boolean(profPayload.task_completed);
-           const uncappedProgress = Math.min(100, Math.round((taskScore / 9) * 100));
-           const newProgress = !taskCompleted && interactionCount < 3
-             ? Math.min(99, uncappedProgress)
-             : uncappedProgress;
+           if (!profPayload.task_ready_to_complete) {
+             setTaskReadyToComplete(current => (
+               current && String(current.task_id) === String(profPayload.task_id)
+                 ? null
+                 : current
+             ));
+             setTaskCompletionPending(false);
+           }
+           const newProgress = calculateTaskProgress({
+             score: taskScore,
+             interactionCount,
+             taskCompleted,
+             previousProgress: previousProgressRef.current,
+           });
            setCurrentTaskProgress(newProgress);
            previousProgressRef.current = newProgress;
            setCurrentTaskScore(taskScore);
@@ -1898,6 +2032,8 @@ function Conversation() {
            // Handle task completion notification
            console.log('✅ Task Completed:', data.payload);
            const taskPayload = data.payload || {};
+           setTaskCompletionPending(false);
+           setTaskReadyToComplete(null);
            if (taskPayload.task_title) {
                // 构建提示消息，包含下一个任务预告
                let completionMessage = `✅ 任务完成：${taskPayload.task_title}`;
@@ -2119,8 +2255,17 @@ function Conversation() {
         case 'task_ready_to_complete':
            console.log('🏁 Task Ready to Complete:', data.payload);
            if (data.payload) {
+               setTaskCompletionPending(false);
                setTaskReadyToComplete(data.payload);
            }
+           break;
+        case 'task_switch_error':
+           setTaskCompletionPending(false);
+           setMessages(prev => [...prev, {
+             type: 'system',
+             content: data.payload?.message || '任务切换失败，请重试',
+             isFinal: true,
+           }]);
            break;
         case 'response.audio.done':
            // Backend signals the current AI turn's TTS is fully delivered.
@@ -2130,9 +2275,27 @@ function Conversation() {
            // produced a user-driven `isWaitingForAIResponse=true` clear path,
            // or audio that finished without flipping the flag back).
            setIsWaitingForAIResponse(false);
+           streamAudioDoneRef.current = (
+             data.payload?.responseId
+             || data.responseId
+             || activeAudioResponseIdRef.current
+             || true
+           );
+           if (
+             aiTextReadyForAudioRef.current
+             && (
+               streamAudioDoneRef.current === true
+               || streamAudioDoneRef.current === activeAudioResponseIdRef.current
+             )
+           ) {
+             const scheduler = pcmSchedulerRef.current;
+             scheduler?.flush(scheduler.generation).then(() => {
+               nextStartTimeRef.current = scheduler.nextStartTime;
+             });
+           }
            // Schedule the speaking flag to flip off shortly after the last
            // queued chunk finishes — this drives CC subtitle auto-clear.
-           {
+           if (!receivedStreamAudioRef.current) {
              const ctx = audioContextRef.current;
              const tailMs = ctx
                ? Math.max(0, (nextStartTimeRef.current - ctx.currentTime) * 1000)
@@ -2162,83 +2325,33 @@ function Conversation() {
       }
   }, [setCurrentTaskProgress, setCurrentTaskScore, setEngagementLevel, setCompletedTasks, setTasks, location.state, userAPI]);
 
-  const playAudioChunk = useCallback(async (audioData) => {
+  const playAudioChunk = useCallback(async (audioDataOrPromise) => {
     if (isInterruptedRef.current) return; // Drop audio if interrupted
-
-    // Mark that the streaming path has started producing audio for this turn —
-    // set it SYNCHRONOUSLY at entry, BEFORE the async decodeAudioData await
-    // below. If we waited until after decode (cut-off chain A), a COS audio_url
-    // arriving mid-decode would read this flag as still-false and the auto-play
-    // effect would kill the streaming we're about to schedule. Setting it here
-    // closes that race to a single synchronous tick.
-    streamedAudioSinceCutRef.current = true;
-
-    initAudioContext();
-    const ctx = audioContextRef.current;
-
-    console.log('Playing Audio Chunk, type:', audioData.constructor.name, 'size:', audioData.byteLength || audioData.size);
-
-    let audioBuffer;
+    const contextReady = initAudioContext();
+    const scheduler = pcmSchedulerRef.current;
+    if (!scheduler) return;
+    const generation = scheduler.generation;
     try {
-        // audioData is already an ArrayBuffer, no need to call .arrayBuffer()
-        const decodeBuffer = audioData.slice(0);
-        audioBuffer = await ctx.decodeAudioData(decodeBuffer);
-        console.log('Audio decoded successfully, duration:', audioBuffer.duration, 'sampleRate:', audioBuffer.sampleRate);
-    } catch (e) {
-        console.log('decodeAudioData failed, trying PCM fallback:', e.message);
-        
-        // Fallback: Assume Raw PCM Int16 24kHz Mono
-        const int16Array = new Int16Array(audioData);
-        const float32Array = new Float32Array(int16Array.length);
-        for (let i = 0; i < int16Array.length; i++) {
-            float32Array[i] = int16Array[i] / 32768.0;
-        }
-        audioBuffer = ctx.createBuffer(1, float32Array.length, 24000);
-        audioBuffer.getChannelData(0).set(float32Array);
-        console.log('PCM fallback created, length:', float32Array.length);
+      const accepted = await scheduler.enqueue(
+        Promise.resolve(contextReady).then(() => audioDataOrPromise),
+        generation
+      );
+      if (accepted && generation === scheduler.generation) {
+        nextStartTimeRef.current = scheduler.nextStartTime;
+        speechTotalDurationRef.current = Math.max(
+          speechTotalDurationRef.current,
+          scheduler.nextStartTime - speechStartTimeRef.current
+        );
+      }
+    } catch (error) {
+      // Keep streamedAudioSinceCut=false so the complete COS recording remains
+      // eligible as a fallback when PCM conversion/scheduling fails.
+      streamedAudioSinceCutRef.current = false;
+      console.error('Failed to schedule PCM chunk:', error);
     }
+  }, []);
 
-    const source = ctx.createBufferSource();
-    source.buffer = audioBuffer;
-    source.connect(ctx.destination);
-    source.onended = () => {
-         // Drop this source from the queue; when the queue drains AND no later
-         // chunk is scheduled in the future, the AI has stopped speaking.
-         // Drives CC subtitle visibility — without this signal the caption
-         // would never auto-clear after TTS finishes.
-         audioQueueRef.current = audioQueueRef.current.filter(s => s !== source);
-         const ctxNow = audioContextRef.current?.currentTime ?? 0;
-         if (audioQueueRef.current.length === 0 && nextStartTimeRef.current <= ctxNow + 0.05) {
-           setIsAISpeaking(false);
-           setIsWaitingForAIResponse(false);
-         }
-    };
-
-    const currentTime = ctx.currentTime;
-    const start = Math.max(currentTime, nextStartTimeRef.current);
-
-    // If this is the first chunk of a new AI turn (queue is empty before
-    // pushing), record the start time so CC caption can compute progress.
-    const isFirstChunkOfTurn = audioQueueRef.current.length === 0;
-
-    source.start(start);
-    nextStartTimeRef.current = start + audioBuffer.duration;
-
-    // (streamedAudioSinceCutRef already set synchronously at fn entry — see top.)
-
-    // Track source for cancellation
-    audioQueueRef.current.push(source);
-
-    if (isFirstChunkOfTurn) {
-      speechStartTimeRef.current = start;
-    }
-    speechTotalDurationRef.current = nextStartTimeRef.current - speechStartTimeRef.current;
-
-    setIsAISpeaking(true);
-    setIsWaitingForAIResponse(false);
-    console.log('Audio playback started, isAISpeaking:', true);
-
-  }, [handleJsonMessage]);
+  playAudioChunkRef.current = playAudioChunk;
 
   // --- WebSocket Logic ---
   const connectWebSocket = useCallback(async (explicitSessionId = null, options = {}) => {
@@ -2357,6 +2470,7 @@ function Conversation() {
         token: token,
         scenario: scenario,
         topic: searchParams.get('topic'),
+        mode: searchParams.get('mode'),
           isRestoration: true,
         welcomeMuted: welcomeMuted || suppressWelcome,
         clientInfo: {
@@ -2386,7 +2500,13 @@ function Conversation() {
       if (event.data instanceof ArrayBuffer) {
         // Handle binary audio data
         console.log('[Audio] Received binary audio data, size:', event.data.byteLength);
-        playAudioChunk(event.data);
+        receivedStreamAudioRef.current = true;
+        const packet = unpackPcmAudioPacket(event.data);
+        if (
+          aiTextReadyForAudioRef.current
+          && (!packet.responseId || packet.responseId === activeAudioResponseIdRef.current)
+        ) playAudioChunk(packet.pcm);
+        else pendingStreamAudioRef.current.push(packet);
       } else if (typeof event.data === 'string') {
         try {
           const data = JSON.parse(event.data);
@@ -2397,11 +2517,18 @@ function Conversation() {
       } else if (event.data instanceof Blob) {
         // Handle blob data
         console.log('[Audio] Received blob data, size:', event.data.size);
-        try {
-          const arrayBuffer = await event.data.arrayBuffer();
-          playAudioChunk(arrayBuffer);
-        } catch (e) {
-          console.error('Failed to handle blob:', e);
+        receivedStreamAudioRef.current = true;
+        const conversion = event.data.arrayBuffer().then(unpackPcmAudioPacket);
+        if (aiTextReadyForAudioRef.current) {
+          playAudioChunk(conversion.then(packet => (
+            !packet.responseId || packet.responseId === activeAudioResponseIdRef.current
+              ? packet.pcm
+              : new Uint8Array()
+          )));
+        } else {
+          // Queue the conversion promise immediately so the scheduler preserves
+          // WebSocket invocation order even if Blob conversions resolve out of order.
+          pendingStreamAudioRef.current.push({ packetPromise: conversion });
         }
       } else {
         console.warn('[WS] Unknown message type:', typeof event.data, event.data);
@@ -3855,8 +3982,11 @@ function Conversation() {
             tasks={tasks}
             completedTasks={completedTasks}
             onConfirm={handleConfirmComplete}
-            onContinue={() => setTaskReadyToComplete(null)}
-            canConfirm={isConnected}
+            onContinue={() => {
+              setTaskCompletionPending(false);
+              setTaskReadyToComplete(null);
+            }}
+            canConfirm={isConnected && !taskCompletionPending}
           />
         )}
       </AnimatePresence>
