@@ -50,6 +50,14 @@ class _FakeRedis:
         self._ttl[key] = ttl; return True
     async def ttl(self, key):
         return self._ttl.get(key, -1)
+    async def eval(self, script, numkeys, marker_key, counter_key, marker_ttl, counter_ttl):
+        if marker_key in self._store:
+            return int(self._store.get(counter_key, 0))
+        self._store[marker_key] = "1"
+        self._ttl[marker_key] = int(marker_ttl)
+        self._store[counter_key] = str(int(self._store.get(counter_key, 0)) + 1)
+        self._ttl[counter_key] = int(counter_ttl)
+        return int(self._store[counter_key])
 _redis_async.Redis = _FakeRedis
 _redis_async.from_url = lambda *a, **kw: _FakeRedis()
 _redis_mod.asyncio = _redis_async
@@ -105,6 +113,38 @@ async def test_incr_called_n_times(fake_redis):
     assert await omni._get_daily_turns(fake_redis, "u9") == 3
 
 @pytest.mark.asyncio
+async def test_turn_count_is_idempotent_across_reconnects(fake_redis):
+    first = await omni._incr_daily_turn_once(fake_redis, "u9", "stable-turn")
+    second = await omni._incr_daily_turn_once(fake_redis, "u9", "stable-turn")
+    assert first == second == 1
+    assert await omni._get_daily_turns(fake_redis, "u9") == 1
+
+@pytest.mark.asyncio
+async def test_atomic_turn_failure_remains_retryable():
+    class _Boom:
+        async def eval(self, *args):
+            raise RuntimeError("redis down")
+    assert await omni._incr_daily_turn_once(_Boom(), "u9", "retry-turn") is None
+
+@pytest.mark.asyncio
+async def test_callback_retries_transient_atomic_increment_failure():
+    callback = object.__new__(omni.WebSocketCallback)
+    callback.current_turn_id = "retry-turn"
+    callback.user_id = "u9"
+    callback.counts_against_quota = True
+    callback.processed_quota_turn_ids = set()
+    callback.quota_turns_inflight = set()
+    increment = AsyncMock(side_effect=[None, 1])
+    with patch.object(omni, "_get_redis_client", return_value=object()), patch.object(
+        omni, "_incr_daily_turn_once", increment
+    ):
+        callback._schedule_real_turn_count()
+        await asyncio.sleep(0.25)
+    assert increment.await_count == 2
+    assert callback.processed_quota_turn_ids == {"retry-turn"}
+    assert callback.counts_against_quota is False
+
+@pytest.mark.asyncio
 async def test_check_daily_limit_blocks_at_limit(fake_redis):
     for _ in range(omni.FREE_DAILY_TURNS):
         await omni._incr_daily_turns(fake_redis, "uF")
@@ -126,3 +166,26 @@ async def test_check_daily_limit_fail_open_none_client():
     blocked, info = await omni._check_daily_limit(None, "uX", {"subscription_status": "free"})
     assert blocked is False  # used=0 < limit
     assert info["used"] == 0
+
+
+@pytest.mark.parametrize("mode", ["daily_qa", "recall", "tour"])
+def test_non_scene_modes_are_quota_exempt(mode):
+    callback = types.SimpleNamespace(
+        is_daily_qa_mode=mode == "daily_qa",
+        mode=mode,
+        phase_key=f"u:{mode}",
+    )
+    omni.session_phases[callback.phase_key] = {"phase": "scene_theater"}
+    assert omni._is_quota_exempt_mode(callback) is True
+
+
+def test_magic_repetition_is_quota_exempt_but_scene_theater_is_not():
+    callback = types.SimpleNamespace(
+        is_daily_qa_mode=False,
+        mode=None,
+        phase_key="u:scenario",
+    )
+    omni.session_phases[callback.phase_key] = {"phase": "magic_repetition"}
+    assert omni._is_quota_exempt_mode(callback) is True
+    omni.session_phases[callback.phase_key] = {"phase": "scene_theater"}
+    assert omni._is_quota_exempt_mode(callback) is False

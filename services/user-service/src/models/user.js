@@ -363,29 +363,53 @@ User.completeTask = async (userId, scenarioTitle, taskText, mode = null) => {
     return await User.getActiveGoal(userId);
 };
 
+User.getTaskByIdForUser = async (userId, taskId) => {
+    const result = await db.query(
+        `SELECT id, user_id, goal_id, scenario_title, task_description,
+                score, interaction_count, status, feedback
+         FROM user_tasks
+         WHERE id = $1 AND user_id = $2`,
+        [taskId, userId]
+    );
+    return result.rows[0] || null;
+};
+
 User.confirmCompleteTaskById = async (userId, taskId, mode = null) => {
-    // 1. Load task — require ownership + score >= 9 (ready_to_complete gate)
+    // 1. Load task — require the full server-side readiness contract.
     const taskRes = await db.query(
-        `SELECT id, user_id, goal_id, scenario_title, task_description, score, status, feedback
+        `SELECT id, user_id, goal_id, scenario_title, task_description,
+                score, interaction_count, status, feedback
          FROM user_tasks
          WHERE id = $1 AND user_id = $2`,
         [taskId, userId]
     );
     const task = taskRes.rows[0];
     if (!task) return { error: 'not_found' };
-    if (task.status === 'completed') return { error: 'already_completed', task };
-    if ((task.score || 0) < 9) return { error: 'not_ready', task };
+    const alreadyCompleted = task.status === 'completed';
+    if (!alreadyCompleted && ((task.score || 0) < 9 || (task.interaction_count || 0) < 3)) {
+        return { error: 'not_ready', task };
+    }
 
     // 2. Mark completed (preserve existing mode if caller doesn't supply one)
-    const completedRes = await db.query(
-        `UPDATE user_tasks
-         SET status = 'completed', completed_at = NOW(),
-             mode = COALESCE($2, mode)
-         WHERE id = $1
-         RETURNING *`,
-        [taskId, mode || null]
-    );
-    const completedTask = completedRes.rows[0];
+    let completedTask = task;
+    if (!alreadyCompleted) {
+        const completedRes = await db.query(
+            `UPDATE user_tasks
+             SET status = 'completed', completed_at = NOW(),
+                 mode = COALESCE($2, mode)
+             WHERE id = $1 AND user_id = $3
+               AND status != 'completed'
+               AND score >= 9 AND interaction_count >= 3
+             RETURNING *`,
+            [taskId, mode || null, userId]
+        );
+        completedTask = completedRes.rows[0];
+        if (!completedTask) {
+            const racedTask = await User.getTaskByIdForUser(userId, taskId);
+            if (!racedTask || racedTask.status !== 'completed') return { error: 'not_ready', task };
+            completedTask = racedTask;
+        }
+    }
 
     // 3. Recompute goal proficiency based on completed-vs-total ratio (parity with User.completeTask)
     const statsRes = await db.query(
@@ -445,6 +469,7 @@ User.confirmCompleteTaskById = async (userId, taskId, mode = null) => {
         completed_task: completedTask,
         next_task: nextTask,
         current_proficiency: newProficiency,
+        already_completed: alreadyCompleted,
     };
 };
 

@@ -2,9 +2,16 @@ const bcrypt = require('bcryptjs');
 
 jest.mock('../models/db', () => ({ query: jest.fn() }));
 jest.mock('../utils/notificationPublisher', () => ({ publishNotification: jest.fn() }));
+jest.mock('../utils/redisClient', () => ({
+  get: jest.fn(),
+  eval: jest.fn(),
+  setex: jest.fn(),
+  del: jest.fn(),
+}));
 
 const User = require('../models/user');
 const userController = require('../controllers/userController');
+const redis = require('../utils/redisClient');
 
 function mockRes() {
   const res = {
@@ -17,6 +24,63 @@ function mockRes() {
   };
   return res;
 }
+
+describe('confirmCompleteTask readiness capability', () => {
+  beforeEach(() => jest.clearAllMocks());
+  afterEach(() => jest.restoreAllMocks());
+
+  test('rejects a missing or stale readiness token before mutating the task', async () => {
+    redis.get.mockResolvedValue('current-ready-token-1234567890');
+    jest.spyOn(User, 'getTaskByIdForUser').mockResolvedValue({ id: 42, status: 'pending' });
+    const complete = jest.spyOn(User, 'confirmCompleteTaskById');
+    const req = { user: { id: 'u1' }, params: { id: '42' }, body: { ready_token: 'stale-ready-token-12345678901' } };
+    const res = mockRes();
+
+    await userController.confirmCompleteTask(req, res);
+
+    expect(res.statusCode).toBe(409);
+    expect(complete).not.toHaveBeenCalled();
+  });
+
+  test('accepts and consumes the task-bound readiness token after completion', async () => {
+    const token = 'current-ready-token-1234567890';
+    redis.get.mockResolvedValue(token);
+    redis.eval.mockResolvedValue(1);
+    jest.spyOn(User, 'getTaskByIdForUser').mockResolvedValue({ id: 42, status: 'pending' });
+    jest.spyOn(User, 'confirmCompleteTaskById').mockResolvedValue({
+      completed_task: { id: 42, status: 'completed' },
+      next_task: { id: 43 },
+      current_proficiency: 7,
+    });
+    jest.spyOn(User, 'evaluateAchievements').mockResolvedValue(undefined);
+    const req = { user: { id: 'u1' }, params: { id: '42' }, body: { ready_token: token } };
+    const res = mockRes();
+
+    await userController.confirmCompleteTask(req, res);
+
+    expect(res.statusCode).toBe(200);
+    expect(User.confirmCompleteTaskById).toHaveBeenCalledWith('u1', '42', null);
+    expect(redis.eval).toHaveBeenCalledTimes(1);
+  });
+
+  test('recovers an already-completed task when the original ACK was lost', async () => {
+    jest.spyOn(User, 'getTaskByIdForUser').mockResolvedValue({ id: 42, status: 'completed' });
+    jest.spyOn(User, 'confirmCompleteTaskById').mockResolvedValue({
+      completed_task: { id: 42, status: 'completed' },
+      next_task: { id: 43, status: 'pending' },
+      current_proficiency: 33,
+      already_completed: true,
+    });
+    const req = { user: { id: 'u1' }, params: { id: '42' }, body: {} };
+    const res = mockRes();
+
+    await userController.confirmCompleteTask(req, res);
+
+    expect(res.statusCode).toBe(200);
+    expect(res.body.data.next_task.id).toBe(43);
+    expect(redis.get).not.toHaveBeenCalled();
+  });
+});
 
 // ─── Login: null-password (Google OAuth user) ────────────────────────
 

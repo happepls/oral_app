@@ -649,6 +649,203 @@ class TestDailyQaFinalizePersistence:
         notify.assert_awaited_once()
 
 
+class TestDailyQaTurnCompletion:
+    @pytest.mark.asyncio
+    async def test_trusted_marker_completes_first_real_answer(self):
+        callback = types.SimpleNamespace(
+            is_daily_qa_mode=True,
+            daily_qa_completed=False,
+            current_turn_id="turn-marker",
+            processed_daily_qa_turn_ids=set(),
+            daily_qa_ai_response_count=0,
+            daily_qa_suppress_modal=False,
+            messages=[{"role": "user", "content": "I cook dinner with my family."}],
+            user_context={"active_goal": {"target_language": "English"}},
+            user_id="user-1",
+            websocket=AsyncMock(),
+            _safe_send=AsyncMock(),
+        )
+        finalize = AsyncMock()
+        with patch.object(_main_module, "_finalize_daily_qa_pass", finalize):
+            completed = await _main_module._maybe_finalize_daily_qa_answer(
+                callback, "[DAILY_QA_PASSED] Great answer!"
+            )
+
+        assert completed is True
+        finalize.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_two_real_answers_complete_without_audio_or_cos(self):
+        callback = types.SimpleNamespace(
+            is_daily_qa_mode=True,
+            daily_qa_completed=False,
+            current_turn_id="turn-1",
+            processed_daily_qa_turn_ids=set(),
+            daily_qa_ai_response_count=0,
+            daily_qa_suppress_modal=False,
+            messages=[{"role": "user", "content": "I usually read before bed."}],
+            user_context={"active_goal": {"target_language": "English"}},
+            user_id="user-1",
+            websocket=AsyncMock(),
+            _safe_send=AsyncMock(),
+        )
+        finalize = AsyncMock()
+        with patch.object(_main_module, "_finalize_daily_qa_pass", finalize):
+            first = await _main_module._maybe_finalize_daily_qa_answer(
+                callback, "Great answer, that is a clear habit."
+            )
+            callback.current_turn_id = "turn-2"
+            callback.messages.append({"role": "user", "content": "It helps me sleep calmly."})
+            second = await _main_module._maybe_finalize_daily_qa_answer(
+                callback, "Great answer, well done!"
+            )
+
+        assert first is False
+        assert second is True
+        assert callback.daily_qa_completed is True
+        finalize.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_duplicate_turn_is_not_counted_twice(self):
+        callback = types.SimpleNamespace(
+            is_daily_qa_mode=True,
+            daily_qa_completed=False,
+            current_turn_id="same-turn",
+            processed_daily_qa_turn_ids=set(),
+            daily_qa_ai_response_count=0,
+            daily_qa_suppress_modal=False,
+            messages=[{"role": "user", "content": "I walk to work every day."}],
+            user_context={"active_goal": {"target_language": "English"}},
+            user_id="user-1",
+            websocket=AsyncMock(),
+            _safe_send=AsyncMock(),
+        )
+        with patch.object(_main_module, "_finalize_daily_qa_pass", AsyncMock()):
+            await _main_module._maybe_finalize_daily_qa_answer(callback, "Great answer!")
+            await _main_module._maybe_finalize_daily_qa_answer(callback, "Great answer!")
+
+        assert callback.daily_qa_ai_response_count == 1
+
+
+class TestRealtimeEventOrdering:
+    @pytest.mark.asyncio
+    async def test_slow_history_write_does_not_block_following_realtime_frames(self):
+        callback = _main_module.WebSocketCallback(
+            AsyncMock(), asyncio.get_running_loop(), {}, "token", "user-1",
+            "session-1", [], "Coffee Shop", None,
+        )
+        callback._safe_send = AsyncMock()
+
+        release_save = asyncio.Event()
+
+        async def slow_save(*_args, **_kwargs):
+            await release_save.wait()
+
+        with patch.object(_main_module, "save_single_message", slow_save):
+            callback.on_event({
+                "type": "conversation.item.input_audio_transcription.completed",
+                "item_id": "turn-1",
+                "transcript": "One coffee, please.",
+            })
+            callback.on_event({
+                "type": "response.audio.delta",
+                "response_id": "response-1",
+                "delta": "AAECAw==",
+            })
+            callback.on_event({
+                "type": "response.audio_transcript.delta",
+                "response_id": "response-1",
+                "delta": "Certainly.",
+            })
+            await asyncio.sleep(0.05)
+            sent_types = [call.args[0]["type"] for call in callback._safe_send.await_args_list]
+            assert sent_types == [
+                "user_transcript", "role_switch", "ai_text_delta", "audio_response",
+            ]
+            release_save.set()
+            await asyncio.sleep(0)
+
+    @pytest.mark.asyncio
+    async def test_first_text_frame_precedes_buffered_audio_frame(self):
+        callback = _main_module.WebSocketCallback(
+            AsyncMock(),
+            asyncio.get_running_loop(),
+            {},
+            "token",
+            "user-1",
+            "session-1",
+            [],
+            "Coffee Shop",
+            None,
+        )
+        callback._safe_send = AsyncMock()
+        encoded_audio = "AAECAw=="
+
+        callback.on_event({
+            "type": "response.audio.delta",
+            "response_id": "response-1",
+            "delta": encoded_audio,
+        })
+        callback.on_event({
+            "type": "response.audio_transcript.delta",
+            "response_id": "response-1",
+            "delta": "Hello",
+        })
+        await asyncio.sleep(0.05)
+
+        sent_types = [call.args[0]["type"] for call in callback._safe_send.await_args_list]
+        assert sent_types == ["role_switch", "ai_text_delta", "audio_response"]
+
+    @pytest.mark.asyncio
+    async def test_audio_done_waits_for_text_and_buffered_audio(self):
+        callback = _main_module.WebSocketCallback(
+            AsyncMock(), asyncio.get_running_loop(), {}, "token", "user-1",
+            "session-1", [], "Coffee Shop", None,
+        )
+        callback._safe_send = AsyncMock()
+        callback.on_event({
+            "type": "response.audio.delta",
+            "response_id": "response-1",
+            "delta": "AAECAw==",
+        })
+        callback.on_event({
+            "type": "response.audio.done",
+            "response_id": "response-1",
+        })
+        callback.on_event({
+            "type": "response.audio_transcript.delta",
+            "response_id": "response-1",
+            "delta": "Hello",
+        })
+        await asyncio.sleep(0.05)
+
+        sent_types = [call.args[0]["type"] for call in callback._safe_send.await_args_list]
+        assert sent_types == [
+            "role_switch", "ai_text_delta", "audio_response", "response.audio.done",
+        ]
+
+    @pytest.mark.asyncio
+    async def test_audio_done_grace_releases_when_transcript_never_arrives(self):
+        callback = _main_module.WebSocketCallback(
+            AsyncMock(), asyncio.get_running_loop(), {}, "token", "user-1",
+            "session-1", [], "Coffee Shop", None,
+        )
+        callback._safe_send = AsyncMock()
+        callback.on_event({
+            "type": "response.audio.delta",
+            "response_id": "response-short",
+            "delta": "AAECAw==",
+        })
+        callback.on_event({
+            "type": "response.audio.done",
+            "response_id": "response-short",
+        })
+        await asyncio.sleep(0.45)
+
+        sent_types = [call.args[0]["type"] for call in callback._safe_send.await_args_list]
+        assert sent_types == ["ai_turn_started", "audio_response", "response.audio.done"]
+
+
 # =========================================================================
 # helpers
 # =========================================================================

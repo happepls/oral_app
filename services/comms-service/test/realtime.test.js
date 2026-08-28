@@ -86,10 +86,17 @@ test('realtime ticket handshake, event forwarding, binary audio, invalid mode, a
     while (aiMessages.length < 2) await new Promise((resolve) => setTimeout(resolve, 5));
     assert.equal(aiMessages[1].type, 'audio_stream');
     assert.equal(aiMessages[1].payload.audio, Buffer.from([1, 2, 3]).toString('base64'));
-    aiConnections[0].socket.send(JSON.stringify({ type: 'audio_response', payload: Buffer.from([4, 5]).toString('base64') }));
+    aiConnections[0].socket.send(JSON.stringify({
+      type: 'audio_response',
+      responseId: 'response-1',
+      payload: Buffer.from([4, 5]).toString('base64'),
+    }));
     const [audio, isBinary] = await once(client, 'message');
     assert.equal(isBinary, true);
-    assert.deepEqual(Buffer.from(audio), Buffer.from([4, 5]));
+    const packet = Buffer.from(audio);
+    assert.deepEqual(packet.subarray(0, 4), Buffer.from([0x47, 0x4a, 0x01, 10]));
+    assert.equal(packet.subarray(4, 14).toString(), 'response-1');
+    assert.deepEqual(packet.subarray(14), Buffer.from([4, 5]));
     client.close();
     await once(client, 'close');
 
@@ -120,6 +127,107 @@ test('realtime endpoint rejects a non-realtime token', async () => {
   }
 });
 
+test('unexpected upstream close closes the browser once with a retryable code', async () => {
+  const aiHttp = http.createServer();
+  const aiWss = new WebSocketServer({ server: aiHttp });
+  aiHttp.listen(0, '127.0.0.1');
+  await once(aiHttp, 'listening');
+  let upstream;
+  aiWss.on('connection', (socket) => {
+    upstream = socket;
+    socket.send(JSON.stringify({ type: 'connection_established' }));
+  });
+  const comms = await startComms(`ws://127.0.0.1:${aiHttp.address().port}/stream`);
+  try {
+    const client = new WebSocket(`ws://127.0.0.1:${comms.port}/api/v1/realtime?ticket=${encodeURIComponent(ticket())}&sessionId=upstream-close`);
+    await once(client, 'open');
+    await once(client, 'message');
+
+    let closeCount = 0;
+    client.on('close', () => { closeCount += 1; });
+    const closedEvent = once(client, 'message');
+    const clientClosed = once(client, 'close');
+    upstream.close(); // ws reports the no-status close as 1005 to comms.
+
+    const [notification] = await closedEvent;
+    assert.deepEqual(JSON.parse(notification.toString()), {
+      type: 'connection_closed',
+      payload: {
+        code: 1005,
+        reason: 'AI service connection closed',
+        reconnectable: true,
+      },
+    });
+    const [code] = await clientClosed;
+    assert.equal(code, 1011);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    assert.equal(closeCount, 1);
+  } finally {
+    comms.stop();
+    await new Promise((resolve) => aiWss.close(() => aiHttp.close(resolve)));
+  }
+});
+
+test('upstream stream timeout propagates as one retryable browser close', async () => {
+  const aiHttp = http.createServer();
+  const aiWss = new WebSocketServer({ server: aiHttp });
+  aiHttp.listen(0, '127.0.0.1');
+  await once(aiHttp, 'listening');
+  let upstream;
+  aiWss.on('connection', (socket) => {
+    upstream = socket;
+    socket.send(JSON.stringify({ type: 'connection_established' }));
+  });
+  const comms = await startComms(`ws://127.0.0.1:${aiHttp.address().port}/stream`);
+  try {
+    const client = new WebSocket(`ws://127.0.0.1:${comms.port}/api/v1/realtime?ticket=${encodeURIComponent(ticket())}&sessionId=stream-timeout`);
+    await once(client, 'open');
+    await once(client, 'message');
+
+    const closedEvent = once(client, 'message');
+    const clientClosed = once(client, 'close');
+    upstream.close(1011, 'Response stream timeout');
+
+    const [notification] = await closedEvent;
+    const payload = JSON.parse(notification.toString());
+    assert.equal(payload.type, 'connection_closed');
+    assert.equal(payload.payload.code, 1011);
+    assert.equal(payload.payload.reason, 'Response stream timeout');
+    assert.equal(payload.payload.reconnectable, true);
+    const [code] = await clientClosed;
+    assert.equal(code, 1011);
+  } finally {
+    comms.stop();
+    await new Promise((resolve) => aiWss.close(() => aiHttp.close(resolve)));
+  }
+});
+
+test('upstream policy rejection remains non-retryable', async () => {
+  const aiHttp = http.createServer();
+  const aiWss = new WebSocketServer({ server: aiHttp });
+  aiHttp.listen(0, '127.0.0.1');
+  await once(aiHttp, 'listening');
+  aiWss.on('connection', (socket) => {
+    socket.send(JSON.stringify({ type: 'connection_established' }));
+    setTimeout(() => socket.close(1008, 'Policy rejected'), 10);
+  });
+  const comms = await startComms(`ws://127.0.0.1:${aiHttp.address().port}/stream`);
+  try {
+    const client = new WebSocket(`ws://127.0.0.1:${comms.port}/api/v1/realtime?ticket=${encodeURIComponent(ticket())}&sessionId=policy-close`);
+    await once(client, 'open');
+    await once(client, 'message');
+    const [notification] = await once(client, 'message');
+    const payload = JSON.parse(notification.toString());
+    assert.equal(payload.type, 'connection_closed');
+    assert.equal(payload.payload.reconnectable, false);
+    const [code] = await once(client, 'close');
+    assert.equal(code, 1008);
+  } finally {
+    comms.stop();
+    await new Promise((resolve) => aiWss.close(() => aiHttp.close(resolve)));
+  }
+});
+
 test('new socket replaces the old user session and heartbeat gets one local pong', async () => {
   const aiHttp = http.createServer();
   const aiWss = new WebSocketServer({ server: aiHttp });
@@ -137,6 +245,8 @@ test('new socket replaces the old user session and heartbeat gets one local pong
     await once(first, 'open');
     await once(first, 'message');
 
+    let firstCloseCount = 0;
+    first.on('close', () => { firstCloseCount += 1; });
     const firstClosed = once(first, 'close');
     const second = new WebSocket(url);
     await once(second, 'open');
@@ -150,6 +260,8 @@ test('new socket replaces the old user session and heartbeat gets one local pong
     assert.deepEqual(JSON.parse(pong.toString()), { type: 'pong', timestamp: 1234, sequence: 9 });
     await new Promise((resolve) => setTimeout(resolve, 20));
     assert.equal(aiMessages.length, beforeHeartbeat);
+    assert.equal(firstCloseCount, 1);
+    assert.equal(second.readyState, WebSocket.OPEN);
     second.close();
   } finally {
     comms.stop();

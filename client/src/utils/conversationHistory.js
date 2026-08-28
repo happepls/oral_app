@@ -136,7 +136,14 @@ export function reconcileUserTranscript(messages, { text, messageId, currentMess
 // Stable IDs make those saves updates instead of new MongoDB array entries.
 export function prepareHistorySnapshot(messages) {
   return (messages || [])
-    .filter(message => message.isFinal || message.type === 'ai')
+    // UI-only rows (system notices, scoring feedback, task completion banners)
+    // are not conversation turns. Persisting them as `assistant` pollutes the
+    // restored model context and can make delayed scoring notices look like an
+    // AI reply.
+    .filter(message => (
+      (message.type === 'user' || message.type === 'ai')
+      && (message.isFinal || message.type === 'ai')
+    ))
     .map((message, index) => {
       const role = message.type === 'user' ? 'user' : 'assistant';
       const stableId = message.historyId
@@ -148,6 +155,7 @@ export function prepareHistorySnapshot(messages) {
         role,
         content: message.content,
         audioUrl: message.audioUrl || null,
+        ...(message.timestamp ? { timestamp: message.timestamp } : {}),
         ...(message.scenario ? { scenario: message.scenario } : {}),
         ...(message.task_id != null ? { task_id: String(message.task_id) } : {}),
         ...(message.turn_id ? { turn_id: message.turn_id } : {}),

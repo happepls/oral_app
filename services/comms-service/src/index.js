@@ -130,7 +130,29 @@ wss.on('connection', async function connection(clientWs, req) {
 
     let aiServiceWs = null;
     let bridgeReady = false;
+    let downstreamCloseStarted = false;
     const messageQueue = [];
+
+    const closeClientForUpstreamFailure = (upstreamCode, upstreamReason) => {
+      if (downstreamCloseStarted || clientWs.readyState !== WebSocket.OPEN) return;
+      downstreamCloseStarted = true;
+      const reason = upstreamReason?.toString() || 'AI service connection closed';
+      const reconnectable = upstreamCode !== 1008 && upstreamCode !== 4400;
+      clientWs.send(JSON.stringify({
+        type: 'connection_closed',
+        payload: {
+          code: upstreamCode,
+          reason,
+          reconnectable,
+        }
+      }));
+      // 1005/1006 are reserved and cannot be sent in a close frame. Normalize
+      // every unexpected upstream loss to a retryable server-error close so the
+      // browser's normal reconnect path runs instead of remaining falsely OPEN.
+      clientWs.close(reconnectable ? 1011 : 1008, reconnectable
+        ? 'AI service connection lost'
+        : 'AI service rejected connection');
+    };
 
     const forwardToAI = (message, isBinary) => {
       if (!aiServiceWs || aiServiceWs.readyState !== WebSocket.OPEN) return;
@@ -274,7 +296,7 @@ wss.on('connection', async function connection(clientWs, req) {
             type: 'error',
             message: `AI service connection failed: ${error.message || 'Unknown error'}. Please try again.`
           }));
-          clientWs.close(1011, 'AI service connection error');
+          closeClientForUpstreamFailure(1011, error.message || 'AI service connection error');
         }
       });
 
@@ -296,8 +318,12 @@ wss.on('connection', async function connection(clientWs, req) {
             if (data.type === 'audio_response' && data.payload) {
               try {
                 const audioBuffer = Buffer.from(data.payload, 'base64');
+                const responseId = Buffer.from(String(data.responseId || ''), 'utf8');
+                if (responseId.length > 255) throw new Error('responseId is too long');
+                const header = Buffer.from([0x47, 0x4a, 0x01, responseId.length]);
+                const packet = Buffer.concat([header, responseId, audioBuffer]);
                 console.log(`Forwarding audio_response to user ${userId}, size: ${audioBuffer.length} bytes`);
-                clientWs.send(audioBuffer, { binary: true });
+                clientWs.send(packet, { binary: true });
               } catch (err) {
                 console.error(`Failed to decode audio payload: ${err.message}`);
               }
@@ -321,23 +347,7 @@ wss.on('connection', async function connection(clientWs, req) {
 
       aiServiceWs.on('close', (code, reason) => {
         console.log(`Connection to AI service closed for user ${userId}. Code: ${code}, Reason: ${reason?.toString()}`);
-        
-        // Send connection_closed event to client for proper handling
-        if (clientWs.readyState === WebSocket.OPEN) {
-          clientWs.send(JSON.stringify({
-            type: 'connection_closed',
-            payload: {
-              code: code,
-              reason: reason?.toString() || 'AI service connection closed',
-              reconnectable: code !== 1008 && code !== 1011  // Protocol errors are not reconnectable
-            }
-          }));
-          
-          // Only close client connection for fatal errors
-          if (code === 1008 || code === 1011) {
-            clientWs.close(code, reason?.toString() || 'AI service connection lost.');
-          }
-        }
+        closeClientForUpstreamFailure(code, reason);
       });
 
       // Remove duplicate error handler - already handled above
@@ -348,10 +358,13 @@ wss.on('connection', async function connection(clientWs, req) {
 
     } catch (error) {
       console.error('Failed to connect to AI service:', error.message);
-      clientWs.send(JSON.stringify({
-        type: 'error',
-        message: `Could not connect to AI service: ${error.message}`
-      }));
+      if (clientWs.readyState === WebSocket.OPEN) {
+        clientWs.send(JSON.stringify({
+          type: 'error',
+          message: `Could not connect to AI service: ${error.message}`
+        }));
+        closeClientForUpstreamFailure(1011, error.message);
+      }
     }
 
     clientWs.on('close', () => {

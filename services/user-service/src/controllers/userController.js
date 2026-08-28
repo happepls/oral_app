@@ -23,8 +23,15 @@ function _smsProvider(phone) {
 // 密码重置 token 配置
 const RESET_TOKEN_TTL_SECONDS = 30 * 60; // 30 分钟
 const RESET_TOKEN_PREFIX = 'pwreset:';
+const TASK_READY_PREFIX = 'task_ready:v1:';
 function _hashResetToken(token) {
   return crypto.createHash('sha256').update(token).digest('hex');
+}
+
+function _taskReadyKey(userId, taskId) {
+  return `${TASK_READY_PREFIX}${crypto.createHash('sha256')
+    .update(`${userId}\0${taskId}`)
+    .digest('hex')}`;
 }
 
 
@@ -747,9 +754,46 @@ exports.confirmCompleteTask = async (req, res) => {
     try {
         const userId = req.user?.id;
         const taskId = req.params.id;
-        const { mode } = req.body || {};
+        const { mode, ready_token: readyToken } = req.body || {};
         if (!userId) return res.status(401).json({ success: false, message: 'Unauthorized' });
         if (!taskId) return res.status(400).json({ success: false, message: 'task id required' });
+        const existingTask = await User.getTaskByIdForUser(userId, taskId);
+        if (!existingTask) {
+            return res.status(404).json({ success: false, message: 'Task not found' });
+        }
+        if (existingTask.status === 'completed') {
+            const completed = await User.confirmCompleteTaskById(userId, taskId, mode || null);
+            return res.json({
+                success: true,
+                message: 'Task already completed',
+                data: {
+                    completed_task: completed.completed_task,
+                    next_task: completed.next_task,
+                    current_proficiency: completed.current_proficiency,
+                },
+            });
+        }
+        if (typeof readyToken !== 'string' || readyToken.length < 20 || readyToken.length > 128) {
+            return res.status(409).json({ success: false, message: 'Task readiness has expired' });
+        }
+
+        const readyKey = _taskReadyKey(userId, taskId);
+        let storedReadyToken;
+        try {
+            storedReadyToken = await redis.get(readyKey);
+        } catch (error) {
+            console.error('[User] Confirm-Complete readiness check failed:', error.message);
+            return res.status(503).json({ success: false, message: 'Task readiness is temporarily unavailable' });
+        }
+        const storedValue = String(storedReadyToken || '');
+        const storedToken = storedValue.includes(':')
+            ? storedValue.slice(storedValue.indexOf(':') + 1)
+            : storedValue;
+        const presented = Buffer.from(readyToken);
+        const stored = Buffer.from(storedToken);
+        if (presented.length !== stored.length || !crypto.timingSafeEqual(presented, stored)) {
+            return res.status(409).json({ success: false, message: 'Task readiness has expired' });
+        }
 
         console.log(`[User] Confirm-Complete Task: User=${userId}, Task=${taskId}, Mode=${mode || 'default'}`);
 
@@ -764,15 +808,19 @@ exports.confirmCompleteTask = async (req, res) => {
                 data: { score: result.task?.score || 0 },
             });
         }
-        if (result.error === 'already_completed') {
-            return res.json({
-                success: true,
-                message: 'Task already completed',
-                data: { completed_task: result.task, next_task: null },
-            });
-        }
-
         await User.evaluateAchievements(userId);
+        try {
+            await redis.eval(
+                "if redis.call('GET', KEYS[1]) == ARGV[1] then return redis.call('DEL', KEYS[1]) else return 0 end",
+                1,
+                readyKey,
+                storedValue
+            );
+        } catch (error) {
+            // The DB status is already authoritative and idempotent. A stale
+            // capability cannot complete another task because the key is task-bound.
+            console.error('[User] Confirm-Complete readiness cleanup failed:', error.message);
+        }
         return res.json({
             success: true,
             data: {
