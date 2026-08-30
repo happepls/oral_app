@@ -1,416 +1,388 @@
-"""
-Tests for BatchEvaluationWorkflow (Feature 1 — 批量评估 Agent)
-
-Design spec: docs/batch-evaluation-agent-design.md
-
-Covers:
-- _rule_based_fallback(): 4-turn window + current_task.keywords → delta, coverage_ratio, matched/missed
-- evaluate_window() LLM failure path: dashscope.Generation.call raises → fallback path
-- JSON parse tolerance: markdown-wrapped JSON (```json ... ```)
-- delta=0 → no DB update (mock _update_user_proficiency stays untouched)
-- Cheat defense: same keyword repeated 4x → unique_hits=1 → delta=0
-
-NOTE: Implementation is in progress (task #2 F1-1). Tests use defensive imports and
-skip-on-missing so the file is committable before the workflow module exists.
-When the module lands, remove the skip guard and they should run clean.
-"""
 import json
 import os
 import sys
-from unittest.mock import AsyncMock, MagicMock, patch
+from contextlib import asynccontextmanager
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
-# --- Ensure src on path ---------------------------------------------------
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
-# --- Defensive import ----------------------------------------------------
-try:
-    from workflows.batch_evaluation import BatchEvaluationWorkflow  # type: ignore
-    _IMPL_AVAILABLE = True
-except Exception as _imp_err:  # noqa: BLE001
-    BatchEvaluationWorkflow = None  # type: ignore
-    _IMPL_AVAILABLE = False
-    _IMPORT_ERROR = _imp_err
-
-pytestmark = pytest.mark.skipif(
-    not _IMPL_AVAILABLE,
-    reason="batch_evaluation.py not yet implemented (task #2 F1-1 pending)",
-)
+from workflows.batch_evaluation import BatchEvaluationWorkflow, QUALITY_DELTAS
 
 
-# =========================================================================
-# Fixtures
-# =========================================================================
+TASK = {
+    "id": 42,
+    "task_description": "Order coffee politely",
+    "scenario_title": "Coffee shop",
+    "target_language": "English",
+    "keywords": ["coffee", "please"],
+}
 
 
-@pytest.fixture
-def workflow():
-    return BatchEvaluationWorkflow()
-
-
-@pytest.fixture
-def current_task():
-    return {
-        "id": 42,
-        "task_description": "Ask about check-in times and room types",
-        "keywords": ["check-in", "room", "reservation", "available"],
-        "scenario_title": "Hotel Check-In",
-        "target_language": "English",
-    }
-
-
-def _mk_turn(idx: int, user: str, ai: str) -> dict:
-    return {
-        "turn_index": idx,
-        "user_content": user,
-        "ai_response": ai,
-        "timestamp": f"2026-04-20T10:0{idx}:00Z",
-    }
-
-
-@pytest.fixture
-def window_diverse(current_task):
-    """4 turns covering 3 distinct keywords → above the ≥3 hits threshold."""
+def window(size=3, prefix="window"):
     return [
-        _mk_turn(1, "I want to check-in please.", "Great! Do you have a reservation?"),
-        _mk_turn(2, "Yes I have a reservation under Smith.", "Let me look that up."),
-        _mk_turn(3, "Any room with a nice view?", "We have several options."),
-        _mk_turn(4, "Is a double room available?", "Yes, on the 5th floor."),
+        {"turn_id": f"{prefix}-turn-{i}", "turn_order": i,
+         "user_content": f"A coffee please, attempt {i}.", "ai_response": "Certainly."}
+        for i in range(1, size + 1)
     ]
 
 
-@pytest.fixture
-def window_cheat(current_task):
-    """4 turns repeating SAME keyword → unique_hits must collapse to 1."""
-    return [
-        _mk_turn(1, "check-in check-in", "Ok."),
-        _mk_turn(2, "check-in please", "Sure."),
-        _mk_turn(3, "I want check-in", "Got it."),
-        _mk_turn(4, "check-in now", "Right away."),
-    ]
+class FakeRedis:
+    def __init__(self):
+        self.values = {}
+
+    def setex(self, key, ttl, value):
+        self.values[key] = value
+
+    def eval(self, script, numkeys, key, generation, order, ttl, value):
+        current = str(self.values.get(key) or "")
+        if current:
+            current_generation, current_order, _ = current.split(":", 2)
+            if int(current_generation) > int(generation):
+                return "__STALE__"
+            if int(current_generation) == int(generation) and int(current_order) > int(order):
+                return "__STALE__"
+            if int(current_generation) == int(generation) and int(current_order) == int(order):
+                return current
+        self.values[key] = value
+        return value
 
 
-# =========================================================================
-# 1. _rule_based_fallback()
-# =========================================================================
+class FakeDB:
+    def __init__(self, *, score=0, interaction_count=0, generation=0, status="pending"):
+        self.task = {"score": score, "interaction_count": interaction_count,
+                     "goal_id": 7,
+                     "scoring_generation": generation, "status": status}
+        self.evaluations = {}
+        self.task_updates = 0
+        self.goal_delta = 0
 
+    @asynccontextmanager
+    async def transaction(self):
+        yield
 
-class TestRuleBasedFallback:
-    def test_diverse_window_counts_unique_hits(self, workflow, window_diverse, current_task):
-        result = workflow._rule_based_fallback(window_diverse, current_task)
+    async def fetchrow(self, query, *args):
+        if "workflow_scoring_evaluations" in query:
+            value = self.evaluations.get(args[0])
+            return {"result": value} if value is not None else None
+        return dict(self.task)
 
-        assert isinstance(result, dict)
-        detail = result["keyword_coverage_detail"]
-        matched = {m.lower() for m in detail["matched"]}
-        # all four keywords were used across the 4 turns
-        assert "check-in" in matched
-        assert "reservation" in matched
-        assert "room" in matched
-        assert "available" in matched
-        assert detail["coverage_ratio"] == pytest.approx(1.0, abs=0.01)
-        assert detail["missed"] == [] or set(detail["missed"]) == set()
-
-    def test_cheat_repeated_keyword_unique_hits_is_one(
-        self, workflow, window_cheat, current_task
-    ):
-        result = workflow._rule_based_fallback(window_cheat, current_task)
-        detail = result["keyword_coverage_detail"]
-        matched_lower = {m.lower() for m in detail["matched"]}
-
-        # Only "check-in" counts, even though spoken 4 times
-        assert matched_lower == {"check-in"}
-        assert detail["coverage_ratio"] == pytest.approx(0.25, abs=0.01)
-        # Spec §六: unique_hits=1 → input_score=4 → delta=0 under the "≤5→0" gate
-        assert result["delta"] == 0
-
-    def test_partial_coverage_two_hits(self, workflow, current_task):
-        window = [
-            _mk_turn(1, "check-in please", "Do you have a reservation?"),
-            _mk_turn(2, "Yes, reservation under Jones.", "Good."),
-            _mk_turn(3, "How's the weather today?", "Let's stay on topic."),
-            _mk_turn(4, "Nice lobby here.", "Thank you."),
-        ]
-        result = workflow._rule_based_fallback(window, current_task)
-        matched = {m.lower() for m in result["keyword_coverage_detail"]["matched"]}
-        assert matched == {"check-in", "reservation"}
-        assert result["keyword_coverage_detail"]["coverage_ratio"] == pytest.approx(0.5, abs=0.01)
-
-    def test_empty_keywords_defaults_to_zero_coverage(self, workflow):
-        task = {"id": 1, "keywords": [], "task_description": "t", "target_language": "English"}
-        window = [_mk_turn(1, "hello", "hi")]
-        result = workflow._rule_based_fallback(window, task)
-        # With no keywords, coverage_ratio is conventionally 0; delta should be 0
-        assert result["keyword_coverage_detail"]["coverage_ratio"] in (0.0, 0)
-        assert result["delta"] == 0
-
-    def test_fallback_returns_required_shape(self, workflow, window_diverse, current_task):
-        result = workflow._rule_based_fallback(window_diverse, current_task)
-        for key in ("delta", "teaching_mode", "scores", "improvement_tips", "keyword_coverage_detail"):
-            assert key in result, f"missing key: {key}"
-        assert result["teaching_mode"] in ("guide", "correct")
-        # delta scale widened to 0-10 (aggressive): one strong window completes a task
-        assert result["delta"] in range(11)
-
-
-# =========================================================================
-# 2. evaluate_window() — LLM exception path
-# =========================================================================
-
-
-class TestEvaluateWindowLLMExceptions:
-    @pytest.mark.asyncio
-    async def test_dashscope_raises_falls_back_to_rule_based(
-        self, workflow, window_diverse, current_task
-    ):
-        """When the configured model throws, fallback computes locally."""
-        workflow._api_key = "fake-key-for-test"
-        fallback_spy = MagicMock(wraps=workflow._rule_based_fallback)
-        db = AsyncMock()
-
-        with patch.object(workflow, "_post_chat_completion",
-                          new=AsyncMock(side_effect=RuntimeError("boom"))), \
-             patch.object(workflow, "_rule_based_fallback", fallback_spy), \
-             patch.object(workflow, "_update_user_proficiency", new=AsyncMock(return_value={})):
-            result = await workflow.evaluate_window(
-                user_id="u1",
-                goal_id=5,
-                current_task=current_task,
-                native_language="Chinese",
-                turn_window=window_diverse,
-                db_connection=db,
-            )
-
-        fallback_spy.assert_called_once()
-        assert "delta" in result
-
-    @pytest.mark.asyncio
-    async def test_dashscope_timeout_falls_back(self, workflow, window_diverse, current_task):
-        workflow._api_key = "fake-key-for-test"
-        with patch.object(workflow, "_post_chat_completion",
-                          new=AsyncMock(side_effect=TimeoutError("slow"))), \
-             patch.object(workflow, "_update_user_proficiency", new=AsyncMock(return_value={})):
-            result = await workflow.evaluate_window(
-                user_id="u1",
-                goal_id=5,
-                current_task=current_task,
-                native_language="Chinese",
-                turn_window=window_diverse,
-                db_connection=AsyncMock(),
-            )
-        assert isinstance(result, dict)
-        assert "delta" in result
-
-    @pytest.mark.asyncio
-    async def test_missing_api_key_falls_back(self, workflow, window_diverse, current_task):
-        """DASHSCOPE_API_KEY not configured → fallback (no network call)."""
-        workflow._api_key = None
-        with patch.object(workflow, "_update_user_proficiency",
-                          new=AsyncMock(return_value={})):
-            result = await workflow.evaluate_window(
-                user_id="u1", goal_id=5, current_task=current_task,
-                native_language="Chinese", turn_window=window_diverse,
-                db_connection=AsyncMock(),
-            )
-        assert isinstance(result, dict)
-        assert "delta" in result
-
-
-# =========================================================================
-# 3. JSON parse tolerance: markdown-wrapped JSON
-# =========================================================================
-
-
-class TestJSONParseTolerance:
-    @pytest.mark.asyncio
-    async def test_markdown_wrapped_json_parses(self, workflow, window_diverse, current_task):
-        body = {
-            "delta": 1,
-            "teaching_mode": "correct",
-            "scores": {"keyword_coverage": 4.0, "grammar_quality": 7.0,
-                       "topic_relevance": 6.0, "fluency": 6.0},
-            "next_topic_hint": None,
-            "correction_guidance": {
-                "error_type": "keyword_coverage",
-                "native_explanation": "你只用了 check-in",
-                "correct_example": "Do you have any rooms available?",
-                "retry_instruction": "Try again.",
-            },
-            "improvement_tips": ["使用 reservation 和 available"],
-            "keyword_coverage_detail": {
-                "matched": ["check-in"],
-                "missed": ["room", "reservation", "available"],
-                "coverage_ratio": 0.25,
-            },
-        }
-        wrapped = f"```json\n{json.dumps(body, ensure_ascii=False)}\n```"
-
-        workflow._api_key = "fake-key-for-test"
-        with patch.object(workflow, "_post_chat_completion",
-                          new=AsyncMock(return_value=wrapped)), \
-             patch.object(workflow, "_update_user_proficiency",
-                          new=AsyncMock(return_value={"task_completed": False})):
-            result = await workflow.evaluate_window(
-                user_id="u1",
-                goal_id=5,
-                current_task=current_task,
-                native_language="Chinese",
-                turn_window=window_diverse,
-                db_connection=AsyncMock(),
-            )
-
-        assert result["delta"] == 1
-        assert result["teaching_mode"] == "correct"
-        assert result["keyword_coverage_detail"]["coverage_ratio"] == pytest.approx(0.25)
-
-    @pytest.mark.asyncio
-    async def test_plain_json_also_parses(self, workflow, window_diverse, current_task):
-        body = {
-            "delta": 2,
-            "teaching_mode": "guide",
-            "scores": {"keyword_coverage": 8.0, "grammar_quality": 7.0,
-                       "topic_relevance": 8.0, "fluency": 7.0},
-            "next_topic_hint": "Ask about breakfast included",
-            "correction_guidance": None,
-            "improvement_tips": ["Great job — try longer sentences"],
-            "keyword_coverage_detail": {"matched": ["check-in", "room", "reservation"],
-                                        "missed": ["available"], "coverage_ratio": 0.75},
-        }
-        workflow._api_key = "fake-key-for-test"
-        with patch.object(workflow, "_post_chat_completion",
-                          new=AsyncMock(return_value=json.dumps(body))), \
-             patch.object(workflow, "_update_user_proficiency",
-                          new=AsyncMock(return_value={})):
-            result = await workflow.evaluate_window(
-                user_id="u1", goal_id=5, current_task=current_task,
-                native_language="Chinese", turn_window=window_diverse,
-                db_connection=AsyncMock(),
-            )
-        assert result["delta"] == 2
-        assert result["teaching_mode"] == "guide"
-
-    @pytest.mark.asyncio
-    async def test_malformed_json_falls_back(self, workflow, window_diverse, current_task):
-        workflow._api_key = "fake-key-for-test"
-        with patch.object(workflow, "_post_chat_completion",
-                          new=AsyncMock(return_value="not-json-at-all {{{")), \
-             patch.object(workflow, "_update_user_proficiency",
-                          new=AsyncMock(return_value={})):
-            result = await workflow.evaluate_window(
-                user_id="u1", goal_id=5, current_task=current_task,
-                native_language="Chinese", turn_window=window_diverse,
-                db_connection=AsyncMock(),
-            )
-        # fallback path returned a dict with delta key
-        assert "delta" in result
-        assert "keyword_coverage_detail" in result
-
-
-# =========================================================================
-# 4. OpenAI-compatible transport contract
-# =========================================================================
-
-
-class TestChatCompletionsTransport:
-    def test_accepts_official_workspace_endpoint(self):
-        url = BatchEvaluationWorkflow._validated_chat_completions_url(
-            "https://llm-example.cn-beijing.maas.aliyuncs.com/compatible-mode/v1"
+    async def fetchval(self, query, *args):
+        return sum(
+            1 for result in self.evaluations.values()
+            if result.get("scoring_generation") == args[2]
+            and result.get("window_completed") is True
         )
-        assert url.endswith("/compatible-mode/v1/chat/completions")
 
-    @pytest.mark.parametrize(
-        "base_url",
-        [
-            "http://dashscope.aliyuncs.com/compatible-mode/v1",
-            "https://example.com/compatible-mode/v1",
-            "https://dashscope.aliyuncs.com/api/v1",
-            "https://user@example.maas.aliyuncs.com/compatible-mode/v1",
-        ],
+    async def execute(self, query, *args):
+        if "UPDATE user_tasks" in query:
+            self.task["score"], self.task["interaction_count"] = args[:2]
+            self.task_updates += 1
+        elif "UPDATE user_goals" in query:
+            self.goal_delta += args[0]
+        elif "INSERT INTO workflow_scoring_evaluations" in query:
+            self.evaluations[args[0]] = json.loads(args[4])
+
+
+async def evaluate(workflow, db, quality="strong", evidence=True, *, size=3,
+                   evaluation_id="eval-1", redis=None, force_decision=False):
+    turns = window(size, evaluation_id)
+    derived_id = workflow._derive_evaluation_id(0, turns)
+    assessment = {"quality": quality, "evidence_sufficient": evidence,
+                  "reason": f"{quality} reason"}
+    with patch.object(workflow, "_call_llm", new=AsyncMock(return_value=assessment)):
+        return await workflow.evaluate_window(
+            user_id="u1", goal_id=7, task_id=42,
+            evaluation_id=derived_id,
+            scoring_generation=0, turn_window=turns, current_task=TASK,
+            native_language="Chinese", db_connection=db, redis_client=redis,
+            force_decision=force_decision,
+        )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("quality,delta", QUALITY_DELTAS.items())
+async def test_server_maps_every_quality_and_clamps_delta(quality, delta):
+    workflow = BatchEvaluationWorkflow()
+    result = await evaluate(workflow, FakeDB(), quality)
+    assert result["evaluation_status"] == "completed"
+    assert result["quality"] == quality
+    assert result["delta"] == delta
+    assert 0 <= result["delta"] <= 3
+
+
+def test_model_supplied_delta_is_ignored():
+    parsed = BatchEvaluationWorkflow._validate_llm_result({
+        "quality": "strong", "evidence_sufficient": True,
+        "reason": "Good work.", "delta": 10,
+    })
+    assert "delta" not in parsed
+    assert QUALITY_DELTAS[parsed["quality"]] == 3
+
+
+@pytest.mark.asyncio
+async def test_three_turns_with_insufficient_evidence_stays_open_without_write():
+    db = FakeDB()
+    result = await evaluate(BatchEvaluationWorkflow(), db, evidence=False)
+    assert result["evaluation_status"] == "insufficient_evidence"
+    assert result["evidence_sufficient"] is False
+    assert result["window_completed"] is False
+    assert result["delta"] == 0
+    assert db.task_updates == 0
+    assert not db.evaluations
+
+
+@pytest.mark.asyncio
+async def test_force_decision_requires_a_four_turn_window():
+    workflow = BatchEvaluationWorkflow()
+    turns = window(size=3, prefix="forced-too-early")
+    with pytest.raises(ValueError, match="only valid for a 4-turn"):
+        await workflow.evaluate_window(
+            user_id="u1", goal_id=7, task_id=42,
+            evaluation_id=workflow._derive_evaluation_id(0, turns),
+            scoring_generation=0, turn_window=turns, current_task=TASK,
+            native_language="Chinese", db_connection=FakeDB(),
+            force_decision=True,
+        )
+
+
+@pytest.mark.asyncio
+async def test_fourth_turn_forces_quality_decision():
+    db = FakeDB()
+    result = await evaluate(
+        BatchEvaluationWorkflow(), db, "needs_work", evidence=False, size=4
     )
-    def test_rejects_unapproved_or_malformed_endpoint(self, base_url):
-        with pytest.raises(ValueError):
-            BatchEvaluationWorkflow._validated_chat_completions_url(base_url)
-
-    @pytest.mark.asyncio
-    async def test_non_streaming_json_request_uses_selected_model(self, workflow):
-        workflow._api_key = "fake-key-for-test"
-        workflow._model = "qwen3.7-flash"
-        response = MagicMock()
-        response.raise_for_status.return_value = None
-        response.json.return_value = {
-            "choices": [{"message": {"content": '{"delta": 0}'}}]
-        }
-        client = AsyncMock()
-        client.post.return_value = response
-        context = MagicMock()
-        context.__aenter__ = AsyncMock(return_value=client)
-        context.__aexit__ = AsyncMock(return_value=None)
-
-        with patch("workflows.batch_evaluation.httpx.AsyncClient", return_value=context):
-            content = await workflow._post_chat_completion(
-                messages=[{"role": "user", "content": "evaluate"}]
-            )
-
-        assert content == '{"delta": 0}'
-        request = client.post.await_args.kwargs
-        assert request["json"]["model"] == "qwen3.7-flash"
-        assert request["json"]["stream"] is False
-        assert request["json"]["enable_thinking"] is False
-        assert request["json"]["response_format"] == {"type": "json_object"}
-        assert request["headers"]["Authorization"] == "Bearer fake-key-for-test"
+    assert result["evaluation_status"] == "completed"
+    assert result["evidence_sufficient"] is True
+    assert result["window_completed"] is True
+    assert result["delta"] == 1
+    assert result["interaction_count"] == 4
 
 
-# =========================================================================
-# 5. delta=0 → no DB update
-# =========================================================================
+@pytest.mark.asyncio
+async def test_qwen_failure_is_pending_and_never_writes_or_falls_back():
+    workflow = BatchEvaluationWorkflow()
+    db = FakeDB()
+    with patch.object(workflow, "_call_llm", new=AsyncMock(side_effect=TimeoutError("slow"))):
+        turns = window(prefix="pending")
+        result = await workflow.evaluate_window(
+            user_id="u1", goal_id=7, task_id=42,
+            evaluation_id=workflow._derive_evaluation_id(0, turns),
+            scoring_generation=0, turn_window=turns, current_task=TASK,
+            native_language="Chinese", db_connection=db,
+        )
+    assert result["evaluation_status"] == "evaluation_pending"
+    assert result["delta"] == 0
+    assert result["window_completed"] is False
+    assert db.task_updates == 0
+    assert db.goal_delta == 0
+    assert not db.evaluations
 
 
-class TestDBUpdateGate:
-    @pytest.mark.asyncio
-    async def test_delta_zero_skips_db_write(self, workflow, window_cheat, current_task):
-        """Cheat window (4x same keyword) → delta=0 → _update_user_proficiency NOT called."""
-        db = AsyncMock()
-        update_spy = AsyncMock(return_value={})
-        workflow._api_key = "fake-key-for-test"
+@pytest.mark.asyncio
+async def test_duplicate_evaluation_id_is_idempotent():
+    workflow = BatchEvaluationWorkflow()
+    db = FakeDB()
+    first = await evaluate(workflow, db, "strong")
+    second = await evaluate(workflow, db, "needs_work")
+    assert second == first
+    assert db.task_updates == 1
+    assert db.task["score"] == 3
+    assert db.task["interaction_count"] == 3
 
-        # Force fallback path (no LLM) by raising
-        with patch.object(workflow, "_post_chat_completion",
-                          new=AsyncMock(side_effect=RuntimeError("skip-llm"))), \
-             patch.object(workflow, "_update_user_proficiency", new=update_spy):
-            result = await workflow.evaluate_window(
-                user_id="u1", goal_id=5, current_task=current_task,
-                native_language="Chinese", turn_window=window_cheat,
-                db_connection=db,
-            )
 
-        assert result["delta"] == 0
-        update_spy.assert_not_called()
+@pytest.mark.asyncio
+async def test_duplicate_is_returned_before_second_qwen_call_and_is_unchanged():
+    workflow = BatchEvaluationWorkflow()
+    db = FakeDB()
+    first_model = AsyncMock(return_value={
+        "quality": "strong", "evidence_sufficient": True, "reason": "first",
+    })
+    turns = window(prefix="stable")
+    stable_id = workflow._derive_evaluation_id(0, turns)
+    with patch.object(workflow, "_call_llm", new=first_model):
+        first = await workflow.evaluate_window(
+            user_id="u1", goal_id=7, task_id=42, evaluation_id=stable_id,
+            scoring_generation=0, turn_window=turns, current_task=TASK,
+            native_language="Chinese", db_connection=db,
+        )
+    second_model = AsyncMock(side_effect=AssertionError("Qwen must not run"))
+    with patch.object(workflow, "_call_llm", new=second_model):
+        replay = await workflow.evaluate_window(
+            user_id="u1", goal_id=7, task_id=42, evaluation_id=stable_id,
+            scoring_generation=0, turn_window=turns, current_task=TASK,
+            native_language="Chinese", db_connection=db,
+        )
+    second_model.assert_not_awaited()
+    assert replay == first
+    assert replay["reason"] == "first"
 
-    @pytest.mark.asyncio
-    async def test_delta_positive_triggers_db_write(
-        self, workflow, window_diverse, current_task
-    ):
-        body = {
-            "delta": 2,
-            "teaching_mode": "guide",
-            "scores": {"keyword_coverage": 9, "grammar_quality": 8,
-                       "topic_relevance": 8, "fluency": 8},
-            "next_topic_hint": "Ask about check-out time",
-            "correction_guidance": None,
-            "improvement_tips": ["Nice variety"],
-            "keyword_coverage_detail": {"matched": ["check-in", "room", "reservation", "available"],
-                                        "missed": [], "coverage_ratio": 1.0},
-        }
-        update_spy = AsyncMock(return_value={"task_completed": False, "total_proficiency": 7})
-        workflow._api_key = "fake-key-for-test"
 
-        with patch.object(workflow, "_post_chat_completion",
-                          new=AsyncMock(return_value=json.dumps(body))), \
-             patch.object(workflow, "_update_user_proficiency", new=update_spy):
+@pytest.mark.asyncio
+async def test_task_goal_mismatch_is_rejected_without_write():
+    workflow = BatchEvaluationWorkflow()
+    db = FakeDB()
+    with patch.object(workflow, "_call_llm", new=AsyncMock(return_value={
+        "quality": "strong", "evidence_sufficient": True, "reason": "good",
+    })):
+        turns = window(prefix="wrong-goal")
+        with pytest.raises(ValueError, match="requested goal"):
             await workflow.evaluate_window(
-                user_id="u1", goal_id=5, current_task=current_task,
-                native_language="Chinese", turn_window=window_diverse,
-                db_connection=AsyncMock(),
+                user_id="u1", goal_id=999, task_id=42,
+                evaluation_id=workflow._derive_evaluation_id(0, turns),
+                scoring_generation=0, turn_window=turns, current_task=TASK,
+                native_language="Chinese", db_connection=db,
             )
+    assert db.task_updates == 0
 
-        update_spy.assert_called_once()
+
+@pytest.mark.asyncio
+async def test_old_scoring_generation_is_rejected_without_write():
+    workflow = BatchEvaluationWorkflow()
+    db = FakeDB(generation=1)
+    result = await evaluate(workflow, db, "strong")
+    assert result["evaluation_status"] == "stale_generation"
+    assert result["delta"] == 0
+    assert result["window_completed"] is False
+    assert db.task_updates == 0
+    assert not db.evaluations
+
+
+@pytest.mark.asyncio
+async def test_cached_final_is_rejected_after_generation_reset_before_qwen():
+    workflow = BatchEvaluationWorkflow()
+    db = FakeDB()
+    turns = window(prefix="reset-replay")
+    evaluation_id = workflow._derive_evaluation_id(0, turns)
+    with patch.object(workflow, "_call_llm", new=AsyncMock(return_value={
+        "quality": "strong", "evidence_sufficient": True, "reason": "first",
+    })):
+        await workflow.evaluate_window(
+            user_id="u1", goal_id=7, task_id=42, evaluation_id=evaluation_id,
+            scoring_generation=0, turn_window=turns, current_task=TASK,
+            native_language="Chinese", db_connection=db,
+        )
+    db.task.update(score=0, interaction_count=0, scoring_generation=1)
+    model = AsyncMock(side_effect=AssertionError("stale replay must not call Qwen"))
+    with patch.object(workflow, "_call_llm", new=model):
+        replay = await workflow.evaluate_window(
+            user_id="u1", goal_id=7, task_id=42, evaluation_id=evaluation_id,
+            scoring_generation=0, turn_window=turns, current_task=TASK,
+            native_language="Chinese", db_connection=db,
+        )
+    model.assert_not_awaited()
+    assert replay["evaluation_status"] == "stale_generation"
+    assert replay["score"] == 0
+
+
+@pytest.mark.asyncio
+async def test_caller_cannot_alias_a_different_window_evaluation_id():
+    workflow = BatchEvaluationWorkflow()
+    turns = window(prefix="canonical")
+    with pytest.raises(ValueError, match="evaluation_id does not match"):
+        await workflow.evaluate_window(
+            user_id="u1", goal_id=7, task_id=42, evaluation_id="forged-id",
+            scoring_generation=0, turn_window=turns, current_task=TASK,
+            native_language="Chinese", db_connection=FakeDB(),
+        )
+
+
+@pytest.mark.asyncio
+async def test_readiness_is_not_published_when_transaction_insert_fails():
+    workflow = BatchEvaluationWorkflow()
+
+    class InsertFailDB(FakeDB):
+        async def execute(self, query, *args):
+            if "INSERT INTO workflow_scoring_evaluations" in query:
+                raise RuntimeError("insert failed")
+            return await super().execute(query, *args)
+
+    gate = AsyncMock()
+    turns = window(prefix="commit-first")
+    with patch.object(workflow, "_call_llm", new=AsyncMock(return_value={
+        "quality": "strong", "evidence_sufficient": True, "reason": "good",
+    })), patch.object(workflow, "_update_ready_gate", gate):
+        with pytest.raises(RuntimeError, match="insert failed"):
+            await workflow.evaluate_window(
+                user_id="u1", goal_id=7, task_id=42,
+                evaluation_id=workflow._derive_evaluation_id(0, turns),
+                scoring_generation=0, turn_window=turns, current_task=TASK,
+                native_language="Chinese", db_connection=InsertFailDB(),
+            )
+    gate.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_three_strong_windows_reach_nine_and_latest_is_ready():
+    workflow = BatchEvaluationWorkflow()
+    db = FakeDB()
+    redis = FakeRedis()
+    results = [
+        await evaluate(workflow, db, "strong", evaluation_id=f"eval-{i}", redis=redis)
+        for i in range(1, 4)
+    ]
+    assert [result["score"] for result in results] == [3, 6, 9]
+    assert [result["completed_window_count"] for result in results] == [1, 2, 3]
+    assert results[-1]["interaction_count"] == 9
+    assert results[-1]["task_ready_to_complete"] is True
+    assert results[-1]["ready_token"]
+    assert results[-1]["task_completed"] is False
+
+
+@pytest.mark.asyncio
+async def test_zero_delta_closed_window_still_counts_actual_turns():
+    db = FakeDB()
+    result = await evaluate(BatchEvaluationWorkflow(), db, "off_topic", size=4)
+    assert result["delta"] == 0
+    assert result["window_completed"] is True
+    assert result["interaction_count"] == 4
+    assert db.task_updates == 1
+    assert db.goal_delta == 0
+
+
+def test_readiness_gate_is_generation_aware_and_monotonic():
+    redis = FakeRedis()
+    workflow = BatchEvaluationWorkflow()
+    newest_token = workflow._update_ready_gate(
+        redis_client=redis, user_id="u1", task_id=42,
+        scoring_generation=2, ready=True, order=12,
+    )
+    key = workflow._ready_key("u1", 42)
+    newest_value = redis.values[key]
+    assert newest_token
+
+    assert workflow._update_ready_gate(
+        redis_client=redis, user_id="u1", task_id=42,
+        scoring_generation=2, ready=False, order=9,
+    ) is None
+    assert redis.values[key] == newest_value
+
+    assert workflow._update_ready_gate(
+        redis_client=redis, user_id="u1", task_id=42,
+        scoring_generation=1, ready=False, order=99,
+    ) is None
+    assert redis.values[key] == newest_value
+
+    workflow._update_ready_gate(
+        redis_client=redis, user_id="u1", task_id=42,
+        scoring_generation=3, ready=False, order=3,
+    )
+    assert redis.values[key] == "3:3:"
+
+
+@pytest.mark.asyncio
+async def test_invalid_json_is_pending():
+    workflow = BatchEvaluationWorkflow()
+    workflow._api_key = "test-key"
+    db = FakeDB()
+    with patch.object(workflow, "_post_chat_completion", new=AsyncMock(return_value="not json")):
+        turns = window(prefix="bad-json")
+        result = await workflow.evaluate_window(
+            user_id="u1", goal_id=7, task_id=42,
+            evaluation_id=workflow._derive_evaluation_id(0, turns),
+            scoring_generation=0, turn_window=turns, current_task=TASK,
+            native_language="Chinese", db_connection=db,
+        )
+    assert result["evaluation_status"] == "evaluation_pending"
+    assert db.task_updates == 0

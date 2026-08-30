@@ -223,6 +223,7 @@ export const userAPI = {
             const text = typeof task === 'string' ? task : task.text;
             const current = currentTasks.find((candidate) => candidate.scenario_title === scenario.title && candidate.task_description === text);
             const score = current?.score || 0;
+            const completed = current?.status === 'completed';
             return {
               ...(typeof task === 'object' ? task : {}),
               id: current?.id ?? null,
@@ -230,9 +231,10 @@ export const userAPI = {
               status: current?.status || 'pending',
               score,
               interaction_count: current?.interaction_count || 0,
+              scoring_generation: current?.scoring_generation || 0,
               feedback: current?.feedback || null,
               completed_at: current?.completed_at || null,
-              progress: Math.min(100, Math.round((score / 9) * 100)),
+              progress: completed ? 100 : Math.min(99, Math.round((score / 9) * 100)),
             };
           }),
         })),
@@ -273,7 +275,13 @@ export const userAPI = {
             method: 'POST',
             headers: getAuthHeaders(),
             credentials: 'include',
-            body: JSON.stringify({ user_id: String(userId), scenario: scenarioTitle || '' })
+            body: JSON.stringify({
+              user_id: String(userId),
+              scenario: scenarioTitle || '',
+              task_id: taskId || null,
+              scoring_generation: result.scoring_generation ?? null,
+              scoring_generations: result.tasks || [],
+            })
           });
           console.log('[resetTask] Phase state reset for user', userId);
         }

@@ -25,7 +25,7 @@ import { resolveDailyLimitModal } from './dailyLimitLogic';
 import { shouldUseProgressiveAudio, progressiveAudioSrc, nextProgressiveAttempt } from './audioPlaybackLogic';
 import { cleanStreamingText, appendDelta, aiBubbleRenderState, stripAllMarkers, extractMagicSentence } from './streamingTextLogic';
 import { normalizeConnectionError, shouldShowConnectionError } from './connectionErrorLogic';
-import { calculateTaskProgress } from './conversationProgress';
+import { calculateTaskProgress, isCompletedWindowEvaluation } from './conversationProgress';
 import { createPcmStreamScheduler, unpackPcmAudioPacket } from '../utils/pcmStreamScheduler';
 
 const MAGIC_TIPS = [
@@ -511,6 +511,7 @@ function Conversation() {
   const [latestDelta, setLatestDelta] = useState(0); // 高/中/低
   const previousProgressRef = useRef(0); // Track previous progress to prevent unreasonable jumps
   const lastSeenTaskIdRef = useRef(null); // Track task ID to detect task switches
+  const scoringGenerationByTaskRef = useRef(new Map()); // Reject late evaluations from before an explicit reset
 
   // Initialize showTasks based on whether we have scenario info
   // Tasks will be loaded from backend, so we show tasks if scenario is specified
@@ -1184,10 +1185,22 @@ function Conversation() {
       try {
         if (scenarioTitle) {
           console.log('Resetting all tasks in scenario:', scenarioTitle);
-          await userAPI.resetTask(null, scenarioTitle);
+          const resetResult = await userAPI.resetTask(null, scenarioTitle);
+          scoringGenerationByTaskRef.current = new Map(
+            (resetResult?.tasks || []).map(task => [
+              String(task.task_id),
+              Number(task.scoring_generation),
+            ])
+          );
         }
       } catch (err) {
         console.error('Failed to reset scenario:', err);
+        setMessages(prev => [...prev, {
+          type: 'system',
+          content: '重置失败，当前进度已保留，请重试。',
+          isFinal: true,
+        }]);
+        return;
       }
     }
 
@@ -1919,7 +1932,16 @@ function Conversation() {
         case 'proficiency_update':
            // Handle proficiency update notification with deduplication
            const profPayload = data.payload || {};
-           const updateKey = profPayload.turn_id || `${profPayload.task_id}-${profPayload.task_score}-${profPayload.delta}`;
+           const expectedGeneration = scoringGenerationByTaskRef.current.get(String(profPayload.task_id));
+           const payloadGeneration = Number(profPayload.scoring_generation);
+           const staleGeneration = expectedGeneration !== undefined && (
+             !Number.isFinite(payloadGeneration) || payloadGeneration !== expectedGeneration
+           );
+           if (staleGeneration || !isCompletedWindowEvaluation(profPayload)) {
+               console.log('Ignoring non-completed or stale scoring window:', profPayload.evaluation_status);
+               break;
+           }
+           const updateKey = profPayload.evaluation_id || profPayload.turn_id || `${profPayload.task_id}-${profPayload.score ?? profPayload.task_score}-${profPayload.delta}`;
 
            // Skip if we've already processed this exact update
            if (lastProficiencyUpdateRef.current === updateKey) {
@@ -1945,7 +1967,7 @@ function Conversation() {
            console.log('📈 Proficiency Update:', profPayload);
            const delta = profPayload.delta || profPayload.proficiency_delta || 0;
            const total = profPayload.total || profPayload.current_proficiency || 0;
-           const taskScore = profPayload.task_score || 0;
+           const taskScore = Number(profPayload.score ?? profPayload.task_score ?? 0);
            const message = profPayload.message || '';
            const improvementTips = profPayload.improvement_tips || [];
 
@@ -1960,7 +1982,6 @@ function Conversation() {
                }]);
            }
 
-           const interactionCount = Number(profPayload.interaction_count || 0);
            const taskCompleted = Boolean(profPayload.task_completed);
            if (!profPayload.task_ready_to_complete) {
              setTaskReadyToComplete(current => (
@@ -1972,7 +1993,7 @@ function Conversation() {
            }
            const newProgress = calculateTaskProgress({
              score: taskScore,
-             interactionCount,
+             completedWindowCount: profPayload.completed_window_count,
              taskCompleted,
              previousProgress: previousProgressRef.current,
            });
@@ -1980,11 +2001,11 @@ function Conversation() {
            previousProgressRef.current = newProgress;
            setCurrentTaskScore(taskScore);
 
-           // Zero-point turns still update interaction_count, but do not show a
-           // misleading positive-score toast.
+           // Zero-point windows still record evidence server-side, but do not
+           // show a misleading positive-score toast.
            if (delta > 0) {
                const total = profPayload.total || profPayload.current_proficiency || 0;
-               const taskScore = profPayload.task_score || 0;
+               const taskScore = Number(profPayload.score ?? profPayload.task_score ?? 0);
                const message = profPayload.message || '';
 
                // Build message with improvement tips if available

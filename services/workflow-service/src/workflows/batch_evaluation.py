@@ -1,232 +1,148 @@
-"""
-Workflow: Batch Evaluation Agent (批量评估 Agent)
+"""Qwen-backed evaluation for complete three-or-four-turn scoring windows."""
 
-Accumulates 4 conversation turns, then calls the configured Qwen text model to perform
-a holistic evaluation. Outputs:
-- delta: proficiency score delta (0 | 1 | 2)
-- teaching_mode: "guide" | "correct"
-- scores: keyword_coverage / grammar_quality / topic_relevance / fluency
-- improvement_tips: tips in native language
-- next_topic_hint / correction_guidance
-
-Falls back to pure rule-based scoring on LLM failure.
-
-Reuses ProficiencyScoringWorkflow._update_user_proficiency for DB writes
-(only when delta > 0).
-
-Design: docs/batch-evaluation-agent-design.md
-"""
-import os
-import re
+import hashlib
 import json
 import logging
-from typing import Dict, List, Any, Optional
+import os
+import re
+import secrets
+from typing import Any, Dict, List, Optional
 from urllib.parse import urlparse
 
 import httpx
 
-from workflows.proficiency_scoring import ProficiencyScoringWorkflow
-
 logger = logging.getLogger(__name__)
 
-
-# Hard-correction markers (partial match across common target languages)
-_HARD_CORRECTION_MARKERS = [
-    "说错了", "不对", "错误", "incorrect", "wrong",
-    "間違", "間違い", "全然違う", "틀렸",
-]
-# Soft-correction markers
-_SOFT_CORRECTION_MARKERS = [
-    "曖昧", "不够具体", "vague", "try again", "もう少し具体的",
-    "can be clearer", "不太清楚",
-]
+QUALITY_DELTAS = {
+    "mastered": 3, "strong": 3, "satisfactory": 2, "needs_work": 1,
+    "off_topic": 0, "repetitive": 0, "incorrect": 0,
+}
+COMPLETION_QUALITIES = {"mastered", "strong", "satisfactory"}
+IDEMPOTENCY_TTL_SECONDS = 72 * 3600
 
 
 class BatchEvaluationWorkflow:
-    """
-    批量评估工作流
-    - 窗口大小默认 4 轮
-    - 调用配置的 Qwen 文本模型做综合打分 + 教学策略决策
-    - LLM 失败时降级到规则打分
-    - delta > 0 时复用 ProficiencyScoringWorkflow._update_user_proficiency 写库
-    """
+    """Evaluate one immutable window and apply its score exactly once."""
 
-    def __init__(self):
-        self.proficiency_workflow = ProficiencyScoringWorkflow()
-        self._model = os.getenv(
-            "BATCH_EVAL_MODEL",
-            os.getenv("QWEN_TEXT_MODEL", "qwen3.7-flash"),
-        )
+    def __init__(self) -> None:
+        self._model = os.getenv("BATCH_EVAL_MODEL", os.getenv("QWEN_TEXT_MODEL", "qwen3.7-flash"))
         self._base_url = os.getenv(
-            "QWEN_TEXT_BASE_URL",
-            "https://dashscope.aliyuncs.com/compatible-mode/v1",
+            "QWEN_TEXT_BASE_URL", "https://dashscope.aliyuncs.com/compatible-mode/v1"
         ).rstrip("/")
-        self._chat_completions_url = self._validated_chat_completions_url(
-            self._base_url
-        )
+        self._chat_completions_url = self._validated_chat_completions_url(self._base_url)
         hostname = (urlparse(self._base_url).hostname or "").lower().rstrip(".")
         self._api_key = os.getenv(
-            "DASHSCOPE_API_KEY"
-            if hostname.endswith(".maas.aliyuncs.com")
-            else "QWEN3_OMNI_API_KEY"
+            "DASHSCOPE_API_KEY" if hostname.endswith(".maas.aliyuncs.com") else "QWEN3_OMNI_API_KEY"
         )
 
     async def evaluate_window(
-        self,
-        *,
-        user_id: str,
-        goal_id: int,
-        turn_window: List[Dict[str, Any]],
-        current_task: Dict[str, Any],
-        native_language: str,
-        db_connection: Any,
+        self, *, user_id: str, goal_id: int, turn_window: List[Dict[str, Any]],
+        current_task: Dict[str, Any], native_language: str, db_connection: Any,
+        task_id: Optional[int] = None, evaluation_id: Optional[str] = None,
+        scoring_generation: int = 0, force_decision: bool = False,
+        redis_client: Any = None,
     ) -> Dict[str, Any]:
-        """
-        Evaluate a window of conversation turns.
-
-        Args:
-            user_id: 用户 ID
-            goal_id: 目标 ID
-            turn_window: 轮次列表 [{turn_index, user_content, ai_response, timestamp}, ...]
-            current_task: 任务信息 {id, task_description, keywords, scenario_title, target_language}
-            native_language: 母语 (用于 improvement_tips / correction_guidance)
-            db_connection: asyncpg connection
-
-        Returns:
-            完整评估结果 dict，详见 docs/batch-evaluation-agent-design.md Section V
-        """
-        target_language = current_task.get("target_language") or "English"
-
-        # 1. LLM 评估（失败则走 fallback）
-        try:
-            result = await self._call_llm(
-                turn_window=turn_window,
-                current_task=current_task,
-                native_language=native_language,
-                target_language=target_language,
+        """Return a final evaluation or fail-closed ``evaluation_pending``."""
+        window_size = len(turn_window)
+        if window_size not in (3, 4):
+            raise ValueError("turn_window must contain exactly 3 or 4 turns")
+        if force_decision and window_size != 4:
+            raise ValueError("force_decision is only valid for a 4-turn window")
+        turn_ids = [str(turn.get("turn_id") or "").strip() for turn in turn_window]
+        if any(not turn_id for turn_id in turn_ids) or len(set(turn_ids)) != window_size:
+            raise ValueError("turn_window must contain unique, non-empty turn_id values")
+        if scoring_generation < 0:
+            raise ValueError("scoring_generation must be non-negative")
+        resolved_task_id = task_id if task_id is not None else current_task.get("id")
+        if resolved_task_id is None:
+            raise ValueError("task_id is required")
+        context = await self._read_task_context(
+            db_connection, user_id, resolved_task_id, goal_id
+        )
+        if context["scoring_generation"] != scoring_generation:
+            return self._stale_result(
+                evaluation_id=evaluation_id or self._derive_evaluation_id(scoring_generation, turn_window),
+                requested_generation=scoring_generation,
+                task_id=resolved_task_id,
+                context=context,
             )
-        except Exception as e:
-            logger.warning(f"[BATCH_EVAL] LLM failed, using rule-based fallback: {e}")
-            result = self._rule_based_fallback(turn_window, current_task)
 
-        # 2. 保底字段
-        result.setdefault("delta", 0)
-        result.setdefault("teaching_mode", "guide")
-        result.setdefault("scores", {})
-        result.setdefault("improvement_tips", [])
-        result.setdefault("keyword_coverage_detail", {})
-        result.setdefault("next_topic_hint", None)
-        result.setdefault("correction_guidance", None)
+        derived_evaluation_id = self._derive_evaluation_id(scoring_generation, turn_window)
+        if evaluation_id is not None and evaluation_id != derived_evaluation_id:
+            raise ValueError("evaluation_id does not match scoring_generation and ordered turn_ids")
+        evaluation_id = derived_evaluation_id
 
-        # 3. delta > 0 则调用 proficiency workflow 写 DB
-        delta = int(result.get("delta", 0) or 0)
-        task_id = current_task.get("id")
+        cached = await self._read_cached_final(
+            db_connection, evaluation_id, user_id, resolved_task_id,
+            scoring_generation,
+        )
+        if cached is not None:
+            return self._reconcile_readiness(cached, redis_client)
 
-        result["task_id"] = task_id
-        result["task_completed"] = False
-        result["task_ready_to_complete"] = False
-        result["total_proficiency"] = 0
-        result["task_score"] = 0
+        try:
+            assessment = await self._call_llm(
+                turn_window=turn_window, current_task=current_task,
+                native_language=native_language,
+                target_language=current_task.get("target_language") or "English",
+            )
+        except Exception as exc:
+            logger.warning("[BATCH_EVAL] model=%s evaluation pending (%s)", self._model, type(exc).__name__)
+            snapshot = await self._read_task_snapshot(db_connection, user_id, resolved_task_id)
+            return self._pending_result(
+                evaluation_id=evaluation_id, scoring_generation=scoring_generation,
+                task_id=resolved_task_id, snapshot=snapshot,
+                native_language=native_language,
+            )
 
-        if delta > 0 and task_id is not None:
-            try:
-                feedback_text = ""
-                tips = result.get("improvement_tips") or []
-                if tips:
-                    feedback_text = tips[0] if isinstance(tips[0], str) else ""
+        evidence_sufficient = bool(assessment["evidence_sufficient"])
+        if window_size == 3 and not evidence_sufficient and not force_decision:
+            snapshot = await self._read_task_snapshot(db_connection, user_id, resolved_task_id)
+            return {
+                **self._base_result(evaluation_id, scoring_generation, resolved_task_id, snapshot),
+                "evaluation_status": "insufficient_evidence", "evidence_sufficient": False,
+                "quality": None, "delta": 0, "reason": assessment["reason"],
+                "window_completed": False, "completed_window_count": None,
+            }
 
-                db_result = await self._update_user_proficiency(
-                    user_id=user_id,
-                    goal_id=goal_id,
-                    task_id=task_id,
-                    proficiency_delta=delta,
-                    scores=result.get("scores", {}),
-                    feedback=feedback_text,
-                    db_connection=db_connection,
-                    current_task=current_task,
-                    conversation_history=self._turn_window_to_history(turn_window),
-                    native_language=native_language,
-                )
-                result["task_completed"] = bool(db_result.get("task_completed", False))
-                result["task_ready_to_complete"] = bool(db_result.get("task_ready_to_complete", False))
-                result["total_proficiency"] = db_result.get("total_proficiency", 0)
-                result["task_score"] = db_result.get("task_score", 0)
-                if db_result.get("completion_feedback"):
-                    result["completion_feedback"] = db_result["completion_feedback"]
-                # 保留 DB 返回的 task_title / scenario_title
-                if db_result.get("task_title"):
-                    result["task_title"] = db_result["task_title"]
-                if db_result.get("scenario_title"):
-                    result["scenario_title"] = db_result["scenario_title"]
-            except Exception as e:
-                logger.error(f"[BATCH_EVAL] DB update failed: {e}")
-
-        return result
-
-    async def _update_user_proficiency(self, **kwargs) -> Dict[str, Any]:
-        """Thin delegator to ProficiencyScoringWorkflow — kept on this class so
-        unit tests can patch it directly on BatchEvaluationWorkflow instances."""
-        return await self.proficiency_workflow._update_user_proficiency(**kwargs)
-
-    # ---------- LLM 调用 ----------
+        quality = assessment["quality"]
+        delta = max(0, min(3, int(QUALITY_DELTAS.get(quality, 0))))
+        result = await self._apply_evaluation(
+            db_connection=db_connection, user_id=user_id, goal_id=goal_id,
+            task_id=resolved_task_id, evaluation_id=evaluation_id,
+            scoring_generation=scoring_generation, turn_count=window_size,
+            quality=quality, delta=delta, reason=assessment["reason"],
+        )
+        result.pop("_idempotent_replay", False)
+        return self._reconcile_readiness(result, redis_client)
 
     async def _call_llm(
-        self,
-        turn_window: List[Dict[str, Any]],
-        current_task: Dict[str, Any],
-        native_language: str,
-        target_language: str,
+        self, turn_window: List[Dict[str, Any]], current_task: Dict[str, Any],
+        native_language: str, target_language: str,
     ) -> Dict[str, Any]:
-        """Call Qwen through the OpenAI-compatible Chat Completions API."""
         if not self._api_key:
-            raise RuntimeError("DashScope API key not configured for QWEN_TEXT_BASE_URL")
-
-        prompt = self._build_prompt(
-            turn_window=turn_window,
-            current_task=current_task,
-            native_language=native_language,
-            target_language=target_language,
-        )
-
-        content = await self._post_chat_completion(
-            messages=[{"role": "user", "content": prompt}],
-        )
-
+            raise RuntimeError("DashScope API key is not configured")
+        content = await self._post_chat_completion(messages=[{
+            "role": "user",
+            "content": self._build_prompt(turn_window, current_task, native_language, target_language),
+        }])
         if isinstance(content, list):
-            # Some qwen variants return list[{'text': ...}]
             content = " ".join(
-                seg.get("text", "") if isinstance(seg, dict) else str(seg)
-                for seg in content
+                part.get("text", "") if isinstance(part, dict) else str(part) for part in content
             )
-        content = (content or "").strip()
-
-        # Strip possible markdown fences
-        content = re.sub(r"^```(?:json)?\s*", "", content)
+        content = re.sub(r"^```(?:json)?\s*", "", (content or "").strip())
         content = re.sub(r"\s*```$", "", content)
-
-        parsed = json.loads(content)
-        return self._validate_llm_result(parsed)
+        return self._validate_llm_result(json.loads(content))
 
     async def _post_chat_completion(self, *, messages: List[Dict[str, str]]) -> str:
-        """Send one non-streaming request without exposing credentials in logs."""
         async with httpx.AsyncClient(timeout=30.0) as client:
             response = await client.post(
                 self._chat_completions_url,
-                headers={
-                    "Authorization": f"Bearer {self._api_key}",
-                    "Content-Type": "application/json",
-                },
-                json={
-                    "model": self._model,
-                    "messages": messages,
-                    "stream": False,
-                    "enable_thinking": False,
-                    "response_format": {"type": "json_object"},
-                },
+                headers={"Authorization": f"Bearer {self._api_key}", "Content-Type": "application/json"},
+                json={"model": self._model, "messages": messages, "stream": False,
+                      "enable_thinking": False, "response_format": {"type": "json_object"}},
             )
             response.raise_for_status()
             payload = response.json()
-
         try:
             return payload["choices"][0]["message"]["content"]
         except (KeyError, IndexError, TypeError) as exc:
@@ -234,339 +150,348 @@ class BatchEvaluationWorkflow:
 
     @staticmethod
     def _validated_chat_completions_url(base_url: str) -> str:
-        """Allow only official DashScope HTTPS endpoints."""
         parsed = urlparse(base_url)
         hostname = (parsed.hostname or "").lower().rstrip(".")
-        if (
-            parsed.scheme != "https"
-            or parsed.username
-            or parsed.password
-            or parsed.query
-            or parsed.fragment
-            or not (
-                hostname in {
-                    "dashscope.aliyuncs.com",
-                    "dashscope-intl.aliyuncs.com",
-                    "dashscope-us.aliyuncs.com",
-                }
-                or hostname.endswith(".maas.aliyuncs.com")
-            )
-        ):
+        if (parsed.scheme != "https" or parsed.username or parsed.password or parsed.query
+                or parsed.fragment or not (hostname in {
+                    "dashscope.aliyuncs.com", "dashscope-intl.aliyuncs.com", "dashscope-us.aliyuncs.com",
+                } or hostname.endswith(".maas.aliyuncs.com"))):
             raise ValueError("QWEN_TEXT_BASE_URL must be an official DashScope HTTPS endpoint")
-
-        normalized_path = parsed.path.rstrip("/")
-        if not normalized_path.endswith("/compatible-mode/v1"):
+        if not parsed.path.rstrip("/").endswith("/compatible-mode/v1"):
             raise ValueError("QWEN_TEXT_BASE_URL must end with /compatible-mode/v1")
         return f"{base_url.rstrip('/')}/chat/completions"
 
+    @staticmethod
     def _build_prompt(
-        self,
-        turn_window: List[Dict[str, Any]],
-        current_task: Dict[str, Any],
-        native_language: str,
-        target_language: str,
+        turn_window: List[Dict[str, Any]], current_task: Dict[str, Any],
+        native_language: str, target_language: str,
     ) -> str:
-        """Build prompt per docs/batch-evaluation-agent-design.md Section VI."""
-        window_size = len(turn_window)
-        keywords = current_task.get("keywords") or []
-        task_description = current_task.get("task_description") or ""
-
-        formatted_turns = "\n".join(
-            f"Turn {t.get('turn_index', i + 1)} — "
-            f"Student: {t.get('user_content', '')} | "
-            f"Tutor: {t.get('ai_response', '')}"
-            for i, t in enumerate(turn_window)
+        turns = "\n".join(
+            f"Turn {index + 1}: Student: {turn.get('user_content', '')}\nTutor: {turn.get('ai_response', '')}"
+            for index, turn in enumerate(turn_window)
         )
+        return f"""Evaluate this complete language-practice window.
+Task: {current_task.get('task_description') or current_task.get('text') or ''}
+Scenario: {current_task.get('scenario_title') or ''}
+Target language: {target_language}
+Required concepts/keywords: {current_task.get('keywords') or []}
 
-        return f"""You are an expert language teaching evaluator. Analyze {window_size} conversation turns.
+{turns}
 
-## CRITICAL OUTPUT CONSTRAINT
-The "delta" field MUST use the PACED mapping defined below (0 / 1 / 2 / 2 / 3 scale, clamped to 0-10).
-A single strong window does NOT complete a task — the student should practice for 3-4 windows (12-16 turns) to accumulate task_score >= 9.
-Do NOT output delta >= 5 in normal cases; that would advance the user too fast and feel unnatural.
+Choose exactly one quality:
+- mastered: fully correct, natural, detailed, and directly completes the task
+- strong: correct, relevant, and clear with only minor limitations
+- satisfactory: meaningful, relevant, understandable task progress
+- needs_work: relevant attempt but incomplete or substantially flawed
+- off_topic: unrelated or merely a generic greeting
+- repetitive: repeats wording without meaningful new task content
+- incorrect: wrong meaning or failure of the requested communicative action
 
-## Student Profile
-- Target Language: {target_language}
-- Native Language: {native_language}
-- Task: {task_description}
-- Required Keywords: {keywords}
+For a 3-turn window, evidence_sufficient is false only when a fourth turn is genuinely
+needed to make a reliable classification. For a 4-turn window, choose a quality even
+when performance is poor. Generic greetings, off-topic content, keyword stuffing,
+repetition, and incorrect answers must never be rewarded.
 
-## Conversation Window
-{formatted_turns}
-(Format: "Turn N — Student: ... | Tutor: ...")
-
-## Scoring Criteria (0-10 each)
-- keyword_coverage: unique keywords used across ALL turns / total keywords × 10
-  (CRITICAL: same keyword repeated across turns = ONE hit only, prevents cheating)
-- grammar_quality: aggregate grammar accuracy across {window_size} turns
-- topic_relevance: consistency of staying on task
-- fluency: avg response length, use of connectors, sentence completeness
-
-## Teaching Mode Decision — STRICT RULES
-- "correct" REQUIRED if ANY holds:
-  * keyword_coverage < 4 (student barely used task keywords)
-  * topic_relevance < 5 (student drifted off task)
-  * Student used abstract filler, numbers-as-words, or irrelevant chunks (e.g. "七七六六零", "积极努力") instead of real task content
-- "guide" ONLY if keyword_coverage >= 4 AND topic_relevance >= 5 AND grammar_quality >= 4
-
-## guide — STRICT SCOPE RULE
-- guide MUST stay within the CURRENT task: "{task_description}"
-- next_topic_hint MUST be a DEEPENING or VARIATION of the current task, NEVER a different/next task.
-- Examples for current task "greet customer in Japanese":
-  * "ask about customer's needs" ✓ (still greeting/onboarding context)
-  * "recommend products" ✗ (this belongs to a LATER task)
-  * "say goodbye" ✗ (this belongs to a LATER task)
-- If the current task is fully mastered, repeat/vary it — do NOT advance the topic.
-
-## Delta Rules — PACED (3-4 strong windows to complete a task)
-- delta is 0-10, representing how much THIS window advances the subtask toward completion.
-- Task completes at cumulative task_score >= 9. With this paced scale, a student needs 3-4 strong windows (12-16 turns) to accumulate task_score >= 9 — this feels natural and ensures real practice.
-- Mapping by unique_keyword_hits AND topic_relevance AND grammar_quality:
-  * hits >= 3 AND topic_relevance >= 7 AND grammar_quality >= 6 → delta = 3 (strong window)
-  * hits >= 3 AND topic_relevance >= 5 → delta = 2
-  * hits == 2 → delta = 2
-  * hits == 1 AND meaningful attempt in {target_language} → delta = 1 (participation)
-  * hits == 0 OR topic_relevance < 4 → delta = 0
-- Do NOT output delta >= 5 in normal cases — that would complete the task in a single window and break pacing.
-- Correction penalties (applied AFTER mapping above):
-  * hard correction in tutor responses → delta × 0.5 (round down, floor at 0)
-  * soft correction → delta × 0.7 (round down, floor at 0)
-- Final delta is an integer in [0, 10].
-
-## Participation Reward
-If the student made a meaningful attempt in {target_language} (avg content length >= 10 chars, uses target-language characters, not just numbers/abstract filler), give at least delta = 1 even if hits are low. This rewards effort and prevents discouragement.
-
-## Output (strict JSON, no markdown wrapper)
-{{
-  "delta": <integer 0-10 — see Delta Rules above (PACED scale). Typical: 3 for strong, 2 for solid, 1 for participation, 0 for none. Do NOT output >=5 in normal cases.>,
-  "teaching_mode": "guide" | "correct",
-  "scores": {{ "keyword_coverage": 0-10, "grammar_quality": 0-10, "topic_relevance": 0-10, "fluency": 0-10 }},
-  "next_topic_hint": "<in {target_language}, null if mode=correct>",
-  "correction_guidance": {{
-    "error_type": "keyword_coverage | topic_mismatch | grammar | vocabulary",
-    "native_explanation": "<in {native_language}>",
-    "correct_example": "<in {target_language}>",
-    "retry_instruction": "<in {target_language}>"
-  }},
-  "improvement_tips": ["<1-2 tips in {native_language}>"],
-  "keyword_coverage_detail": {{ "matched": [], "missed": [], "coverage_ratio": 0.0 }}
-}}"""
-
-    def _validate_llm_result(self, parsed: Any) -> Dict[str, Any]:
-        """Normalize LLM output — clamp delta, ensure keys exist."""
-        if not isinstance(parsed, dict):
-            raise ValueError(f"LLM output not a dict: {type(parsed)}")
-
-        delta = parsed.get("delta", 0)
-        try:
-            delta = int(delta)
-        except (TypeError, ValueError):
-            delta = 0
-        delta = max(0, min(10, delta))
-        parsed["delta"] = delta
-
-        # Sanity-check (PACED scale): warn if LLM produces delta >= 5 — that would
-        # complete the task in a single window and break pacing. Also warn on
-        # high coverage + delta == 0 (likely LLM ignoring participation reward).
-        try:
-            _kc = float((parsed.get("scores") or {}).get("keyword_coverage", 0))
-        except (TypeError, ValueError):
-            _kc = 0.0
-        if delta >= 5:
-            logger.warning(
-                f"[BATCH_EVAL] LLM returned delta={delta} (>=5) — expected PACED scale 0/1/2/3. "
-                f"Prompt drift? keyword_coverage={_kc}"
-            )
-        elif _kc >= 7 and delta == 0:
-            logger.warning(
-                f"[BATCH_EVAL] LLM returned delta=0 despite keyword_coverage={_kc} "
-                f"(expected delta>=2). Prompt drift or schema regression?"
-            )
-
-        mode = parsed.get("teaching_mode", "guide")
-        if mode not in ("guide", "correct"):
-            mode = "guide"
-        parsed["teaching_mode"] = mode
-
-        scores = parsed.get("scores", {}) or {}
-        for key in ("keyword_coverage", "grammar_quality", "topic_relevance", "fluency"):
-            try:
-                scores[key] = float(scores.get(key, 0))
-            except (TypeError, ValueError):
-                scores[key] = 0.0
-        parsed["scores"] = scores
-
-        tips = parsed.get("improvement_tips", [])
-        if not isinstance(tips, list):
-            tips = []
-        parsed["improvement_tips"] = [str(t) for t in tips][:3]
-
-        return parsed
-
-    # ---------- 规则降级 ----------
-
-    def _rule_based_fallback(
-        self,
-        turn_window: List[Dict[str, Any]],
-        current_task: Dict[str, Any],
-    ) -> Dict[str, Any]:
-        """
-        纯规则评分（LLM 不可用时）— PACED scale (0/1/2/2/3):
-        - 统计跨轮 unique keyword 命中数，直接映射 delta
-        - 检测 tutor 回复中的 hard/soft correction 乘惩罚
-        - 参与奖励：avg content >= 10 chars → 保底 delta=1
-        - 3-4 次 batch_eval (12-16 轮) 累积到 task_score >= 9 才完成任务
-        """
-        keywords = [k for k in (current_task.get("keywords") or []) if k]
-        target_language = current_task.get("target_language") or "English"
-        combined_user = " ".join((t.get("user_content") or "") for t in turn_window).lower()
-        combined_ai = " ".join((t.get("ai_response") or "") for t in turn_window).lower()
-
-        matched = []
-        missed = []
-        for kw in keywords:
-            if kw and kw.lower() in combined_user:
-                matched.append(kw)
-            else:
-                missed.append(kw)
-
-        unique_hits = len(matched)
-        # PACED delta scale — hits 0→0, 1→1, 2→2, ≥3→3.
-        if unique_hits == 0:
-            delta = 0
-        elif unique_hits == 1:
-            delta = 1
-        elif unique_hits == 2:
-            delta = 2
-        else:
-            delta = 3
-
-        # Participation reward: if the student produced meaningful content
-        # in the target language beyond just parroting keywords, give delta>=1.
-        # Strip matched keywords per-turn; compute avg remaining chars.
-        import re as _re
-        stripped_lens = []
-        for t in turn_window:
-            content = (t.get("user_content") or "").lower()
-            for kw in matched:
-                if kw:
-                    content = content.replace(kw.lower(), "")
-            content = content.strip()
-            stripped_lens.append(len(content))
-        avg_chars_per_turn = (sum(stripped_lens) / len(stripped_lens)) if stripped_lens else 0.0
-        has_target_lang_chars = any(
-            _re.search(r"[A-Za-z\u4e00-\u9fff\u3040-\u30ff\uac00-\ud7af]", (t.get("user_content") or ""))
-            for t in turn_window
-        )
-        # Anti-cheat: hits=1 with parrot-style short turns → drop to 0
-        # (preserves the repeated-keyword cheat test: "check-in check-in ...")
-        if unique_hits == 1 and avg_chars_per_turn < 10:
-            delta = 0
-        # Participation reward: meaningful attempt → at least delta=1
-        if avg_chars_per_turn >= 10 and has_target_lang_chars and delta < 1:
-            delta = 1
-
-        # Correction detection
-        correction_penalty = 1.0
-        for marker in _HARD_CORRECTION_MARKERS:
-            if marker.lower() in combined_ai:
-                correction_penalty = 0.5
-                break
-        else:
-            for marker in _SOFT_CORRECTION_MARKERS:
-                if marker.lower() in combined_ai:
-                    correction_penalty = 0.7
-                    break
-
-        # Apply correction penalty to delta (floor at 0, ceil at 10).
-        delta = max(0, min(10, int(delta * correction_penalty)))
-
-        # For downstream scoring compatibility — map delta back to a nominal
-        # final_score for teaching_mode / scores fields.
-        final_score = max(0, min(10, unique_hits * 3 + 1))
-
-        coverage_ratio = (unique_hits / len(keywords)) if keywords else 0.0
-
-        # Teaching mode: force correct when coverage is very low (student off-task).
-        if coverage_ratio < 0.3:
-            teaching_mode = "correct"
-        elif coverage_ratio >= 0.5 and final_score >= 5:
-            teaching_mode = "guide"
-        else:
-            teaching_mode = "correct"
-
-        scores = {
-            "keyword_coverage": round(coverage_ratio * 10, 1),
-            "grammar_quality": 5.0,  # unknown without LLM — neutral
-            "topic_relevance": 5.0 if unique_hits >= 1 else 3.0,
-            "fluency": 5.0,
-        }
-
-        improvement_tips: List[str] = []
-        if missed:
-            sample = missed[:2]
-            improvement_tips.append(
-                f"尝试在下次对话中使用 {', '.join(repr(k) for k in sample)}"
-            )
-
-        correction_guidance = None
-        next_topic_hint = None
-        if teaching_mode == "correct":
-            target_kw = missed[0] if missed else (keywords[0] if keywords else "the target word")
-            example_templates = {
-                "English": f"I would like to {target_kw}.",
-                "Japanese": f"{target_kw}をお願いします。",
-                "Chinese": f"请问{target_kw}。",
-            }
-            retry_templates = {
-                "English": f"Let's try again — please use the word '{target_kw}'.",
-                "Japanese": f"もう一度やってみましょう — 「{target_kw}」を使ってください。",
-                "Chinese": f"我们再来一次 — 请使用词语'{target_kw}'。",
-            }
-            correct_example = example_templates.get(target_language, example_templates["English"])
-            retry_instruction = retry_templates.get(target_language, retry_templates["English"])
-            correction_guidance = {
-                "error_type": "keyword_coverage",
-                "native_explanation": (
-                    f"在 {len(turn_window)} 轮对话中你只用到了 {unique_hits} 个关键词，"
-                    f"可以尝试使用 {', '.join(missed[:3]) or '更多任务相关关键词'}"
-                ) if missed else "请继续围绕任务关键词展开练习",
-                "correct_example": correct_example,
-                "retry_instruction": retry_instruction,
-            }
-        else:
-            if missed:
-                next_topic_hint = f"Try to use: {', '.join(missed[:2])}"
-
-        return {
-            "delta": delta,
-            "teaching_mode": teaching_mode,
-            "scores": scores,
-            "next_topic_hint": next_topic_hint,
-            "correction_guidance": correction_guidance,
-            "improvement_tips": improvement_tips,
-            "keyword_coverage_detail": {
-                "matched": matched,
-                "missed": missed,
-                "coverage_ratio": round(coverage_ratio, 3),
-            },
-        }
-
-    # ---------- helpers ----------
+Return strict JSON only:
+{{"quality":"<one value above>","evidence_sufficient":true|false,
+"reason":"<one short sentence in {native_language}>"}}
+Do not return a score or delta; the server owns score mapping."""
 
     @staticmethod
-    def _turn_window_to_history(turn_window: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        """Flatten turn window into [{role, content}, ...] so downstream helpers
-        (e.g. _generate_improvement_tips) can consume it like a normal history."""
-        history: List[Dict[str, Any]] = []
-        for t in turn_window:
-            uc = t.get("user_content")
-            ar = t.get("ai_response")
-            if uc:
-                history.append({"role": "user", "content": uc})
-            if ar:
-                history.append({"role": "assistant", "content": ar})
-        return history
+    def _validate_llm_result(parsed: Any) -> Dict[str, Any]:
+        if not isinstance(parsed, dict):
+            raise ValueError("model output must be a JSON object")
+        quality = str(parsed.get("quality") or "").strip().lower()
+        if quality not in QUALITY_DELTAS:
+            raise ValueError("unsupported quality returned by model")
+        if not isinstance(parsed.get("evidence_sufficient"), bool):
+            raise ValueError("evidence_sufficient must be boolean")
+        reason = str(parsed.get("reason") or "").strip()
+        if not reason:
+            raise ValueError("model returned no reason")
+        return {"quality": quality, "evidence_sufficient": parsed["evidence_sufficient"], "reason": reason[:240]}
+
+    async def _apply_evaluation(
+        self, *, db_connection: Any, user_id: str, goal_id: int, task_id: int,
+        evaluation_id: str, scoring_generation: int, turn_count: int,
+        quality: str, delta: int, reason: str,
+    ) -> Dict[str, Any]:
+        async with db_connection.transaction():
+            task = await db_connection.fetchrow(
+                """SELECT score, status, interaction_count, scoring_generation, goal_id
+                   FROM user_tasks WHERE id = $1 AND user_id = $2 FOR UPDATE""",
+                task_id, user_id,
+            )
+            if not task:
+                raise ValueError("task not found for user")
+            authoritative_goal_id = int(task.get("goal_id") or 0)
+            if authoritative_goal_id != int(goal_id):
+                raise ValueError("task does not belong to requested goal")
+            current_generation = int(task.get("scoring_generation") or 0)
+            snapshot = {"score": int(task.get("score") or 0),
+                        "interaction_count": int(task.get("interaction_count") or 0)}
+            if current_generation != scoring_generation:
+                return {
+                    **self._base_result(evaluation_id, scoring_generation, task_id, snapshot),
+                    "evaluation_status": "stale_generation", "evidence_sufficient": True,
+                    "quality": quality, "delta": 0, "reason": reason,
+                    "task_ready_to_complete": False,
+                }
+
+            await db_connection.execute(
+                """DELETE FROM workflow_scoring_evaluations
+                   WHERE evaluation_id = $1 AND expires_at <= NOW()""",
+                evaluation_id,
+            )
+            existing = await db_connection.fetchrow(
+                """SELECT result FROM workflow_scoring_evaluations
+                   WHERE evaluation_id = $1 AND expires_at > NOW()""",
+                evaluation_id,
+            )
+            if existing:
+                value = existing.get("result")
+                replay = json.loads(value) if isinstance(value, str) else dict(value)
+                replay["_idempotent_replay"] = True
+                return replay
+
+            completed_window_count = int(await db_connection.fetchval(
+                """SELECT COUNT(*) FROM workflow_scoring_evaluations
+                   WHERE user_id = $1 AND task_id = $2 AND scoring_generation = $3
+                     AND result->>'window_completed' = 'true'""",
+                user_id, task_id, scoring_generation,
+            ) or 0) + 1
+
+            if task.get("status") == "completed":
+                result = {
+                    **self._base_result(evaluation_id, scoring_generation, task_id, snapshot),
+                    "evaluation_status": "already_completed", "evidence_sufficient": True,
+                    "quality": quality, "delta": 0, "reason": reason,
+                    "task_completed": True, "task_ready_to_complete": False,
+                    "window_completed": True,
+                    "completed_window_count": completed_window_count,
+                }
+            else:
+                safe_delta = max(0, min(3, int(delta)))
+                score = min(9, snapshot["score"] + safe_delta)
+                interaction_count = snapshot["interaction_count"] + turn_count
+                ready = (
+                    score >= 9
+                    and completed_window_count >= 3
+                    and interaction_count >= 9
+                    and quality in COMPLETION_QUALITIES
+                )
+                await db_connection.execute(
+                    """UPDATE user_tasks SET score = $1, interaction_count = $2, updated_at = NOW()
+                       WHERE id = $3 AND user_id = $4 AND scoring_generation = $5""",
+                    score, interaction_count, task_id, user_id, scoring_generation,
+                )
+                if safe_delta:
+                    await db_connection.execute(
+                        """UPDATE user_goals SET current_proficiency = current_proficiency + $1,
+                           updated_at = NOW() WHERE id = $2 AND user_id = $3""",
+                        safe_delta, authoritative_goal_id, user_id,
+                    )
+                result = {
+                    **self._base_result(evaluation_id, scoring_generation, task_id,
+                                        {"score": score, "interaction_count": interaction_count}),
+                    "evaluation_status": "completed", "evidence_sufficient": True,
+                    "quality": quality, "delta": safe_delta, "reason": reason,
+                    "task_ready_to_complete": ready,
+                    "window_completed": True,
+                    "completed_window_count": completed_window_count,
+                }
+
+            readiness_intent = {
+                "ready": bool(result.get("task_ready_to_complete", False)),
+                "scoring_generation": scoring_generation,
+                "order": int(result.get("interaction_count", 0)),
+                "user_id": user_id,
+            }
+            result["readiness_intent"] = readiness_intent
+            # Capability publication occurs only after this transaction commits.
+            result["ready_token"] = None
+            result["task_ready_to_complete"] = False
+
+            await db_connection.execute(
+                """INSERT INTO workflow_scoring_evaluations
+                   (evaluation_id, user_id, task_id, scoring_generation, result, expires_at)
+                   VALUES ($1, $2, $3, $4, $5::jsonb, NOW() + INTERVAL '72 hours')""",
+                evaluation_id, user_id, task_id, scoring_generation,
+                json.dumps(result, ensure_ascii=False),
+            )
+            return result
+
+    @staticmethod
+    async def _read_task_context(
+        db_connection: Any, user_id: str, task_id: int, goal_id: int,
+    ) -> Dict[str, int]:
+        task = await db_connection.fetchrow(
+            """SELECT goal_id, scoring_generation, score, interaction_count
+               FROM user_tasks WHERE id = $1 AND user_id = $2""",
+            task_id, user_id,
+        )
+        if not task:
+            raise ValueError("task not found for user")
+        if int(task.get("goal_id") or 0) != int(goal_id):
+            raise ValueError("task does not belong to requested goal")
+        return {
+            "goal_id": int(task.get("goal_id") or 0),
+            "scoring_generation": int(task.get("scoring_generation") or 0),
+            "score": int(task.get("score") or 0),
+            "interaction_count": int(task.get("interaction_count") or 0),
+        }
+
+    @staticmethod
+    async def _read_cached_final(
+        db_connection: Any, evaluation_id: str, user_id: str, task_id: int,
+        scoring_generation: int,
+    ) -> Optional[Dict[str, Any]]:
+        row = await db_connection.fetchrow(
+            """SELECT evaluation.result
+               FROM workflow_scoring_evaluations AS evaluation
+               JOIN user_tasks AS task
+                 ON task.id = evaluation.task_id AND task.user_id = evaluation.user_id
+               WHERE evaluation.evaluation_id = $1
+                 AND evaluation.user_id = $2 AND evaluation.task_id = $3
+                 AND evaluation.scoring_generation = $4
+                 AND task.scoring_generation = $4
+                 AND evaluation.expires_at > NOW()""",
+            evaluation_id, user_id, task_id, scoring_generation,
+        )
+        if not row:
+            return None
+        value = row.get("result")
+        return json.loads(value) if isinstance(value, str) else dict(value)
+
+    def _stale_result(
+        self, *, evaluation_id: str, requested_generation: int, task_id: int,
+        context: Dict[str, int],
+    ) -> Dict[str, Any]:
+        return {
+            **self._base_result(
+                evaluation_id, requested_generation, task_id,
+                {"score": context["score"], "interaction_count": context["interaction_count"]},
+            ),
+            "evaluation_status": "stale_generation",
+            "current_scoring_generation": context["scoring_generation"],
+            "evidence_sufficient": False,
+            "quality": None,
+            "delta": 0,
+            "reason": "This evaluation belongs to an older scoring generation.",
+        }
+
+    @staticmethod
+    async def _read_task_snapshot(db_connection: Any, user_id: str, task_id: int) -> Dict[str, int]:
+        task = await db_connection.fetchrow(
+            "SELECT score, interaction_count FROM user_tasks WHERE id = $1 AND user_id = $2",
+            task_id, user_id,
+        )
+        return {"score": int(task.get("score") or 0) if task else 0,
+                "interaction_count": int(task.get("interaction_count") or 0) if task else 0}
+
+    def _pending_result(
+        self, *, evaluation_id: str, scoring_generation: int, task_id: int,
+        snapshot: Dict[str, int], native_language: str,
+    ) -> Dict[str, Any]:
+        language = (native_language or "").lower()
+        if language in {"chinese", "zh", "zh-cn", "中文"}:
+            reason = "评分服务暂时不可用，请稍后重试。"
+        elif language in {"japanese", "ja", "日本語"}:
+            reason = "評価サービスは一時的に利用できません。後でもう一度お試しください。"
+        else:
+            reason = "Evaluation is temporarily unavailable; please retry later."
+        return {
+            **self._base_result(evaluation_id, scoring_generation, task_id, snapshot),
+            "evaluation_status": "evaluation_pending", "evidence_sufficient": False,
+            "quality": None, "delta": 0, "reason": reason,
+            "window_completed": False, "completed_window_count": None,
+        }
+
+    def _base_result(
+        self, evaluation_id: str, scoring_generation: int, task_id: int,
+        snapshot: Dict[str, int],
+    ) -> Dict[str, Any]:
+        return {
+            "evaluation_id": evaluation_id, "scoring_generation": scoring_generation,
+            "task_id": task_id, "score": snapshot["score"],
+            "interaction_count": snapshot["interaction_count"], "task_completed": False,
+            "task_ready_to_complete": False, "ready_token": None, "model_id": self._model,
+            "window_completed": False, "completed_window_count": None,
+        }
+
+    @staticmethod
+    def _derive_evaluation_id(scoring_generation: int, turn_window: List[Dict[str, Any]]) -> str:
+        turn_ids = [str(turn.get("turn_id") or turn.get("turn_order")) for turn in turn_window]
+        return hashlib.sha256(f"{scoring_generation}\0".encode() + "\0".join(turn_ids).encode()).hexdigest()
+
+    @staticmethod
+    def _ready_key(user_id: str, task_id: int) -> str:
+        digest = hashlib.sha256(f"{user_id}\0{task_id}".encode()).hexdigest()
+        return f"task_ready:v1:{digest}"
+
+    def _reconcile_readiness(
+        self, result: Dict[str, Any], redis_client: Any,
+    ) -> Dict[str, Any]:
+        reconciled = dict(result)
+        intent = reconciled.get("readiness_intent") or {}
+        if not intent or reconciled.get("evaluation_status") not in {
+            "completed", "already_completed"
+        }:
+            return reconciled
+        token = self._update_ready_gate(
+            redis_client=redis_client,
+            user_id=str(reconciled.get("user_id") or intent.get("user_id") or ""),
+            task_id=int(reconciled["task_id"]),
+            scoring_generation=int(intent["scoring_generation"]),
+            ready=bool(intent["ready"]),
+            order=int(intent["order"]),
+        )
+        reconciled["ready_token"] = token
+        reconciled["task_ready_to_complete"] = bool(token) and bool(intent["ready"])
+        return reconciled
+
+    @classmethod
+    def _update_ready_gate(
+        cls, *, redis_client: Any, user_id: str, task_id: int,
+        scoring_generation: int, ready: bool, order: int,
+    ) -> Optional[str]:
+        if redis_client is None:
+            return None
+        token = secrets.token_urlsafe(24) if ready else ""
+        generation = max(0, int(scoring_generation))
+        order = max(0, int(order))
+        value = f"{generation}:{order}:{token}"
+        try:
+            applied = redis_client.eval(
+                """
+                local current = redis.call('GET', KEYS[1])
+                if current then
+                  local first = string.find(current, ':')
+                  local second = first and string.find(current, ':', first + 1)
+                  local current_generation = tonumber(first and string.sub(current, 1, first - 1) or '0') or 0
+                  local current_order = tonumber(second and string.sub(current, first + 1, second - 1) or '0') or 0
+                  if current_generation > tonumber(ARGV[1]) then return '__STALE__' end
+                  if current_generation == tonumber(ARGV[1]) and current_order > tonumber(ARGV[2]) then return '__STALE__' end
+                  if current_generation == tonumber(ARGV[1]) and current_order == tonumber(ARGV[2]) then return current end
+                end
+                redis.call('SETEX', KEYS[1], ARGV[3], ARGV[4])
+                return ARGV[4]
+                """,
+                1,
+                cls._ready_key(user_id, task_id),
+                generation,
+                order,
+                IDEMPOTENCY_TTL_SECONDS,
+                value,
+            )
+            if not applied or applied == "__STALE__":
+                return None
+            current = applied.decode() if isinstance(applied, bytes) else str(applied)
+            parts = current.split(":", 2)
+            return parts[2] if len(parts) == 3 and parts[2] else None
+        except Exception as exc:
+            logger.warning("[BATCH_EVAL] Redis readiness write failed: %s", type(exc).__name__)
+            return None
 
 
 batch_evaluation_workflow = BatchEvaluationWorkflow()

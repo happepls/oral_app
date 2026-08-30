@@ -4,23 +4,27 @@ const MAX_PROGRESS_PER_TURN = 33;
 /**
  * Translate the scoring contract into user-facing progress.
  *
- * Scores may jump by as much as five points, but one real interaction must
- * never advance the progress bar by more than 33 percentage points. A task
- * remains at 99% while it is waiting for explicit completion confirmation.
+ * Only completed scoring windows reach this function. A window may contain
+ * three or four dialogue turns, so raw interaction_count is not a valid cap.
+ * One applied window must never advance the bar by more than 33 percentage
+ * points. A task remains at 99% until completion is explicitly confirmed.
  */
 export function calculateTaskProgress({
   score,
-  interactionCount,
+  completedWindowCount,
   taskCompleted = false,
   previousProgress = null,
 }) {
   if (taskCompleted) return 100;
 
   const safeScore = Math.max(0, Number(score) || 0);
-  const safeCount = Math.max(0, Number(interactionCount) || 0);
   const scoreProgress = Math.min(100, Math.round((safeScore / COMPLETION_SCORE) * 100));
-  const turnCap = Math.min(99, safeCount * MAX_PROGRESS_PER_TURN);
-  let progress = Math.min(scoreProgress, turnCap);
+  const hasWindowCount = completedWindowCount !== null && completedWindowCount !== undefined;
+  const safeWindowCount = Number(completedWindowCount);
+  let progress = scoreProgress;
+  if (hasWindowCount && Number.isFinite(safeWindowCount) && safeWindowCount >= 0) {
+    progress = Math.min(progress, safeWindowCount * MAX_PROGRESS_PER_TURN);
+  }
 
   if (previousProgress !== null && previousProgress !== undefined) {
     const previous = Math.max(0, Math.min(99, Number(previousProgress) || 0));
@@ -31,6 +35,10 @@ export function calculateTaskProgress({
   }
 
   return Math.max(0, Math.min(99, progress));
+}
+
+export function isCompletedWindowEvaluation(payload = {}) {
+  return payload.evaluation_status === 'completed' || payload.window_completed === true;
 }
 
 export { COMPLETION_SCORE, MAX_PROGRESS_PER_TURN };

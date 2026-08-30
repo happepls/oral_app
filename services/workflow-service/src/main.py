@@ -3,7 +3,7 @@ Workflow Service - Main Entry Point
 提供 4 个工作流的统一 API 接口
 """
 from fastapi import FastAPI, HTTPException, Depends
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from typing import Dict, List, Any, Optional
 import asyncpg
 import os
@@ -185,7 +185,8 @@ class MagicPassEvaluateRequest(BaseModel):
 
 
 class BatchEvaluateTurn(BaseModel):
-    turn_index: int
+    turn_id: str = Field(min_length=1, max_length=128)
+    turn_order: int
     user_content: str
     ai_response: str
     timestamp: Optional[str] = None
@@ -195,10 +196,12 @@ class BatchEvaluateRequest(BaseModel):
     user_id: str
     goal_id: int
     task_id: int
+    evaluation_id: str = Field(min_length=1, max_length=128)
+    scoring_generation: int = Field(ge=0)
     current_task: Dict[str, Any]
     native_language: str = "English"
-    turn_window: List[BatchEvaluateTurn]
-    window_size: int = 4
+    turn_window: List[BatchEvaluateTurn] = Field(min_length=3, max_length=4)
+    force_decision: bool = False
 
 
 class TurnEvaluateRequest(BaseModel):
@@ -280,11 +283,8 @@ async def batch_evaluate_proficiency(
     conn = Depends(get_db_connection)
 ):
     """
-    Workflow: Batch Evaluation — analyze a window of N turns (default 4)
-    with the configured Qwen text model and update proficiency when delta > 0.
-    Falls back to rule-based scoring on LLM failure.
-
-    Design: docs/batch-evaluation-agent-design.md
+    Evaluate one immutable 3–4 turn window. Qwen failures are returned as
+    evaluation_pending and never produce a score write or positive fallback.
     """
     try:
         logger.info(
@@ -294,10 +294,15 @@ async def batch_evaluate_proficiency(
         result = await batch_evaluation_workflow.evaluate_window(
             user_id=request.user_id,
             goal_id=request.goal_id,
+            task_id=request.task_id,
+            evaluation_id=request.evaluation_id,
+            scoring_generation=request.scoring_generation,
+            force_decision=request.force_decision,
             turn_window=[t.dict() for t in request.turn_window],
             current_task=request.current_task,
             native_language=request.native_language,
             db_connection=conn,
+            redis_client=cache.client if cache.is_connected() else None,
         )
         logger.info(
             f"[BATCH_EVAL] result: delta={result.get('delta')} "
@@ -305,6 +310,8 @@ async def batch_evaluate_proficiency(
             f"task_completed={result.get('task_completed')}"
         )
         return {"success": True, "data": result}
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         logger.error(f"[BATCH_EVAL] Error: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
@@ -315,7 +322,7 @@ async def turn_evaluate_proficiency(
     request: TurnEvaluateRequest,
     conn = Depends(get_db_connection),
 ):
-    """Evaluate and idempotently persist exactly one completed user/AI turn."""
+    """Deprecated read-only compatibility endpoint; use batch-evaluate."""
     try:
         logger.info(
             "[TURN_EVAL] model=%s user=%s goal=%s task=%s turn=%s",
