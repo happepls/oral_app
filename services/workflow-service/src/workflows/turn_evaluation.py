@@ -14,9 +14,9 @@ from workflows.batch_evaluation import batch_evaluation_workflow
 logger = logging.getLogger(__name__)
 
 QUALITY_DELTAS = {
-    "mastered": 5,
-    "strong": 4,
-    "satisfactory": 3,
+    "mastered": 3,
+    "strong": 3,
+    "satisfactory": 2,
     "needs_work": 1,
     "off_topic": 0,
     "repetitive": 0,
@@ -47,85 +47,33 @@ class TurnEvaluationWorkflow:
         db_connection: Any,
         redis_client: Any = None,
     ) -> Dict[str, Any]:
-        cache_key = self._cache_key(user_id, goal_id, task_id, turn_id)
-        cached = self._get_cached(cache_key, redis_client)
-        if cached is not None:
-            current_token = self._read_ready_gate(redis_client, user_id, task_id)
-            cached["task_ready_to_complete"] = bool(current_token)
-            cached["ready_token"] = current_token
-            return cached
-
-        lock_key = f"{cache_key}:lock"
-        owns_lock = self._acquire_lock(lock_key, redis_client)
-        if not owns_lock:
-            for _ in range(40):
-                await asyncio.sleep(0.05)
-                cached = self._get_cached(cache_key, redis_client)
-                if cached is not None:
-                    return cached
-            raise RuntimeError("turn evaluation is already in progress")
-
-        try:
-            try:
-                assessment = await self._evaluate_quality(
-                    user_content=user_content,
-                    ai_response=ai_response,
-                    current_task=current_task,
-                    native_language=native_language,
-                )
-                fallback_used = False
-            except Exception as exc:
-                logger.warning(
-                    "[TURN_EVAL] model=%s failed; using fallback (%s)",
-                    self._model_client._model,
-                    type(exc).__name__,
-                )
-                assessment = self._rule_based_fallback(
-                    user_content=user_content,
-                    current_task=current_task,
-                    native_language=native_language,
-                )
-                fallback_used = True
-
-            quality = assessment["quality"]
-            delta = QUALITY_DELTAS[quality]
-            persisted = await self._apply_score(
-                db_connection=db_connection,
-                user_id=user_id,
-                goal_id=goal_id,
-                task_id=task_id,
-                delta=delta,
-                quality=quality,
-            )
-            ready_token = self._update_ready_gate(
-                redis_client=redis_client,
-                user_id=user_id,
-                task_id=task_id,
-                should_be_ready=persisted["task_ready_to_complete"],
-                turn_order=turn_order,
-            )
-            # Completion confirmation is fail-closed: without the shared Redis
-            # capability, user-service cannot prove that the latest answer met
-            # the satisfactory-or-better requirement.
-            persisted["task_ready_to_complete"] = bool(ready_token)
-            result = {
-                "quality": quality,
-                "delta": delta,
-                "score": persisted["score"],
-                "interaction_count": persisted["interaction_count"],
-                "task_completed": persisted["task_completed"],
-                "task_ready_to_complete": persisted["task_ready_to_complete"],
-                "ready_token": ready_token,
-                "reason": assessment["reason"],
-                "model_id": self._model_client._model,
-                "fallback_used": fallback_used,
-                "task_id": task_id,
-                "turn_id": turn_id,
-            }
-            self._set_cached(cache_key, result, redis_client)
-            return result
-        finally:
-            self._release_lock(lock_key, redis_client)
+        # Kept only so older clients receive a safe response while migrating to
+        # /batch-evaluate. It deliberately performs no model call, score write,
+        # cache write, or readiness mutation.
+        task = await db_connection.fetchrow(
+            """SELECT score, interaction_count, status FROM user_tasks
+               WHERE id = $1 AND user_id = $2""",
+            task_id,
+            user_id,
+        )
+        if not task:
+            raise ValueError("task not found for user")
+        return {
+            "evaluation_status": "deprecated",
+            "deprecated": True,
+            "quality": None,
+            "delta": 0,
+            "score": int(task.get("score") or 0),
+            "interaction_count": int(task.get("interaction_count") or 0),
+            "task_completed": task.get("status") == "completed",
+            "task_ready_to_complete": False,
+            "ready_token": None,
+            "reason": "Per-turn scoring is disabled; use a 3–4 turn batch window.",
+            "model_id": self._model_client._model,
+            "fallback_used": False,
+            "task_id": task_id,
+            "turn_id": turn_id,
+        }
 
     async def _evaluate_quality(
         self,
@@ -203,7 +151,7 @@ Return strict JSON with keys "quality" and "reason". The reason must be one shor
                     "task_ready_to_complete": False,
                 }
 
-            score = min(10, current_score + delta)
+            score = min(9, current_score + max(0, min(3, int(delta))))
             interaction_count = current_count + 1
             task_ready_to_complete = (
                 score >= 9
@@ -241,45 +189,6 @@ Return strict JSON with keys "quality" and "reason". The reason must be one shor
                 "task_completed": False,
                 "task_ready_to_complete": task_ready_to_complete,
             }
-
-    @staticmethod
-    def _rule_based_fallback(
-        *, user_content: str, current_task: Dict[str, Any], native_language: str
-    ) -> Dict[str, str]:
-        answer = " ".join((user_content or "").lower().split())
-        task_text = " ".join(
-            str(current_task.get(key) or "")
-            for key in ("task_description", "text", "scenario_title")
-        ).lower()
-        keywords = [
-            str(value).lower()
-            for value in (current_task.get("keywords") or [])
-            if str(value).strip()
-        ]
-        if not answer:
-            quality = "incorrect"
-        elif len(set(answer.split())) <= 2 and len(answer.split()) >= 4:
-            quality = "repetitive"
-        elif keywords and not any(keyword in answer for keyword in keywords):
-            quality = "off_topic"
-        elif len(answer) < 8:
-            quality = "needs_work"
-        elif any(word in answer for word in keywords) or any(
-            word in answer for word in re.findall(r"[a-zA-Z]{4,}", task_text)
-        ):
-            quality = "satisfactory"
-        else:
-            quality = "needs_work"
-        reasons = {
-            "mastered": "本轮表达自然、准确，并完整完成了任务。",
-            "strong": "本轮表达准确且紧扣任务。",
-            "satisfactory": "本轮回答与任务相关，并形成了有效推进。",
-            "needs_work": "本轮有相关尝试，但还需要更完整地表达。",
-            "off_topic": "本轮回答偏离了当前任务。",
-            "repetitive": "本轮内容重复，未提供新的有效信息。",
-            "incorrect": "本轮没有形成可评分的正确回答。",
-        }
-        return {"quality": quality, "reason": reasons[quality]}
 
     @staticmethod
     def _cache_key(user_id: str, goal_id: int, task_id: int, turn_id: str) -> str:

@@ -579,6 +579,7 @@ class TestSceneProgressWithoutMedia:
             "target_language": "Japanese",
             "score": 0,
             "interaction_count": 0,
+            "scoring_generation": 0,
             "keywords": [],
         }
 

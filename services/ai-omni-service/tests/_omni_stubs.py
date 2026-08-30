@@ -176,6 +176,10 @@ def load_main():
                 installed.append(name)
 
     try:
+        app_dir = os.path.dirname(main_path)
+        added_app_dir = app_dir not in sys.path
+        if added_app_dir:
+            sys.path.insert(0, app_dir)
         spec = importlib.util.spec_from_file_location(_PRIVATE_NAME, main_path)
         module = importlib.util.module_from_spec(spec)
         # Register under the private name so `main.py`'s own internal references
@@ -185,6 +189,8 @@ def load_main():
         _cached = module
         return module
     finally:
+        if 'added_app_dir' in locals() and added_app_dir:
+            sys.path.remove(app_dir)
         # Tear down the stubs we installed so other test modules see the
         # original "deps absent" state and keep their skip behaviour.
         for name in installed:

@@ -5,6 +5,24 @@ const serviceRoot = path.resolve(__dirname, '../..');
 const repositoryRoot = path.resolve(serviceRoot, '../..');
 
 describe('production data migration gates', () => {
+  test('task scoring generation migration is additive and non-destructive', () => {
+    const migration = fs.readFileSync(
+      path.join(serviceRoot, 'migrations/20260830_task_scoring_generation.sql'),
+      'utf8'
+    );
+    expect(migration).toMatch(/ADD COLUMN IF NOT EXISTS scoring_generation/i);
+    expect(migration).toMatch(/NOT NULL DEFAULT 0/i);
+    expect(migration).not.toMatch(/\b(?:UPDATE|DELETE|DROP|TRUNCATE)\b/i);
+  });
+
+  test('scoring idempotency ledger is present in fresh and upgrade schemas', () => {
+    for (const filename of ['init.sql', 'update_db.sql']) {
+      const schema = fs.readFileSync(path.join(serviceRoot, filename), 'utf8');
+      expect(schema).toMatch(/CREATE TABLE IF NOT EXISTS workflow_scoring_evaluations/i);
+      expect(schema).toMatch(/idx_workflow_scoring_evaluations_task_generation/i);
+    }
+  });
+
   test('structural migrations do not rewrite goal or subscription data', () => {
     const goalMigration = fs.readFileSync(
       path.join(serviceRoot, 'migrations/20260724_recall_goal_status.sql'),

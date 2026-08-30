@@ -44,7 +44,7 @@ describe('confirmCompleteTask readiness capability', () => {
 
   test('accepts and consumes the task-bound readiness token after completion', async () => {
     const token = 'current-ready-token-1234567890';
-    redis.get.mockResolvedValue(token);
+    redis.get.mockResolvedValue(`4:12:${token}`);
     redis.eval.mockResolvedValue(1);
     jest.spyOn(User, 'getTaskByIdForUser').mockResolvedValue({ id: 42, status: 'pending' });
     jest.spyOn(User, 'confirmCompleteTaskById').mockResolvedValue({
@@ -61,6 +61,7 @@ describe('confirmCompleteTask readiness capability', () => {
     expect(res.statusCode).toBe(200);
     expect(User.confirmCompleteTaskById).toHaveBeenCalledWith('u1', '42', null);
     expect(redis.eval).toHaveBeenCalledTimes(1);
+    expect(redis.eval.mock.calls[0]).toContain(`4:12:${token}`);
   });
 
   test('recovers an already-completed task when the original ACK was lost', async () => {

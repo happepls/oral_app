@@ -61,12 +61,28 @@ CREATE TABLE IF NOT EXISTS user_tasks (
     status VARCHAR(50) DEFAULT 'pending', -- pending, completed
     score INT DEFAULT 0, -- 0-100 quality score for this specific task
     interaction_count INT DEFAULT 0, -- Number of dialogue turns for this task
+    scoring_generation INTEGER NOT NULL DEFAULT 0, -- Invalidates scoring requests started before an explicit reset
     feedback TEXT, -- AI feedback regarding this task
     mode VARCHAR(32), -- Conversation mode: scene_theater, daily_qa, recall, tour, etc.
     completed_at TIMESTAMPTZ,
     created_at TIMESTAMPTZ DEFAULT NOW(),
     updated_at TIMESTAMPTZ DEFAULT NOW()
 );
+
+-- Final 3-4 turn scoring-window results (72-hour idempotency ledger).
+CREATE TABLE IF NOT EXISTS workflow_scoring_evaluations (
+    evaluation_id VARCHAR(128) PRIMARY KEY,
+    user_id VARCHAR(128) NOT NULL,
+    task_id INTEGER NOT NULL,
+    scoring_generation INTEGER NOT NULL,
+    result JSONB NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    expires_at TIMESTAMPTZ NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_workflow_scoring_evaluations_expiry
+    ON workflow_scoring_evaluations (expires_at);
+CREATE INDEX IF NOT EXISTS idx_workflow_scoring_evaluations_task_generation
+    ON workflow_scoring_evaluations (user_id, task_id, scoring_generation);
 
 -- Create the user_checkins table (Daily Check-in Records)
 CREATE TABLE IF NOT EXISTS user_checkins (

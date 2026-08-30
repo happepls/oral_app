@@ -510,31 +510,58 @@ exports.resetTask = async (req, res) => {
         const { task_id, scenario_title } = req.body;
 
         const db = require('../models/db');
+        let result;
 
         if (task_id) {
-            // Reset single task by ID
-            await db.query(
+            // One UPDATE is atomic: reset all mutable scoring state and advance
+            // the generation used to reject late asynchronous evaluations.
+            result = await db.query(
                 `UPDATE user_tasks
-                 SET score = 0, status = 'pending', interaction_count = 0, feedback = NULL, completed_at = NULL, updated_at = NOW()
-                 WHERE id = $1 AND user_id = $2`,
+                 SET score = 0, status = 'pending', interaction_count = 0,
+                     feedback = NULL, completed_at = NULL,
+                     scoring_generation = COALESCE(scoring_generation, 0) + 1,
+                     updated_at = NOW()
+                 WHERE id = $1 AND user_id = $2
+                 RETURNING id, scenario_title, scoring_generation`,
                 [task_id, userId]
             );
-            res.json({ success: true, message: '任务进度已重置' });
         } else if (scenario_title) {
-            // Reset all tasks in a specific scenario
-            await db.query(
+            result = await db.query(
                 `UPDATE user_tasks
-                 SET score = 0, status = 'pending', interaction_count = 0, feedback = NULL, completed_at = NULL, updated_at = NOW()
-                 WHERE user_id = $1 AND scenario_title = $2`,
+                 SET score = 0, status = 'pending', interaction_count = 0,
+                     feedback = NULL, completed_at = NULL,
+                     scoring_generation = COALESCE(scoring_generation, 0) + 1,
+                     updated_at = NOW()
+                 WHERE user_id = $1 AND scenario_title = $2
+                 RETURNING id, scenario_title, scoring_generation`,
                 [userId, scenario_title]
             );
-            res.json({ success: true, message: '场景任务已重置' });
         } else {
             return res.status(400).json({
                 success: false,
                 message: '需要提供任务ID或场景标题'
             });
         }
+
+        if (!result.rows.length) {
+            return res.status(404).json({ success: false, message: '未找到可重置的任务' });
+        }
+
+        const tasks = result.rows.map(row => ({
+            task_id: row.id,
+            scenario_title: row.scenario_title,
+            scoring_generation: Number(row.scoring_generation),
+        }));
+        res.json({
+            success: true,
+            data: {
+                tasks,
+                task_id: task_id || null,
+                scenario_title: scenario_title || tasks[0].scenario_title,
+                scoring_generation: tasks.length === 1 ? tasks[0].scoring_generation : null,
+            },
+            message: task_id ? '任务进度已重置' : '场景任务已重置'
+        });
     } catch (error) {
         console.error('Reset Task Error:', error);
         res.status(500).json({
@@ -787,7 +814,7 @@ exports.confirmCompleteTask = async (req, res) => {
         }
         const storedValue = String(storedReadyToken || '');
         const storedToken = storedValue.includes(':')
-            ? storedValue.slice(storedValue.indexOf(':') + 1)
+            ? storedValue.slice(storedValue.lastIndexOf(':') + 1)
             : storedValue;
         const presented = Buffer.from(readyToken);
         const stored = Buffer.from(storedToken);

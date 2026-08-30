@@ -6,13 +6,6 @@ export function getTaskPracticeProgress(task) {
 
   const explicitProgress = Number(task.progress);
   const score = Number(task.score);
-  const interactionCount = Number(task.interaction_count);
-  const hasTrace = (
-    ['in_progress', 'active', 'practicing'].includes(task.status)
-    || (Number.isFinite(interactionCount) && interactionCount > 0)
-    || Boolean(task.feedback)
-  );
-
   let progress = 0;
   if (Number.isFinite(explicitProgress) && explicitProgress > 0) {
     progress = Math.max(progress, explicitProgress);
@@ -20,7 +13,6 @@ export function getTaskPracticeProgress(task) {
   if (Number.isFinite(score) && score > 0) {
     progress = Math.max(progress, (score / 9) * 100);
   }
-  if (hasTrace) progress = Math.max(progress, 1);
   return clamp(progress, 0, 99);
 }
 

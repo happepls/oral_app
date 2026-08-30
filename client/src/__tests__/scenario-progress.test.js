@@ -24,10 +24,10 @@ describe('scenario practice progress', () => {
     expect(getScenarioPracticeStatus(scenario)).toBe('in-progress');
   });
 
-  test('preserves interaction-only practice as visible progress', () => {
+  test('does not award visible progress for unscored interactions', () => {
     const task = { status: 'pending', score: 0, interaction_count: 1 };
-    expect(getTaskPracticeProgress(task)).toBe(1);
-    expect(calcScenarioProgress({ tasks: [task, { status: 'pending' }] })).toBe(1);
+    expect(getTaskPracticeProgress(task)).toBe(0);
+    expect(calcScenarioProgress({ tasks: [task, { status: 'pending' }] })).toBe(0);
   });
 
   test('calculates completed tasks as full task progress', () => {

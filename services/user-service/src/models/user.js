@@ -228,12 +228,17 @@ User.getActiveGoal = async (userId) => {
                     
                     // Return object with status and progress
                     const taskScore = dbTask ? dbTask.score : 0;
-                    const taskProgress = Math.min(100, Math.round((taskScore / 9) * 100)); // 3 points = 100% completion
+                    const taskCompleted = dbTask?.status === 'completed';
+                    const taskProgress = taskCompleted
+                        ? 100
+                        : Math.min(99, Math.round((taskScore / 9) * 100));
                     return {
                         id: dbTask ? dbTask.id : null,
                         text: tText,
                         status: dbTask ? dbTask.status : 'pending',
                         score: taskScore,
+                        interaction_count: dbTask ? dbTask.interaction_count : 0,
+                        scoring_generation: dbTask ? dbTask.scoring_generation : 0,
                         progress: taskProgress
                     };
                 });
@@ -366,7 +371,7 @@ User.completeTask = async (userId, scenarioTitle, taskText, mode = null) => {
 User.getTaskByIdForUser = async (userId, taskId) => {
     const result = await db.query(
         `SELECT id, user_id, goal_id, scenario_title, task_description,
-                score, interaction_count, status, feedback
+                score, interaction_count, scoring_generation, status, feedback
          FROM user_tasks
          WHERE id = $1 AND user_id = $2`,
         [taskId, userId]
@@ -378,7 +383,7 @@ User.confirmCompleteTaskById = async (userId, taskId, mode = null) => {
     // 1. Load task — require the full server-side readiness contract.
     const taskRes = await db.query(
         `SELECT id, user_id, goal_id, scenario_title, task_description,
-                score, interaction_count, status, feedback
+                score, interaction_count, scoring_generation, status, feedback
          FROM user_tasks
          WHERE id = $1 AND user_id = $2`,
         [taskId, userId]
@@ -512,12 +517,17 @@ User.getUserGoals = async (userId) => {
                     dbt.task_description === tText
                 );
                 const taskScore = dbTask ? dbTask.score : 0;
-                const taskProgress = Math.min(100, Math.round((taskScore / 9) * 100));
+                const taskCompleted = dbTask?.status === 'completed';
+                const taskProgress = taskCompleted
+                    ? 100
+                    : Math.min(99, Math.round((taskScore / 9) * 100));
                 return {
                     id: dbTask ? dbTask.id : null,
                     text: tText,
                     status: dbTask ? dbTask.status : 'pending',
                     score: taskScore,
+                    interaction_count: dbTask ? dbTask.interaction_count : 0,
+                    scoring_generation: dbTask ? dbTask.scoring_generation : 0,
                     progress: taskProgress,
                 };
             });

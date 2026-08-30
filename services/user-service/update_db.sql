@@ -33,7 +33,22 @@ ALTER TABLE user_goals ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT N
 
 -- Multi-turn scoring migration (added for task scoring feature)
 ALTER TABLE user_tasks ADD COLUMN IF NOT EXISTS interaction_count INT DEFAULT 0;
+ALTER TABLE user_tasks ADD COLUMN IF NOT EXISTS scoring_generation INTEGER NOT NULL DEFAULT 0;
 ALTER TABLE user_tasks ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT NOW();
+
+CREATE TABLE IF NOT EXISTS workflow_scoring_evaluations (
+    evaluation_id VARCHAR(128) PRIMARY KEY,
+    user_id VARCHAR(128) NOT NULL,
+    task_id INTEGER NOT NULL,
+    scoring_generation INTEGER NOT NULL,
+    result JSONB NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    expires_at TIMESTAMPTZ NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_workflow_scoring_evaluations_expiry
+    ON workflow_scoring_evaluations (expires_at);
+CREATE INDEX IF NOT EXISTS idx_workflow_scoring_evaluations_task_generation
+    ON workflow_scoring_evaluations (user_id, task_id, scoring_generation);
 
 -- Update existing completed tasks to have full score
 UPDATE user_tasks SET score = 100 WHERE status = 'completed' AND score = 0;

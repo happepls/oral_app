@@ -116,6 +116,60 @@ describe('getDailyProgress', () => {
   });
 });
 
+// ─── resetTask ───────────────────────────────────────────
+
+describe('resetTask', () => {
+  test('atomically resets a task and increments its scoring generation', async () => {
+    db.query.mockResolvedValue({
+      rows: [{ id: 7, scenario_title: 'Cafe', scoring_generation: 4 }],
+    });
+    const res = mockRes();
+
+    await userController.resetTask({
+      user: { id: 'u1' },
+      body: { task_id: 7, scenario_title: 'Cafe' },
+    }, res);
+
+    const [sql, params] = db.query.mock.calls[0];
+    expect(sql).toMatch(/score\s*=\s*0/i);
+    expect(sql).toMatch(/interaction_count\s*=\s*0/i);
+    expect(sql).toMatch(/scoring_generation\s*=\s*COALESCE\(scoring_generation, 0\) \+ 1/i);
+    expect(sql).toMatch(/feedback\s*=\s*NULL/i);
+    expect(sql).toMatch(/completed_at\s*=\s*NULL/i);
+    expect(params).toEqual([7, 'u1']);
+    expect(res.body.data).toMatchObject({ task_id: 7, scoring_generation: 4 });
+  });
+
+  test('returns every new generation when resetting a scenario', async () => {
+    db.query.mockResolvedValue({ rows: [
+      { id: 7, scenario_title: 'Cafe', scoring_generation: 2 },
+      { id: 8, scenario_title: 'Cafe', scoring_generation: 5 },
+    ] });
+    const res = mockRes();
+
+    await userController.resetTask({
+      user: { id: 'u1' },
+      body: { scenario_title: 'Cafe' },
+    }, res);
+
+    expect(res.body.data.scoring_generation).toBeNull();
+    expect(res.body.data.tasks).toEqual([
+      { task_id: 7, scenario_title: 'Cafe', scoring_generation: 2 },
+      { task_id: 8, scenario_title: 'Cafe', scoring_generation: 5 },
+    ]);
+  });
+
+  test('does not report success when no owned task matched', async () => {
+    db.query.mockResolvedValue({ rows: [] });
+    const res = mockRes();
+    await userController.resetTask({
+      user: { id: 'u1' },
+      body: { task_id: 999 },
+    }, res);
+    expect(res.statusCode).toBe(404);
+  });
+});
+
 // ─── submitFeedback ──────────────────────────────────────────────────
 
 describe('submitFeedback', () => {

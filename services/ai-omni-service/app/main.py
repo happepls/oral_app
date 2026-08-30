@@ -491,6 +491,342 @@ def _format_teaching_directive(result: dict, target_language: str, native_langua
     )
 
 
+_SCORING_WINDOW_TTL_SECONDS = 72 * 3600
+_SCORING_RETRY_DELAYS = (1, 2, 4)
+_SCORING_LOCK_LEASE_SECONDS = 15
+_SCORING_LOCK_WAIT_ATTEMPTS = 400
+_SCORING_EVALUATOR_STALE_SECONDS = 150
+_SCORING_RESULT_WAIT_SECONDS = 155
+_SCORING_COMPLETED_RESULT_CAP = 10
+
+
+class _ScoringLockLost(RuntimeError):
+    pass
+
+
+def _scoring_window_key(user_id, goal_id, task_id, scoring_generation):
+    """Return the reconnect-stable Redis key for one scoring generation."""
+    return (
+        f"scene_scoring:v2:{user_id}:{goal_id}:{task_id}:"
+        f"{int(scoring_generation or 0)}"
+    )
+
+
+def _scoring_evaluation_id(scoring_generation, turns):
+    turn_ids = [str(turn.get("turn_id") or turn.get("turn_order")) for turn in turns]
+    material = f"{int(scoring_generation or 0)}\0".encode() + "\0".join(turn_ids).encode()
+    return hashlib.sha256(material).hexdigest()
+
+
+async def _load_scoring_window(redis, key, scoring_generation):
+    raw = await redis.get(key)
+    if raw:
+        try:
+            state = json.loads(raw)
+            if isinstance(state, dict):
+                return state
+        except (TypeError, ValueError):
+            logger.warning("[BATCH_EVAL] discarded malformed Redis window key=%s", key)
+    return {
+        "scoring_generation": int(scoring_generation or 0),
+        "turns": [],
+        "queue": [],
+        "seen_turn_ids": [],
+        "frozen": False,
+    }
+
+
+def _scoring_lock_key(window_key):
+    return f"{window_key}:lock"
+
+
+def _scoring_inbox_key(window_key):
+    return f"{window_key}:inbox"
+
+
+async def _persist_scoring_inbox(redis, window_key, turn):
+    """Atomically retain a turn when the shared state lease is unavailable."""
+    await redis.eval(
+        """
+        redis.call('RPUSH', KEYS[1], ARGV[2])
+        redis.call('EXPIRE', KEYS[1], ARGV[1])
+        return 1
+        """,
+        1, _scoring_inbox_key(window_key), _SCORING_WINDOW_TTL_SECONDS,
+        json.dumps(turn, ensure_ascii=False, separators=(",", ":")),
+    )
+
+
+async def _drain_scoring_inbox(redis, window_key):
+    """Atomically take all overflow turns; concurrent later pushes remain."""
+    values = await redis.eval(
+        """
+        local values = redis.call('LRANGE', KEYS[1], 0, -1)
+        redis.call('DEL', KEYS[1])
+        return values
+        """,
+        1, _scoring_inbox_key(window_key),
+    )
+    turns = []
+    for raw in values or []:
+        try:
+            turn = json.loads(raw)
+            if isinstance(turn, dict) and turn.get("turn_id"):
+                turns.append(turn)
+        except (TypeError, ValueError):
+            logger.warning("[BATCH_EVAL] discarded malformed inbox turn key=%s", window_key)
+    return turns
+
+
+async def _acquire_scoring_lock(redis, window_key):
+    """Acquire a bounded Redis lease shared by all service replicas."""
+    lock_key = _scoring_lock_key(window_key)
+    owner = uuid.uuid4().hex
+    for attempt in range(_SCORING_LOCK_WAIT_ATTEMPTS):
+        if await redis.set(
+            lock_key, owner, nx=True, ex=_SCORING_LOCK_LEASE_SECONDS
+        ):
+            return lock_key, owner
+        if attempt + 1 < _SCORING_LOCK_WAIT_ATTEMPTS:
+            await asyncio.sleep(0.05)
+    return None, None
+
+
+async def _save_scoring_window(redis, key, state, lock_key, owner):
+    """CAS-save state only while this caller still owns the Redis lease."""
+    saved = await redis.eval(
+        """
+        if redis.call('GET', KEYS[2]) == ARGV[1] then
+          redis.call('SETEX', KEYS[1], ARGV[2], ARGV[3])
+          return 1
+        end
+        return 0
+        """,
+        2, key, lock_key, owner, _SCORING_WINDOW_TTL_SECONDS,
+        json.dumps(state, ensure_ascii=False, separators=(",", ":")),
+    )
+    if int(saved or 0) != 1:
+        raise _ScoringLockLost(key)
+
+
+async def _release_scoring_lock(redis, lock_key, owner):
+    """Never delete a lease acquired by a newer owner after expiry."""
+    if not lock_key or not owner:
+        return
+    await redis.eval(
+        """
+        if redis.call('GET', KEYS[1]) == ARGV[1] then
+          return redis.call('DEL', KEYS[1])
+        end
+        return 0
+        """,
+        1, lock_key, owner,
+    )
+
+
+def _claim_scoring_evaluation(state, scoring_generation, owner):
+    """Claim the next immutable window; callers persist this under the lease."""
+    active = state.setdefault("turns", [])
+    queued = state.setdefault("queue", [])
+    while len(active) < 3 and queued:
+        active.append(queued.pop(0))
+    if len(active) < 3:
+        state["frozen"] = False
+        return None
+
+    pending_id = state.get("pending_evaluation_id")
+    pending_started = float(state.get("evaluation_started_at") or 0)
+    pending_owner = state.get("evaluator_owner")
+    if pending_id and pending_owner and (
+        time.time() - pending_started < _SCORING_EVALUATOR_STALE_SECONDS
+    ):
+        return None
+
+    if state.get("awaiting_fourth") and len(active) == 3:
+        if not queued:
+            state["frozen"] = False
+            return None
+        active.append(queued.pop(0))
+        state["awaiting_fourth"] = False
+
+    window_size = int(state.get("pending_window_size") or min(4, len(active)))
+    window = active[:window_size]
+    evaluation_id = pending_id or _scoring_evaluation_id(scoring_generation, window)
+    state["frozen"] = True
+    state["pending_evaluation_id"] = evaluation_id
+    state["pending_window_size"] = len(window)
+    state["evaluator_owner"] = owner
+    state["evaluation_started_at"] = time.time()
+    return window, evaluation_id
+
+
+def _clear_scoring_claim(state):
+    state.pop("pending_evaluation_id", None)
+    state.pop("pending_window_size", None)
+    state.pop("evaluator_owner", None)
+    state.pop("evaluation_started_at", None)
+
+
+def _completed_scoring_entry(state, turn_id=None, evaluation_id=None):
+    for entry in reversed(state.get("completed_results", [])):
+        if evaluation_id and entry.get("evaluation_id") == evaluation_id:
+            return entry
+        if turn_id and turn_id in entry.get("turn_ids", []):
+            return entry
+    return None
+
+
+async def _wait_for_scoring_result(redis, key, turn_id, evaluation_id):
+    """Let a reconnecting callback replay a result finalized by another replica."""
+    deadline = time.monotonic() + _SCORING_RESULT_WAIT_SECONDS
+    while time.monotonic() < deadline:
+        state = await _load_scoring_window(redis, key, 0)
+        entry = (
+            _completed_scoring_entry(state, turn_id=turn_id)
+            or _completed_scoring_entry(state, evaluation_id=evaluation_id)
+        )
+        if entry:
+            return entry
+        pending_id = state.get("pending_evaluation_id")
+        pending_size = int(state.get("pending_window_size") or 0)
+        pending_turns = state.get("turns", [])[:pending_size]
+        if pending_id != evaluation_id and any(
+            item.get("turn_id") == turn_id for item in pending_turns
+        ):
+            # A three-turn insufficient decision transitions to a new forced
+            # four-turn evaluation. Follow the claim containing this turn.
+            evaluation_id = pending_id
+        if not evaluation_id or state.get("pending_evaluation_id") != evaluation_id:
+            return None
+        if not state.get("evaluator_owner"):
+            return None
+        await asyncio.sleep(0.1)
+    return None
+
+
+async def _post_scoring_window(payload, token):
+    """Call Workflow with bounded retries; pending/errors never become points."""
+    attempts = len(_SCORING_RETRY_DELAYS) + 1
+    for attempt in range(attempts):
+        try:
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                resp = await client.post(
+                    f"{WORKFLOW_SERVICE_URL}/api/workflows/proficiency-scoring/batch-evaluate",
+                    json=payload,
+                    headers={"Authorization": f"Bearer {token}"} if token else None,
+                )
+            if resp.status_code == 200:
+                result = resp.json().get("data", {}) or {}
+                readiness_intent = result.get("readiness_intent") or {}
+                readiness_pending = (
+                    bool(readiness_intent.get("ready"))
+                    and not result.get("ready_token")
+                )
+                if result.get("evaluation_status") not in (
+                    "evaluation_pending", "pending", "model_error"
+                ) and not readiness_pending:
+                    return result
+                if readiness_pending:
+                    logger.warning(
+                        "[BATCH_EVAL] readiness publication pending id=%s attempt=%s",
+                        payload["evaluation_id"][:16], attempt + 1,
+                    )
+                    if attempt < len(_SCORING_RETRY_DELAYS):
+                        await asyncio.sleep(_SCORING_RETRY_DELAYS[attempt])
+                    continue
+                logger.warning(
+                    "[BATCH_EVAL] evaluation pending id=%s attempt=%s",
+                    payload["evaluation_id"][:16], attempt + 1,
+                )
+            else:
+                logger.warning(
+                    "[BATCH_EVAL] workflow status=%s id=%s attempt=%s",
+                    resp.status_code, payload["evaluation_id"][:16], attempt + 1,
+                )
+        except Exception as exc:
+            logger.warning(
+                "[BATCH_EVAL] request failed type=%s id=%s attempt=%s",
+                type(exc).__name__, payload["evaluation_id"][:16], attempt + 1,
+            )
+        if attempt < len(_SCORING_RETRY_DELAYS):
+            await asyncio.sleep(_SCORING_RETRY_DELAYS[attempt])
+    return None
+
+
+async def _emit_scoring_result(callback, current_task, task_id, turn_ids, result, token):
+    """Apply an already-persisted Workflow result to this websocket session."""
+    current_score = int(current_task.get("score") or 0)
+    interaction_count = int(current_task.get("interaction_count") or 0)
+    delta = max(0, min(3, int(result.get("delta", 0) or 0)))
+    task_completed = bool(result.get("task_completed", False))
+    task_ready_to_complete = bool(result.get("task_ready_to_complete", False))
+    score = int(result.get("score", current_score) or 0)
+    count = int(result.get("interaction_count", interaction_count) or 0)
+    reason = result.get("reason", "") or ""
+    total = int(((callback.user_context or {}).get("active_goal") or {}).get("current_proficiency") or 0) + delta
+    current_task["score"] = score
+    current_task["interaction_count"] = count
+
+    await callback._safe_send({
+        "type": "proficiency_update",
+        "payload": {
+            "delta": delta, "total": total, "task_id": task_id,
+            "task_score": score, "interaction_count": count,
+            "message": reason, "reason": reason,
+            "quality": result.get("quality"), "model_id": result.get("model_id"),
+            "evaluation_status": "completed",
+            "window_completed": True,
+            "completed_window_count": int(result.get("completed_window_count", 0) or 0),
+            "evidence_sufficient": bool(result.get("evidence_sufficient", True)),
+            "evaluation_id": result.get("evaluation_id"),
+            "scoring_generation": int(result.get("scoring_generation", 0) or 0),
+            "turn_ids": turn_ids, "task_completed": task_completed,
+            "task_ready_to_complete": task_ready_to_complete,
+            "ready_token": result.get("ready_token"),
+        },
+    })
+    if task_completed:
+        refreshed = await get_user_context(token, callback.scenario)
+        if refreshed:
+            callback.user_context = refreshed
+        next_task = (((callback.user_context or {}).get("active_goal") or {}).get("current_task") or {})
+        has_next_task = (
+            next_task.get("id") and str(next_task.get("id")) != str(task_id)
+            and next_task.get("status") != "completed"
+        )
+        await callback._safe_send({
+            "type": "task_completed",
+            "payload": {
+                "task_id": task_id,
+                "task_title": current_task.get("task_description", "Task"),
+                "scenario_title": current_task.get("scenario_title", ""),
+                "next_task": (next_task.get("task_description") or next_task.get("text")) if has_next_task else None,
+                "score": score, "interaction_count": count,
+                "evaluation_id": result.get("evaluation_id"),
+            },
+        })
+        if has_next_task:
+            callback._clear_dashscope_items("dynamic_task_complete")
+            callback.messages = []
+            callback.task_history_cutoff = 0
+            callback.current_turn_id = None
+            callback.just_switched_task = True
+            callback.user_context["next_task_text"] = next_task.get("task_description") or next_task.get("text")
+            callback._update_session_prompt()
+
+    return {
+        "proficiency_delta": delta, "total_proficiency": total,
+        "task_completed": task_completed,
+        "task_ready_to_complete": task_ready_to_complete,
+        "ready_token": result.get("ready_token"), "task_score": score,
+        "interaction_count": count, "improvement_tips": [reason] if reason else [],
+        "task_id": task_id,
+        "task_title": result.get("task_title", current_task.get("task_description", "Task")),
+        "scenario_title": result.get("scenario_title", current_task.get("scenario_title", "")),
+        "message": reason, "evaluation_id": result.get("evaluation_id"),
+    }
+
+
 async def _handle_turn_with_accumulator(
     callback,
     conversation,
@@ -504,7 +840,7 @@ async def _handle_turn_with_accumulator(
     native_language: str,
     token: str,
 ):
-    """Evaluate exactly one completed turn through the idempotent workflow."""
+    """Persist a complete turn and score only closed 3-4 turn windows."""
     latest_user_message = next(
         (message for message in reversed(callback.messages) if message.get("role") == "user"),
         {},
@@ -522,130 +858,184 @@ async def _handle_turn_with_accumulator(
         ).timestamp() * 1_000_000)
     except (TypeError, ValueError):
         turn_order = time.time_ns() // 1000
-    if turn_id in callback.processed_turn_ids or turn_id in callback.turn_evaluations_inflight:
-        logger.info("[TURN_EVAL] duplicate local event ignored turn=%s", turn_id[:16])
-        return None
-
-    callback.turn_evaluations_inflight.add(turn_id)
-    current_score = int(current_task.get("score") or 0)
-    interaction_count = int(current_task.get("interaction_count") or 0)
-    payload = {
-        "user_id": user_id,
-        "goal_id": goal_id,
-        "task_id": task_id,
-        "current_task": current_task,
-        "native_language": native_language,
-        "user_content": user_content or "",
-        "ai_response": ai_response or "",
-        "score": current_score,
-        "interaction_count": interaction_count,
-        "turn_id": turn_id,
-        "turn_order": turn_order,
+    turn = {
+        "turn_id": turn_id, "turn_order": turn_order,
+        "user_content": user_content or "", "ai_response": ai_response or "",
     }
+    redis = _get_redis_client()
+    if redis is None:
+        logger.error("[BATCH_EVAL] Redis unavailable; freezing score turn=%s", turn_id[:16])
+        return None
+    generation = int(current_task.get("scoring_generation") or 0)
+    key = _scoring_window_key(user_id, goal_id, task_id, generation)
+    completed_result = None
+    lock_key, owner = await _acquire_scoring_lock(redis, key)
+    if not owner:
+        await _persist_scoring_inbox(redis, key, turn)
+        logger.warning("[BATCH_EVAL] Redis lease timeout; turn persisted to inbox turn=%s", turn_id[:16])
+        return None
+    claim = None
+    replay_entry = None
+    should_wait_for_result = False
+    waiting_evaluation_id = None
+    candidates = []
     try:
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            resp = await client.post(
-                f"{WORKFLOW_SERVICE_URL}/api/workflows/proficiency-scoring/turn-evaluate",
-                json=payload,
-                headers={"Authorization": f"Bearer {token}"} if token else None,
-            )
-            if resp.status_code == 200:
-                result = resp.json().get("data", {}) or {}
-                logger.info(
-                    "[TURN_EVAL] model=%s turn=%s quality=%s delta=%s score=%s fallback=%s",
-                    result.get("model_id"),
-                    turn_id[:16],
-                    result.get("quality"),
-                    result.get("delta"),
-                    result.get("score"),
-                    result.get("fallback_used"),
-                )
+        state = await _load_scoring_window(redis, key, generation)
+        seen = set(str(value) for value in state.get("seen_turn_ids", []))
+        candidates = await _drain_scoring_inbox(redis, key)
+        candidates.append(turn)
+        for candidate in candidates:
+            candidate_id = str(candidate.get("turn_id") or "")
+            if not candidate_id or candidate_id in seen:
+                continue
+            seen.add(candidate_id)
+            if len(state.get("turns", [])) >= 3:
+                state.setdefault("queue", []).append(candidate)
             else:
-                logger.error("[TURN_EVAL] workflow returned status=%s", resp.status_code)
-                return None
-    except Exception as e:
-        logger.error("[TURN_EVAL] HTTP error: %s", type(e).__name__)
+                state.setdefault("turns", []).append(candidate)
+        state["seen_turn_ids"] = list(seen)[-256:]
+        replay_entry = _completed_scoring_entry(state, turn_id)
+        if replay_entry is None:
+            claim = _claim_scoring_evaluation(state, generation, owner)
+            waiting_evaluation_id = state.get("pending_evaluation_id") if claim is None else None
+            should_wait_for_result = claim is None and any(
+                item.get("turn_id") == turn_id
+                for item in state.get("turns", []) + state.get("queue", [])
+            )
+        await _save_scoring_window(redis, key, state, lock_key, owner)
+    except _ScoringLockLost:
+        # The inbox was drained before the ownership-CAS save. Put every
+        # drained candidate back; turn_id dedupe makes duplicate recovery safe.
+        for candidate in candidates or [turn]:
+            await _persist_scoring_inbox(redis, key, candidate)
+        logger.warning(
+            "[BATCH_EVAL] Redis lease expired; %s turn(s) recovered in inbox",
+            len(candidates or [turn]),
+        )
         return None
     finally:
-        callback.turn_evaluations_inflight.discard(turn_id)
+        await _release_scoring_lock(redis, lock_key, owner)
 
-    callback.processed_turn_ids.add(turn_id)
-
-    delta = int(result.get("delta", 0) or 0)
-    task_completed = bool(result.get("task_completed", False))
-    task_ready_to_complete = bool(result.get("task_ready_to_complete", False))
-    score = int(result.get("score", current_score) or 0)
-    count = int(result.get("interaction_count", interaction_count) or 0)
-    reason = result.get("reason", "") or ""
-    total = int(((callback.user_context or {}).get("active_goal") or {}).get("current_proficiency") or 0) + delta
-    current_task["score"] = score
-    current_task["interaction_count"] = count
-
-    await callback._safe_send({
-        "type": "proficiency_update",
-        "payload": {
-            "delta": delta,
-            "total": total,
-            "task_id": task_id,
-            "task_score": score,
-            "interaction_count": count,
-            "message": reason,
-            "reason": reason,
-            "quality": result.get("quality"),
-            "model_id": result.get("model_id"),
-            "fallback_used": bool(result.get("fallback_used")),
-            "turn_id": turn_id,
-            "task_completed": task_completed,
-            "task_ready_to_complete": task_ready_to_complete,
-            "ready_token": result.get("ready_token"),
-        },
-    })
-    if task_completed:
-        refreshed = await get_user_context(token, callback.scenario)
-        if refreshed:
-            callback.user_context = refreshed
-        next_task = (((callback.user_context or {}).get("active_goal") or {}).get("current_task") or {})
-        has_next_task = (
-            next_task.get("id")
-            and str(next_task.get("id")) != str(task_id)
-            and next_task.get("status") != "completed"
+    if replay_entry is not None:
+        return await _emit_scoring_result(
+            callback, current_task, task_id, replay_entry["turn_ids"],
+            replay_entry["result"], token,
         )
-        await callback._safe_send({
-            "type": "task_completed",
-            "payload": {
-                "task_id": task_id,
-                "task_title": current_task.get("task_description", "Task"),
-                "scenario_title": current_task.get("scenario_title", ""),
-                "next_task": (next_task.get("task_description") or next_task.get("text")) if has_next_task else None,
-                "score": score,
-                "interaction_count": count,
-                "turn_id": turn_id,
-            },
-        })
-        if has_next_task:
-            callback._clear_dashscope_items("dynamic_task_complete")
-            callback.messages = []
-            callback.task_history_cutoff = 0
-            callback.current_turn_id = None
-            callback.just_switched_task = True
-            callback.user_context["next_task_text"] = next_task.get("task_description") or next_task.get("text")
-            callback._update_session_prompt()
+    if claim is None and should_wait_for_result:
+        replay_entry = await _wait_for_scoring_result(
+            redis, key, turn_id, waiting_evaluation_id
+        ) if waiting_evaluation_id else None
+        if replay_entry is not None:
+            return await _emit_scoring_result(
+                callback, current_task, task_id, replay_entry["turn_ids"],
+                replay_entry["result"], token,
+            )
 
-    return {
-        "proficiency_delta": delta,
-        "total_proficiency": total,
-        "task_completed": task_completed,
-        "task_ready_to_complete": task_ready_to_complete,
-        "ready_token": result.get("ready_token"),
-        "task_score": score,
-        "interaction_count": count,
-        "improvement_tips": [reason] if reason else [],
-        "task_id": task_id,
-        "task_title": result.get("task_title", current_task.get("task_description", "Task")),
-        "scenario_title": result.get("scenario_title", current_task.get("scenario_title", "")),
-        "message": reason,
-        "turn_id": turn_id,
-    }
+    while claim:
+        window, evaluation_id = claim
+        workflow_window = [
+            {
+                "turn_id": item["turn_id"],
+                "turn_index": index,
+                "turn_order": int(item.get("turn_order", index) or index),
+                "user_content": item["user_content"],
+                "ai_response": item["ai_response"],
+            }
+            for index, item in enumerate(window, start=1)
+        ]
+        payload = {
+            "user_id": user_id, "goal_id": goal_id, "task_id": task_id,
+            "current_task": current_task, "native_language": native_language,
+            "scoring_generation": generation,
+            "evaluation_id": evaluation_id,
+            "turn_window": workflow_window,
+            "force_decision": len(window) == 4,
+        }
+        result = await _post_scoring_window(payload, token)
+
+        lock_key, finalize_owner = await _acquire_scoring_lock(redis, key)
+        if not finalize_owner:
+            logger.error("[BATCH_EVAL] Redis lease timeout finalizing id=%s", evaluation_id[:16])
+            return completed_result
+        emit_result = None
+        claim = None
+        try:
+            state = await _load_scoring_window(redis, key, generation)
+            # The claim may have been recovered after its bounded evaluator
+            # lease. Only its current owner may mutate or emit the result.
+            if (
+                state.get("pending_evaluation_id") != evaluation_id
+                or state.get("evaluator_owner") != owner
+            ):
+                logger.info("[BATCH_EVAL] superseded evaluator ignored id=%s", evaluation_id[:16])
+                return completed_result
+            active = state.setdefault("turns", [])
+            queued = state.setdefault("queue", [])
+            if result is None:
+                state["evaluator_owner"] = None
+                state["evaluation_started_at"] = 0
+                state["frozen"] = True
+                await _save_scoring_window(redis, key, state, lock_key, finalize_owner)
+                break
+            if result.get("evaluation_status") == "stale_generation":
+                # A user-initiated reset invalidates both the in-flight window
+                # and turns queued behind it. The new generation uses a new key.
+                state["turns"] = []
+                state["queue"] = []
+                state["frozen"] = False
+                _clear_scoring_claim(state)
+                await _save_scoring_window(redis, key, state, lock_key, finalize_owner)
+                logger.info("[BATCH_EVAL] discarded stale generation key=%s", key)
+                break
+
+            evidence_sufficient = bool(result.get("evidence_sufficient", len(window) == 4))
+            if len(window) == 3 and not evidence_sufficient:
+                state["frozen"] = False
+                state["awaiting_fourth"] = True
+                _clear_scoring_claim(state)
+                # Claim a queued fourth turn immediately, otherwise the next
+                # completed turn will recover this window.
+                claim = _claim_scoring_evaluation(state, generation, owner)
+                await _save_scoring_window(redis, key, state, lock_key, finalize_owner)
+                continue
+
+            result.setdefault("evaluation_id", evaluation_id)
+            completed_entries = state.setdefault("completed_results", [])
+            if not any(
+                entry.get("evaluation_id") == evaluation_id
+                for entry in completed_entries
+            ):
+                completed_entries.append({
+                    "evaluation_id": evaluation_id,
+                    "turn_ids": [item["turn_id"] for item in window],
+                    "result": result,
+                })
+                del completed_entries[:-_SCORING_COMPLETED_RESULT_CAP]
+            del active[:len(window)]
+            state["frozen"] = False
+            state["awaiting_fourth"] = False
+            _clear_scoring_claim(state)
+            if result.get("task_completed"):
+                state["queue"] = []
+            else:
+                claim = _claim_scoring_evaluation(state, generation, owner)
+            await _save_scoring_window(redis, key, state, lock_key, finalize_owner)
+            emit_result = result
+        except _ScoringLockLost:
+            logger.warning("[BATCH_EVAL] Redis lease expired finalizing id=%s", evaluation_id[:16])
+            return completed_result
+        finally:
+            await _release_scoring_lock(redis, lock_key, finalize_owner)
+
+        if emit_result is not None:
+            completed_result = await _emit_scoring_result(
+                callback, current_task, task_id,
+                [item["turn_id"] for item in window], emit_result, token,
+            )
+            if completed_result.get("task_completed"):
+                break
+
+    return completed_result
 
 
 async def _evaluate_scene_turn_progress(
@@ -671,7 +1061,9 @@ async def _evaluate_scene_turn_progress(
         return None
     if phase_info.get("phase") == "magic_repetition":
         return None
-    if getattr(callback, "mode", None) in ("recall", "daily_qa") or getattr(callback, "is_daily_qa_mode", False) is True:
+    if getattr(callback, "mode", None) in (
+        "recall", "daily_qa", "tour", "magic_repetition"
+    ) or getattr(callback, "is_daily_qa_mode", False) is True:
         return None
 
     active_goal = (callback.user_context or {}).get("active_goal") or {}
@@ -696,6 +1088,7 @@ async def _evaluate_scene_turn_progress(
         "target_language": active_goal.get("target_language", "English"),
         "score": current.get("score", 0),
         "interaction_count": current.get("interaction_count", 0),
+        "scoring_generation": current.get("scoring_generation", 0),
         "keywords": current.get("keywords", []),
     }
     native_language = (
@@ -3255,6 +3648,10 @@ class WebSocketCallback(OmniRealtimeCallback):
                                         "task_description": _task_description,
                                         "scenario_title": _scenario_title,
                                         "target_language": _target_language,
+                                        "score": _current_task_record.get("score", 0),
+                                        "interaction_count": _current_task_record.get("interaction_count", 0),
+                                        "scoring_generation": _current_task_record.get("scoring_generation", 0),
+                                        "keywords": _current_task_record.get("keywords", []),
                                     }
 
                                     workflow_result = await _handle_turn_with_accumulator(
@@ -3301,6 +3698,7 @@ class WebSocketCallback(OmniRealtimeCallback):
                                                     "scenario_title": _scenario_title,
                                                     "score": task_score,
                                                     "message": workflow_result.get('message', 'You have mastered this task!'),
+                                                    "ready_token": workflow_result.get('ready_token'),
                                                 }
                                             })
                                             logger.info(f"[TASK_READY] Task ready to complete: {task_title} (score={task_score})")

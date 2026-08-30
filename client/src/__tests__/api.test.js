@@ -133,6 +133,39 @@ describe('userAPI.resetTask()', () => {
     expect(result.progress).toBe(0);
   });
 
+  test('forwards the new scoring generation to phase reset', async () => {
+    localStorage.getItem.mockReturnValueOnce(JSON.stringify({ id: 'user-1' }));
+    fetch
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          success: true,
+          data: {
+            task_id: 'task-1',
+            scenario_title: 'Cafe',
+            scoring_generation: 3,
+            tasks: [{ task_id: 'task-1', scenario_title: 'Cafe', scoring_generation: 3 }],
+          },
+        }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({ success: true }),
+      });
+
+    await userAPI.resetTask('task-1', 'Cafe');
+
+    expect(fetch.mock.calls[1][0]).toContain('/api/ai/reset-phase');
+    expect(JSON.parse(fetch.mock.calls[1][1].body)).toMatchObject({
+      user_id: 'user-1',
+      task_id: 'task-1',
+      scoring_generation: 3,
+      scoring_generations: [{ task_id: 'task-1', scoring_generation: 3 }],
+    });
+  });
+
   test('should preserve task metadata after reset', async () => {
     const mockTask = {
       id: 'task-1',
