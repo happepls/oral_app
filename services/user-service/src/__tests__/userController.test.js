@@ -81,6 +81,30 @@ describe('confirmCompleteTask readiness capability', () => {
     expect(res.body.data.next_task.id).toBe(43);
     expect(redis.get).not.toHaveBeenCalled();
   });
+
+  test('internal confirmation binds the service-authenticated websocket user id', async () => {
+    const token = 'current-ready-token-1234567890';
+    redis.get.mockResolvedValue(`0:9:${token}`);
+    redis.eval.mockResolvedValue(1);
+    jest.spyOn(User, 'getTaskByIdForUser').mockResolvedValue({ id: 42, status: 'pending' });
+    jest.spyOn(User, 'confirmCompleteTaskById').mockResolvedValue({
+      completed_task: { id: 42, status: 'completed' },
+      next_task: { id: 43 },
+      current_proficiency: 7,
+    });
+    jest.spyOn(User, 'evaluateAchievements').mockResolvedValue(undefined);
+    const req = {
+      params: { userId: 'trusted-ws-user', id: '42' },
+      body: { ready_token: token },
+    };
+    const res = mockRes();
+
+    await userController.confirmCompleteTaskInternal(req, res);
+
+    expect(res.statusCode).toBe(200);
+    expect(User.getTaskByIdForUser).toHaveBeenCalledWith('trusted-ws-user', '42');
+    expect(User.confirmCompleteTaskById).toHaveBeenCalledWith('trusted-ws-user', '42', null);
+  });
 });
 
 // ─── Login: null-password (Google OAuth user) ────────────────────────

@@ -777,9 +777,8 @@ exports.updateProficiencyInternal = async (req, res) => {
 
 };
 
-exports.confirmCompleteTask = async (req, res) => {
+const confirmCompleteTaskForUser = async (req, res, userId) => {
     try {
-        const userId = req.user?.id;
         const taskId = req.params.id;
         const { mode, ready_token: readyToken } = req.body || {};
         if (!userId) return res.status(401).json({ success: false, message: 'Unauthorized' });
@@ -860,6 +859,18 @@ exports.confirmCompleteTask = async (req, res) => {
         console.error('Confirm-Complete Task Error:', error);
         res.status(500).json({ success: false, message: 'Server Error' });
     }
+};
+
+exports.confirmCompleteTask = async (req, res) => {
+    return confirmCompleteTaskForUser(req, res, req.user?.id);
+};
+
+// AI Omni keeps a long-lived websocket session. Its user JWT can expire while
+// the user is still speaking, so the final task confirmation uses service auth
+// and the server-validated websocket user id. The task-bound readiness token is
+// still required and checked by confirmCompleteTaskForUser above.
+exports.confirmCompleteTaskInternal = async (req, res) => {
+    return confirmCompleteTaskForUser(req, res, req.params.userId);
 };
 
 exports.completeTaskInternal = async (req, res) => {
