@@ -468,11 +468,19 @@ Do not return a score or delta; the server owns score mapping."""
                 if current then
                   local first = string.find(current, ':')
                   local second = first and string.find(current, ':', first + 1)
-                  local current_generation = tonumber(first and string.sub(current, 1, first - 1) or '0') or 0
-                  local current_order = tonumber(second and string.sub(current, first + 1, second - 1) or '0') or 0
-                  if current_generation > tonumber(ARGV[1]) then return '__STALE__' end
-                  if current_generation == tonumber(ARGV[1]) and current_order > tonumber(ARGV[2]) then return '__STALE__' end
-                  if current_generation == tonumber(ARGV[1]) and current_order == tonumber(ARGV[2]) then return current end
+                  -- The retired per-turn scorer stored "turn_order:token" under
+                  -- the same v1 key.  Its timestamp-like order is not comparable
+                  -- with the batch scorer's "generation:interaction_count:token"
+                  -- format and must never be interpreted as a generation.  Only
+                  -- apply monotonic checks to a value that has both separators;
+                  -- any legacy/malformed value is atomically upgraded below.
+                  if first and second then
+                    local current_generation = tonumber(string.sub(current, 1, first - 1)) or 0
+                    local current_order = tonumber(string.sub(current, first + 1, second - 1)) or 0
+                    if current_generation > tonumber(ARGV[1]) then return '__STALE__' end
+                    if current_generation == tonumber(ARGV[1]) and current_order > tonumber(ARGV[2]) then return '__STALE__' end
+                    if current_generation == tonumber(ARGV[1]) and current_order == tonumber(ARGV[2]) then return current end
+                  end
                 end
                 redis.call('SETEX', KEYS[1], ARGV[3], ARGV[4])
                 return ARGV[4]
