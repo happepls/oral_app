@@ -50,7 +50,7 @@ router.post('/api/users/goals/reset-task', protect, userController.resetTask);
 // Daily scenario count (for enforcing per-day scenario limits)
 router.get('/api/users/daily-scenario-count', protect, userController.getDailyScenarioCount);
 
-// Task confirm-complete: user (or AI on behalf of user via Bearer token) confirms switching to next task
+// Task confirm-complete from a current browser session.
 router.post('/api/users/tasks/:id/confirm-complete', protect, userController.confirmCompleteTask);
 
 // Check-in routes
@@ -97,6 +97,9 @@ router.post('/api/users/internal/users/:id/daily-qa-pass', internalAuthWithNetwo
 router.post('/api/users/internal/users/:id/proficiency', internalAuthWithNetworkSkip, userController.updateProficiencyInternal);
 router.post('/api/users/internal/users/:id/tasks/complete', internalAuthWithNetworkSkip, userController.completeTaskInternal);
 router.post('/api/users/internal/users/:id/tasks/score', internalAuthWithNetworkSkip, userController.updateTaskScoreInternal);
+// Long-lived AI websocket sessions confirm with service auth because their
+// original user access token may expire before the conversation is complete.
+router.post('/api/users/internal/users/:userId/tasks/:id/confirm-complete', internalAuthWithNetworkSkip, userController.confirmCompleteTaskInternal);
 router.get('/api/users/internal/users/:id', internalAuthWithNetworkSkip, userController.getUserInternal);
 
 // Internal: persist a scenario cover image URL (called by ai-omni after COS re-host)

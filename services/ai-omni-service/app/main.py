@@ -753,6 +753,70 @@ async def _post_scoring_window(payload, token):
     return None
 
 
+async def _post_internal_task_confirmation(
+    user_service_url, user_id, task_id, mode, ready_token,
+):
+    """Confirm a task without relying on the websocket's expiring user JWT.
+
+    The websocket user id was authenticated when the realtime ticket was
+    redeemed. User Service still verifies the task-bound readiness capability,
+    while INTERNAL_AUTH_SECRET authenticates this service-to-service call.
+    """
+    internal_secret = os.getenv("INTERNAL_AUTH_SECRET")
+    if not internal_secret:
+        raise RuntimeError("INTERNAL_AUTH_SECRET is required for task confirmation")
+    encoded_user_id = urllib.parse.quote(str(user_id), safe="")
+    encoded_task_id = urllib.parse.quote(str(task_id), safe="")
+    async with httpx.AsyncClient() as client:
+        return await client.post(
+            f"{user_service_url}/api/users/internal/users/"
+            f"{encoded_user_id}/tasks/{encoded_task_id}/confirm-complete",
+            headers={"X-Guaji-Internal-Auth": internal_secret},
+            json={"mode": mode, "ready_token": ready_token},
+            timeout=5.0,
+        )
+
+
+def _apply_confirmed_task_context(
+    user_context, completed_task, next_task, current_proficiency=None,
+):
+    """Keep both legacy and active-goal task views in sync after confirmation."""
+    active_goal = user_context.setdefault("active_goal", {})
+    if current_proficiency is not None:
+        active_goal["current_proficiency"] = current_proficiency
+
+    completed_id = str((completed_task or {}).get("id") or "")
+    next_id = str((next_task or {}).get("id") or "")
+    for scenario in active_goal.get("scenarios", []) or []:
+        for task in scenario.get("tasks", []) or []:
+            task_id = str(task.get("id") or "") if isinstance(task, dict) else ""
+            if completed_id and task_id == completed_id:
+                task.update({
+                    "status": "completed",
+                    "score": (completed_task or {}).get("score", task.get("score", 9)),
+                    "progress": 100,
+                })
+            elif next_id and task_id == next_id:
+                task.update(next_task)
+
+    if isinstance(next_task, dict):
+        user_context["next_task_text"] = next_task.get("text", "")
+        user_context["current_task"] = next_task
+        active_goal["current_task"] = {
+            "id": next_task.get("id"),
+            "task_description": next_task.get("text", ""),
+            "scenario_title": next_task.get("scenario_title", ""),
+            "score": next_task.get("score", 0),
+            "interaction_count": next_task.get("interaction_count", 0),
+            "scoring_generation": next_task.get("scoring_generation", 0),
+            "status": next_task.get("status", "pending"),
+        }
+    else:
+        user_context["next_task_text"] = None
+        user_context["current_task"] = None
+        active_goal["current_task"] = None
+
+
 async def _emit_scoring_result(callback, current_task, task_id, turn_ids, result, token):
     """Apply an already-persisted Workflow result to this websocket session."""
     current_score = int(current_task.get("score") or 0)
@@ -4401,7 +4465,15 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query(None), ses
 
                 # Log messages except ping (which is too frequent)
                 if msg_type != 'ping':
-                    logger.info(f"Received message: {message[:200]}..." if len(message) > 200 else f"Received message: {message}")
+                    if msg_type == 'user_confirmed_complete':
+                        # ready_token is a task-bound capability; never put it
+                        # into production logs.
+                        logger.info(
+                            "Received message: type=user_confirmed_complete task_id=%s",
+                            payload.get('task_id'),
+                        )
+                    else:
+                        logger.info(f"Received message: {message[:200]}..." if len(message) > 200 else f"Received message: {message}")
 
                 if msg_type == 'session_start':
                     logger.info(f"Received session_start for user {payload.get('userId')}")
@@ -4657,36 +4729,24 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query(None), ses
 
                         user_service_url = os.getenv("USER_SERVICE_URL", "http://user-service:3000")
                         _confirm_mode = callback.task_completion_mode()
-                        async with httpx.AsyncClient() as client:
-                            confirm_resp = await client.post(
-                                f"{user_service_url}/api/users/tasks/{confirm_task_id}/confirm-complete",
-                                headers={"Authorization": f"Bearer {callback.token}"},
-                                json={"mode": _confirm_mode, "ready_token": ready_token},
-                                timeout=5.0,
-                            )
-                            if confirm_resp.status_code != 200:
-                                logger.error(f"[TASK_CONFIRM] confirm-complete failed: {confirm_resp.status_code} {confirm_resp.text[:200]}")
-                                await callback._safe_send({
-                                    "type": "task_switch_error",
-                                    "payload": {"message": "任务切换失败，请重试", "task_id": confirm_task_id}
-                                })
-                                continue
+                        confirm_resp = await _post_internal_task_confirmation(
+                            user_service_url,
+                            callback.user_id,
+                            confirm_task_id,
+                            _confirm_mode,
+                            ready_token,
+                        )
+                        if confirm_resp.status_code != 200:
+                            logger.error(f"[TASK_CONFIRM] confirm-complete failed: {confirm_resp.status_code} {confirm_resp.text[:200]}")
+                            await callback._safe_send({
+                                "type": "task_switch_error",
+                                "payload": {"message": "任务切换失败，请重试", "task_id": confirm_task_id}
+                            })
+                            continue
 
-                            confirm_data = confirm_resp.json().get('data', {}) or {}
-                            next_task_obj = confirm_data.get('next_task')
-                            completed_task = confirm_data.get('completed_task') or {}
-
-                            # 刷新 active_goal scenarios
-                            goal_resp = await client.get(
-                                f"{user_service_url}/api/users/goals/active",
-                                headers={"Authorization": f"Bearer {callback.token}"},
-                                timeout=5.0,
-                            )
-                            if goal_resp.status_code == 200:
-                                goal_data = goal_resp.json().get('data', {})
-                                active_goal = goal_data.get('goal', goal_data)
-                                if active_goal and active_goal.get('scenarios'):
-                                    callback.user_context['active_goal']['scenarios'] = active_goal.get('scenarios', [])
+                        confirm_data = confirm_resp.json().get('data', {}) or {}
+                        next_task_obj = confirm_data.get('next_task')
+                        completed_task = confirm_data.get('completed_task') or {}
 
                         # 通知前端任务切换
                         await callback._safe_send({
@@ -4700,13 +4760,14 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query(None), ses
                             }
                         })
 
-                        # 更新 user_context 到新任务
-                        if isinstance(next_task_obj, dict):
-                            callback.user_context['next_task_text'] = next_task_obj.get('text', '')
-                            callback.user_context['current_task'] = next_task_obj
-                        else:
-                            callback.user_context['next_task_text'] = None
-                            callback.user_context['current_task'] = None
+                        # 更新 user_context 到新任务。active_goal.current_task 是
+                        # 评分与 prompt 的权威视图，顶层 current_task 仅为兼容。
+                        _apply_confirmed_task_context(
+                            callback.user_context,
+                            completed_task,
+                            next_task_obj,
+                            confirm_data.get('current_proficiency'),
+                        )
 
                         # 清理服务端 history + items，刷新 session prompt
                         callback.messages = []
