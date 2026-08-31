@@ -38,13 +38,15 @@ class FakeRedis:
     def eval(self, script, numkeys, key, generation, order, ttl, value):
         current = str(self.values.get(key) or "")
         if current:
-            current_generation, current_order, _ = current.split(":", 2)
-            if int(current_generation) > int(generation):
-                return "__STALE__"
-            if int(current_generation) == int(generation) and int(current_order) > int(order):
-                return "__STALE__"
-            if int(current_generation) == int(generation) and int(current_order) == int(order):
-                return current
+            parts = current.split(":", 2)
+            if len(parts) == 3:
+                current_generation, current_order, _ = parts
+                if int(current_generation) > int(generation):
+                    return "__STALE__"
+                if int(current_generation) == int(generation) and int(current_order) > int(order):
+                    return "__STALE__"
+                if int(current_generation) == int(generation) and int(current_order) == int(order):
+                    return current
         self.values[key] = value
         return value
 
@@ -369,6 +371,24 @@ def test_readiness_gate_is_generation_aware_and_monotonic():
         scoring_generation=3, ready=False, order=3,
     )
     assert redis.values[key] == "3:3:"
+
+
+def test_readiness_gate_atomically_upgrades_legacy_turn_order_value():
+    redis = FakeRedis()
+    workflow = BatchEvaluationWorkflow()
+    key = workflow._ready_key("u1", 42)
+    # The retired per-turn scorer used "turn_order:token". Production had an
+    # empty-token timestamp in this format, which the batch scorer previously
+    # misread as a future scoring_generation and rejected forever as stale.
+    redis.values[key] = "1788094759335706:"
+
+    token = workflow._update_ready_gate(
+        redis_client=redis, user_id="u1", task_id=42,
+        scoring_generation=0, ready=True, order=19,
+    )
+
+    assert token
+    assert redis.values[key] == f"0:19:{token}"
 
 
 @pytest.mark.asyncio
