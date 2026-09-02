@@ -777,6 +777,137 @@ async def _post_internal_task_confirmation(
         )
 
 
+def _next_task_in_confirmed_scenario(completed_task, next_task):
+    """Return the next task only when it belongs to the completed scenario.
+
+    User Service intentionally falls back to the next pending task in the goal.
+    That is useful for goal navigation, but a realtime scenario session must stop
+    at the scenario boundary so it can generate the practice review first.
+    """
+    if not isinstance(next_task, dict):
+        return None
+    completed_scenario = str((completed_task or {}).get("scenario_title") or "").strip()
+    next_scenario = str(next_task.get("scenario_title") or "").strip()
+    if completed_scenario and next_scenario and completed_scenario != next_scenario:
+        return None
+    return next_task
+
+
+async def _generate_and_emit_scenario_review(
+    callback, goal_id, scenario_title, conversation_history,
+):
+    """Generate, persist (in Workflow), and emit a completed-scenario review.
+
+    The workflow endpoint is service-internal and does not depend on the browser
+    JWT kept by a long-lived websocket. A matching persisted review is reused so
+    a repeated completion acknowledgement cannot trigger another LLM evaluation.
+    """
+    scenario_title = str(scenario_title or "").strip()
+    if not goal_id or not scenario_title:
+        logger.warning(
+            "[SCENARIO_REVIEW] Missing goal/scenario after final task confirmation"
+        )
+        return None
+
+    active_goal = callback.user_context.setdefault("active_goal", {})
+    existing = (
+        callback.user_context.get("scenario_review")
+        or active_goal.get("scenario_review")
+    )
+    if (
+        isinstance(existing, dict)
+        and existing.get("scenario_title") == scenario_title
+        and existing.get("analysis")
+    ):
+        await callback._safe_send({"type": "scenario_review", "payload": existing})
+        logger.info(
+            "[SCENARIO_REVIEW] Reused persisted review after confirmation: goal=%s scenario=%s",
+            goal_id,
+            scenario_title,
+        )
+        return existing
+
+    recent_history = list(conversation_history or [])[-50:]
+    user_turn_count = sum(
+        1
+        for message in recent_history
+        if message.get("role") == "user"
+        and str(message.get("content") or "").strip()
+    )
+    if user_turn_count < 3:
+        logger.warning(
+            "[SCENARIO_REVIEW] Skipping deep evaluation after confirmation: "
+            "user_turns=%s goal=%s scenario=%s",
+            user_turn_count,
+            goal_id,
+            scenario_title,
+        )
+        await callback._safe_send({
+            "type": "scenario_completed",
+            "payload": {
+                "scenario_title": scenario_title,
+                "reason": "insufficient_practice",
+                "user_turn_count": user_turn_count,
+                "message": "本场景练习数据不足，建议完整完成 3 个子任务后再查看报告。",
+            },
+        })
+        return None
+
+    try:
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            response = await client.post(
+                f"{WORKFLOW_SERVICE_URL}/api/workflows/scenario-review/generate",
+                json={
+                    "user_id": callback.user_id,
+                    "goal_id": goal_id,
+                    "scenario_title": scenario_title,
+                    "completed_tasks": [],
+                    "conversation_history": recent_history,
+                },
+            )
+        if response.status_code != 200:
+            logger.error(
+                "[SCENARIO_REVIEW] Generation failed after confirmation: status=%s",
+                response.status_code,
+            )
+            return None
+        response_body = response.json()
+        if response_body.get("success") is not True:
+            logger.error("[SCENARIO_REVIEW] Workflow returned an unsuccessful response")
+            return None
+        data = response_body.get("data") or {}
+        if data.get("persisted") is not True:
+            logger.error("[SCENARIO_REVIEW] Workflow did not confirm persistence")
+            return None
+        review_payload = {
+            "scenario_title": scenario_title,
+            "review_report": data.get("review_report", ""),
+            "recommendations": data.get("recommendations", []),
+            "analysis": data.get("analysis", {}),
+        }
+        if not review_payload["analysis"]:
+            logger.error("[SCENARIO_REVIEW] Workflow response omitted analysis")
+            return None
+        callback.user_context["scenario_review"] = review_payload
+        active_goal["scenario_review"] = review_payload
+        await callback._safe_send({"type": "scenario_review", "payload": review_payload})
+        logger.info(
+            "[SCENARIO_REVIEW] Generated, persisted and emitted after confirmation: "
+            "goal=%s scenario=%s user_turns=%s",
+            goal_id,
+            scenario_title,
+            user_turn_count,
+        )
+        return review_payload
+    except Exception as exc:
+        logger.error(
+            "[SCENARIO_REVIEW] Generation failed after confirmation: %s",
+            type(exc).__name__,
+            exc_info=True,
+        )
+        return None
+
+
 def _apply_confirmed_task_context(
     user_context, completed_task, next_task, current_proficiency=None,
 ):
@@ -4745,8 +4876,11 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query(None), ses
                             continue
 
                         confirm_data = confirm_resp.json().get('data', {}) or {}
-                        next_task_obj = confirm_data.get('next_task')
                         completed_task = confirm_data.get('completed_task') or {}
+                        next_task_obj = _next_task_in_confirmed_scenario(
+                            completed_task,
+                            confirm_data.get('next_task'),
+                        )
 
                         # 通知前端任务切换
                         await callback._safe_send({
@@ -4768,6 +4902,15 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query(None), ses
                             next_task_obj,
                             confirm_data.get('current_proficiency'),
                         )
+
+                        if not next_task_obj:
+                            active_goal = callback.user_context.get('active_goal') or {}
+                            await _generate_and_emit_scenario_review(
+                                callback,
+                                completed_task.get('goal_id') or active_goal.get('id'),
+                                completed_task.get('scenario_title') or callback.scenario,
+                                list(callback.messages),
+                            )
 
                         # 清理服务端 history + items，刷新 session prompt
                         callback.messages = []
