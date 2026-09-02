@@ -92,6 +92,8 @@ docker compose logs ai-omni-service | grep -i "proficiency\|task_completed"
 ## Agent 协作与文档索引
 
 - 多 Agent 仅用于可并行、文件边界清晰的任务；先明确 owner，禁止多人编辑同一文件；主 Agent 负责合并、测试与结论。
+- AI-native 变更遵循根目录单活跃 `intent.md`→`spec.md`→`plan.md`→`verification.md`→`release.md`→`maintenance.md`；计划执行和发布必须人工批准，禁止伪造审批、命令、结果或生产证据。
+- 并发需求与告警进入 GitHub Issues 队列，不得覆盖活跃工件；Agent 只能推进到 PR，禁止自动合并、直推 `master` 或绕过 required checks。完整流程、恢复、审计和控制带见 `docs/ai-sdlc.md`。
 - Figma/响应式与 Zeabur 生产验证：`docs/test-cases-design-integration.md`。
 - Zeabur 部署：`docs/zeabur-backend-deploy-plan.md`、`docs/zeabur-panel-steps.md`、`docs/zeabur-backend-deploy-checklist.md`。
 - E2E 遗留：`docs/E2E_problems_list.md`、`docs/TODO.md`；场景契约测试：`test_scenario_batch_and_daily_qa.py`。

@@ -1,0 +1,145 @@
+name: SDLC Production Observe
+
+on:
+  schedule:
+    - cron: '*/15 * * * *'
+  workflow_dispatch:
+    inputs:
+      health_url:
+        description: Optional public health URL override
+        required: false
+        type: string
+
+concurrency:
+  group: oral-app-sdlc-observe
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  observe:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ secrets.SDLC_BOT_TOKEN }}
+      HEALTH_URL: ${{ inputs.health_url || vars.PRODUCTION_HEALTH_URL }}
+      ZEABUR_AGGREGATES_URL: ${{ vars.ZEABUR_AGGREGATES_URL }}
+      ZEABUR_TOKEN: ${{ secrets.ZEABUR_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Restore consecutive-window state
+        uses: actions/cache/restore@v4
+        with:
+          path: .sdlc-observe-state.json
+          key: sdlc-observe-${{ github.run_id }}
+          restore-keys: sdlc-observe-
+      - name: Probe public health and update redacted observation
+        id: probe
+        run: |
+          test -n "$HEALTH_URL" || { echo "PRODUCTION_HEALTH_URL is missing"; exit 1; }
+          previous=0
+          if [ -f .sdlc-observe-state.json ]; then
+            previous=$(python3 -c 'import json; print(json.load(open(".sdlc-observe-state.json")).get("health_consecutive_failures", 0))')
+          fi
+          started=$(date +%s%3N)
+          status=$(curl --silent --show-error --output /dev/null --write-out '%{http_code}' --max-time 15 "$HEALTH_URL" || true)
+          ended=$(date +%s%3N)
+          latency=$((ended - started))
+          if [[ "$status" =~ ^2 ]]; then failures=0; else failures=$((previous + 1)); fi
+          python3 - "$status" "$latency" "$failures" <<'PY'
+          import json, sys
+          observation = {
+              "http_status": sys.argv[1],
+              "latency_ms": int(sys.argv[2]),
+              "health_consecutive_failures": int(sys.argv[3]),
+              "summary": "public health metadata only",
+          }
+          json.dump(observation, open(".sdlc-observe-state.json", "w"))
+          json.dump(observation, open("/tmp/observation.json", "w"))
+          PY
+          python3 scripts/sdlc-monitor.py /tmp/observation.json | tee /tmp/evaluation.json
+          echo "severity=$(python3 -c 'import json; print(json.load(open("/tmp/evaluation.json"))["severity"])')" >> "$GITHUB_OUTPUT"
+      - name: Read hourly structured Zeabur aggregates
+        id: aggregate
+        if: github.event.schedule == '*/15 * * * *'
+        run: |
+          minute=$(date -u +%M)
+          [ "$minute" = 00 ] || exit 0
+          test -n "$ZEABUR_AGGREGATES_URL" || { echo "ZEABUR_AGGREGATES_URL missing: hourly aggregate observation blocked"; exit 1; }
+          test -n "$ZEABUR_TOKEN" || { echo "ZEABUR_TOKEN missing: hourly aggregate observation blocked"; exit 1; }
+          curl --fail --silent --show-error --max-time 20 \
+            -H "Authorization: Bearer $ZEABUR_TOKEN" "$ZEABUR_AGGREGATES_URL" \
+            | python3 scripts/sdlc-monitor.py - --aggregate-only \
+            > /tmp/zeabur-aggregate-evaluation.json
+          echo "severity=$(python3 -c 'import json; print(json.load(open("/tmp/zeabur-aggregate-evaluation.json"))["severity"])')" >> "$GITHUB_OUTPUT"
+      - name: Combine health and aggregate severity
+        id: combined
+        if: always() && steps.probe.outcome == 'success'
+        env:
+          HEALTH_SEVERITY: ${{ steps.probe.outputs.severity }}
+          AGGREGATE_SEVERITY: ${{ steps.aggregate.outputs.severity }}
+        run: |
+          python3 - <<'PY'
+          import json, os
+          rank = {"observe": 0, "diagnose": 1, "immediate": 2}
+          health = json.load(open("/tmp/evaluation.json"))
+          values = [health]
+          try:
+              values.append(json.load(open("/tmp/zeabur-aggregate-evaluation.json")))
+          except FileNotFoundError:
+              pass
+          severity = max((item["severity"] for item in values), key=rank.get)
+          combined = {"severity": severity, "reasons": sorted({reason for item in values for reason in item["reasons"]})}
+          json.dump(combined, open("/tmp/combined-evaluation.json", "w"))
+          with open(os.environ["GITHUB_OUTPUT"], "a") as output:
+              output.write(f"severity={severity}\n")
+          PY
+      - name: Queue evidence-backed diagnostic
+        if: steps.combined.outputs.severity == 'diagnose' || steps.combined.outputs.severity == 'immediate'
+        env:
+          SEVERITY: ${{ steps.combined.outputs.severity }}
+        run: |
+          test -n "$GH_TOKEN" || { echo "SDLC_BOT_TOKEN missing: diagnostic queue blocked"; exit 1; }
+          reasons=$(python3 -c 'import json; print(", ".join(json.load(open("/tmp/combined-evaluation.json"))["reasons"]))')
+          gh label create 'sdlc:accepted' --color 0e8a16 --description 'Accepted for the SDLC loop' --force
+          gh label create 'sdlc:queued' --color fbca04 --description 'Queued behind the active SDLC loop' --force
+          gh label create 'sdlc:diagnostic' --color b60205 --description 'Production diagnostic evidence' --force
+          active=$(gh pr list --state open --json headRefName --jq '[.[] | select(.headRefName | startswith("agent/sdlc-"))] | length')
+          label=sdlc:accepted
+          [ "$active" -eq 0 ] || label=sdlc:queued
+          grep -A3 '^stage: maintain' maintenance.md | grep -q '^status: complete' || label=sdlc:queued
+          title="[SDLC diagnostic] production control-band breach"
+          existing=$(gh issue list --state open --label sdlc:diagnostic --search "$title in:title" --json number --jq '.[0].number // empty')
+          body="Automated read-only observation triggered: $reasons. Run: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID. No user content or raw logs are attached. Diagnose before proposing a fix."
+          if [ -n "$existing" ]; then
+            gh issue comment "$existing" --body "$body"
+            gh issue edit "$existing" --add-label "$label"
+          else
+            gh issue create --title "$title" --label "$label,sdlc:diagnostic" --body "$body"
+          fi
+      - name: Emit daily trend summary
+        if: github.event.schedule == '*/15 * * * *'
+        run: |
+          hour=$(date -u +%H)
+          minute=$(date -u +%M)
+          [ "$hour:$minute" = 00:00 ] || exit 0
+          cp /tmp/evaluation.json daily-trend.json
+      - name: Upload observation evidence only
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sdlc-observation-${{ github.run_id }}
+          path: |
+            /tmp/evaluation.json
+            /tmp/combined-evaluation.json
+            /tmp/zeabur-aggregate-evaluation.json
+            daily-trend.json
+          if-no-files-found: ignore
+          retention-days: 14
+      - name: Save consecutive-window state
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: .sdlc-observe-state.json
+          key: sdlc-observe-${{ github.run_id }}

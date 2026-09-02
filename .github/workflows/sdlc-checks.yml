@@ -1,0 +1,66 @@
+name: SDLC Governance
+
+on:
+  pull_request:
+    branches: [master]
+  push:
+    branches: [master]
+  workflow_dispatch:
+    inputs:
+      enforce:
+        description: Fail instead of report (enable only after shadow acceptance)
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+jobs:
+  sdlc-artifacts:
+    name: sdlc-artifacts
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Validate artifact schema and chain
+        id: gate
+        continue-on-error: true
+        run: python3 scripts/sdlc.py validate --history
+      - name: Apply shadow or enforcement result
+        env:
+          OUTCOME: ${{ steps.gate.outcome }}
+          REQUEST_ENFORCEMENT: ${{ inputs.enforce || 'false' }}
+        run: |
+          mode=$(awk '/^mode:/ {print $2}' bands.yaml)
+          echo "artifact gate outcome=$OUTCOME mode=$mode"
+          if [ "$OUTCOME" != success ] && { [ "$mode" = enforce ] || [ "$REQUEST_ENFORCEMENT" = true ]; }; then
+            exit 1
+          fi
+
+  sdlc-review:
+    name: sdlc-review
+    if: github.event_name != 'push'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Classify project risks
+        id: review
+        continue-on-error: true
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: python3 scripts/sdlc-review.py --base "$BASE_SHA" --head "$HEAD_SHA"
+      - name: Apply shadow or enforcement result
+        env:
+          OUTCOME: ${{ steps.review.outcome }}
+          REQUEST_ENFORCEMENT: ${{ inputs.enforce || 'false' }}
+        run: |
+          mode=$(awk '/^mode:/ {print $2}' bands.yaml)
+          echo "review gate outcome=$OUTCOME mode=$mode"
+          if [ "$OUTCOME" != success ] && { [ "$mode" = enforce ] || [ "$REQUEST_ENFORCEMENT" = true ]; }; then
+            exit 1
+          fi
