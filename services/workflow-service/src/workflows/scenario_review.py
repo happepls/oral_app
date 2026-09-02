@@ -612,7 +612,7 @@ Write a short, personalized performance review in {native_language}. Requirement
             placeholder_report = analysis["summary"]
             placeholder_recs = ["完整完成 3 个子任务后再生成详细复盘报告"]
 
-            await self._save_review_to_db(
+            persisted = await self._save_review_to_db(
                 user_id=user_id,
                 goal_id=goal_id,
                 scenario_title=scenario_title,
@@ -621,6 +621,8 @@ Write a short, personalized performance review in {native_language}. Requirement
                 analysis=analysis,
                 db_connection=db_connection
             )
+            if not persisted:
+                raise RuntimeError("Failed to persist scenario review")
 
             return {
                 "workflow": "scenario_review",
@@ -631,6 +633,7 @@ Write a short, personalized performance review in {native_language}. Requirement
                 "all_scenarios_completed": False,
                 "sufficient": False,
                 "reason": "insufficient_practice",
+                "persisted": True,
             }
 
         analysis["sufficient"] = True
@@ -693,7 +696,7 @@ Write a short, personalized performance review in {native_language}. Requirement
             recommendations = [ai_feedback["recommendation"]] + (recommendations[1:] if len(recommendations) > 1 else [])
 
         # 保存复盘报告到数据库
-        await self._save_review_to_db(
+        persisted = await self._save_review_to_db(
             user_id=user_id,
             goal_id=goal_id,
             scenario_title=scenario_title,
@@ -702,6 +705,8 @@ Write a short, personalized performance review in {native_language}. Requirement
             analysis=analysis,
             db_connection=db_connection
         )
+        if not persisted:
+            raise RuntimeError("Failed to persist scenario review")
 
         return {
             "workflow": "scenario_review",
@@ -709,7 +714,8 @@ Write a short, personalized performance review in {native_language}. Requirement
             "review_report": review_report,
             "recommendations": recommendations,
             "analysis": analysis,
-            "all_scenarios_completed": False  # 由外部检查
+            "all_scenarios_completed": False,  # 由外部检查
+            "persisted": True,
         }
     
     async def _analyze_scenario_conversation(
@@ -1161,16 +1167,17 @@ Write a short, personalized performance review in {native_language}. Requirement
         recommendations: List[str],
         analysis: Dict[str, Any],
         db_connection: Any
-    ) -> None:
+    ) -> bool:
         """保存复盘报告到 user_goals.scenario_review（JSONB）。
 
         前端 getScenarioReview 读取 goal.scenario_review，因此存成与 WS payload
         一致的形状 {review_report, recommendations, analysis}，让 REST 立即拿到真
-        数据、无需等 ~15s 的慢 WS。失败不抛——评审展示不应因落库失败而中断。
+        数据、无需等 ~15s 的慢 WS。返回值用于阻止调用方把未落库的报告
+        误报为成功；生成流程会把 False 转成 5xx，以便上游保留兜底并重试。
         """
         if db_connection is None:
             logger.warning(f"[SCENARIO_REVIEW] no db_connection, skip persist for {scenario_title}")
-            return
+            return False
         payload = {
             "review_report": review_report,
             "recommendations": recommendations,
@@ -1179,15 +1186,21 @@ Write a short, personalized performance review in {native_language}. Requirement
         }
         try:
             # asyncpg 不会把 dict 自动编码成 jsonb——显式 json.dumps + ::jsonb 转型。
-            await db_connection.execute(
+            command_status = await db_connection.execute(
                 "UPDATE user_goals SET scenario_review = $1::jsonb, updated_at = NOW() WHERE id = $2",
                 json.dumps(payload, ensure_ascii=False),
                 goal_id,
             )
+            if command_status != "UPDATE 1":
+                logger.error(
+                    f"[SCENARIO_REVIEW] goal not found while persisting review (goal={goal_id})"
+                )
+                return False
             logger.info(f"[SCENARIO_REVIEW] persisted to user_goals.scenario_review (goal={goal_id}, scenario={scenario_title})")
+            return True
         except Exception as e:
             logger.error(f"[SCENARIO_REVIEW] failed to persist review (goal={goal_id}): {e}")
-        print(f"Report: {review_report[:200]}...")
+            return False
     
     def check_scenario_completion(
         self,
