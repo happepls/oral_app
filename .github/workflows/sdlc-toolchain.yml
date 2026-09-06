@@ -1,0 +1,38 @@
+name: SDLC Clean Runner
+
+on:
+  pull_request:
+    branches: [master]
+    paths:
+      - '.github/actions/setup-verification/**'
+      - '.github/workflows/sdlc-*.yml'
+      - 'scripts/ci/install-verification-deps.sh'
+      - 'scripts/quality/**'
+      - 'quality/tests/sdlc-gates.test.py'
+      - 'quality/fixtures/sdlc/**'
+      - '**/package-lock.json'
+      - 'services/*/requirements.txt'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verification-toolchain:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-verification
+      - name: Validate governance regressions
+        run: python3 quality/tests/sdlc-gates.test.py
+      - name: Verify on a clean runner without automation credentials
+        run: npm run verify
+      - name: Upload verification evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sdlc-clean-runner-verification
+          path: quality/artifacts/latest
+          retention-days: 14

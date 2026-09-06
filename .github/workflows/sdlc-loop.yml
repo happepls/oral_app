@@ -41,6 +41,10 @@ jobs:
           token: ${{ secrets.SDLC_BOT_TOKEN }}
           fetch-depth: 0
           persist-credentials: false
+      - name: Configure commit identity
+        run: |
+          git config --local user.name 'github-actions[bot]'
+          git config --local user.email '41898282+github-actions[bot]@users.noreply.github.com'
       - name: Require configured credentials
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
@@ -172,10 +176,10 @@ jobs:
           ref: ${{ needs.plan-design.outputs.branch }}
           fetch-depth: 0
           persist-credentials: false
-      - name: Install and verify pinned Codex CLI
+      - name: Configure commit identity
         run: |
-          npm install --global "@openai/codex@$CODEX_VERSION"
-          test "$(codex --version | awk '{print $2}')" = "$CODEX_VERSION"
+          git config --local user.name 'github-actions[bot]'
+          git config --local user.email '41898282+github-actions[bot]@users.noreply.github.com'
       - name: Record plan approval
         env:
           GH_TOKEN: ${{ secrets.SDLC_BOT_TOKEN }}
@@ -190,6 +194,12 @@ jobs:
           token=$(python3 scripts/sdlc.py approve-plan --evidence "github-environment:$APPROVAL_RUN:reviewer=$reviewer")
           git add plan.md verification.md
           git commit -m "docs(sdlc): record plan approval" -m "SDLC-Artifact: $token"
+      - name: Prepare deterministic verification
+        uses: ./.github/actions/setup-verification
+      - name: Install and verify pinned Codex CLI
+        run: |
+          npm install --global "@openai/codex@$CODEX_VERSION"
+          test "$(codex --version | awk '{print $2}')" = "$CODEX_VERSION"
       - name: Build one task block per bounded run
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}

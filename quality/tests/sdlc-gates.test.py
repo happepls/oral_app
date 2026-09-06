@@ -1,11 +1,15 @@
 import importlib.util
-import shutil
+import ast
+import os
+import re
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[2]
+FIXTURES = ROOT / "quality/fixtures/sdlc"
 
 
 def load(name, path):
@@ -45,25 +49,38 @@ class ArtifactGateTests(unittest.TestCase):
             sdlc.validate_artifacts = original
 
     def validate_mutation(self, filename, old, new):
+        artifacts = {name: (FIXTURES / name).read_text() for name, _stage in sdlc.ARTIFACTS}
+        self.assertEqual([], sdlc.validate_artifacts(loader=artifacts.__getitem__))
+        self.assertEqual(1, artifacts[filename].count(old), "mutation must target exactly one fixture value")
+        self.assertNotEqual(old, new, "mutation must actually change the fixture")
+        artifacts[filename] = artifacts[filename].replace(old, new, 1)
+        return sdlc.validate_artifacts(loader=artifacts.__getitem__)
+
+    def test_fixtures_are_independent_of_live_root(self):
         original_root = sdlc.ROOT
-        with tempfile.TemporaryDirectory() as directory:
-            temp = Path(directory)
-            for artifact, _stage in sdlc.ARTIFACTS:
-                shutil.copy(ROOT / artifact, temp / artifact)
-            path = temp / filename
-            path.write_text(path.read_text().replace(old, new, 1))
-            sdlc.ROOT = temp
-            try:
-                return sdlc.validate_artifacts()
-            finally:
-                sdlc.ROOT = original_root
+        try:
+            with tempfile.TemporaryDirectory() as directory:
+                sdlc.ROOT = Path(directory)
+                errors = self.validate_mutation("spec.md", "change_id: fixture-example-loop", "change_id: unrelated-next-loop")
+                self.assertTrue(any("change_id mismatch" in error for error in errors))
+        finally:
+            sdlc.ROOT = original_root
+
+    def test_fixture_can_model_a_later_loop_and_release_state(self):
+        artifacts = {name: (FIXTURES / name).read_text().replace("fixture-example-loop", "issue-123-next-loop").replace("/r1", "/r7").replace("revision: 1", "revision: 7") for name, _stage in sdlc.ARTIFACTS}
+        artifacts["release.md"] = artifacts["release.md"].replace("status: pending", "status: ready")
+        self.assertEqual([], sdlc.validate_artifacts(loader=artifacts.__getitem__))
+
+    def test_missing_mutation_target_fails_fast(self):
+        with self.assertRaisesRegex(AssertionError, "exactly one fixture value"):
+            self.validate_mutation("spec.md", "change_id: nonexistent-old-loop", "change_id: different-change")
 
     def test_change_id_mismatch_is_rejected(self):
-        errors = self.validate_mutation("spec.md", "change_id: ai-native-sdlc-bootstrap", "change_id: different-change")
+        errors = self.validate_mutation("spec.md", "change_id: fixture-example-loop", "change_id: different-change")
         self.assertTrue(any("change_id mismatch" in error for error in errors))
 
     def test_missing_required_field_is_rejected(self):
-        errors = self.validate_mutation("intent.md", "owner_role: product-owner\n", "")
+        errors = self.validate_mutation("intent.md", "owner_role: fixture-owner\n", "")
         self.assertTrue(any("missing fields: owner_role" in error for error in errors))
 
     def test_stage_skip_is_rejected(self):
@@ -73,49 +90,35 @@ class ArtifactGateTests(unittest.TestCase):
     def test_approved_plan_without_evidence_is_rejected(self):
         errors = self.validate_mutation(
             "plan.md",
-            "approval_evidence: explicit-user-request-to-implement-provided-plan-2026-09-02",
+            "approval_evidence: fixture-plan-approval",
             "approval_evidence: pending",
         )
         self.assertTrue(any("approval" in error and "evidence" in error for error in errors))
 
     def test_planned_command_cannot_masquerade_as_actual(self):
-        original_root = sdlc.ROOT
-        with tempfile.TemporaryDirectory() as directory:
-            temp = Path(directory)
-            for artifact, _stage in sdlc.ARTIFACTS:
-                shutil.copy(ROOT / artifact, temp / artifact)
-            verification = temp / "verification.md"
-            text = verification.read_text()
-            before, rest = text.split("## Actual commands", 1)
-            _actual, after = rest.split("## Results", 1)
-            verification.write_text(before + "## Actual commands\n\n- planned: npm test\n\n## Results" + after)
-            sdlc.ROOT = temp
-            try:
-                errors = sdlc.validate_artifacts()
-            finally:
-                sdlc.ROOT = original_root
+        errors = self.validate_mutation("verification.md", "- `fixture-check` — exit 0", "- planned: npm test")
         self.assertTrue(any("exit N evidence" in error for error in errors))
 
     def test_unresolved_artifact_commit_is_rejected_in_history_mode(self):
         original_git = sdlc.git
         try:
             sdlc.git = lambda *args, **kwargs: ""
-            errors = sdlc.validate_artifacts(history=True)
+            errors = sdlc.validate_artifacts(history=True, loader=lambda name: (FIXTURES / name).read_text())
         finally:
             sdlc.git = original_git
         self.assertTrue(any("expected one commit trailer" in error for error in errors))
 
     def test_sha_shaped_artifact_commit_is_rejected(self):
         errors = self.validate_mutation(
-            "intent.md", "artifact_commit: sdlc/ai-native-sdlc-bootstrap/plan/r1",
+            "intent.md", "artifact_commit: sdlc/fixture-example-loop/plan/r1",
             "artifact_commit: " + "0" * 40,
         )
         self.assertTrue(any("invalid artifact_commit" in error for error in errors))
 
     def test_token_must_match_frontmatter(self):
         errors = self.validate_mutation(
-            "spec.md", "artifact_commit: sdlc/ai-native-sdlc-bootstrap/design/r1",
-            "artifact_commit: sdlc/ai-native-sdlc-bootstrap/build/r1",
+            "spec.md", "artifact_commit: sdlc/fixture-example-loop/design/r1",
+            "artifact_commit: sdlc/fixture-example-loop/build/r1",
         )
         self.assertTrue(any("does not match change_id" in error for error in errors))
 
@@ -214,6 +217,104 @@ class WorkflowContractTests(unittest.TestCase):
     def setUpClass(cls):
         cls.loop = (ROOT / ".github/workflows/sdlc-loop.yml").read_text()
         cls.maintain = (ROOT / ".github/workflows/sdlc-maintain.yml").read_text()
+
+    @staticmethod
+    def step(workflow, name):
+        return workflow.split(f"      - name: {name}\n", 1)[1].split("      - ", 1)[0]
+
+    def scheduled_step_runs(self, name, schedule="", cadence="", event="schedule"):
+        step = self.step(self.maintain, name)
+        expression = re.search(r"^        if: (.+)$", step, re.M).group(1)
+        for field, value in {"github.event.schedule": schedule, "inputs.cadence": cadence, "github.event_name": event}.items():
+            expression = expression.replace(field, repr(value))
+        tree = ast.parse(expression.replace("||", "or").replace("&&", "and"), mode="eval")
+
+        def evaluate(node):
+            if isinstance(node, ast.Constant):
+                return node.value
+            if isinstance(node, ast.BoolOp):
+                values = [evaluate(value) for value in node.values]
+                if isinstance(node.op, ast.Or):
+                    return any(values)
+                if isinstance(node.op, ast.And):
+                    return all(values)
+            if isinstance(node, ast.Compare) and len(node.ops) == 1 and isinstance(node.ops[0], ast.Eq):
+                return evaluate(node.left) == evaluate(node.comparators[0])
+            self.fail(f"Unexpected schedule expression: {ast.dump(node)}")
+
+        return evaluate(tree.body)
+
+    def test_each_commit_job_sets_local_identity_on_a_clean_repository(self):
+        for job in ("plan-design", "build-test-review"):
+            with self.subTest(job=job), tempfile.TemporaryDirectory() as directory:
+                block = self.loop.split(f"  {job}:\n", 1)[1].split("\n  build-test-review:", 1)[0]
+                identity = self.step(block, "Configure commit identity")
+                commands = identity.split("        run: |\n", 1)[1]
+                self.assertLess(block.index("Configure commit identity"), block.index("git commit"))
+                env = {key: value for key, value in os.environ.items() if not key.startswith("GIT_") and key != "EMAIL"}
+                env.update(GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_SYSTEM=os.devnull, GIT_CONFIG_NOSYSTEM="1")
+
+                def run(*args):
+                    return subprocess.run(args, cwd=directory, env=env, check=True, text=True, capture_output=True).stdout.strip()
+
+                run("git", "init")
+                run("bash", "-eu", "-c", commands)
+                run("git", "-c", "commit.gpgsign=false", "commit", "--allow-empty", "-m", "synthetic identity test")
+                self.assertEqual("github-actions[bot] <41898282+github-actions[bot]@users.noreply.github.com>", run("git", "log", "-1", "--format=%an <%ae>"))
+                self.assertEqual("local", run("git", "config", "--show-scope", "--get", "user.name").split()[0])
+
+    def test_verification_setup_precedes_build_and_is_shared_with_clean_ci(self):
+        build = self.loop.split("  build-test-review:\n", 1)[1]
+        setup = "uses: ./.github/actions/setup-verification"
+        self.assertLess(build.index("Record plan approval"), build.index(setup))
+        self.assertLess(build.index(setup), build.index("Build one task block"))
+        self.assertLess(build.index(setup), build.index("npm run verify"))
+        clean_ci = (ROOT / ".github/workflows/sdlc-toolchain.yml").read_text()
+        self.assertIn(setup, clean_ci)
+        self.assertIn("run: npm run verify", clean_ci)
+        self.assertNotIn("secrets.", clean_ci)
+        action = (ROOT / ".github/actions/setup-verification/action.yml").read_text()
+        self.assertIn("node-version: 20.x", action)
+        self.assertIn("python-version: '3.10'", action)
+        self.assertIn("bash scripts/ci/install-verification-deps.sh", action)
+
+    def test_installer_covers_verifier_services_and_checks_download(self):
+        installer = (ROOT / "scripts/ci/install-verification-deps.sh").read_text()
+        verifier = (ROOT / "scripts/quality/verify.mjs").read_text()
+        self.assertIn("\nnpm ci\n", installer)
+        self.assertIn("npm ci --legacy-peer-deps --prefix client", installer)
+        for service in set(re.findall(r"cwd: path.join\(root, 'services/([^']+)'\)", verifier)):
+            self.assertIn(service, installer)
+        self.assertIn('npm ci --prefix "services/$service"', installer)
+        for service in ("workflow-service", "ai-omni-service"):
+            self.assertIn(f"-r services/{service}/requirements.txt", installer)
+        self.assertIn("pytest pytest-asyncio", installer)
+        self.assertRegex(installer, r"gitleaks_sha256=[0-9a-f]{64}\n")
+        self.assertLess(installer.index("sha256sum --check --strict"), installer.index("tar -xzf"))
+        self.assertIn("GITHUB_PATH", installer)
+
+    def test_schedule_events_partition_every_quarter_hour(self):
+        self.assertEqual(["15,30,45 * * * *", "0 1-23 * * *", "0 0 * * *"], re.findall(r"cron: '([^']+)'", self.maintain))
+        for hour in range(24):
+            for minute in (0, 15, 30, 45):
+                schedule = "15,30,45 * * * *" if minute else ("0 1-23 * * *" if hour else "0 0 * * *")
+                with self.subTest(hour=hour, minute=minute):
+                    self.assertEqual(minute == 0, self.scheduled_step_runs("Read hourly structured Zeabur aggregates", schedule))
+                    self.assertEqual(hour == minute == 0, self.scheduled_step_runs("Emit daily trend summary", schedule))
+
+    def test_delayed_midnight_event_still_runs_aggregate_and_daily_work(self):
+        # A 00:00 event starting at 00:02 (or hours later) has the same payload.
+        for name in ("Read hourly structured Zeabur aggregates", "Emit daily trend summary"):
+            self.assertTrue(self.scheduled_step_runs(name, "0 0 * * *"))
+            self.assertNotIn("date ", self.step(self.maintain, name))
+        self.assertIn("cp /tmp/combined-evaluation.json daily-trend.json", self.maintain)
+
+    def test_manual_cadence_is_explicit_and_defaults_to_health(self):
+        self.assertIn("default: health", self.maintain)
+        for cadence in ("", "health", "hourly", "daily"):
+            with self.subTest(cadence=cadence):
+                self.assertEqual(cadence in {"hourly", "daily"}, self.scheduled_step_runs("Read hourly structured Zeabur aggregates", cadence=cadence, event="workflow_dispatch"))
+                self.assertEqual(cadence == "daily", self.scheduled_step_runs("Emit daily trend summary", cadence=cadence, event="workflow_dispatch"))
 
     def test_queue_has_close_and_periodic_recovery(self):
         self.assertIn("pull_request_target:", self.loop)

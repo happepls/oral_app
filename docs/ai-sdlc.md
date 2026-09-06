@@ -22,6 +22,13 @@ The Build job pins `@openai/codex` `0.152.0`, uses ephemeral non-interactive run
 
 ## Local operation
 
+Both commit-capable jobs configure a repository-local Git bot identity. Before
+Build, `.github/actions/setup-verification` installs Node 20, Python 3.10, root,
+client and six Node service dependencies, both Python service requirements and
+pytest, plus checksum-pinned Gitleaks 8.30.1. The same setup is exercised by the
+secret-free `SDLC Clean Runner` PR workflow when its inputs change. This check
+does not run Codex, approve plans, queue Issues, merge, or deploy.
+
 ```bash
 python3 scripts/sdlc.py validate
 python3 scripts/sdlc.py validate --history
@@ -64,6 +71,14 @@ GitHub does not version branch-protection settings in the repository. Record the
 After the application PR is merged and Zeabur reports the exact deployed commit, create a follow-up branch and run `python3 scripts/sdlc.py complete-release --deployed-version <40-char-commit> --evidence 'github-pr:<review-url>:reviewer=<login>;zeabur-deployment:<deployment-url>'`. Commit `release.md` plus the updated `maintenance.md` parent with the returned trailer token and open a human-reviewed PR. After at least one accepted observation cycle, run `complete-maintenance` with the same deployed SHA and `--evidence observation:<workflow-run-url>`. These commands validate evidence shape and refuse skipped stages; they do not deploy or merge. The next loop cannot replace root artifacts until both follow-up transitions are merged and history validation passes.
 
 ## Production observations
+
+Cadences use three non-overlapping UTC schedules: `15,30,45 * * * *` runs health
+only; `0 1-23 * * *` runs health and hourly aggregates; `0 0 * * *` also emits
+the daily combined-severity snapshot. Routing reads the scheduled event, never
+the runner's current minute, so a delayed midnight run still performs daily work.
+Manual dispatch defaults to `health`; choose `hourly` or `daily` to exercise the
+aggregate paths explicitly (their credentials are still required). The daily
+artifact is one combined observation snapshot, not a historical trend analysis.
 
 `SDLC Production Observe` checks a public health endpoint every 15 minutes. When configured, it reads a server-side structured Zeabur aggregate hourly and emits a daily trend artifact. The endpoint must return only the numeric/boolean fields allowlisted in `scripts/sdlc-monitor.py`; free text and unknown fields are rejected. It never requests or stores raw logs or user conversation text.
 
