@@ -266,6 +266,7 @@ class WorkflowContractTests(unittest.TestCase):
     def test_verification_setup_precedes_build_and_is_shared_with_clean_ci(self):
         build = self.loop.split("  build-test-review:\n", 1)[1]
         setup = "uses: ./.github/actions/setup-verification"
+        self.assertLess(build.index("Record plan approval"), build.index(setup))
         self.assertLess(build.index(setup), build.index("Build one task block"))
         self.assertLess(build.index(setup), build.index("npm run verify"))
         clean_ci = (ROOT / ".github/workflows/sdlc-toolchain.yml").read_text()
