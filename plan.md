@@ -1,17 +1,17 @@
 ---
 change_id: ai-native-sdlc-bootstrap
 stage: build
-status: complete
-revision: 1
+status: approved
+revision: 2
 source: spec.md
 created_at: 2026-09-02T12:00:00+08:00
-updated_at: 2026-09-02T13:22:31+08:00
+updated_at: 2026-09-06T15:40:00+08:00
 parent_artifact_commit: sdlc/ai-native-sdlc-bootstrap/design/r1
-artifact_commit: sdlc/ai-native-sdlc-bootstrap/build/r1
+artifact_commit: sdlc/ai-native-sdlc-bootstrap/build/r2
 risk_level: high
 owner_role: implementation-agent
 approval_required: true
-approval_evidence: explicit-user-request-to-implement-provided-plan-2026-09-02
+approval_evidence: explicit-user-request-to-fix-four-explained-sdlc-findings-2026-09-06
 ---
 
 # Implementation plan
@@ -25,6 +25,28 @@ approval_evidence: explicit-user-request-to-implement-provided-plan-2026-09-02
 - [x] Run skill/schema/unit/workflow/static and existing repository verification; record only actual results.
 
 ## Dependencies and candidate files
+
+## Approved bootstrap follow-up (2026-09-06)
+
+The user confirmed phone-registration acceptance and requested fixing the four
+previously explained SDLC findings. This resumes the existing bootstrap loop;
+it does not initialize a second loop or claim deployment/maintenance completion.
+The earlier bootstrap approval and results remain archived in Git history.
+
+- [ ] Configure repository-local bot identity before commits in both automation jobs.
+- [ ] Provision the full deterministic verification toolchain on a clean runner.
+- [ ] Route quarter-hour/hourly/daily observations by scheduled event, not execution time; support explicit manual cadence.
+- [ ] Decouple mutation tests from live root artifacts, with fail-fast fixtures and regression coverage.
+
+Scope: workflow setup, schedule routing, governance test fixtures and documentation.
+No application changes, secrets/settings changes, enforcement activation, merge,
+master push, or production deployment are approved by this follow-up request.
+Verify with isolated Git identity tests, delayed-schedule tests, clean dependency
+installation evidence, workflow lint, artifact/history validation, `npm run verify`,
+and a fresh-context review. Stop at a human-reviewed PR. Rollback is a revert of
+this follow-up; retain the original bootstrap and phone-registration release.
+
+## Dependencies and candidate files (original bootstrap)
 
 Python 3 standard library, Git, GitHub CLI in GitHub-hosted runners, Codex CLI `0.152.0`, existing npm verification commands. Candidate files are `.agents/skills/oral-app-sdlc/**`, `scripts/sdlc*`, `.githooks/pre-commit`, `.github/workflows/sdlc-*.yml`, root artifacts/policies, `docs/ai-sdlc.md`, and generated instruction files.
 
