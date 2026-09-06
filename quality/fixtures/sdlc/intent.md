@@ -17,4 +17,3 @@ approval_evidence: pending
 # Synthetic plan fixture
 
 Synthetic unit-test fixture, not a live SDLC artifact.
-

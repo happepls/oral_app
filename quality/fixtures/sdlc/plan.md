@@ -17,4 +17,3 @@ approval_evidence: fixture-plan-approval
 # Synthetic build fixture
 
 Synthetic unit-test fixture, not a live SDLC artifact.
-

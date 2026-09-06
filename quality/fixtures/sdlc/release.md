@@ -19,4 +19,3 @@ approval_evidence: pending
 ## Rollback
 
 Revert the synthetic fixture change.
-
