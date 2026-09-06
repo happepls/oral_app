@@ -1,6 +1,16 @@
 # 手机号注册实施与验证
 
-日期：2026-09-06。分支：`feat/phone-registration`。生产状态：未发布，真实收码未验证。
+日期：2026-09-06。分支：`feat/phone-registration`。生产状态：获准发布，组合版本 CI 与生产只读核查进行中；本记录尚无部署成功或真实收码证据。
+
+## 追加发布批次（2026-09-06）
+
+- 用户明确授权将手机号注册与旧 SDLC 的 5 个提交一起合入 master，自动触发 Zeabur 上线。执行路径为受保护 PR 合并，不绕过 required checks。
+- `git merge --no-ff 68927d8` 已在 PR worktree 完成（整合提交 `d6bf642`）；`git diff --quiet 51fcf44 HEAD -- client services` exit 0，业务代码与已通过完整 CI 的手机号版本一致。
+- 原手机号版本 [CI 34010333009](https://github.com/happepls/oral_app/actions/runs/34010333009) 的 `test`、`ui-audit` 全部通过；完整 UI 230 passed / 0 failed / 9 skipped。
+- 整合后 `python3 scripts/sdlc.py validate --history` 通过；`python3 quality/tests/sdlc-gates.test.py` 为 25 tests passed；`git diff --check` 通过；`gitleaks git --verbose --config .gitleaks.toml --log-opts='9b6f35d..HEAD'` 扫描 8 个非 merge 提交、约 168.15 KB，无泄漏。
+- 新一轮完整 CI、独立组合审查、Zeabur 生产配置存在性及数据库约束核查正在进行。旧根 `release.md` / `maintenance.md` 仍保持 pending，不预填部署、评审或观察证据。最新发布结果以 PR 时间线、CI 与实际 Zeabur 部署记录为准。
+
+## 首次独立实施阶段记录
 
 PR：[happepls/oral_app#50](https://github.com/happepls/oral_app/pull/50)。原工作区的本地 `master` 比远端多 5 个 SDLC 提交，本次已在隔离 worktree 以远端 `9b6f35d` 为基线，仅移植手机号注册提交，确保这些旧工件和用户 TODO 不进入 PR。原工作区保留于 `work/phone-registration-local`，业务代码与 PR 分支一致。
 
