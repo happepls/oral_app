@@ -1,0 +1,4 @@
+interface:
+  display_name: "oral_app SDLC"
+  short_description: "Govern oral_app's evidence-backed agent loop"
+  default_prompt: "Use $oral-app-sdlc to advance or audit the current oral_app SDLC stage."

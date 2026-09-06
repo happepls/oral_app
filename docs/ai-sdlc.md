@@ -1,0 +1,85 @@
+# oral_app AI-native SDLC
+
+This repository uses one evidence-backed loop:
+
+`intent.md → spec.md → plan.md → verification.md → release.md → maintenance.md → new intent.md`
+
+Codex proposes and implements; Git hooks and GitHub Actions provide deterministic gates; humans approve the implementation plan, PR, and production release. Git history archives prior revisions. GitHub Issues queue concurrent demand, so root artifacts are never replaced during an active PR.
+
+## Bootstrap and shadow mode
+
+The committed default in `bands.yaml` is `mode: shadow`. SDLC checks report failures in PRs, but branch protection must not make them required until a synthetic six-stage loop and at least one production observation window pass with no false blocker, no sensitive data persistence, and all existing checks green.
+
+Required repository secrets are values only: `OPENAI_API_KEY`, fine-grained `SDLC_BOT_TOKEN`, and read-only `ZEABUR_TOKEN`. Repository variables are `PRODUCTION_HEALTH_URL` and a server-side numeric-only `ZEABUR_AGGREGATES_URL`. Missing credentials or sources block the dependent stage; they never produce a pass.
+
+## Starting and queueing a loop
+
+Trigger `AI SDLC Loop` manually with an Issue number or add `sdlc:accepted` to an Issue. The workflow serializes through one concurrency group and checks for an existing open `agent/sdlc-*` PR. A concurrent request gets `sdlc:queued`; it does not touch the branch or root artifacts. PR-close events and a ten-minute recovery scan promote the highest severity, then oldest queued/accepted Issue, so GitHub's single-pending concurrency behavior cannot erase the durable queue.
+
+The planning job creates `agent/sdlc-<change-id>`, runs Codex separately for Plan, Design, and Build-plan, and commits each stage with the artifact token trailer. It opens a draft PR and stops with `plan.md` ready. The next job is protected by the `sdlc-plan` GitHub environment. Configure at least one required reviewer on that environment and give `SDLC_BOT_TOKEN` read access to Actions/environment metadata; the job verifies the protection rule and actual approval record before accepting evidence.
+
+The Build job pins `@openai/codex` `0.152.0`, uses ephemeral non-interactive runs in the workspace-write sandbox with automated approval review, reads all upstream artifacts on every run, and processes one task block at a time. It retries a transient failure no more than twice. Verification runs repository checks and a separate read-only fresh-context review against `REVIEW.md`, writes actual evidence, then marks the PR ready. Nothing auto-merges or pushes `master`.
+
+## Local operation
+
+```bash
+python3 scripts/sdlc.py validate
+python3 scripts/sdlc.py validate --history
+python3 scripts/sdlc.py precommit
+python3 quality/tests/sdlc-gates.test.py
+```
+
+Initialize only when the six root artifacts do not exist:
+
+```bash
+python3 scripts/sdlc.py init \
+  --change-id issue-123-short-slug \
+  --source github-issue-123 \
+  --risk medium
+```
+
+After `maintenance.md` is genuinely complete and `validate --history` passes, the dispatcher adds `--replace-complete`. That is the only supported way to replace the root set for a new loop.
+
+Commit one stage at a time and copy its exact `artifact_commit` value into the trailer:
+
+```text
+SDLC-Artifact: sdlc/issue-123-short-slug/plan/r1
+```
+
+`artifact_commit` is a deterministic lookup token rather than a self-referential SHA. `validate --history` requires the token in Git history. See `.agents/skills/oral-app-sdlc/references/artifact-contract.md`.
+
+## Checks and branch protection
+
+The `sdlc-artifacts` check validates schema, change identity, chain order, approval and execution evidence, secret patterns, and stage history. `sdlc-review` classifies changed paths and requires risk-specific review evidence in `release.md` before release readiness.
+
+After shadow acceptance, a repository administrator applies branch protection to `master`:
+
+- require `test`, `ui-audit`, `sdlc-artifacts`, and `sdlc-review`;
+- require at least one approving review and dismiss stale approvals;
+- require all review conversations resolved;
+- disallow force pushes, deletions, auto-merge, and administrator bypass.
+
+GitHub does not version branch-protection settings in the repository. Record the settings screenshot/API response and approval in `release.md`; do not claim they are active merely because workflow files exist.
+
+After the application PR is merged and Zeabur reports the exact deployed commit, create a follow-up branch and run `python3 scripts/sdlc.py complete-release --deployed-version <40-char-commit> --evidence 'github-pr:<review-url>:reviewer=<login>;zeabur-deployment:<deployment-url>'`. Commit `release.md` plus the updated `maintenance.md` parent with the returned trailer token and open a human-reviewed PR. After at least one accepted observation cycle, run `complete-maintenance` with the same deployed SHA and `--evidence observation:<workflow-run-url>`. These commands validate evidence shape and refuse skipped stages; they do not deploy or merge. The next loop cannot replace root artifacts until both follow-up transitions are merged and history validation passes.
+
+## Production observations
+
+`SDLC Production Observe` checks a public health endpoint every 15 minutes. When configured, it reads a server-side structured Zeabur aggregate hourly and emits a daily trend artifact. The endpoint must return only the numeric/boolean fields allowlisted in `scripts/sdlc-monitor.py`; free text and unknown fields are rejected. It never requests or stores raw logs or user conversation text.
+
+In shadow mode a single timeout is only an observation. Diagnosis is triggered by a critical security event, two windows at 5xx ≥1%, two windows at resource use ≥80%, backup age over 26 hours, or two consecutive critical health failures. Latency is report-only until a seven-day baseline is accepted. If a loop is active, the workflow creates or labels a queued diagnostic Issue; otherwise a new maintenance-derived loop may start after the old `maintenance.md` is complete.
+
+## Failure recovery and audit
+
+- Planning failure: retain the Issue and failed run; do not open or overwrite artifacts with partial claims.
+- Build failure: inspect the single task block; after bounded retry mark it blocked and request human direction.
+- Missing production access: record `blocked` and the missing variable/secret name only.
+- Stale or duplicate event: concurrency plus active-PR lookup makes it a queue update.
+- Workflow loss: check out the active branch, run artifact/history validation, and resume from the first non-complete stage.
+- Rollback: revert SDLC commits. If checks were made required, first obtain administrator approval and remove only the affected required contexts so merges are not permanently deadlocked.
+
+The audit chain is the six artifact revisions, their `SDLC-Artifact` commit trailers, GitHub environment approval, PR reviews/conversations, check runs, merge commit, Zeabur deployment record, and redacted maintenance observations.
+
+## Knowledge promotion
+
+Every diagnostic may propose `knowledge_candidates`, but an agent only opens a PR. A candidate must include source, reproduction evidence, a counterexample that bounds the rule, and a regression test. Permanent invariants go to `core-rules.md`; reusable judgment goes to the SDLC skill; deterministic blockers go to hooks/CI; one-time noise stays in `maintenance.md`. Human merge is the promotion decision.

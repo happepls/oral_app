@@ -125,6 +125,12 @@ img_*.png
 
 # AI coding assistant local files
 .agents/
+!.agents/
+.agents/*
+!.agents/skills/
+.agents/skills/*
+!.agents/skills/oral-app-sdlc/
+!.agents/skills/oral-app-sdlc/**
 .claude/scheduled_tasks.lock
 .claude/skills/
 .claude/wf-*.js
