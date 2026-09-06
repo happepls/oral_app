@@ -6,7 +6,7 @@ revision: 1
 source: verification.md
 created_at: 2026-09-02T12:00:00+08:00
 updated_at: 2026-09-02T12:00:00+08:00
-parent_artifact_commit: sdlc/ai-native-sdlc-bootstrap/test/r1
+parent_artifact_commit: sdlc/ai-native-sdlc-bootstrap/test/r2
 artifact_commit: sdlc/ai-native-sdlc-bootstrap/deploy/r1
 risk_level: high
 owner_role: release-owner
