@@ -41,6 +41,10 @@ jobs:
           token: ${{ secrets.SDLC_BOT_TOKEN }}
           fetch-depth: 0
           persist-credentials: false
+      - name: Configure commit identity
+        run: |
+          git config --local user.name 'github-actions[bot]'
+          git config --local user.email '41898282+github-actions[bot]@users.noreply.github.com'
       - name: Require configured credentials
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
@@ -172,6 +176,12 @@ jobs:
           ref: ${{ needs.plan-design.outputs.branch }}
           fetch-depth: 0
           persist-credentials: false
+      - name: Configure commit identity
+        run: |
+          git config --local user.name 'github-actions[bot]'
+          git config --local user.email '41898282+github-actions[bot]@users.noreply.github.com'
+      - name: Prepare deterministic verification
+        uses: ./.github/actions/setup-verification
       - name: Install and verify pinned Codex CLI
         run: |
           npm install --global "@openai/codex@$CODEX_VERSION"

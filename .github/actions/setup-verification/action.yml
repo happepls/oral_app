@@ -1,0 +1,19 @@
+name: Prepare repository verification
+description: Install the Linux x64 toolchain used by npm run verify (no secrets required).
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-node@v4
+      with:
+        node-version: 20.x
+        cache: npm
+        cache-dependency-path: |
+          package-lock.json
+          client/package-lock.json
+          services/*/package-lock.json
+    - uses: actions/setup-python@v5
+      with:
+        python-version: '3.10'
+    - name: Install verification dependencies
+      shell: bash
+      run: bash scripts/ci/install-verification-deps.sh

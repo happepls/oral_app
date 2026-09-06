@@ -2,9 +2,18 @@ name: SDLC Production Observe
 
 on:
   schedule:
-    - cron: '*/15 * * * *'
+    # Non-overlapping events still route correctly when GitHub starts late.
+    - cron: '15,30,45 * * * *'
+    - cron: '0 1-23 * * *'
+    - cron: '0 0 * * *'
   workflow_dispatch:
     inputs:
+      cadence:
+        description: Observation scope (hourly/daily require aggregate credentials)
+        required: true
+        default: health
+        type: choice
+        options: [health, hourly, daily]
       health_url:
         description: Optional public health URL override
         required: false
@@ -62,10 +71,8 @@ jobs:
           echo "severity=$(python3 -c 'import json; print(json.load(open("/tmp/evaluation.json"))["severity"])')" >> "$GITHUB_OUTPUT"
       - name: Read hourly structured Zeabur aggregates
         id: aggregate
-        if: github.event.schedule == '*/15 * * * *'
+        if: github.event.schedule == '0 1-23 * * *' || github.event.schedule == '0 0 * * *' || (github.event_name == 'workflow_dispatch' && (inputs.cadence == 'hourly' || inputs.cadence == 'daily'))
         run: |
-          minute=$(date -u +%M)
-          [ "$minute" = 00 ] || exit 0
           test -n "$ZEABUR_AGGREGATES_URL" || { echo "ZEABUR_AGGREGATES_URL missing: hourly aggregate observation blocked"; exit 1; }
           test -n "$ZEABUR_TOKEN" || { echo "ZEABUR_TOKEN missing: hourly aggregate observation blocked"; exit 1; }
           curl --fail --silent --show-error --max-time 20 \
@@ -119,12 +126,9 @@ jobs:
             gh issue create --title "$title" --label "$label,sdlc:diagnostic" --body "$body"
           fi
       - name: Emit daily trend summary
-        if: github.event.schedule == '*/15 * * * *'
+        if: github.event.schedule == '0 0 * * *' || (github.event_name == 'workflow_dispatch' && inputs.cadence == 'daily')
         run: |
-          hour=$(date -u +%H)
-          minute=$(date -u +%M)
-          [ "$hour:$minute" = 00:00 ] || exit 0
-          cp /tmp/evaluation.json daily-trend.json
+          cp /tmp/combined-evaluation.json daily-trend.json
       - name: Upload observation evidence only
         if: always()
         uses: actions/upload-artifact@v4
