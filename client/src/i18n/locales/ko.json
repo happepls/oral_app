@@ -1,4 +1,13 @@
 {
+  "register_method_label": "가입 방법",
+  "register_tab_email": "이메일 가입",
+  "register_tab_phone": "휴대폰 가입",
+  "phone_register_hint": "비밀번호가 필요하지 않습니다. 이미 가입한 번호라면 기존 계정으로 로그인합니다.",
+  "phone_register_submit": "가입하고 계속하기",
+  "phone_code_invalid": "6자리 인증번호를 입력하세요",
+  "phone_rate_limited": "시도 횟수가 너무 많습니다. 잠시 후 다시 시도하세요.",
+  "phone_retry_in": "{{seconds}}초 후 재시도",
+  "phone_code_sent": "인증번호를 보냈습니다. 문자를 확인하세요.",
   "nav_login": "로그인",
   "nav_free_start": "무료로 시작",
   "nav_enter_app": "앱으로",

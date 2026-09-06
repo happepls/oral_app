@@ -1,4 +1,13 @@
 {
+  "register_method_label": "Registrierungsart",
+  "register_tab_email": "E-Mail",
+  "register_tab_phone": "Telefon",
+  "phone_register_hint": "Kein Passwort nötig. Bereits registrierte Nummern melden dich bei deinem bestehenden Konto an.",
+  "phone_register_submit": "Registrieren und weiter",
+  "phone_code_invalid": "Gib den 6-stelligen Code ein",
+  "phone_rate_limited": "Zu viele Versuche. Bitte versuche es später erneut.",
+  "phone_retry_in": "In {{seconds}}s erneut",
+  "phone_code_sent": "Code gesendet. Prüfe deine SMS.",
   "nav_login": "Anmelden",
   "nav_free_start": "Kostenlos starten",
   "nav_enter_app": "Zur App",

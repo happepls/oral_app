@@ -1,4 +1,13 @@
 {
+  "register_method_label": "Способ регистрации",
+  "register_tab_email": "Почта",
+  "register_tab_phone": "Телефон",
+  "phone_register_hint": "Пароль не нужен. Если номер уже зарегистрирован, вы войдёте в существующий аккаунт.",
+  "phone_register_submit": "Зарегистрироваться",
+  "phone_code_invalid": "Введите 6-значный код",
+  "phone_rate_limited": "Слишком много попыток. Повторите позже.",
+  "phone_retry_in": "Повторить через {{seconds}}с",
+  "phone_code_sent": "Код отправлен. Проверьте SMS.",
   "nav_login": "Войти",
   "nav_free_start": "Начать бесплатно",
   "nav_enter_app": "В приложение",

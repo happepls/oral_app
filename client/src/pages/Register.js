@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { useAuth } from '../contexts/AuthContext';
 import LanguageSwitcher from '../components/LanguageSwitcher';
+import PhoneAuthForm from '../components/PhoneAuthForm';
 import { motion } from 'motion/react';
 import { ArrowLeft, Eye, EyeOff } from 'lucide-react';
 
@@ -19,6 +20,7 @@ function Register() {
   const [error, setError] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirm, setShowConfirm] = useState(false);
+  const [mode, setMode] = useState('email');
 
   const handleChange = (e) => {
     setFormData({ ...formData, [e.target.name]: e.target.value });
@@ -77,7 +79,7 @@ function Register() {
         transition={{ duration: 0.3 }}
         className="w-full max-w-md"
       >
-        <div className="bg-white dark:bg-slate-800 rounded-3xl p-8 shadow-brand border border-slate-100 dark:border-slate-700">
+        <div className="bg-white dark:bg-slate-800 rounded-3xl p-5 sm:p-8 shadow-brand border border-slate-100 dark:border-slate-700">
           {/* Header */}
           <div className="flex items-center justify-between mb-6">
             <button
@@ -92,21 +94,42 @@ function Register() {
 
           <h1 className="text-slate-900 dark:text-white text-2xl font-bold mb-1">{t('register_title')}</h1>
           <p className="text-slate-500 dark:text-slate-400 text-sm mb-6">{t('register_subtitle')}</p>
+          <div role="tablist" aria-label={t('register_method_label')} className="flex gap-2 mb-4 p-1 bg-slate-100 dark:bg-slate-700 rounded-xl">
+            {['email', 'phone'].map(method => (
+              <button key={method} id={`register-tab-${method}`} type="button" role="tab"
+                aria-selected={mode === method} aria-controls={`register-panel-${method}`} tabIndex={mode === method ? 0 : -1}
+                disabled={loading} onClick={() => { setMode(method); setError(''); }}
+                onKeyDown={event => {
+                  if (['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) {
+                    event.preventDefault();
+                    const next = event.key === 'Home' ? 'email' : event.key === 'End' ? 'phone' : method === 'email' ? 'phone' : 'email';
+                    setMode(next); setError('');
+                    document.getElementById(`register-tab-${next}`)?.focus();
+                  }
+                }}
+                className={`flex-1 min-h-11 px-2 py-2 rounded-lg text-sm font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 transition ${mode === method ? 'bg-white dark:bg-slate-800 text-primary-dark dark:text-primary-light shadow-sm' : 'text-slate-600 dark:text-slate-300'}`}>
+                {t(`register_tab_${method}`)}
+              </button>
+            ))}
+          </div>
 
-          <form onSubmit={handleSubmit} className="space-y-4">
+          {mode === 'phone' ? <PhoneAuthForm idPrefix="register" registration onSuccess={() => navigate('/discovery')} /> : (
+          <form id="register-panel-email" role="tabpanel" aria-labelledby="register-tab-email" onSubmit={handleSubmit} className="space-y-4">
             {error && (
-              <div className="bg-red-50 border border-red-200 text-red-600 px-4 py-3 rounded-xl text-sm">
+              <div role="alert" className="bg-red-50 border border-red-200 text-red-600 px-4 py-3 rounded-xl text-sm">
                 {error}
               </div>
             )}
 
             <div>
-              <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">
+              <label htmlFor="register-name" className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">
                 {t('username_label')}
               </label>
               <input
                 type="text"
                 name="name"
+                id="register-name"
+                autoComplete="username"
                 value={formData.name}
                 onChange={handleChange}
                 required
@@ -117,12 +140,14 @@ function Register() {
             </div>
 
             <div>
-              <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">
+              <label htmlFor="register-email" className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">
                 {t('email_label')}
               </label>
               <input
                 type="email"
                 name="email"
+                id="register-email"
+                autoComplete="email"
                 value={formData.email}
                 onChange={handleChange}
                 required
@@ -133,13 +158,15 @@ function Register() {
             </div>
 
             <div>
-              <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">
+              <label htmlFor="register-password" className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">
                 {t('password_label')}
               </label>
               <div className="relative">
                 <input
                   type={showPassword ? 'text' : 'password'}
                   name="password"
+                  id="register-password"
+                  autoComplete="new-password"
                   value={formData.password}
                   onChange={handleChange}
                   required
@@ -162,13 +189,15 @@ function Register() {
             </div>
 
             <div>
-              <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">
+              <label htmlFor="register-confirm" className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">
                 {t('confirm_password_label')}
               </label>
               <div className="relative">
                 <input
                   type={showConfirm ? 'text' : 'password'}
                   name="confirmPassword"
+                  id="register-confirm"
+                  autoComplete="new-password"
                   value={formData.confirmPassword}
                   onChange={handleChange}
                   required
@@ -199,7 +228,7 @@ function Register() {
             >
               {loading ? t('register_loading') : t('register_submit')}
             </motion.button>
-          </form>
+          </form>)}
 
           <p className="text-center text-slate-500 text-sm mt-6">
             {t('register_has_account')}{' '}

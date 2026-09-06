@@ -1,4 +1,13 @@
 {
+  "register_method_label": "Méthode d’inscription",
+  "register_tab_email": "E-mail",
+  "register_tab_phone": "Téléphone",
+  "phone_register_hint": "Aucun mot de passe requis. Si ton numéro est déjà enregistré, tu accéderas à ton compte existant.",
+  "phone_register_submit": "S’inscrire et continuer",
+  "phone_code_invalid": "Saisis le code à 6 chiffres",
+  "phone_rate_limited": "Trop de tentatives. Réessaie plus tard.",
+  "phone_retry_in": "Réessayer dans {{seconds}}s",
+  "phone_code_sent": "Code envoyé. Consulte tes SMS.",
   "nav_login": "Connexion",
   "nav_free_start": "Commencer gratuitement",
   "nav_enter_app": "Ouvrir l'app",

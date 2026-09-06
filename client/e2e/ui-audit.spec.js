@@ -84,6 +84,16 @@ for (const [name, url] of pages) {
     const consoleErrors = [];
     page.on('console', (message) => { if (message.type() === 'error' && !message.text().includes('ERR_BLOCKED_BY_CLIENT')) consoleErrors.push(message.text()); });
     await page.goto(url);
+    if (name === 'register') {
+      // Register is lazy loaded and fades in with Motion. Wait for the real
+      // final form before recording a baseline or measuring text contrast.
+      await expect(page.getByRole('tab', { name: /邮箱注册|Email/ })).toBeVisible();
+      await page.waitForFunction(() => {
+        let node = document.querySelector('h1')?.parentElement;
+        while (node && !node.style.opacity) node = node.parentElement;
+        return node?.style.opacity === '1' && (!node.style.transform || node.style.transform === 'none');
+      });
+    }
     if (name === 'landing') {
       // Landing owns a one-per-session Splash. Reload after explicitly marking
       // it seen so the visual baseline always captures the page beneath it.

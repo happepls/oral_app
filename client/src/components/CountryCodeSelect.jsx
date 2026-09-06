@@ -233,6 +233,7 @@ function CountryCodeSelect({ value, onChange, disabled, t }) {
     <div className="relative" ref={ref}>
       <button
         type="button"
+        aria-label={t('country_search')}
         disabled={disabled}
         onClick={() => setOpen((o) => !o)}
         className="flex items-center gap-1.5 h-full px-3 py-3 rounded-l-xl border border-r-0 border-slate-200 dark:border-slate-600 bg-slate-50 dark:bg-slate-700 text-slate-900 dark:text-white outline-none disabled:opacity-50 transition whitespace-nowrap"
@@ -247,9 +248,11 @@ function CountryCodeSelect({ value, onChange, disabled, t }) {
       </button>
 
       {open && (
-        <div className="absolute z-20 mt-1 left-0 w-72 rounded-xl border border-slate-200 dark:border-slate-600 bg-white dark:bg-slate-800 shadow-lg overflow-hidden">
+        <div className="absolute z-20 mt-1 left-0 w-72 max-w-[calc(100vw-4.5rem)] rounded-xl border border-slate-200 dark:border-slate-600 bg-white dark:bg-slate-800 shadow-lg overflow-hidden"
+          onKeyDown={event => { if (event.key === 'Escape') { setOpen(false); ref.current?.querySelector('button')?.focus(); } }}>
           <div className="p-2 border-b border-slate-100 dark:border-slate-700">
             <input
+              aria-label={t('country_search')}
               ref={searchRef}
               type="text"
               value={query}
@@ -268,6 +271,8 @@ function CountryCodeSelect({ value, onChange, disabled, t }) {
               <li key={c.iso2}>
                 <button
                   type="button"
+                  role="option"
+                  aria-selected={c.iso2 === current.iso2}
                   onClick={() => pick(c)}
                   className={`w-full flex items-center gap-3 px-3 py-2 text-left text-sm hover:bg-slate-100 dark:hover:bg-slate-700 transition ${c.iso2 === current.iso2 ? 'bg-slate-50 dark:bg-slate-700/60' : ''}`}
                 >

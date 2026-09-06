@@ -1,4 +1,13 @@
 {
+  "register_method_label": "Método de cadastro",
+  "register_tab_email": "E-mail",
+  "register_tab_phone": "Telefone",
+  "phone_register_hint": "Não é preciso senha. Se o número já estiver cadastrado, você entrará na sua conta existente.",
+  "phone_register_submit": "Cadastrar e continuar",
+  "phone_code_invalid": "Digite o código de 6 dígitos",
+  "phone_rate_limited": "Muitas tentativas. Tente novamente mais tarde.",
+  "phone_retry_in": "Tentar em {{seconds}}s",
+  "phone_code_sent": "Código enviado. Confira suas mensagens.",
   "nav_login": "Entrar",
   "nav_free_start": "Começar grátis",
   "nav_enter_app": "Abrir app",
