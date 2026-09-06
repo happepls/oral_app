@@ -7,11 +7,14 @@ process.env.REDIS_HOST = '127.0.0.1';
 process.env.REDIS_PORT = '16389';
 delete process.env.REDIS_PASSWORD;
 process.env.DATABASE_URL = 'postgresql://postgres@127.0.0.1:15439/postgres';
+const schema = `phone_registration_${crypto.randomBytes(8).toString('hex')}`;
+process.env.PGOPTIONS = `-c search_path=${schema}`;
 process.env.JWT_SECRET = crypto.randomBytes(32).toString('hex');
 for (const key of ['ACCESS_KEY_ID', 'ACCESS_KEY_SECRET', 'SIGN_NAME', 'TEMPLATE_CODE']) {
   process.env[`ALIYUN_SMS_${key}`] = crypto.randomBytes(16).toString('hex');
 }
 const redis = require('../src/utils/redisClient');
+redis.options.keyPrefix = `${schema}:`;
 const db = require('../src/models/db');
 const User = require('../src/models/user');
 const controller = require('../src/controllers/userController');
@@ -38,6 +41,7 @@ global.fetch = async (url, options) => {
 };
 
 async function main() {
+  await db.query(`CREATE SCHEMA "${schema}"`);
   await db.query('CREATE TABLE users (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), username VARCHAR(50) UNIQUE NOT NULL, phone VARCHAR(32) UNIQUE, email TEXT, native_language TEXT)');
   await db.query('CREATE TABLE user_identities (user_id UUID, provider TEXT, provider_uid TEXT)');
   const app = express(); app.use(express.json()); app.use(cookieParser());
@@ -106,5 +110,10 @@ async function main() {
 
 main().catch(error => { console.error(error); process.exitCode = 1; }).finally(async () => {
   global.fetch = originalFetch;
-  await db.pool.end(); redis.disconnect();
+  try {
+    // Only the random schema created by this test is removed.
+    await db.query(`DROP SCHEMA IF EXISTS "${schema}" CASCADE`);
+  } finally {
+    await db.pool.end(); redis.disconnect();
+  }
 });

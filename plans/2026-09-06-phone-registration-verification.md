@@ -17,6 +17,7 @@
 - `npm run verify`：exit 0，decision=pass、score=100。包含前端完整 46 suites / 553 tests、前端 build、lint、服务端与跨服务认证/场景契约检查。具体日志在忽略目录 `quality/artifacts/latest/`。构建有既有 hooks/unused-variable 警告；新增测试 mock 也有 lint warning，未报告为零警告。
 - `node services/user-service/test/phone-registration.integration.cjs`：exit 0。使用独立临时 Redis/Postgres 容器，实际执行 Lua、SQL 及 HTTP/cookie；供应商响应被测试桩替换。证明验证码重放/过期拒绝、12 个并发请求只消费一次、并发限流、12 次并发建号只得到一个账户，以及既有手机号再次登录。**这不是实际短信送达证明。**
 - `docker compose build user-service`：exit 0，镜像 `78caf9fefc0b`，依赖从宿主复制。
+- 同一集成脚本在新建 user-service Docker 镜像的 Node 18 环境中再次通过：`docker run --rm --network host --mount type=bind,source=/Users/sgcc-work/IdeaProjects/oral_app/services/user-service/test/phone-registration.integration.cjs,target=/usr/src/app/test/phone-registration.integration.cjs,readonly oral_app-user-service:latest node test/phone-registration.integration.cjs`。测试使用随机 PostgreSQL schema（结束后删除）和 Redis key 前缀，保证可重复执行且不受前次限流状态影响。
 - `PLAYWRIGHT_BASE_URL=http://127.0.0.1:3017 npm --prefix client run test:e2e -- phone-registration.spec.js --project=chromium-320 --project=chromium-390 --project=chromium-desktop --project=webkit-mobile`：8 passed。覆盖发送/注册/引导、错误码、区号选择、横向溢出以及发送成功页严重/致命 axe 违规检查。
 - 浏览器截图已人工查看：320px 手机注册成功发送状态与 390px 区号选择/错误状态。截图和测试 JSON 在 `quality/artifacts/phone-registration-browser/`、`quality/artifacts/phone-registration-browser-results.json`。
 - 主脚本 `/static/js/main.0538a3af.js` 在宿主、已有 client 容器的挂载目录和独立预览 HTTP 返回的 SHA-256 一致：`c107adaa3d4e389f9291a287a8fd0d1c2353f78f392d17fe5b6f0849b13f8a8e`。
@@ -30,6 +31,7 @@
 - 首次浏览器运行旧本地 Nginx 5001 端口返回空响应；改为独立的 `127.0.0.1:3017` 静态构建预览后完成验证，未修改该 Nginx 配置。
 - WebKit 被第三方脚本的页面 load 等待阻塞；短信注册测试禁止第三方 HTTPS 请求，等待 DOMContentLoaded 并断言实际表单/导航，最终通过。
 - 注册页旧视觉测试在 Motion 入场动画尚未完成时取样，导致部分视口出现错误的低对比度结果；加入表单可见且 opacity=1 的等待后，10 组配置均通过。
+- 首次 Docker 集成复跑遇到前次测试残留限流（429）；改为每次随机 schema 和 Redis key 前缀后复跑通过，未降低业务限流阈值。
 
 ## 独立审查
 
@@ -37,7 +39,7 @@
 
 ## 尚待完成
 
-- 完整 239 项 UI 回归正在运行；提交前 secret scanning；PR 的 CI 与 Linux 视觉基线检查。
+- 草稿 PR：[happepls/oral_app#50](https://github.com/happepls/oral_app/pull/50)，功能提交 `68d0926`。已执行 staged gitleaks，扫描约 68.74 KB，无泄漏；提交 hook 同样通过。完整 239 项 UI 回归与远端 CI/Linux 视觉基线检查进行中。
 - 人工审核 PR、合并并发布前端与 user-service。Agent 不自动合并或部署。
 - 生产只读核实 `users.phone` 唯一约束和可空邮箱、阿里云/Twilio 配置存在性、可用的签名模板及发送权限。当前部署清单的历史“已通”不代替本次验证。
 - 用户授权的真实号码收取短信 → 新账户注册 → httpOnly Cookie 登录 → Onboarding；退出后同号重新收码并登录原账户。真实号码与验证码不得存入文档或日志。
