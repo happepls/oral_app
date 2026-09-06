@@ -2,6 +2,8 @@
 
 日期：2026-09-06。分支：`feat/phone-registration`。生产状态：未发布，真实收码未验证。
 
+PR：[happepls/oral_app#50](https://github.com/happepls/oral_app/pull/50)。原工作区的本地 `master` 比远端多 5 个 SDLC 提交，本次已在隔离 worktree 以远端 `9b6f35d` 为基线，仅移植手机号注册提交，确保这些旧工件和用户 TODO 不进入 PR。原工作区保留于 `work/phone-registration-local`，业务代码与 PR 分支一致。
+
 ## 已实施
 
 - `/register` 增加邮箱/手机号切换，手机号验证后自动注册或登录既有账户；新用户经 Discovery 进入 Onboarding。
@@ -22,7 +24,11 @@
 - 浏览器截图已人工查看：320px 手机注册成功发送状态与 390px 区号选择/错误状态。截图和测试 JSON 在 `quality/artifacts/phone-registration-browser/`、`quality/artifacts/phone-registration-browser-results.json`。
 - 主脚本 `/static/js/main.0538a3af.js` 在宿主、已有 client 容器的挂载目录和独立预览 HTTP 返回的 SHA-256 一致：`c107adaa3d4e389f9291a287a8fd0d1c2353f78f392d17fe5b6f0849b13f8a8e`。
 - `git diff --check` 通过；`python3 scripts/sdlc.py validate --history` 已在实施前通过。
-- 注册页视觉基线更新命令：`PLAYWRIGHT_BASE_URL=http://127.0.0.1:3017 npm --prefix client run test:e2e -- ui-audit.spec.js --grep 'register has' --update-snapshots`，10 passed。覆盖 320/375/390/768/1440px，浅色中文及深色英文；实际查看了手机截图与深色英文平板截图。macOS 基线已更新，Linux 基线待 CI 产物验证。
+- 注册页视觉基线更新命令：`PLAYWRIGHT_BASE_URL=http://127.0.0.1:3017 npm --prefix client run test:e2e -- ui-audit.spec.js --grep 'register has' --update-snapshots`，10 passed。覆盖 320/375/390/768/1440px，浅色中文及深色英文；实际查看了手机截图与深色英文平板截图。macOS 基线已更新。
+- 首次远端 [CI 34009811192](https://github.com/happepls/oral_app/actions/runs/34009811192)：基础 `test` 通过；完整 UI 220 passed / 10 failed / 9 skipped。失败全部为本次新增注册方式切换导致旧 `register-linux.png` 不匹配，手机号流程用例均通过。该次构建的前端树与整理后的 PR 提交 `2218f87` 完全一致（`git diff 68d0926 2218f87 -- client` 无差异）。
+- 从该次 CI 的 `ui-audit-evidence` 归档成功提取 10 个完整 `ui-candidates/<project>/register.png`，人工查看 320px 浅色中文及桌面深色英文截图后，原样复制为对应的 `register-linux.png`。未改变截图差异阈值或减少测试；更新后的完整 Linux CI 结果以 PR 最新检查为准，本记录不预先宣称通过。
+- 本地 `PLAYWRIGHT_BASE_URL=http://127.0.0.1:3017 npm run verify:ui`：35 passed / 14 failed / 3 skipped，随后主动结束运行（exit 130，2 interrupted / 185 did not run），不是全量通过。发现多处现有页面快照漂移后，以远端 Linux 全矩阵作为完整验证来源。
+- 对照未修改的 `68927d8`，在独立构建/预览 `3018` 执行 `ui-audit.spec.js --grep '(goals|goal-setting) has' --project=chromium-320 --workers=1 --reporter=line --global-timeout=180000`：1 passed / 1 failed。学习目标页复现完全相同的期望 320×926、实际 320×568、18039 像素差异。该具体本地失败已证明不是本次改动引入；其他本地差异不由这一个对照泛化证明。
 
 ## 已解决的测试问题
 
@@ -39,7 +45,7 @@
 
 ## 尚待完成
 
-- 草稿 PR：[happepls/oral_app#50](https://github.com/happepls/oral_app/pull/50)，功能提交 `68d0926`。已执行 staged gitleaks，扫描约 68.74 KB，无泄漏；提交 hook 同样通过。完整 239 项 UI 回归与远端 CI/Linux 视觉基线检查进行中。
+- 已执行 staged gitleaks，扫描约 68.74 KB，无泄漏；提交 hook 同样通过。Linux 注册页基线已同步，最终 CI 待复核。
 - 人工审核 PR、合并并发布前端与 user-service。Agent 不自动合并或部署。
 - 生产只读核实 `users.phone` 唯一约束和可空邮箱、阿里云/Twilio 配置存在性、可用的签名模板及发送权限。当前部署清单的历史“已通”不代替本次验证。
 - 用户授权的真实号码收取短信 → 新账户注册 → httpOnly Cookie 登录 → Onboarding；退出后同号重新收码并登录原账户。真实号码与验证码不得存入文档或日志。
