@@ -10,12 +10,10 @@
  *   TWILIO_AUTH_TOKEN         — Basic Auth 密码
  *   TWILIO_VERIFY_SERVICE_SID — VA...
  *
- * 未配置时 isConfigured()=false：调用方走开发期 fallback
- * （sendCode 返回 {sent:false, devMode:true}，checkCode 接受固定 dev 验证码）。
+ * 未配置时拒绝发送和验证；不提供固定验证码 fallback。
  */
 
 const VERIFY_BASE = 'https://verify.twilio.com/v2/Services';
-const DEV_CODE = '000000'; // 未配置 Twilio 时的开发期固定验证码
 
 function isConfigured() {
   return Boolean(
@@ -38,8 +36,7 @@ function _authHeader() {
  */
 async function sendCode(phone) {
   if (!isConfigured()) {
-    console.warn(`[twilioVerify] 未配置 Twilio，dev 模式：手机 ${phone} 的验证码固定为 ${DEV_CODE}`);
-    return { sent: false, devMode: true };
+    return { sent: false, reason: 'not_configured' };
   }
   const svc = process.env.TWILIO_VERIFY_SERVICE_SID;
   const body = new URLSearchParams({ To: phone, Channel: 'sms' });
@@ -48,15 +45,14 @@ async function sendCode(phone) {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded', Authorization: _authHeader() },
       body: body.toString(),
+      signal: AbortSignal.timeout(10000),
     });
     if (!res.ok) {
-      const errText = await res.text().catch(() => '');
-      console.error(`[twilioVerify] sendCode failed ${res.status}: ${errText.slice(0, 300)}`);
       return { sent: false, reason: `http_${res.status}` };
     }
-    return { sent: true };
-  } catch (err) {
-    console.error('[twilioVerify] sendCode error:', err.message);
+    const data = await res.json().catch(() => ({}));
+    return { sent: data.status === 'pending' };
+  } catch {
     return { sent: false, reason: 'network_error' };
   }
 }
@@ -69,8 +65,7 @@ async function sendCode(phone) {
  */
 async function checkCode(phone, code) {
   if (!isConfigured()) {
-    // dev 模式：固定码通过
-    return { ok: code === DEV_CODE };
+    return { ok: false, reason: 'not_configured' };
   }
   const svc = process.env.TWILIO_VERIFY_SERVICE_SID;
   const body = new URLSearchParams({ To: phone, Code: code });
@@ -79,17 +74,15 @@ async function checkCode(phone, code) {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded', Authorization: _authHeader() },
       body: body.toString(),
+      signal: AbortSignal.timeout(10000),
     });
     if (!res.ok) {
-      const errText = await res.text().catch(() => '');
-      console.error(`[twilioVerify] checkCode failed ${res.status}: ${errText.slice(0, 300)}`);
       return { ok: false, reason: `http_${res.status}` };
     }
     const data = await res.json().catch(() => ({}));
     // Twilio 返回 status: 'approved' 表示验证通过
     return { ok: data.status === 'approved' };
-  } catch (err) {
-    console.error('[twilioVerify] checkCode error:', err.message);
+  } catch {
     return { ok: false, reason: 'network_error' };
   }
 }

@@ -8,11 +8,7 @@ const redis = require('../utils/redisClient');
 const { sendEmail } = require('../utils/mailer');
 const twilioVerify = require('../utils/twilioVerify');
 const aliyunSms = require('../utils/aliyunSms');
-
-// 简单 E.164 校验：+ 开头，2-15 位数字
-function _isValidPhone(p) {
-  return typeof p === 'string' && /^\+[1-9]\d{1,14}$/.test(p.trim());
-}
+const { normalizePhone, reservePhoneAttempt } = require('../utils/phoneAuth');
 
 // 短信通道路由：+86（中国大陆）走阿里云，其他走 Twilio。
 // Twilio 不支持中国大陆号（监管限制 error 60220），阿里云不支持国际号（需国际短信资质）。
@@ -1423,39 +1419,59 @@ exports.resetPassword = async (req, res) => {
 
 // POST /api/users/phone/send-code — 发送短信验证码
 exports.sendPhoneCode = async (req, res) => {
-    const { phone } = req.body || {};
+    const phone = normalizePhone(req.body?.phone);
     try {
-        if (!_isValidPhone(phone)) {
+        if (!phone) {
             return res.status(400).json({ success: false, message: '请输入有效的手机号（含国家码，如 +8613800138000）。' });
         }
-        const result = await _smsProvider(phone).sendCode(phone.trim());
-        if (result.sent || result.devMode) {
-            // devMode 也返回成功（验证码走 dev 固定码 000000，日志已提示）
-            return res.json({ success: true, message: '验证码已发送，请查收短信。', devMode: !!result.devMode });
+        const provider = _smsProvider(phone);
+        if (!provider.isConfigured()) {
+            return res.status(503).json({ success: false, message: '短信服务暂不可用，请稍后重试。' });
+        }
+        const retryAfter = await reservePhoneAttempt(phone, 'send');
+        if (retryAfter) {
+            res.set('Retry-After', String(retryAfter));
+            return res.status(429).json({ success: false, retryAfter, message: '获取验证码过于频繁，请稍后重试。' });
+        }
+        const result = await provider.sendCode(phone);
+        if (result.sent) {
+            return res.json({ success: true, message: '验证码已发送，请查收短信。', retryAfter: 60 });
         }
         return res.status(502).json({ success: false, message: '验证码发送失败，请稍后再试。' });
-    } catch (error) {
-        console.error('sendPhoneCode error:', error);
-        return res.status(500).json({ success: false, message: '服务异常，请稍后再试。' });
+    } catch {
+        return res.status(503).json({ success: false, message: '短信服务暂不可用，请稍后重试。' });
     }
 };
 
 // POST /api/users/phone/login — 校验验证码 → 登录/注册 → 签 JWT cookie
 exports.phoneLogin = async (req, res) => {
-    const { phone, code } = req.body || {};
+    const phone = normalizePhone(req.body?.phone);
+    const code = req.body?.code;
     try {
-        if (!_isValidPhone(phone)) {
+        if (!phone) {
             return res.status(400).json({ success: false, message: '手机号格式不正确。' });
         }
-        if (!code || !/^\d{4,8}$/.test(String(code).trim())) {
+        if (typeof code !== 'string' || !/^\d{6}$/.test(code.trim())) {
             return res.status(400).json({ success: false, message: '验证码格式不正确。' });
         }
-        const check = await _smsProvider(phone).checkCode(phone.trim(), String(code).trim());
+        const provider = _smsProvider(phone);
+        if (!provider.isConfigured()) {
+            return res.status(503).json({ success: false, message: '短信服务暂不可用，请稍后重试。' });
+        }
+        const retryAfter = await reservePhoneAttempt(phone, 'verify');
+        if (retryAfter) {
+            res.set('Retry-After', String(retryAfter));
+            return res.status(429).json({ success: false, retryAfter, message: '验证码尝试次数过多，请稍后重试。' });
+        }
+        const check = await provider.checkCode(phone, code.trim());
+        if (['redis_error', 'network_error', 'not_configured'].includes(check.reason) || /^http_5/.test(check.reason || '')) {
+            return res.status(503).json({ success: false, message: '短信服务暂不可用，请稍后重试。' });
+        }
         if (!check.ok) {
             return res.status(401).json({ success: false, message: '验证码错误或已过期。' });
         }
 
-        const user = await User.findOrCreateByPhone(phone.trim());
+        const user = await User.findOrCreateByPhone(phone);
         const userWithoutPassword = { ...user };
         delete userWithoutPassword.password;
 
@@ -1466,9 +1482,8 @@ exports.phoneLogin = async (req, res) => {
             message: '登录成功',
             data: { token, user: userWithoutPassword },
         });
-    } catch (error) {
-        console.error('phoneLogin error:', error);
-        return res.status(500).json({ success: false, message: '登录失败，请稍后再试。' });
+    } catch {
+        return res.status(503).json({ success: false, message: '登录失败，请稍后再试。' });
     }
 };
 

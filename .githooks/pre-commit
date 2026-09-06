@@ -3,21 +3,19 @@ set -euo pipefail
 
 if ! command -v gitleaks &>/dev/null; then
   echo "WARNING: gitleaks not installed. Install: brew install gitleaks"
-  exit 0
+else
+  echo "Running gitleaks pre-commit scan..."
+  if ! gitleaks git --pre-commit --staged --verbose --config="$(git rev-parse --show-toplevel)/.gitleaks.toml" 2>&1; then
+    echo ""
+    echo "============================================"
+    echo "  COMMIT BLOCKED: Secrets detected!"
+    echo "  Review findings above."
+    echo "  False positive? Add to .gitleaks.toml allowlist."
+    echo "============================================"
+    exit 1
+  fi
+  echo "gitleaks: clean."
 fi
-
-echo "Running gitleaks pre-commit scan..."
-if ! gitleaks git --pre-commit --staged --verbose --config="$(git rev-parse --show-toplevel)/.gitleaks.toml" 2>&1; then
-  echo ""
-  echo "============================================"
-  echo "  COMMIT BLOCKED: Secrets detected!"
-  echo "  Review findings above."
-  echo "  False positive? Add to .gitleaks.toml allowlist."
-  echo "============================================"
-  exit 1
-fi
-
-echo "gitleaks: clean."
 
 # ---- 供应链闸：package.json 改动须连带 lockfile（防幻觉包/typosquat 无锁引入）----
 ROOT="$(git rev-parse --show-toplevel)"
@@ -42,3 +40,6 @@ if [ "$drift" = 1 ]; then
   exit 1
 fi
 echo "lockfile-drift: clean."
+
+# ---- AI-native SDLC gate: governed code requires the approved current plan ----
+python3 "$ROOT/scripts/sdlc.py" precommit

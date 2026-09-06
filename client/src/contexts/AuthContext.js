@@ -113,7 +113,7 @@ export const AuthProvider = ({ children }) => {
     } catch (err) {
       const errorMessage = err.message || '手机登录失败，请稍后重试';
       setError(errorMessage);
-      return { success: false, message: errorMessage };
+      return { success: false, message: errorMessage, status: err.status };
     } finally {
       setLoading(false);
     }

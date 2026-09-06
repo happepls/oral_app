@@ -1,4 +1,13 @@
 {
+  "register_method_label": "Registration method",
+  "register_tab_email": "Email",
+  "register_tab_phone": "Phone",
+  "phone_register_hint": "No password needed. If your number is already registered, you’ll sign in to your existing account.",
+  "phone_register_submit": "Sign up and continue",
+  "phone_code_invalid": "Enter the 6-digit code",
+  "phone_rate_limited": "Too many attempts. Please try again later.",
+  "phone_retry_in": "Retry in {{seconds}}s",
+  "phone_code_sent": "Code sent. Please check your messages.",
   "nav_login": "Sign In",
   "nav_free_start": "Get Started Free",
   "nav_enter_app": "Enter App",

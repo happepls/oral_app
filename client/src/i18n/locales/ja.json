@@ -1,4 +1,13 @@
 {
+  "register_method_label": "登録方法",
+  "register_tab_email": "メールで登録",
+  "register_tab_phone": "電話番号で登録",
+  "phone_register_hint": "パスワードは不要です。登録済みの電話番号は既存のアカウントにログインします。",
+  "phone_register_submit": "登録して続ける",
+  "phone_code_invalid": "6桁の認証コードを入力してください",
+  "phone_rate_limited": "試行回数が多すぎます。しばらくしてから再試行してください。",
+  "phone_retry_in": "{{seconds}}秒後に再試行",
+  "phone_code_sent": "認証コードを送信しました。SMSをご確認ください。",
   "nav_login": "ログイン",
   "nav_free_start": "無料で始める",
   "nav_enter_app": "アプリへ",

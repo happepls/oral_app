@@ -1029,10 +1029,14 @@ User.findOrCreateByPhone = async (phone) => {
   for (let attempt = 0; attempt < 4; attempt++) {
     try {
       const ins = await db.query(
-        'INSERT INTO users (username, phone) VALUES ($1, $2) RETURNING *',
+        'INSERT INTO users (username, phone) VALUES ($1, $2) ON CONFLICT (phone) DO NOTHING RETURNING *',
         [usernameToTry, phone]
       );
-      return ins.rows[0];
+      if (ins.rows[0]) return ins.rows[0];
+      // Another verified request created this number after our initial SELECT.
+      const concurrent = await db.query('SELECT * FROM users WHERE phone = $1', [phone]);
+      if (concurrent.rows[0]) return concurrent.rows[0];
+      throw new Error('phone account unavailable');
     } catch (err) {
       if (err.code === '23505' && err.detail?.includes('username') && attempt < 3) {
         usernameToTry = `${base}_${Math.floor(Math.random() * 9000 + 1000)}`;

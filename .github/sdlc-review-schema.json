@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["base_sha", "head_sha", "scope", "commands", "risk_areas", "findings"],
+  "properties": {
+    "base_sha": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+    "head_sha": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+    "scope": {"type": "string", "minLength": 1},
+    "commands": {"type": "array", "minItems": 1, "items": {"type": "string", "minLength": 1}},
+    "risk_areas": {"type": "array", "items": {"type": "string", "minLength": 1}, "uniqueItems": true},
+    "findings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["severity", "location", "impact", "fix", "resolved"],
+        "properties": {
+          "severity": {"enum": ["critical", "high", "medium", "low"]},
+          "location": {"type": "string", "minLength": 1},
+          "impact": {"type": "string", "minLength": 1},
+          "fix": {"type": "string", "minLength": 1},
+          "resolved": {"type": "boolean"}
+        }
+      }
+    }
+  }
+}

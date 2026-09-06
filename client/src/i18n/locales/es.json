@@ -1,4 +1,13 @@
 {
+  "register_method_label": "Método de registro",
+  "register_tab_email": "Correo",
+  "register_tab_phone": "Teléfono",
+  "phone_register_hint": "No necesitas contraseña. Si tu número ya está registrado, entrarás en tu cuenta existente.",
+  "phone_register_submit": "Registrarse y continuar",
+  "phone_code_invalid": "Introduce el código de 6 dígitos",
+  "phone_rate_limited": "Demasiados intentos. Inténtalo más tarde.",
+  "phone_retry_in": "Reintentar en {{seconds}}s",
+  "phone_code_sent": "Código enviado. Revisa tus mensajes.",
   "nav_login": "Iniciar sesión",
   "nav_free_start": "Comenzar gratis",
   "nav_enter_app": "Ir a la app",

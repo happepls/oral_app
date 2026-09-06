@@ -66,7 +66,10 @@ const handleAuthResponse = async (response) => {
     throw new Error(`无法解析服务器响应 (状态码: ${response.status})`);
   }
   if (!response.ok) {
-    throw new Error(data.message || `请求失败 (状态码: ${response.status})`);
+    const error = new Error(data.message || `请求失败 (状态码: ${response.status})`);
+    error.status = response.status;
+    error.retryAfter = Number(data.retryAfter);
+    throw error;
   }
   return data.data || data;
 };
@@ -127,13 +130,15 @@ export const authAPI = {
   },
 
   // 发送手机验证码
-  async sendPhoneCode(phone) {
+  async sendPhoneCode(phone, { signal } = {}) {
     const response = await fetch(`${API_BASE_URL}/users/phone/send-code`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      signal,
       body: JSON.stringify({ phone })
     });
-    return response.json();
+    return handleAuthResponse(response);
   },
 
   // 手机验证码登录（成功后 cookie 已种，返回 user）
@@ -142,7 +147,8 @@ export const authAPI = {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       credentials: 'include',
-      body: JSON.stringify({ phone, code })
+      body: JSON.stringify({ phone, code }),
+      signal: AbortSignal.timeout(20000)
     });
     return handleAuthResponse(response);
   }

@@ -16,21 +16,31 @@
  *   ALIYUN_SMS_SIGN_NAME       — 已审核签名，如「咕叽口语」
  *   ALIYUN_SMS_TEMPLATE_CODE   — 已审核模板，如 SMS_123456789（变量名须为 ${code}）
  *
- * 未配置时 isConfigured()=false：调用方走开发期 fallback（dev 固定码 000000）。
+ * 未配置时拒绝发送和验证。测试必须 mock 供应商，禁止固定验证码后门。
  *
  * 验证码 Redis 形状：
- *   key   = sms_code:{phone}        (phone 含 + 前缀，E.164)
- *   value = 6 位数字字符串
+ *   key   = sms_code:v2:{sha256(phone)}
+ *   value = HMAC-SHA256(phone + code)，不存明文验证码
  *   TTL   = 300s (5 分钟，与短信模板「5 分钟内有效」一致)
  */
 
 const crypto = require('crypto');
 const redis = require('./redisClient');
+const { phoneKey } = require('./phoneAuth');
 
 const ENDPOINT = 'https://dysmsapi.aliyuncs.com/';
-const SMS_CODE_PREFIX = 'sms_code:';
+const SMS_CODE_PREFIX = 'sms_code:v2:';
 const SMS_CODE_TTL = 300; // 5 分钟
-const DEV_CODE = '000000'; // 未配置阿里云时的开发期固定验证码
+const CONSUME_SCRIPT = `
+if redis.call('GET', KEYS[1]) ~= ARGV[1] then return 0 end
+redis.call('DEL', KEYS[1])
+return 1
+`;
+
+function codeDigest(phone, code) {
+  return crypto.createHmac('sha256', process.env.ALIYUN_SMS_ACCESS_KEY_SECRET)
+    .update(`${phone}:${code}`).digest('hex');
+}
 
 function isConfigured() {
   return Boolean(
@@ -97,21 +107,8 @@ function _genCode() {
  * @returns {Promise<{sent:boolean, devMode?:boolean, reason?:string}>}
  */
 async function sendCode(phone) {
+  if (!isConfigured()) return { sent: false, reason: 'not_configured' };
   const code = _genCode();
-  // 先存 Redis（无论真发还是 dev 都存，保证 checkCode 一致）
-  try {
-    await redis.setex(`${SMS_CODE_PREFIX}${phone}`, SMS_CODE_TTL, code);
-  } catch (e) {
-    console.error('[aliyunSms] redis setex failed:', e.message);
-    return { sent: false, reason: 'redis_error' };
-  }
-
-  if (!isConfigured()) {
-    console.warn(`[aliyunSms] 未配置阿里云短信，dev 模式：手机 ${phone} 验证码 ${DEV_CODE}（实际存入的随机码已覆盖为 dev 码）`);
-    // dev 模式：覆盖为固定码，方便本地测试
-    try { await redis.setex(`${SMS_CODE_PREFIX}${phone}`, SMS_CODE_TTL, DEV_CODE); } catch (_) {}
-    return { sent: false, devMode: true };
-  }
 
   // 阿里云国内号要求去掉 +86 前缀（PhoneNumbers 传 11 位手机号）
   const cnNumber = phone.replace(/^\+86/, '');
@@ -125,15 +122,20 @@ async function sendCode(phone) {
   });
 
   try {
-    const res = await fetch(url, { method: 'GET' });
+    const res = await fetch(url, { method: 'GET', signal: AbortSignal.timeout(10000) });
     const data = await res.json().catch(() => ({}));
     if (res.ok && data.Code === 'OK') {
+      // A failed provider call must never activate its code. The controller
+      // reserves a 60s per-number cooldown before entering this method.
+      try {
+        await redis.setex(`${SMS_CODE_PREFIX}${phoneKey(phone)}`, SMS_CODE_TTL, codeDigest(phone, code));
+      } catch {
+        return { sent: false, reason: 'redis_error' };
+      }
       return { sent: true };
     }
-    console.error(`[aliyunSms] sendCode failed: Code=${data.Code} Message=${data.Message}`);
-    return { sent: false, reason: data.Code || `http_${res.status}` };
-  } catch (err) {
-    console.error('[aliyunSms] sendCode error:', err.message);
+    return { sent: false, reason: 'provider_error' };
+  } catch {
     return { sent: false, reason: 'network_error' };
   }
 }
@@ -145,19 +147,14 @@ async function sendCode(phone) {
  * @returns {Promise<{ok:boolean, reason?:string}>}
  */
 async function checkCode(phone, code) {
-  const key = `${SMS_CODE_PREFIX}${phone}`;
-  let stored;
+  if (!isConfigured()) return { ok: false, reason: 'not_configured' };
   try {
-    stored = await redis.get(key);
-  } catch (e) {
-    console.error('[aliyunSms] redis get failed:', e.message);
+    const consumed = await redis.eval(CONSUME_SCRIPT, 1,
+      `${SMS_CODE_PREFIX}${phoneKey(phone)}`, codeDigest(phone, String(code).trim()));
+    return { ok: consumed === 1 };
+  } catch {
     return { ok: false, reason: 'redis_error' };
   }
-  if (!stored) return { ok: false, reason: 'expired' };
-  if (String(code).trim() !== stored) return { ok: false, reason: 'mismatch' };
-  // 验证通过 → 删除，防重放
-  try { await redis.del(key); } catch (_) {}
-  return { ok: true };
 }
 
 module.exports = { sendCode, checkCode, isConfigured };

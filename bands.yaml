@@ -1,0 +1,14 @@
+version: 1
+mode: shadow
+privacy:
+  user_content: false
+  persist_raw_logs: false
+hard:
+  five_xx_rate: 0.01
+  consecutive_windows: 2
+  resource_utilization: 0.80
+  backup_age_hours: 26
+  health_consecutive_failures: 2
+latency:
+  enforced: false
+  calibration_days: 7
