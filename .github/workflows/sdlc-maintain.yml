@@ -25,6 +25,7 @@ concurrency:
 permissions:
   contents: read
   issues: write
+  pull-requests: read
 
 jobs:
   observe:
@@ -97,7 +98,7 @@ jobs:
               output.write(f"severity={severity}\n")
           PY
       - name: Queue evidence-backed diagnostic
-        if: steps.combined.outputs.severity == 'diagnose' || steps.combined.outputs.severity == 'immediate'
+        if: always() && (steps.combined.outputs.severity == 'diagnose' || steps.combined.outputs.severity == 'immediate')
         env:
           SEVERITY: ${{ steps.combined.outputs.severity }}
         run: |
