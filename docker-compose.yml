@@ -128,6 +128,8 @@ services:
       - DB_DATABASE=oral_app
       - DB_PORT=5432
       - DATABASE_URL=postgresql://user:password@postgres:5432/oral_app
+      - MONITOR_READ_TOKEN=${MONITOR_READ_TOKEN:-}
+      - MONITOR_MEMORY_BUDGET_BYTES=${MONITOR_MEMORY_BUDGET_BYTES:-}
       - JWT_SECRET=${JWT_SECRET:?Set JWT_SECRET in the root .env}
       - INTERNAL_AUTH_SECRET=${INTERNAL_AUTH_SECRET:?Set INTERNAL_AUTH_SECRET in the root .env}
       - HISTORY_ANALYTICS_SERVICE_URL=http://history-analytics-service:3004
@@ -320,6 +322,7 @@ services:
       - BACKUP_COS_PREFIX=${BACKUP_COS_PREFIX:-backups/oral-app}
       - COS_SESSION_TOKEN=${COS_SESSION_TOKEN:-}
       - BACKUP_ALERT_WEBHOOK=${BACKUP_ALERT_WEBHOOK:-}
+      - BACKUP_MONITOR_ENABLED=${BACKUP_MONITOR_ENABLED:-false}
     volumes:
       - backup_status:/var/lib/oral-backup
     depends_on:

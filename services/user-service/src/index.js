@@ -19,6 +19,21 @@ const express = require('express');
 const cookieParser = require('cookie-parser');
 const app = express();
 
+// A separate, bounded pool keeps monitoring failures off the business pool.
+const { Pool: MonitorPool } = require('pg');
+const { createDailyMonitor, PATH: dailyMonitorPath } = require('./monitoring/dailyAggregates');
+const dailyMonitor = createDailyMonitor({
+  db: new MonitorPool({
+    connectionString: process.env.DATABASE_URL,
+    max: 2, connectionTimeoutMillis: 2000, idleTimeoutMillis: 10000,
+    statement_timeout: 3000, query_timeout: 4000
+  }).on('error', () => console.warn('[daily-monitor] database unavailable')),
+  token: process.env.MONITOR_READ_TOKEN
+});
+app.use(dailyMonitor.middleware);
+app.get(dailyMonitorPath, dailyMonitor.handler);
+dailyMonitor.start();
+
 // Import security middleware
 const {
   securityHeaders,

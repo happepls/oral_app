@@ -91,6 +91,16 @@ mkdir -p "$(dirname "${STATUS_FILE}")"
 printf '{"status":"ok","completed_at":"%s","object":"%s"}\n' \
   "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "${DAILY_KEY}" > "${STATUS_FILE}"
 
+# Publish only after every required object upload succeeded. A failed publish
+# fails the job; it must never refresh the monitor with a fabricated timestamp.
+if [[ "${BACKUP_MONITOR_ENABLED:-false}" == "true" ]]; then
+  PGCONNECT_TIMEOUT=5 PGOPTIONS='-c statement_timeout=5000' psql -X -w -v ON_ERROR_STOP=1 \
+    --host="${POSTGRES_HOST}" --port="${POSTGRES_PORT}" \
+    --username="${POSTGRES_USER}" --dbname="${POSTGRES_DB}" \
+    -c 'INSERT INTO monitor_backup_success (singleton, completed_at) VALUES (TRUE, clock_timestamp())
+        ON CONFLICT (singleton) DO UPDATE SET completed_at = EXCLUDED.completed_at;' >/dev/null
+fi
+
 if [[ -n "${BACKUP_ALERT_WEBHOOK:-}" ]]; then
   curl --fail --silent --show-error \
     -H 'Content-Type: application/json' \
