@@ -19,7 +19,7 @@ test.beforeEach(async ({ page }) => {
   });
 });
 
-test('phone registration sends a code and reaches onboarding @critical', async ({ page }, testInfo) => {
+test('phone registration sends a code and reaches quick experience @critical', async ({ page }, testInfo) => {
   await page.goto('/register', { waitUntil: 'domcontentloaded' });
   await page.getByRole('tab', { name: '手机号注册' }).click();
   await expect(page.getByRole('tabpanel')).toBeVisible();
@@ -39,7 +39,8 @@ test('phone registration sends a code and reaches onboarding @critical', async (
   const login = page.waitForRequest('**/api/users/phone/login');
   await page.getByRole('button', { name: '注册并登录', exact: true }).click();
   expect((await login).postDataJSON()).toEqual({ phone: '+8613800138000', code: '123456' });
-  await expect(page).toHaveURL(/\/onboarding$/);
+  await expect(page).toHaveURL(/\/quick-experience$/);
+  await expect(page.getByRole('button', { name: '快速体验', exact: true })).toBeVisible();
 });
 
 test('phone registration reports wrong codes and supports country selection @critical', async ({ page }, testInfo) => {

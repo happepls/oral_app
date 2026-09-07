@@ -45,7 +45,7 @@ test('email signup is still the default and submits its original fields', async 
   fireEvent.submit(screen.getByRole('tabpanel'));
   await waitFor(() => expect(mockRegister).toHaveBeenCalledWith({ username: 'learner', email: 'learner@example.com', password: 'GoodPassword1' }));
   expect(mockLoginWithPhone).not.toHaveBeenCalled();
-  expect(mockNavigate).toHaveBeenCalledWith('/discovery');
+  expect(mockNavigate).toHaveBeenCalledWith('/quick-experience');
 });
 
 test('phone signup sends E.164 and signs in without an email or password', async () => {
@@ -59,7 +59,7 @@ test('phone signup sends E.164 and signs in without an email or password', async
   enterCode(); fireEvent.submit(screen.getByRole('tabpanel'));
   await waitFor(() => expect(mockLoginWithPhone).toHaveBeenCalledWith('+8613800138000', '123456'));
   expect(mockRegister).not.toHaveBeenCalled();
-  expect(mockNavigate).toHaveBeenCalledWith('/discovery');
+  expect(mockNavigate).toHaveBeenCalledWith('/quick-experience');
 });
 
 test('register modes support arrow-key navigation', () => {
@@ -115,7 +115,7 @@ test('failed verification remains on signup; successful retry can continue', asy
   expect(await screen.findByRole('alert')).toHaveTextContent(en.phone_login_fail);
   expect(mockNavigate).not.toHaveBeenCalled();
   fireEvent.submit(screen.getByRole('tabpanel'));
-  await waitFor(() => expect(mockNavigate).toHaveBeenCalledWith('/discovery'));
+  await waitFor(() => expect(mockNavigate).toHaveBeenCalledWith('/quick-experience'));
 });
 
 test('duplicate submits are ignored and unmount aborts a pending send', async () => {

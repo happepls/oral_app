@@ -18,6 +18,7 @@ const LANDING_SPLASH_SESSION_KEY = 'hasSeenSplash';
 const Welcome = lazy(() => import('./pages/Welcome'));
 const Login = lazy(() => import('./pages/Login'));
 const Register = lazy(() => import('./pages/Register'));
+const QuickExperience = lazy(() => import('./pages/QuickExperience'));
 const ForgotPassword = lazy(() => import('./pages/ForgotPassword'));
 const ResetPassword = lazy(() => import('./pages/ResetPassword'));
 const Conversation = lazy(() => import('./pages/Conversation'));
@@ -116,6 +117,7 @@ const AppRoutes = () => {
               <Route path="/welcome" element={<Welcome />} />
               <Route path="/login" element={<Login />} />
               <Route path="/register" element={<Register />} />
+              <Route path="/quick-experience" element={<RequireAuth><QuickExperience /></RequireAuth>} />
               <Route path="/forgot-password" element={<ForgotPassword />} />
               <Route path="/reset-password" element={<ResetPassword />} />
               <Route path="/onboarding" element={<Onboarding />} />

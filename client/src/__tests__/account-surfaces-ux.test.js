@@ -124,6 +124,13 @@ import History from '../pages/History';
 import Subscription from '../pages/Subscription';
 
 describe('account surfaces UX contracts', () => {
+  test('slow prices do not hide the free plan or back navigation', () => {
+    global.fetch = jest.fn(() => new Promise(() => {}));
+    render(<Subscription />);
+    expect(screen.getByText('Free plan')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Back' })).toBeEnabled();
+  });
+
   beforeEach(() => {
     jest.clearAllMocks();
     mockParams = {};
