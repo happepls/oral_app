@@ -3,6 +3,8 @@ const router = express.Router();
 const { stripeService } = require('./stripeService');
 const { getStripePublishableKey } = require('./stripeClient');
 const { protect } = require('../middleware/authMiddleware');
+const { createCatalogCache } = require('./catalogCache');
+const loadCatalog = createCatalogCache(() => stripeService.listProductsWithPrices());
 
 // Stripe redirect URL whitelist — only these origins are allowed for success/cancel/return URLs
 const ALLOWED_REDIRECT_ORIGINS = (process.env.STRIPE_ALLOWED_ORIGINS || 'http://localhost:3000,http://localhost:5001')
@@ -43,8 +45,9 @@ router.get('/products', async (req, res) => {
 });
 
 router.get('/products-with-prices', async (req, res) => {
+  const started = Date.now();
   try {
-    const rows = await stripeService.listProductsWithPrices();
+    const rows = await loadCatalog();
     
     const productsMap = new Map();
     for (const row of rows) {
@@ -72,7 +75,7 @@ router.get('/products-with-prices', async (req, res) => {
 
     res.json({ data: Array.from(productsMap.values()) });
   } catch (error) {
-    console.error('Error listing products with prices:', error);
+    console.error('Stripe catalog unavailable', { type: error.type || 'unknown', status: error.statusCode || 500, durationMs: Date.now() - started });
     res.status(500).json({ error: 'Failed to list products' });
   }
 });

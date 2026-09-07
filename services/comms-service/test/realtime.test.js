@@ -65,7 +65,7 @@ test('realtime ticket handshake, event forwarding, binary audio, invalid mode, a
   });
   const comms = await startComms(`ws://127.0.0.1:${aiHttp.address().port}/stream`);
   try {
-    const connect = () => new WebSocket(`ws://127.0.0.1:${comms.port}/api/v1/realtime?ticket=${encodeURIComponent(ticket())}&sessionId=session-1&mode=invalid&voice=Tina`);
+    const connect = (mode = 'invalid') => new WebSocket(`ws://127.0.0.1:${comms.port}/api/v1/realtime?ticket=${encodeURIComponent(ticket())}&sessionId=session-1&mode=${mode}&voice=Tina`);
     const client = connect();
     await once(client, 'open');
     const [event] = await once(client, 'message');
@@ -100,10 +100,11 @@ test('realtime ticket handshake, event forwarding, binary audio, invalid mode, a
     client.close();
     await once(client, 'close');
 
-    const reconnected = connect();
+    const reconnected = connect('quick_experience');
     await once(reconnected, 'open');
     const [reconnectEvent] = await once(reconnected, 'message');
     assert.equal(JSON.parse(reconnectEvent.toString()).type, 'connection_established');
+    assert.equal(new URL(aiConnections[1].request.url, 'ws://localhost').searchParams.get('mode'), 'quick_experience');
     reconnected.close();
   } finally {
     comms.stop();

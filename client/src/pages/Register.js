@@ -58,7 +58,7 @@ function Register() {
     });
 
     if (result.success) {
-      navigate('/discovery');
+      navigate('/quick-experience');
     } else {
       setError(result.message || t('err_register_default'));
     }
@@ -113,7 +113,7 @@ function Register() {
             ))}
           </div>
 
-          {mode === 'phone' ? <PhoneAuthForm idPrefix="register" registration onSuccess={() => navigate('/discovery')} /> : (
+          {mode === 'phone' ? <PhoneAuthForm idPrefix="register" registration onSuccess={() => navigate('/quick-experience')} /> : (
           <form id="register-panel-email" role="tabpanel" aria-labelledby="register-tab-email" onSubmit={handleSubmit} className="space-y-4">
             {error && (
               <div role="alert" className="bg-red-50 border border-red-200 text-red-600 px-4 py-3 rounded-xl text-sm">

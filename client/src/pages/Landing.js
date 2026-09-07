@@ -3,7 +3,8 @@ import { useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { useAuth } from '../contexts/AuthContext';
 import LanguageSwitcher from '../components/LanguageSwitcher';
-import { formatCnyReference, formatMinorCurrency } from '../utils/pricing';
+import usePricingCatalog from '../hooks/usePricingCatalog';
+import { annualSavingPercent, formatCnyReference, formatMinorCurrency } from '../utils/pricing';
 import { motion } from 'motion/react';
 import { Mic, GraduationCap, Timer, TrendingUp, ChevronRight, ArrowRight } from 'lucide-react';
 
@@ -12,7 +13,12 @@ function Landing() {
   const { user } = useAuth();
   const { t, i18n } = useTranslation();
   const [showPrivacy, setShowPrivacy] = useState(false);
-  const [livePrices, setLivePrices] = useState({});
+  const { products, loading: pricesLoading, unavailable, retry } = usePricingCatalog();
+  const saving = annualSavingPercent(products);
+  const livePrices = Object.fromEntries(products.map(product => [product.metadata.tier, {
+    unitAmount: product.prices[0].unit_amount, currency: product.prices[0].currency,
+    reference: product.reference,
+  }]));
 
   const features = useMemo(() => [
     { Icon: Mic,           title: t('feature_1_title'), desc: t('feature_1_desc') },
@@ -54,32 +60,10 @@ function Landing() {
       cnyReference: livePrices.annual
         ? formatCnyReference(livePrices.annual.unitAmount, livePrices.annual.currency, i18n.language)
         : null,
-      features: [t('plan_year_f1'), t('plan_year_f2'), t('plan_year_f3'), t('plan_year_f4'), t('plan_year_f5')],
+      features: [t('plan_year_f1'), t('plan_year_f2'), t('plan_year_f3'), t('plan_year_f4'), ...(saving ? [t('pricing_saving', { percent: saving })] : [])],
       cta: t('plan_year_cta'), highlight: false,
     },
-  ], [t, i18n.language, livePrices]);
-
-  useEffect(() => {
-    const controller = new AbortController();
-    fetch('/api/stripe/products-with-prices', { signal: controller.signal })
-      .then((response) => response.ok ? response.json() : Promise.reject(new Error('price unavailable')))
-      .then((payload) => {
-        const mapped = {};
-        for (const product of Array.isArray(payload?.data) ? payload.data : []) {
-          const price = product.prices?.[0];
-          const tier = product.metadata?.tier;
-          if (!price || !tier) continue;
-          mapped[tier] = {
-            unitAmount: price.unit_amount,
-            currency: price.currency,
-            interval: price.recurring?.interval,
-          };
-        }
-        setLivePrices(mapped);
-      })
-      .catch(() => setLivePrices({}));
-    return () => controller.abort();
-  }, []);
+  ], [t, i18n.language, livePrices, saving]);
 
   // 已登录用户可以主动回访首页（不再强制 redirect 到 /discovery）。
   // 仅当账号尚未完成 onboarding（无 native_language）时才引导去 /onboarding，
@@ -286,12 +270,12 @@ function Landing() {
                   {plan.name}
                 </h3>
                 <div className="mb-4">
-                  <span className="text-4xl font-bold">{plan.price === null ? '—' : plan.price}</span>
+                  <span className="text-4xl font-bold">{i > 0 && pricesLoading ? '…' : plan.price}</span>
                   <span className={`text-sm ${plan.highlight ? 'text-primary-light' : 'text-slate-500'}`}>
                     {plan.period}
                   </span>
-                  {plan.price === null && <span className="ml-2 text-xs text-slate-500">{t('qa_ui.price_unavailable_short')}</span>}
-                  {plan.cnyReference && (
+                  {i > 0 && <p role="status" className="mt-2 text-sm">{pricesLoading ? t('qa_ui.loading') : products[i - 1].reference ? t('pricing_reference_note') : ''}</p>}
+                  {!pricesLoading && plan.cnyReference && (
                     <p className={`mt-1 text-xs ${plan.highlight ? 'text-indigo-100' : 'text-slate-500 dark:text-slate-400'}`}>
                       {t('price_cny_reference', { price: plan.cnyReference })}
                     </p>
@@ -307,6 +291,7 @@ function Landing() {
                 </ul>
                 <button
                   onClick={() => navigate('/register')}
+                  disabled={i > 0 && (pricesLoading || products[i - 1].reference)}
                   className={`w-full py-3 rounded-xl font-bold transition ${
                     plan.highlight
                       ? 'bg-white text-indigo-700 hover:bg-slate-100'
@@ -314,11 +299,12 @@ function Landing() {
                   }`}
                   style={!plan.highlight ? { background: 'linear-gradient(135deg, #637FF1, #a47af6)' } : {}}
                 >
-                  {plan.cta}
+                  {i > 0 && products[i - 1].reference && !pricesLoading ? t('pricing_coming_soon') : plan.cta}
                 </button>
               </motion.div>
             ))}
           </div>
+          {!pricesLoading && unavailable && <button type="button" onClick={retry} className="block mx-auto mt-4 px-4 py-3 text-primary underline">{t('pricing_retry')}</button>}
           <p className="mt-6 text-center text-xs text-slate-500 dark:text-slate-400">
             {t('landing_price_settlement_note')}
           </p>

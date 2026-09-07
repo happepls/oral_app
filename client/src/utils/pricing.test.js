@@ -2,9 +2,20 @@ import {
   formatCnyReference,
   formatMinorCurrency,
   USD_CNY_REFERENCE_RATE,
+  annualSavingPercent,
 } from './pricing';
 
 describe('pricing display helpers', () => {
+  test('compares annual billing to 52 weekly payments, without claiming savings for reference prices', () => {
+    const products = [
+      { metadata: { tier: 'weekly' }, prices: [{ unit_amount: 499, currency: 'usd' }] },
+      { metadata: { tier: 'annual' }, prices: [{ unit_amount: 9900, currency: 'usd' }] },
+    ];
+    expect(annualSavingPercent(products)).toBe(61);
+    expect(annualSavingPercent(products.map(p => ({ ...p, reference: true })))).toBeNull();
+    products[1].prices[0].currency = 'eur';
+    expect(annualSavingPercent(products)).toBeNull();
+  });
   test('keeps Stripe USD as the primary amount', () => {
     expect(formatMinorCurrency(499, 'usd', 'en-US')).toBe('$4.99');
   });

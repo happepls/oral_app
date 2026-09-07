@@ -294,18 +294,18 @@ class WorkflowContractTests(unittest.TestCase):
         self.assertIn("GITHUB_PATH", installer)
 
     def test_schedule_events_partition_every_quarter_hour(self):
-        self.assertEqual(["15,30,45 * * * *", "0 1-23 * * *", "0 0 * * *"], re.findall(r"cron: '([^']+)'", self.maintain))
+        self.assertEqual(["*/15 * * * *"], re.findall(r"cron: '([^']+)'", self.maintain))
         for hour in range(24):
             for minute in (0, 15, 30, 45):
-                schedule = "15,30,45 * * * *" if minute else ("0 1-23 * * *" if hour else "0 0 * * *")
+                schedule = "*/15 * * * *"
                 with self.subTest(hour=hour, minute=minute):
-                    self.assertEqual(minute == 0, self.scheduled_step_runs("Read hourly structured Zeabur aggregates", schedule))
-                    self.assertEqual(hour == minute == 0, self.scheduled_step_runs("Emit daily trend summary", schedule))
+                    self.assertFalse(self.scheduled_step_runs("Read hourly structured Zeabur aggregates", schedule))
+                    self.assertFalse(self.scheduled_step_runs("Emit daily trend summary", schedule))
 
-    def test_delayed_midnight_event_still_runs_aggregate_and_daily_work(self):
-        # A 00:00 event starting at 00:02 (or hours later) has the same payload.
+    def test_old_delayed_events_do_not_reenable_deferred_aggregates(self):
+        # Previously queued schedule events must also stay health-only.
         for name in ("Read hourly structured Zeabur aggregates", "Emit daily trend summary"):
-            self.assertTrue(self.scheduled_step_runs(name, "0 0 * * *"))
+            self.assertFalse(self.scheduled_step_runs(name, "0 0 * * *"))
             self.assertNotIn("date ", self.step(self.maintain, name))
         self.assertIn("cp /tmp/combined-evaluation.json daily-trend.json", self.maintain)
 

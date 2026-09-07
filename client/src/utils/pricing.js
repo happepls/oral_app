@@ -1,5 +1,13 @@
 const DEFAULT_USD_CNY_REFERENCE_RATE = 33.71 / 4.99;
 
+export function annualSavingPercent(products) {
+  const weekly = products.find(p => p.metadata?.tier === 'weekly' && !p.reference)?.prices?.[0];
+  const annual = products.find(p => p.metadata?.tier === 'annual' && !p.reference)?.prices?.[0];
+  if (!weekly || !annual || weekly.currency !== annual.currency || weekly.unit_amount <= 0) return null;
+  const percent = Math.floor((1 - annual.unit_amount / (weekly.unit_amount * 52)) * 100);
+  return percent > 0 ? percent : null;
+}
+
 export const USD_CNY_REFERENCE_RATE = (() => {
   const configuredRate = Number(process.env.REACT_APP_USD_CNY_REFERENCE_RATE);
   return Number.isFinite(configuredRate) && configuredRate > 0

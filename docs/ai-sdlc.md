@@ -72,15 +72,20 @@ After the application PR is merged and Zeabur reports the exact deployed commit,
 
 ## Production observations
 
-Cadences use three non-overlapping UTC schedules: `15,30,45 * * * *` runs health
-only; `0 1-23 * * *` runs health and hourly aggregates; `0 0 * * *` also emits
-the daily combined-severity snapshot. Routing reads the scheduled event, never
-the runner's current minute, so a delayed midnight run still performs daily work.
+The scheduled cadence is `*/15 * * * *`, health only. The user deferred the
+aggregate endpoint on 2026-09-07; scheduled jobs must not request missing aggregate
+credentials or claim aggregate coverage. Previously queued hourly/midnight
+schedule events also run health only after this workflow revision is deployed.
 Manual dispatch defaults to `health`; choose `hourly` or `daily` to exercise the
 aggregate paths explicitly (their credentials are still required). The daily
 artifact is one combined observation snapshot, not a historical trend analysis.
 
-`SDLC Production Observe` checks a public health endpoint every 15 minutes. When configured, it reads a server-side structured Zeabur aggregate hourly and emits a daily trend artifact. The endpoint must return only the numeric/boolean fields allowlisted in `scripts/sdlc-monitor.py`; free text and unknown fields are rejected. It never requests or stores raw logs or user conversation text.
+`SDLC Production Observe` checks a public health endpoint every 15 minutes. Manual hourly/daily runs remain available for future aggregate integration, and fail explicitly without the required endpoint and credentials. The endpoint must return only the numeric/boolean fields allowlisted in `scripts/sdlc-monitor.py`; free text and unknown fields are rejected. It never requests or stores raw logs or user conversation text.
+
+The current external probe is `https://guajiguaji.top/api/users/health`. Zeabur's
+service readiness check is separate: it defaults to TCP and can use a custom
+HTTP path returning 2xx. For user-service itself that path is `/api/health`,
+without the gateway's `/users` prefix. See [Zeabur health checks](https://zeabur.com/docs/zh-CN/operations/monitoring/health-checks).
 
 In shadow mode a single timeout is only an observation. Diagnosis is triggered by a critical security event, two windows at 5xx ≥1%, two windows at resource use ≥80%, backup age over 26 hours, or two consecutive critical health failures. Latency is report-only until a seven-day baseline is accepted. If a loop is active, the workflow creates or labels a queued diagnostic Issue; otherwise a new maintenance-derived loop may start after the old `maintenance.md` is complete.
 

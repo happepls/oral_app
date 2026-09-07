@@ -2,7 +2,8 @@ import React, { useState, useEffect } from 'react';
 import { useNavigate, useSearchParams, useLocation } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { useTranslation } from 'react-i18next';
-import { formatCnyReference, formatMinorCurrency } from '../utils/pricing';
+import { annualSavingPercent, formatCnyReference, formatMinorCurrency } from '../utils/pricing';
+import usePricingCatalog from '../hooks/usePricingCatalog';
 
 // Aligns with services/api.js: env var (or default) already includes the `/api`
 // prefix. Append only the resource path here — never re-prepend `/api/`, that
@@ -38,8 +39,7 @@ function Subscription() {
   // Account billing always has a deterministic in-product return target.
   // This also avoids returning to a Stripe Checkout history entry.
   const handleBack = () => navigate('/profile', { replace: isCancelled });
-  const [products, setProducts] = useState([]);
-  const [loading, setLoading] = useState(true);
+  const { products, loading, unavailable, retry } = usePricingCatalog();
   const [checkoutLoading, setCheckoutLoading] = useState(null);
   const [currentSubscription, setCurrentSubscription] = useState(null);
   const [subscriptionLoading, setSubscriptionLoading] = useState(Boolean(user));
@@ -82,25 +82,10 @@ function Subscription() {
   }, [stripeSessionId, navigate, refreshProfile]);
 
   useEffect(() => {
-    fetchProducts();
     if (user) {
       fetchSubscription();
     }
   }, [user]);
-
-  const fetchProducts = async () => {
-    try {
-      const res = await fetch(`${API_BASE}/stripe/products-with-prices`);
-      const data = await res.json();
-      const list = Array.isArray(data?.data) ? data.data : [];
-      setProducts(list);
-    } catch (error) {
-      console.error('Error fetching products:', error);
-      setProducts([]);
-    } finally {
-      setLoading(false);
-    }
-  };
 
   const fetchSubscription = async () => {
     setSubscriptionLoading(true);
@@ -271,15 +256,6 @@ function Subscription() {
                        currentSubscription?.subscription?.status === 'active' ||
                        user?.subscription_status === 'active';
 
-  if (loading) {
-    return (
-      <div role="status" aria-live="polite" className="min-h-[100dvh] bg-background-light dark:bg-background-dark flex items-center justify-center">
-        <span className="sr-only">{t('qa_ui.loading')}</span>
-        <div aria-hidden="true" className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
-      </div>
-    );
-  }
-
   return (
     <div className="mx-auto min-h-[100dvh] w-full max-w-lg pb-24" style={{ background: 'var(--background)' }}>
       <div className="px-4 pt-6 pb-4">
@@ -287,7 +263,7 @@ function Subscription() {
           onClick={handleBack}
           className="mb-4 flex min-h-[44px] items-center rounded-xl border border-slate-200 bg-white px-3 text-slate-600 shadow-sm transition-colors hover:border-primary/40 hover:text-primary dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300"
         >
-          <span className="material-symbols-outlined text-xl mr-1">arrow_back</span>
+          <span aria-hidden="true" className="material-symbols-outlined text-xl mr-1">arrow_back</span>
           {t('qa_ui.subscription_back')}
         </button>
 
@@ -394,20 +370,20 @@ function Subscription() {
             >
               {isAnnual && (
                 <div className="inline-block px-3 py-1 text-xs font-bold text-white bg-gradient-to-r from-indigo-500 to-purple-500 rounded-full mb-3">
-                  {t('qa_ui.subscription_best_value')}
+                  {annualSavingPercent(products) ? t('pricing_saving', { percent: annualSavingPercent(products) }) : t('plan_year_name')}
                 </div>
               )}
               
               <div className="flex items-center justify-between mb-3">
                 <h3 className="font-semibold text-slate-900 dark:text-white">
-                  {product.name}
+                  {t(isAnnual ? 'plan_year_name' : 'plan_week_name')}
                 </h3>
                 {price && (
                   <div className="text-right">
                     <div className="text-lg font-bold text-slate-900 dark:text-white">
-                      {formatPrice(price.unit_amount, price.currency, price.recurring?.interval)}
+                      {loading ? '…' : formatPrice(price.unit_amount, price.currency, price.recurring?.interval)}
                     </div>
-                    {cnyReference && (
+                    {!loading && cnyReference && (
                       <div className="text-xs font-normal text-slate-500 dark:text-slate-400">
                         {t('price_cny_reference', { price: cnyReference })}
                       </div>
@@ -417,7 +393,7 @@ function Subscription() {
               </div>
               
               <p className="text-sm text-slate-600 dark:text-slate-400 mb-4">
-                {product.description}
+                {loading ? t('qa_ui.loading') : product.reference ? t('pricing_reference_note') : product.description}
               </p>
               
               <ul className="space-y-2 text-sm text-slate-600 dark:text-slate-400 mb-4">
@@ -437,7 +413,7 @@ function Subscription() {
                   }
                   handleCheckout(price.id);
                 }}
-                disabled={checkoutLoading === price?.id || isSubscribed || subscriptionLoading || subscriptionError}
+                disabled={loading || product.reference || !price?.id || checkoutLoading === price?.id || isSubscribed || subscriptionLoading || subscriptionError}
                 className={`w-full py-3 rounded-xl font-medium transition-all ${
                   isSubscribed
                     ? 'bg-slate-300 dark:bg-slate-600 text-slate-500 dark:text-slate-400 cursor-not-allowed'
@@ -446,7 +422,7 @@ function Subscription() {
                       : 'bg-slate-900 dark:bg-white text-white dark:text-slate-900 hover:opacity-90'
                 } ${checkoutLoading === price?.id ? 'opacity-50' : ''}`}
               >
-                {subscriptionLoading
+                {loading ? t('qa_ui.loading') : product.reference ? t('pricing_coming_soon') : subscriptionLoading
                   ? t('qa_ui.subscription_status_loading')
                   : subscriptionError
                     ? t('qa_ui.subscription_status_unavailable_short')
@@ -460,9 +436,9 @@ function Subscription() {
           );
         })}
 
-        {products.length === 0 && (
+        {!loading && unavailable && (
           <div className="rounded-xl border border-slate-200 bg-white p-5 text-center text-sm text-slate-500 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-400">
-            {t('qa_ui.subscription_prices_unavailable')}
+            <button type="button" onClick={retry} className="px-4 py-3 text-primary underline">{t('pricing_retry')}</button>
           </div>
         )}
 

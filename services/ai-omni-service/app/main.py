@@ -173,7 +173,7 @@ app.add_middleware(
 
 # --- Service Utilities ---
 
-async def get_user_context(token: str, scenario: str = None):
+async def get_user_context(token: str, scenario: str = None, *, profile_only: bool = False):
     """Fetches user profile and goal context from user-service.
     
     Args:
@@ -192,6 +192,8 @@ async def get_user_context(token: str, scenario: str = None):
                 response_data = resp.json().get('data', {})
                 # Handle both {data: user} and {data: {user: user}} formats
                 data = response_data.get('user', response_data) if isinstance(response_data, dict) else response_data
+                if profile_only:
+                    return data
                 logger.info(f"User profile fetched: id={data.get('id')}, nickname={data.get('nickname')}")
                 goal_resp = await client.get(
                     f"{user_service_url}/api/users/goals/active",
@@ -2905,6 +2907,8 @@ class WebSocketCallback(OmniRealtimeCallback):
         self.welcome_sent = False
         self.welcome_muted = False  # Flag to suppress welcome message after retry
         self.session_ready = False
+        self.session_configured = False
+        self.client_session_started = False
         self.pending_user_transcript = None  # Buffer user transcript until AI response completes
         self.ai_responding = False  # Track if AI is currently responding
         self.connection_established_sent = False  # Track if we've sent connection_established
@@ -3134,9 +3138,8 @@ class WebSocketCallback(OmniRealtimeCallback):
         else:
             logger.warning("connection_established already sent, skipping")
         self._update_session_prompt()
-        # SDK callback order is not stable: session.created can arrive before
-        # or after on_open. The guarded trigger at both readiness edges starts
-        # exactly once as soon as both flags are true.
+        # The guarded trigger also waits for session.updated and the browser's
+        # session_start, so prompt settings and mute intent are known first.
         if not self.messages and not self.welcome_sent and not self.welcome_muted:
             self._trigger_welcome_message()
 
@@ -3370,15 +3373,28 @@ class WebSocketCallback(OmniRealtimeCallback):
         return None
 
     def _trigger_welcome_message(self):
-        if self.welcome_sent or not self.conversation or not self.is_connected or not self.session_ready: return
+        if (self.welcome_sent or self.welcome_muted or self.messages or not self.conversation
+                or not self.is_connected or not self.session_ready
+                or not self.session_configured or not self.client_session_started):
+            return
         self.welcome_sent = True
-        target_lang = self.user_context.get('target_language', 'English')
-        starter_text = "Hello, I'm ready to start." if self.role == "InfoCollector" else "Hi, I want to set up my learning goals." if self.role == "GoalPlanner" else f"Hello, I'm ready to practice {target_lang}."
-        logger.info(f"Sending welcome trigger: {starter_text}")
         try:
-            self.conversation.send_raw(json.dumps({"type": "conversation.item.create", "item": {"type": "message", "role": "user", "content": [{"type": "input_text", "text": starter_text}]}}))
-            self.conversation.send_raw(json.dumps({"type": "response.create", "response": {"modalities": ["text", "audio"]}}))
-        except Exception as e: logger.error(f"Failed to send welcome message: {e}")
+            self.conversation.create_response(instructions=(
+                "Start the current session now, following the configured role and task. "
+                "Give a brief greeting and introduce only the current task in the target language. "
+                "This is a system opening, not a learner answer or evidence of task completion."
+            ))
+            self._mark_latency_stage("welcome_requested")
+        except Exception as e:
+            self.welcome_sent = False
+            logger.warning("Welcome request failed: %s", type(e).__name__)
+
+    def start_client_session(self, data):
+        # Browser sends top-level fields; legacy clients use payload.
+        payload = data.get('payload') if isinstance(data.get('payload'), dict) else data
+        self.client_session_started = True
+        self.welcome_muted = self.welcome_muted or payload.get('welcomeMuted') is True
+        self._trigger_welcome_message()
 
     def on_event(self, response: dict) -> None:
         event_name = response.get('type')
@@ -3400,10 +3416,13 @@ class WebSocketCallback(OmniRealtimeCallback):
             self._mark_latency_stage("session_created")
             self.session_ready = True
             if not self.messages and not self.welcome_sent and not getattr(self, "welcome_muted", False):
-                # session.created is DashScope's readiness acknowledgement, so
-                # an extra timer only delays first audio and races teardown on
-                # short-lived connections. Trigger on the callback thread now.
+                # Creation alone does not acknowledge the configured prompt.
+                # The guard waits for session.updated and the client handshake.
                 self._trigger_welcome_message()
+        elif event_name == 'session.updated':
+            self.session_configured = True
+            self._mark_latency_stage("session_configured")
+            self._trigger_welcome_message()
         async def process_event_unlocked():
             try:
                 # `rid` is captured by this event closure. Update all shared
@@ -4365,7 +4384,8 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query(None), ses
         await websocket.send_json({"type": "error", "payload": {"message": "Invalid voice"}})
         await websocket.close(); return
 
-    user_context = await get_user_context(token, scenario)
+    user_context = (await get_user_context(token, profile_only=True)
+                    if mode == 'quick_experience' else await get_user_context(token, scenario))
     if not user_context:
         await websocket.send_json({"type": "error", "payload": {"message": "Invalid token"}})
         await websocket.close(); return
@@ -4375,6 +4395,17 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query(None), ses
         await websocket.send_json({"type": "error", "payload": {"message": "Invalid user context"}})
         await websocket.close(); return
     user_id, session_id = str(user_id_raw), sessionId
+    if mode == 'quick_experience':
+        try:
+            from .quick_experience import run_quick_experience
+        except ImportError:
+            from quick_experience import run_quick_experience
+        await run_quick_experience(
+            websocket, user_context, _get_redis_client(), DASHSCOPE_CONFIG,
+            QWEN_TEXT_MODEL, os.getenv('QWEN3_OMNI_MODEL', 'qwen3.5-omni-flash-realtime'),
+            _daily_turn_key(user_id), _daily_turn_limit(user_context),
+        )
+        return
     if voice: user_context['voice'] = voice
     history_messages = []
     try:
@@ -4607,11 +4638,7 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query(None), ses
                         logger.info(f"Received message: {message[:200]}..." if len(message) > 200 else f"Received message: {message}")
 
                 if msg_type == 'session_start':
-                    logger.info(f"Received session_start for user {payload.get('userId')}")
-                    # Store welcome_muted flag to suppress welcome message after retry
-                    if payload.get('welcomeMuted'):
-                        callback.welcome_muted = True
-                        logger.info('Welcome message muted for this session')
+                    callback.start_client_session(data)
                     continue
 
                 # SECURITY: removed client-sent 'user_transcript' passcode handler.
