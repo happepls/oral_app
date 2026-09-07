@@ -103,4 +103,12 @@ gh workflow run sdlc-maintain.yml -f cadence=health
 - 回滚整体前后端修复；两项新增兼容 schema 保留，不删除 generation 列或评分去重表，以免破坏已有评分链路。
 - 本次主线程按 REVIEW.md 检查鉴权/额度隔离、Stripe 目录降级、评分隔离、音频资源释放和迁移发布边界；未执行独立 Agent 审查。生产 schema 和 Zeabur 发布验证仍是上线条件，不能用本地测试代替。
 
+### PR 检查跟进
+
+- 业务提交 `8781040` 已推送，PR https://github.com/happepls/oral_app/pull/53 。GitHub Clean Runner 34091588866 的完整 verify 通过；CI 34091588900 普通 test job 通过。
+- 首轮全量 UI：232 项通过、9 项跳过、20 项失败。失败全部为 landing/subscription 在十组视口/主题配置的旧截图基线不匹配，发生在后续无障碍断言前，不能据此宣称该轮所有无障碍断言已执行。新增价格和快速体验行为用例通过。
+- 检查移动/桌面、中文浅色与英文深色实际价格页面，确认价格说明及 61% 比例变化符合本次设计；更新本机平台基线时 20 项完整页面检查通过。正常比较模式复验 chromium-375 与 chromium-desktop-dark-en 的四项页面检查通过。保留原 3% 差异预算、布局及无障碍断言。
+- SDLC artifact 校验通过；review 校验因根 release.md 仍为旧任务而报告 base/head 和风险覆盖不匹配。job 仅因 shadow 模式为绿色，本次不计作审查证据通过。保持已授权的独立文档方案，不覆盖旧根发布记录或修改门禁；该限制已在 PR 发布条件披露。
+- Linux 对应 20 张基线来自 CI 34091588900 的 ui-audit-evidence（artifact 10007250765），按远端 ZIP 范围读取并核验 CRC 后提取原图；查看 CI 移动/桌面价格页面后采用，未用 macOS 图片替代 Linux 基线。更新后提交并重新运行 CI，以新运行结果为准。
+
 生产部署需要更新 user-service、comms-service、ai-omni-service 和 client。按当前挂载/平台模式构建，验证实际 SHA、价格返回、注册入口与前后端协议一起生效。回滚按该修复 PR 整体回退前后端，避免留下不存在的体验模式。
