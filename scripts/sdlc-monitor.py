@@ -8,6 +8,7 @@ import json
 import math
 import re
 import sys
+import time
 from pathlib import Path
 
 
@@ -22,6 +23,17 @@ AGGREGATE_FIELDS = {
     "critical_security_event", "health_consecutive_failures", "ws_error_count",
     "dashscope_error_count", "history_save_error_count", "stripe_webhook_error_count",
     "sample_count", "latency_p95_ms",
+    "schema_version", "window_start_epoch", "window_end_epoch", "generated_at_epoch",
+    "source_last_observed_epoch", "observed_minutes", "five_xx_count",
+    "previous_observed_minutes", "previous_sample_count", "previous_five_xx_rate",
+    "previous_resource_utilization", "previous_window_available", "backup_completed_at_epoch",
+}
+DAILY_REQUIRED = {
+    "schema_version", "window_start_epoch", "window_end_epoch", "generated_at_epoch",
+    "source_last_observed_epoch", "observed_minutes", "sample_count", "five_xx_count",
+    "five_xx_rate", "resource_utilization", "previous_observed_minutes", "previous_sample_count",
+    "previous_five_xx_rate", "previous_resource_utilization", "previous_window_available",
+    "backup_completed_at_epoch", "backup_age_hours",
 }
 
 
@@ -59,10 +71,16 @@ def evaluate(observation: dict, bands: dict) -> dict:
     if observation.get("critical_security_event"):
         reasons.append("critical_security_event")
         severity = "immediate"
-    if float(observation.get("five_xx_rate", 0)) >= hard["five_xx_rate"] and int(observation.get("consecutive_windows", 0)) >= 2:
+    daily = observation.get("schema_version") == 1
+    previous = observation.get("previous_window_available", False)
+    error_repeated = (previous and observation["previous_five_xx_rate"] >= hard["five_xx_rate"]) if daily else int(observation.get("consecutive_windows", 0)) >= hard["consecutive_windows"]
+    resource_repeated = (previous and observation["previous_resource_utilization"] >= hard["resource_utilization"]) if daily else int(observation.get("consecutive_windows", 0)) >= hard["consecutive_windows"]
+    if daily and not previous:
+        reasons.append("previous_window_unavailable")
+    if float(observation.get("five_xx_rate", 0)) >= hard["five_xx_rate"] and error_repeated:
         reasons.append("5xx_rate_two_windows")
         if severity != "immediate": severity = "diagnose"
-    if float(observation.get("resource_utilization", 0)) >= hard["resource_utilization"] and int(observation.get("consecutive_windows", 0)) >= 2:
+    if float(observation.get("resource_utilization", 0)) >= hard["resource_utilization"] and resource_repeated:
         reasons.append("resource_two_windows")
         if severity != "immediate": severity = "diagnose"
     if float(observation.get("backup_age_hours", 0)) > hard["backup_age_hours"]:
@@ -74,26 +92,46 @@ def evaluate(observation: dict, bands: dict) -> dict:
     return {"severity": severity, "reasons": reasons, "redacted_summary": redact(str(observation.get("summary", "")))}
 
 
-def validate_aggregate(value: object) -> dict:
+def validate_aggregate(value: object, now: float | None = None) -> dict:
     if not isinstance(value, dict):
         raise ValueError("aggregate must be a JSON object")
     unknown = set(value) - AGGREGATE_FIELDS
     if unknown:
         raise ValueError("free-text or unknown aggregate fields rejected")
     for key, item in value.items():
-        if key == "critical_security_event":
+        if key in {"critical_security_event", "previous_window_available"}:
             if not isinstance(item, bool):
-                raise ValueError("critical_security_event must be boolean")
+                raise ValueError(f"{key} must be boolean")
             continue
         if isinstance(item, bool) or not isinstance(item, (int, float)) or not math.isfinite(item):
             raise ValueError(f"{key} must be a finite number")
         if item < 0:
             raise ValueError(f"{key} must be non-negative")
-        if key in {"five_xx_rate", "resource_utilization"} and item > 1:
+        if key in {"five_xx_rate", "previous_five_xx_rate"} and item > 1:
             raise ValueError(f"{key} must be between 0 and 1")
-        if key.endswith("_count") or key in {"consecutive_windows", "health_consecutive_failures", "sample_count"}:
+        if key.endswith(("_count", "_epoch", "_minutes")) or key in {"schema_version", "consecutive_windows", "health_consecutive_failures"}:
             if not float(item).is_integer():
                 raise ValueError(f"{key} must be an integer")
+    if not DAILY_REQUIRED <= set(value) or value["schema_version"] != 1:
+        raise ValueError("complete daily schema v1 required")
+    now = time.time() if now is None else now
+    generated = value["generated_at_epoch"]
+    end = value["window_end_epoch"]
+    if not 0 <= now - generated <= 300:
+        raise ValueError("aggregate generation time is stale or future")
+    if end != (generated // 86400) * 86400 or value["window_start_epoch"] != end - 86400:
+        raise ValueError("expected previous complete UTC day")
+    if not 0 <= generated - value["source_last_observed_epoch"] <= 180:
+        raise ValueError("source heartbeat is stale or future")
+    if not 1368 <= value["observed_minutes"] <= 1440 or value["sample_count"] < 1:
+        raise ValueError("insufficient daily coverage or no requests")
+    if value["five_xx_count"] > value["sample_count"] or not math.isclose(value["five_xx_rate"], value["five_xx_count"] / value["sample_count"], abs_tol=1e-9):
+        raise ValueError("inconsistent request counts")
+    if value["previous_observed_minutes"] > 1440 or value["previous_window_available"] != (value["previous_observed_minutes"] >= 1368 and value["previous_sample_count"] > 0):
+        raise ValueError("inconsistent previous window coverage")
+    backup = value["backup_completed_at_epoch"]
+    if not 0 < backup <= generated or not math.isclose(value["backup_age_hours"], (generated - backup) / 3600, abs_tol=1e-6):
+        raise ValueError("inconsistent backup age")
     return value
 
 

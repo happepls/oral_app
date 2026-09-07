@@ -10,7 +10,11 @@ Codex proposes and implements; Git hooks and GitHub Actions provide deterministi
 
 The committed default in `bands.yaml` is `mode: shadow`. SDLC checks report failures in PRs, but branch protection must not make them required until a synthetic six-stage loop and at least one production observation window pass with no false blocker, no sensitive data persistence, and all existing checks green.
 
-Required repository secrets are values only: `OPENAI_API_KEY`, fine-grained `SDLC_BOT_TOKEN`, and read-only `ZEABUR_TOKEN`. Repository variables are `PRODUCTION_HEALTH_URL` and a server-side numeric-only `ZEABUR_AGGREGATES_URL`. Missing credentials or sources block the dependent stage; they never produce a pass.
+Required autonomous-loop secrets are `OPENAI_API_KEY` and fine-grained `SDLC_BOT_TOKEN`.
+Daily observation uses Secrets `ZEABUR_AGGREGATES_URL` and `ZEABUR_TOKEN` (a dedicated
+endpoint read token, not a Zeabur management API token). Repository variables are
+`PRODUCTION_HEALTH_URL` and `DAILY_AGGREGATES_ENABLED`. Missing credentials or
+sources fail the dependent observation; they never produce a pass.
 
 ## Starting and queueing a loop
 
@@ -72,15 +76,27 @@ After the application PR is merged and Zeabur reports the exact deployed commit,
 
 ## Production observations
 
-The scheduled cadence is `*/15 * * * *`, health only. The user deferred the
-aggregate endpoint on 2026-09-07; scheduled jobs must not request missing aggregate
-credentials or claim aggregate coverage. Previously queued hourly/midnight
-schedule events also run health only after this workflow revision is deployed.
-Manual dispatch defaults to `health`; choose `hourly` or `daily` to exercise the
-aggregate paths explicitly (their credentials are still required). The daily
-artifact is one combined observation snapshot, not a historical trend analysis.
+`SDLC Production Observe` retains health checks every 15 minutes. Issue #52 adds
+only daily aggregation: `15 0 * * *` (08:15 Asia/Shanghai), gated by
+`DAILY_AGGREGATES_ENABLED=true` after manual acceptance. Manual dispatch defaults
+to `health`; `daily` exercises aggregates without that gate. There is no hourly
+aggregate mode. Event routing uses the triggering cron, so delayed health events
+cannot accidentally invoke aggregation.
 
-`SDLC Production Observe` checks a public health endpoint every 15 minutes. Manual hourly/daily runs remain available for future aggregate integration, and fail explicitly without the required endpoint and credentials. The endpoint must return only the numeric/boolean fields allowlisted in `scripts/sdlc-monitor.py`; free text and unknown fields are rejected. It never requests or stores raw logs or user conversation text.
+`GET /api/users/monitoring/daily` uses a separate Bearer token and returns only
+numeric/boolean data. It covers user-service completed API responses, sampled
+container memory peak, and the latest successful COS backup, with explicit UTC
+daily windows and freshness/coverage checks. It does not cover gateway failures,
+WebSockets, CPU or other services. See [daily monitoring operations](daily-monitoring.md)
+for source definitions, installation, credentials and acceptance. The daily
+artifact contains actual validated metrics plus evaluation; it is not a
+historical trend chart. Unknown fields, missing data, stale data and fetch errors
+fail the run and do not persist upstream response bodies.
+
+Diagnostic Issues use `SDLC_BOT_TOKEN` when provided, otherwise the workflow's
+`GITHUB_TOKEN` with `issues:write`. The fallback queues evidence but cannot trigger
+another Actions workflow automatically. Control-band breaches fail the run even
+when Issue creation succeeds. No external notification service is required.
 
 The current external probe is `https://guajiguaji.top/api/users/health`. Zeabur's
 service readiness check is separate: it defaults to TCP and can use a custom

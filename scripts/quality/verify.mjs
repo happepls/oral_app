@@ -46,6 +46,7 @@ for (const line of audit.split(/\r?\n/)) {
 }
 
 run('QA-CONTRACT', 'backend', 'node', ['--test', 'quality/tests/contracts.test.mjs'], { files: ['contracts/'] });
+run('QA-DAILY-MONITOR', 'integration', python, ['quality/tests/daily-monitoring.test.py'], { files: ['scripts/sdlc-monitor.py', 'scripts/sdlc-daily.py', 'services/backup-service/backup.sh'] });
 run('QA-SECRET-STAGED', 'integration', 'gitleaks', ['git', '--staged', '--verbose', '--config', '.gitleaks.toml'], { autoFix: false, files: ['.gitleaks.toml'] });
 const trackedSensitiveFiles = ['.security-keys.json'].filter((file) => {
   const result = spawnSync('git', ['ls-files', '--error-unmatch', file], { cwd: root, stdio: 'ignore' });

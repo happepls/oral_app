@@ -199,3 +199,15 @@ CREATE INDEX IF NOT EXISTS idx_developer_keys_client ON developer_api_keys(clien
 CREATE INDEX IF NOT EXISTS idx_developer_grants_lookup ON developer_user_grants(client_id, user_id, status);
 CREATE INDEX IF NOT EXISTS idx_developer_audit_created ON developer_audit_events(created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_developer_idempotency_expiry ON developer_idempotency_keys(expires_at);
+
+-- Numeric-only daily monitoring; see migrations/20260907_daily_monitoring.sql.
+CREATE TABLE IF NOT EXISTS monitor_user_minutes (
+    minute_epoch BIGINT PRIMARY KEY CHECK (minute_epoch > 0 AND minute_epoch % 60 = 0),
+    sample_count BIGINT NOT NULL CHECK (sample_count >= 0),
+    five_xx_count BIGINT NOT NULL CHECK (five_xx_count BETWEEN 0 AND sample_count),
+    memory_utilization DOUBLE PRECISION CHECK (memory_utilization >= 0 AND memory_utilization < 'Infinity'::float8)
+);
+CREATE TABLE IF NOT EXISTS monitor_backup_success (
+    singleton BOOLEAN PRIMARY KEY DEFAULT TRUE CHECK (singleton),
+    completed_at TIMESTAMPTZ NOT NULL
+);

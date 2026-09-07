@@ -222,10 +222,10 @@ class WorkflowContractTests(unittest.TestCase):
     def step(workflow, name):
         return workflow.split(f"      - name: {name}\n", 1)[1].split("      - ", 1)[0]
 
-    def scheduled_step_runs(self, name, schedule="", cadence="", event="schedule"):
+    def scheduled_step_runs(self, name, schedule="", cadence="", event="schedule", enabled="true"):
         step = self.step(self.maintain, name)
         expression = re.search(r"^        if: (.+)$", step, re.M).group(1)
-        for field, value in {"github.event.schedule": schedule, "inputs.cadence": cadence, "github.event_name": event}.items():
+        for field, value in {"github.event.schedule": schedule, "inputs.cadence": cadence, "github.event_name": event, "vars.DAILY_AGGREGATES_ENABLED": enabled}.items():
             expression = expression.replace(field, repr(value))
         tree = ast.parse(expression.replace("||", "or").replace("&&", "and"), mode="eval")
 
@@ -294,27 +294,28 @@ class WorkflowContractTests(unittest.TestCase):
         self.assertIn("GITHUB_PATH", installer)
 
     def test_schedule_events_partition_every_quarter_hour(self):
-        self.assertEqual(["*/15 * * * *"], re.findall(r"cron: '([^']+)'", self.maintain))
+        self.assertEqual(["*/15 * * * *", "15 0 * * *"], re.findall(r"cron: '([^']+)'", self.maintain))
         for hour in range(24):
             for minute in (0, 15, 30, 45):
                 schedule = "*/15 * * * *"
                 with self.subTest(hour=hour, minute=minute):
-                    self.assertFalse(self.scheduled_step_runs("Read hourly structured Zeabur aggregates", schedule))
-                    self.assertFalse(self.scheduled_step_runs("Emit daily trend summary", schedule))
+                    self.assertFalse(self.scheduled_step_runs("Read daily structured aggregates", schedule))
 
     def test_old_delayed_events_do_not_reenable_deferred_aggregates(self):
         # Previously queued schedule events must also stay health-only.
-        for name in ("Read hourly structured Zeabur aggregates", "Emit daily trend summary"):
+        for name in ("Read daily structured aggregates",):
             self.assertFalse(self.scheduled_step_runs(name, "0 0 * * *"))
             self.assertNotIn("date ", self.step(self.maintain, name))
-        self.assertIn("cp /tmp/combined-evaluation.json daily-trend.json", self.maintain)
+        self.assertFalse(self.scheduled_step_runs("Read daily structured aggregates", "15 0 * * *", enabled="false"))
+        self.assertTrue(self.scheduled_step_runs("Read daily structured aggregates", "15 0 * * *"))
+        self.assertIn("'metrics': metrics", self.maintain)
 
     def test_manual_cadence_is_explicit_and_defaults_to_health(self):
         self.assertIn("default: health", self.maintain)
         for cadence in ("", "health", "hourly", "daily"):
             with self.subTest(cadence=cadence):
-                self.assertEqual(cadence in {"hourly", "daily"}, self.scheduled_step_runs("Read hourly structured Zeabur aggregates", cadence=cadence, event="workflow_dispatch"))
-                self.assertEqual(cadence == "daily", self.scheduled_step_runs("Emit daily trend summary", cadence=cadence, event="workflow_dispatch"))
+                self.assertEqual(cadence == "daily", self.scheduled_step_runs("Read daily structured aggregates", cadence=cadence, event="workflow_dispatch", enabled="false"))
+        self.assertIn("options: [health, daily]", self.maintain)
 
     def test_queue_has_close_and_periodic_recovery(self):
         self.assertIn("pull_request_target:", self.loop)
