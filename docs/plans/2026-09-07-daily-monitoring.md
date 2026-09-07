@@ -57,6 +57,11 @@ user-service 的 Zeabur Dockerfile 使用固定 GHCR 标签，发布须核对实
 - 隔离 backup-service 镜像替代 cron 启动入口，验证实际 entrypoint 将
   BACKUP_MONITOR_ENABLED 传入定时环境；脚本语法与 psql 客户端均通过。
   此验证无网络、无业务凭据，不运行真实备份。
+- 生产入口只读连通核验：同一 `/api/users/health`，Python 默认 User-Agent 返回 403，
+  `oral-app-daily-monitor/1.0` 返回 200 JSON。消费端因此显式设置专用 User-Agent，
+  未更改 Cloudflare 规则；这不代表新聚合接口已部署或已有生产聚合证据。
+- 首个提交 `5fe00ea` 的 GitHub CI（test、ui-audit、verification-toolchain、
+  sdlc-artifacts、sdlc-review）全部通过；User-Agent 后续补丁需复核最终提交的检查。
 
 ## 审查与生产状态
 

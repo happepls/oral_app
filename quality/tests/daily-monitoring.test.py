@@ -89,6 +89,7 @@ class DailyTests(unittest.TestCase):
         self.assertEqual(1000, daily.collect('https://monitor.example/daily', 'x' * 32, opener)['sample_count'])
         request = opener.open.call_args.args[0]
         self.assertEqual('Bearer ' + 'x' * 32, request.get_header('Authorization'))
+        self.assertEqual('oral-app-daily-monitor/1.0', request.get_header('User-agent'))
         self.assertEqual(15, opener.open.call_args.kwargs['timeout'])
 
     def test_unsafe_urls_are_rejected_before_network(self):

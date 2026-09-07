@@ -25,7 +25,11 @@ def collect(url, token, opener=None):
         raise ValueError("HTTPS aggregate URL required")
     if len(token) < 32:
         raise ValueError("dedicated read token required")
-    request = urllib.request.Request(url, headers={"Authorization": f"Bearer {token}", "Accept": "application/json"})
+    request = urllib.request.Request(url, headers={
+        "Authorization": f"Bearer {token}", "Accept": "application/json",
+        # Production ingress rejects Python's generic default User-Agent.
+        "User-Agent": "oral-app-daily-monitor/1.0",
+    })
     opener = opener or urllib.request.build_opener(NoRedirect())
     with opener.open(request, timeout=15) as response:
         if response.status != 200 or response.headers.get_content_type() != "application/json":
