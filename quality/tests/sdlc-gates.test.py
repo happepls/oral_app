@@ -222,10 +222,14 @@ class WorkflowContractTests(unittest.TestCase):
     def step(workflow, name):
         return workflow.split(f"      - name: {name}\n", 1)[1].split("      - ", 1)[0]
 
-    def scheduled_step_runs(self, name, schedule="", cadence="", event="schedule", enabled="true"):
+    def scheduled_step_runs(self, name, schedule="", cadence="", event="schedule", enabled="true", severity="", previous_success=True):
         step = self.step(self.maintain, name)
         expression = re.search(r"^        if: (.+)$", step, re.M).group(1)
-        for field, value in {"github.event.schedule": schedule, "inputs.cadence": cadence, "github.event_name": event, "vars.DAILY_AGGREGATES_ENABLED": enabled}.items():
+        # GitHub implicitly requires success() unless a status function is present.
+        if "always()" not in expression and not previous_success:
+            return False
+        expression = expression.replace("always()", "True")
+        for field, value in {"github.event.schedule": schedule, "inputs.cadence": cadence, "github.event_name": event, "vars.DAILY_AGGREGATES_ENABLED": enabled, "steps.combined.outputs.severity": severity}.items():
             expression = expression.replace(field, repr(value))
         tree = ast.parse(expression.replace("||", "or").replace("&&", "and"), mode="eval")
 
@@ -335,6 +339,20 @@ class WorkflowContractTests(unittest.TestCase):
     def test_aggregate_severity_is_combined(self):
         self.assertIn("Combine health and aggregate severity", self.maintain)
         self.assertIn("steps.combined.outputs.severity", self.maintain)
+
+    def test_diagnostic_queue_survives_failed_collection_without_queueing_healthy_runs(self):
+        for previous_success in (True, False):
+            for severity in ("", "normal", "watch", "diagnose", "immediate"):
+                with self.subTest(previous_success=previous_success, severity=severity):
+                    self.assertEqual(
+                        severity in ("diagnose", "immediate"),
+                        self.scheduled_step_runs("Queue evidence-backed diagnostic", severity=severity, previous_success=previous_success),
+                    )
+
+    def test_diagnostic_queue_token_can_read_prs_and_write_issues(self):
+        permissions = self.maintain.split("permissions:\n", 1)[1].split("\n\n", 1)[0]
+        self.assertIn("  pull-requests: read", permissions)
+        self.assertIn("  issues: write", permissions)
 
 
 if __name__ == "__main__":
