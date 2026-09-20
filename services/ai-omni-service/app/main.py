@@ -26,8 +26,10 @@ from dashscope.audio.qwen_omni import (
 import dashscope
 try:
     from .dashscope_config import classify_connection_error, connect_with_retry, resolve_dashscope_config
+    from . import product_analytics
 except ImportError:  # tests and direct `python app/main.py` load it as a module
     from dashscope_config import classify_connection_error, connect_with_retry, resolve_dashscope_config
+    import product_analytics
 
 # --- Configuration & Logging ---
 logging.basicConfig(level=logging.INFO)
@@ -155,6 +157,23 @@ class _TTLDict:
 session_phases: _TTLDict = _TTLDict(ttl=_SESSION_PHASES_TTL, maxsize=_SESSION_PHASES_MAX)
 
 app = FastAPI()
+
+
+@app.on_event('startup')
+async def start_product_analytics():
+    if product_analytics.enabled():
+        app.state.analytics_worker = asyncio.create_task(product_analytics.delivery_worker(_get_redis_client))
+
+
+@app.on_event('shutdown')
+async def stop_product_analytics():
+    worker = getattr(app.state, 'analytics_worker', None)
+    if worker:
+        worker.cancel()
+        try:
+            await worker
+        except asyncio.CancelledError:
+            pass
 
 # Enable CORS — origins from env CORS_ALLOWED_ORIGINS (CSV), default matches Nginx api-gateway allowlist
 _cors_origins = [
@@ -2917,6 +2936,7 @@ class WebSocketCallback(OmniRealtimeCallback):
         self.scenario = scenario
         self.mode = mode
         self.phase_key = f"{user_id}:{scenario or ''}"  # 每个场景独立的 phase key
+        self.analytics = product_analytics.ConversationEvidence(self._emit_analytics)
         self._latency_started_at = time.monotonic()
         self._latency_stages = set()
         self.conversation = None
@@ -2992,6 +3012,45 @@ class WebSocketCallback(OmniRealtimeCallback):
         if phase == "scene_theater":
             return "scene_theater"
         return self.mode or phase or None
+
+    def analytics_real_mode(self):
+        return product_analytics.enabled() and product_analytics.eligible(
+            self.mode, session_phases.get(self.phase_key, {}).get('phase'), self.is_daily_qa_mode
+        )
+
+    async def _emit_analytics(self, event):
+        persisted = await product_analytics.enqueue(_get_redis_client(), self.user_id, self.session_id, event)
+        if event == 'paired' and self.analytics_real_mode():
+            proof = product_analytics.end_proof(self.user_id, self.session_id)
+            if proof:
+                await self._safe_send({'type': 'analytics_end_proof', 'payload': {'proof': proof}})
+        return persisted
+
+    async def restore_analytics_proof(self):
+        # Reconnects can end a real conversation whose pair is already durable.
+        # Only the server's eligible phase can reissue the account/session proof.
+        if not self.analytics_real_mode():
+            return
+        secret = os.getenv('ANALYTICS_WRITE_TOKEN', '')
+        if len(secret) < 32:
+            return
+        for attempt in range(6):
+            try:
+                async with httpx.AsyncClient() as client:
+                    result = await client.post(
+                        f"{os.getenv('USER_SERVICE_URL', 'http://user-service:3000').rstrip('/')}/api/users/analytics/internal/proof",
+                        headers={'Authorization': f'Bearer {secret}'},
+                        json={'userId': self.user_id, 'sessionId': self.session_id}, timeout=2,
+                    )
+                if result.status_code == 200:
+                    if result.json().get('paired') and self.analytics_real_mode():
+                        await self.websocket.send_json({'type': 'analytics_end_proof', 'payload': {
+                            'proof': product_analytics.end_proof(self.user_id, self.session_id)}})
+                        return
+            except Exception:
+                pass
+            await asyncio.sleep(2)
+        logger.warning('[product-analytics] reconnect proof unavailable')
 
     def _mark_latency_stage(self, stage: str) -> None:
         if stage in self._latency_stages:
@@ -3447,6 +3506,7 @@ class WebSocketCallback(OmniRealtimeCallback):
             response.get('response_id') or 
             response.get('request_id') or
             response.get('item', {}).get('response_id') or
+            response.get('response', {}).get('id') or
             self.current_response_id  # Fallback to existing if not found
         )
 
@@ -3468,6 +3528,10 @@ class WebSocketCallback(OmniRealtimeCallback):
             self._trigger_welcome_message()
         async def process_event_unlocked():
             try:
+                if event_name == 'input_audio_buffer.committed':
+                    self.analytics.prepare(response.get('item_id'), self.analytics_real_mode())
+                elif event_name == 'response.created':
+                    self.analytics.response_started(rid)
                 # `rid` is captured by this event closure. Update all shared
                 # response/gate state only while holding the event lock so an
                 # older coroutine cannot read a newer callback's response ID.
@@ -4103,6 +4167,8 @@ class WebSocketCallback(OmniRealtimeCallback):
                                                     
                                                     # All tasks completed, call scenario review workflow for personalized feedback
                                                     logger.info("Scenario completed via magic passcode, calling scenario review workflow...")
+                                                    if self.analytics_real_mode():
+                                                        await self.analytics.end()
                                                     try:
                                                         # Get conversation history for review
                                                         conv_history = self.messages[-50:] if len(self.messages) > 50 else self.messages
@@ -4210,6 +4276,8 @@ class WebSocketCallback(OmniRealtimeCallback):
                             current_task = (self.user_context.get("active_goal") or {}).get("current_task") or {}
                             turn_id = message_id
                             self.current_turn_id = turn_id
+                            if user_transcript.strip():
+                                await self.analytics.accept(turn_id, self.analytics_real_mode())
                             msg = {
                                 "id": message_id,
                                 "role": "user",
@@ -4290,6 +4358,8 @@ class WebSocketCallback(OmniRealtimeCallback):
                         logger.info(f"Sent complete AI message: {self.full_response_text[:50]}...")
 
                         self._schedule_real_turn_count()
+                        if self.analytics_real_mode() and rid not in self.ignored_response_ids:
+                            await self.analytics.finish(rid)
                         await _maybe_finalize_daily_qa_answer(self, self.full_response_text)
 
                         active_goal = self.user_context.get("active_goal") or {}
@@ -4668,6 +4738,7 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query(None), ses
                 })
 
         welcome_readiness_task = asyncio.create_task(welcome_readiness_timeout())
+        asyncio.create_task(callback.restore_analytics_proof())
 
         while True:
             try:
@@ -4807,6 +4878,8 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query(None), ses
                         }
                         current_task = (callback.user_context.get("active_goal") or {}).get("current_task") or {}
                         callback.current_turn_id = text_message["id"]
+                        callback.analytics.prepare(callback.current_turn_id, callback.analytics_real_mode() and bool(text.strip()))
+                        await callback.analytics.accept(callback.current_turn_id, callback.analytics_real_mode() and bool(text.strip()))
                         text_message.update({
                             "scenario": callback.scenario,
                             "task_id": current_task.get("id"),
@@ -4983,6 +5056,8 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query(None), ses
                         )
 
                         if not next_task_obj:
+                            if callback.analytics_real_mode():
+                                await callback.analytics.end()
                             active_goal = callback.user_context.get('active_goal') or {}
                             await _generate_and_emit_scenario_review(
                                 callback,

@@ -1,0 +1,19 @@
+# Standalone analytics stack; never attach Umami to the business database.
+# Secrets are supplied by the operator's environment, never committed.
+services:
+  umami:
+    image: ghcr.io/umami-software/umami:3.4.0
+    ports:
+      - "127.0.0.1:3033:3000"
+    environment:
+      DATABASE_URL: ${UMAMI_DATABASE_URL:?Dedicated Umami database URL required}
+      APP_SECRET: ${UMAMI_APP_SECRET:?Random secret required}
+      TWO_FACTOR_ENCRYPTION_KEY: ${UMAMI_TWO_FACTOR_KEY:?64 hex characters required}
+      DISABLE_TELEMETRY: "1"
+    restart: unless-stopped
+    init: true
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:3000/api/heartbeat"]
+      interval: 30s
+      timeout: 5s
+      retries: 3

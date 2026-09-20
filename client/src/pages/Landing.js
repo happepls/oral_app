@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { useAuth } from '../contexts/AuthContext';
 import LanguageSwitcher from '../components/LanguageSwitcher';
+import { analyticsAllowed } from '../utils/productAnalytics';
 import usePricingCatalog from '../hooks/usePricingCatalog';
 import { annualSavingPercent, formatCnyReference, formatMinorCurrency } from '../utils/pricing';
 import { motion } from 'motion/react';
@@ -13,6 +14,7 @@ function Landing() {
   const { user } = useAuth();
   const { t, i18n } = useTranslation();
   const [showPrivacy, setShowPrivacy] = useState(false);
+  const [allowAnalytics, setAllowAnalytics] = useState(analyticsAllowed);
   const { products, loading: pricesLoading, unavailable, retry } = usePricingCatalog();
   const saving = annualSavingPercent(products);
   const livePrices = Object.fromEntries(products.map(product => [product.metadata.tier, {
@@ -403,6 +405,18 @@ function Landing() {
                 {para}
               </p>
             ))}
+            <p className="text-slate-600 dark:text-slate-300 text-sm leading-relaxed mb-3">
+              {t('analytics_privacy')}
+            </p>
+            <label className="flex items-center gap-3 text-sm text-slate-700 dark:text-slate-200">
+              <input type="checkbox" checked={allowAnalytics} onChange={(event) => {
+                try {
+                  localStorage.setItem('analytics_opt_out', String(!event.target.checked));
+                  setAllowAnalytics(analyticsAllowed());
+                } catch { setAllowAnalytics(false); }
+              }} />
+              {t('analytics_allow')}
+            </label>
           </motion.div>
         </div>
       )}

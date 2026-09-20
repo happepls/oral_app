@@ -8,6 +8,7 @@ import { TourProvider } from './contexts/TourContext';
 import Landing from './pages/Landing';
 import SplashScreen from './components/SplashScreen';
 import SupportChat from './components/SupportChat';
+import ProductAnalytics from './components/ProductAnalytics';
 import './App.css';
 
 const LANDING_SPLASH_SESSION_KEY = 'hasSeenSplash';
@@ -151,6 +152,7 @@ function App() {
             <TourProvider>
               <div className="app-viewport bg-gray-50 dark:bg-gray-900 transition-colors duration-300">
                 <SupportChat />
+                <ProductAnalytics />
                 <AppRoutes />
               </div>
             </TourProvider>
