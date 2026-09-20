@@ -91,7 +91,11 @@ describe('report uses real access-token authentication', () => {
   test('cookie and Bearer admin access; missing, expired and non-admin denied', async () => {
     const cookieParser = require('cookie-parser');
     const jwt = require('jsonwebtoken');
+    // The existing auth module starts an hourly blacklist sweeper on import.
+    // This test exercises authentication, not the production background timer.
+    const intervalSpy = jest.spyOn(global, 'setInterval').mockImplementation(() => ({ unref() {} }));
     const { protect, generateAccessToken } = require('../middleware/enhancedAuthMiddleware');
+    intervalSpy.mockRestore();
     const previousSecret = process.env.JWT_SECRET;
     process.env.JWT_SECRET = 'test-only-jwt-key-product-analytics';
     const db = { query: jest.fn(async () => ({ rows: [{ registered: 0, completed: 0, mature_7d: 0 }] })) };
