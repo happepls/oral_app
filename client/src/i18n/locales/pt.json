@@ -1,4 +1,6 @@
 {
+  "analytics_allow": "Permitir estatísticas anônimas de visitas (respeita os sinais de privacidade do navegador)",
+  "analytics_privacy": "Usamos Umami hospedado por nós para medir páginas e origens das visitas, sem dados da conta, conversas ou áudio. As visitas são mantidas por 90 dias e podem ser desativadas aqui. Datas de cadastro e primeira conversa permitem relatórios de conversão; registros vinculados são removidos com a conta.",
   "task_progress_help_quality": "99%: A pontuação é suficiente, mas a última prática precisa melhorar.",
   "task_progress_help_windows": "99%: São necessárias mais conversas completas de prática.",
   "task_progress_help_score": "Continue praticando para atingir a pontuação necessária.",

@@ -1,5 +1,6 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
+import { endAnalyticsConversation } from '../utils/productAnalytics';
 import { conversationAPI, aiAPI, userAPI } from '../services/api';
 import { getAuthHeaders } from '../services/api';
 import RealTimeRecorder from '../components/RealTimeRecorder';
@@ -433,7 +434,13 @@ function TaskCompletionSheet({ taskReadyToComplete, tasks, completedTasks, onCon
 }
 
 function Conversation() {
-  const navigate = useNavigate();
+  const routerNavigate = useNavigate();
+  const navigate = useCallback((destination, options) => {
+    if (destination !== '/conversation' && !['tour', 'recall', 'daily_qa'].includes(new URLSearchParams(window.location.search).get('mode'))) {
+      endAnalyticsConversation(sessionIdRef.current, analyticsUserRef.current, analyticsEndProofRef.current);
+    }
+    routerNavigate(destination, options);
+  }, [routerNavigate]);
   const location = useLocation();
   const { t } = useTranslation();
   const { user, token, loading } = useAuth(); // Added loading state
@@ -462,6 +469,18 @@ function Conversation() {
   const [wsRejected, setWsRejected] = useState(false);
   const [sessionId, setSessionId] = useState(null);
   const sessionIdRef = useRef(null);
+  const analyticsUserRef = useRef(user?.id);
+  const analyticsEndProofRef = useRef(null);
+  analyticsUserRef.current = user?.id;
+  useEffect(() => {
+    const onBack = () => {
+      if (!['tour', 'recall', 'daily_qa'].includes(new URLSearchParams(location.search).get('mode'))) {
+        endAnalyticsConversation(sessionIdRef.current, analyticsUserRef.current, analyticsEndProofRef.current);
+      }
+    };
+    window.addEventListener('popstate', onBack);
+    return () => window.removeEventListener('popstate', onBack);
+  }, [location.search]);
   const [selection, setSelection] = useState({ text: '', x: 0, y: 0, visible: false });
   const [isSynthesizing, setIsSynthesizing] = useState(false);
   const [playingAudioUrl, setPlayingAudioUrl] = useState(null);
@@ -1443,6 +1462,10 @@ function Conversation() {
 
   // Handle JSON messages from WebSocket
   const handleJsonMessage = useCallback((data) => {
+      if (data.type === 'analytics_end_proof') {
+        analyticsEndProofRef.current = data.payload?.proof || null;
+        return;
+      }
       console.log('Received JSON message:', data);
 
       // Handle different message types

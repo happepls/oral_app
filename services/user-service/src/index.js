@@ -151,6 +151,20 @@ app.use('/', userRoutes);
 app.use('/', sseRoutes);
 app.use('/api/stripe', stripeRoutes);
 
+const { createProductAnalytics } = require('./analytics/productAnalytics');
+const productAnalytics = createProductAnalytics({
+  db: (() => {
+    const pool = new MonitorPool({ connectionString: process.env.DATABASE_URL,
+      max: 2, connectionTimeoutMillis: 1500, idleTimeoutMillis: 10000,
+      statement_timeout: 5000, query_timeout: 6000 });
+    pool.on('error', () => console.warn('[product-analytics] database unavailable'));
+    return { pool, query: (...args) => pool.query(...args) };
+  })(),
+  protect: require('./middleware/enhancedAuthMiddleware').protect,
+});
+app.use('/api/users/analytics', productAnalytics.router);
+productAnalytics.start();
+
 app.get('/api/health', (req, res) => {
   res.status(200).json({
     status: 'OK',

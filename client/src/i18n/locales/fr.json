@@ -1,4 +1,6 @@
 {
+  "analytics_allow": "Autoriser les statistiques anonymes de visite (selon les préférences du navigateur)",
+  "analytics_privacy": "Umami auto-hébergé mesure les pages et sources de visite sans données de compte, conversations ni audio. Les visites sont conservées 90 jours et peuvent être désactivées ici. Les dates d’inscription et de première conversation servent aux rapports de conversion ; les données liées sont supprimées avec le compte.",
   "task_progress_help_quality": "99 % : Le score est suffisant, mais la dernière pratique doit être améliorée.",
   "task_progress_help_windows": "99 % : Il faut davantage de pratique complète.",
   "task_progress_help_score": "Continuez à pratiquer pour atteindre le score requis.",
