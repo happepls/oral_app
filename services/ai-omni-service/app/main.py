@@ -4519,6 +4519,9 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query(None), ses
             websocket, user_context, _get_redis_client(), DASHSCOPE_CONFIG,
             QWEN_TEXT_MODEL, os.getenv('QWEN3_OMNI_MODEL', 'qwen3.5-omni-flash-realtime'),
             _daily_turn_key(user_id), _daily_turn_limit(user_context),
+            analytics_emit=lambda event: product_analytics.enqueue(
+                _get_redis_client(), user_id, f'quick_{user_id}', event
+            ),
         )
         return
     if voice: user_context['voice'] = voice

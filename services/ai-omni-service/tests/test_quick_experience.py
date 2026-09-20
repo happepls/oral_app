@@ -64,6 +64,54 @@ def answer(stage, text="I enjoy helping customers"):
 
 
 class QuickExperienceTests(unittest.IsolatedAsyncioTestCase):
+    async def test_first_interview_analytics_requires_successful_feedback(self):
+        redis = Redis()
+        emit = AsyncMock()
+        ws = Socket([answer(0), answer(1), answer(2)])
+        with patch.object(quick, 'generate_report', AsyncMock(return_value={
+            'strengths': 'Clear examples', 'improvements': 'Add detail', 'example': 'I solved a problem.'
+        })):
+            await quick.run_quick_experience(ws, {'id': 'analytics-user'}, redis, None, 'model', 'realtime', 'quota', 15, analytics_emit=emit)
+        self.assertEqual([call.args[0] for call in emit.await_args_list], ['started', 'paired', 'ended'])
+
+    async def test_interview_invalid_answer_or_failed_feedback_never_completes(self):
+        emit = AsyncMock()
+        ws = Socket([answer(0, ''), answer(0), answer(1), answer(2)])
+        with patch.object(quick, 'generate_report', AsyncMock(side_effect=RuntimeError('unavailable'))):
+            await quick.run_quick_experience(ws, {'id': 'analytics-user'}, Redis(), None, 'model', 'realtime', 'quota', 15, analytics_emit=emit)
+        self.assertEqual([call.args[0] for call in emit.await_args_list], ['started'])
+
+    async def test_interview_analytics_failure_does_not_break_feedback(self):
+        ws = Socket([answer(0), answer(1), answer(2)])
+        report = {'strengths': 'Clear examples', 'improvements': 'Add detail', 'example': 'I solved a problem.'}
+        with patch.object(quick, 'generate_report', AsyncMock(return_value=report)):
+            await quick.run_quick_experience(ws, {'id': 'analytics-user'}, Redis(), None, 'model', 'realtime', 'quota', 15,
+                                             analytics_emit=AsyncMock(side_effect=RuntimeError('offline')))
+        self.assertTrue(any(message.get('payload', {}).get('report') == report for message in ws.sent))
+
+    async def test_failed_report_persistence_requires_successful_retry_before_completion(self):
+        redis = Redis()
+        original_set = redis.set
+        failed = False
+        emit = AsyncMock()
+
+        async def fail_first_report(key, value, **kwargs):
+            nonlocal failed
+            if key.startswith('quick_experience:v1:') and json.loads(value).get('report') and not failed:
+                failed = True
+                raise RuntimeError('redis unavailable')
+            return await original_set(key, value, **kwargs)
+
+        redis.set = fail_first_report
+        report = {'strengths': 'Clear', 'improvements': 'Detail', 'example': 'I helped.'}
+        ws = Socket([answer(0), answer(1), answer(2), {'type': 'quick_report_retry'}])
+        with patch.object(quick, 'generate_report', AsyncMock(return_value=report)) as generate:
+            await quick.run_quick_experience(ws, {'id': 'analytics-user'}, redis, None, 'model', 'realtime', 'quota', 15, analytics_emit=emit)
+        self.assertEqual(generate.await_count, 2)
+        self.assertEqual([call.args[0] for call in emit.await_args_list], ['started', 'paired', 'ended'])
+        self.assertEqual(json.loads(redis.values['quick_experience:v1:analytics-user'])['report'], report)
+        self.assertIn('report_failed', [m['payload'].get('code') for m in ws.sent])
+
     async def run_flow(self, redis, events, user_id="one"):
         ws = Socket(events)
         await quick.run_quick_experience(ws, {"id": user_id}, redis, None, "model", "realtime", f"daily:{user_id}", 15)

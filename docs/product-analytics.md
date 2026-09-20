@@ -7,7 +7,8 @@
 - 自托管 Umami **3.4.0**（固定官方镜像，软件免费；Zeabur 计算/数据库资源按实际计费）显示 PV、访客、来源和自定义事件。
 - 客户端经现有 `/api/users/analytics/pageview` 同源接口采集；不需要扩大 CSP。规范化路径只允许已知路由，其他为 `/other`，不采 query/hash/标题/对话内容/音频/业务身份。浏览器隐私信号与首页隐私弹窗开关均可关闭访问统计。
 - `users` INSERT 触发器事务性记录 `registration_completed`，覆盖三种注册；既有用户不回填。外部 Umami 故障不影响注册事务。
-- AI 服务在真实 scene_theater 阶段配对已接受的用户输入与同一 response 的完整 AI 文本。排除 tour/recall/daily_qa/quick_experience，magic_repetition 阶段不计，转到真人阶段才计。
+- 普通场景在真实 scene_theater 阶段配对已接受的用户输入与同一 response 的完整 AI 文本。排除 tour/recall/daily_qa，magic_repetition 阶段不计，转到真人阶段才计。
+- 注册后的默认快速面试 `quick_experience` 也纳入：首个有效且已持久化的回答记开始；三题回答完成且服务端 AI 反馈成功生成/保存，才记完整对话和结束。空体验、题目展示、无效回答、反馈生成失败不记完成。快速面试与普通场景共享账户级首次去重，不改变现有额度和评分规则。
 - 实际输入记 `first_conversation_started`；完整轮次与明确结束同时存在才记 `first_conversation_completed`。整场后端确认完成也可结束。刷新/断线不自动结束。签名结束凭证绑定账户、会话，普通客户端不能伪造完整轮次。
 - 浏览器结束记录按账户在本地保留待重试队列；上游证据以 Redis 原子队列重试，SQL 唯一约束保证每账户仅一个首次事件。Umami 没有本方案所需的接收幂等键，确认响应丢失可能重复投递，因此**精确转化率以 SQL 队列报表为准**。
 - Umami 服务器事件带 `source=server`，无业务标识。查看浏览器/设备统计时排除 `/conversion`，不要用服务器合成会话做原生用户漏斗。事件时间使用原始业务时间，不使用投递重试时间。

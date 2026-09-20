@@ -1,14 +1,15 @@
 # 产品统计实施验证（2026-09-20）
 
 实现批准：本会话用户“批准实施”。需求：#58；PR：<https://github.com/happepls/oral_app/pull/59>。
-核心行为版本：`630c47807288d7461a119f42435bf40062f20465`；随后补充静态tour禁止统计fetch的保护与回归测试，综合验证已重跑。
+核心行为版本：`630c47807288d7461a119f42435bf40062f20465`；随后补充静态tour禁止统计fetch、注册默认快速面试的开始/完成采集及回归测试，综合验证已重跑。
 对照主分支：`ff80676f6605e49e9ec0357d81fd70e3b2638257`。
 
 ## Ran
 
 | 命令/验证 | 实际结果 |
 | --- | --- |
-| `npm run verify` | exit 0，pass，100；前端569测试通过；user-service162通过、3条既有跳过；ai-omni238通过；其他 verifier 项通过 |
+| `npm run verify` | exit 0，pass，100；前端569测试通过；user-service162通过、3条既有跳过；ai-omni242通过；其他 verifier 项通过 |
+| `.venv/bin/python -m pytest services/ai-omni-service/tests/test_quick_experience.py services/ai-omni-service/tests/test_analytics_hooks.py services/ai-omni-service/tests/test_product_analytics.py -q` | exit 0，28通过；覆盖默认快速面试、反馈失败、保存失败后重试及统计故障隔离 |
 | user-service: `npm test -- --runInBand productAnalytics` | 9通过，涵盖普通账户拒绝、管理员 Cookie/Bearer、过期凭据、隐私字段筛除、投递重试 |
 | `.venv/bin/python -m pytest services/ai-omni-service/tests/test_analytics_hooks.py services/ai-omni-service/tests/test_product_analytics.py -q` | exit 0，18通过，包括真实 callback 入口、欢迎语排除、ASR时序、模式、Redis重试、刷新后延迟恢复结束凭证 |
 | client: `CI=true npm test -- --watchAll=false --runInBand ProductAnalytics` | exit 0，5通过，包括静态tour零统计请求 |
@@ -28,6 +29,8 @@
 ## 修复与复审
 
 独立只读 reviewer 沿调用链审查 auth、data、scoring、ui、websocket_audio，最终无未解决高/中风险问题，建议提交 PR。修复了旧空会话结束拼接后续轮次、复习模式复用会话、代理后全站共享限流、Redis短暂不可用丢事件、刷新丢结束凭证及首次恢复早于后台持久化的竞态。
+
+核对 Register 默认跳转后补齐快速面试。复审发现反馈保存失败后内存残留可能使重试误报完成，已在保存失败时清空未持久化反馈；回归验证重新生成并保存成功后才记完成。修复后复审无未解决高/中风险问题，重跑综合验证与 ai-omni Docker 构建通过。
 
 验证期间发现新增认证测试导入现有 hourly token sweeper 导致 Jest 不退出；停止了明确仍存活的本轮测试进程，在测试中隔离该后台定时器，然后重跑综合验证通过。没有改生产认证行为。早期 `CI=true npm run build` 因既有警告视作错误而exit 1；按仓库标准 `npm run build`及综合verifier重跑成功。早期Playwright初始化脚本每次整页导航清空localStorage，误清了隐私偏好；修正测试初始化后两端通过。
 

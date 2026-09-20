@@ -80,9 +80,16 @@ return 0
 """
 
 
-async def run_quick_experience(ws, user, redis, config, model, realtime_model, quota_key, quota_limit):
+async def run_quick_experience(ws, user, redis, config, model, realtime_model, quota_key, quota_limit, analytics_emit=None):
     async def send(kind, **payload):
         await ws.send_json({"type": kind, "payload": payload})
+
+    async def measure(event):
+        if analytics_emit:
+            try:
+                await analytics_emit(event)
+            except Exception:
+                pass  # Analytics must not turn successful interview feedback into an error.
 
     if redis is None:
         await send("quick_error", code="unavailable")
@@ -109,7 +116,11 @@ async def run_quick_experience(ws, user, redis, config, model, realtime_model, q
                        question=QUESTIONS[len(state["answers"])] if len(state["answers"]) < 3 else None)
 
         async def report():
-            if state["report"] or len(state["answers"]) != 3:
+            if len(state["answers"]) != 3:
+                return
+            if state["report"]:
+                await measure('paired')
+                await measure('ended')
                 return
             if state["report_attempts"] >= 3:
                 await send("quick_error", code="report_limit")
@@ -119,13 +130,21 @@ async def run_quick_experience(ws, user, redis, config, model, realtime_model, q
             await send("quick_busy")
             try:
                 state["report"] = await generate_report(state["answers"], config, model)
-                await persist()
+                try:
+                    await persist()
+                except Exception:
+                    state["report"] = None
+                    raise
+                await measure('paired')
+                await measure('ended')
                 await snapshot()
             except Exception:
                 await send("quick_error", code="report_failed")
 
         await send("connection_established")
         await snapshot()
+        if state["answers"]:
+            await measure('started')
         if len(state["answers"]) == 3:
             await report()
 
@@ -246,6 +265,8 @@ async def run_quick_experience(ws, user, redis, config, model, realtime_model, q
                     continue
                 state["answers"].append(answer)
                 await persist()
+                if len(state["answers"]) == 1:
+                    await measure('started')
                 await snapshot()
                 if len(state["answers"]) == 3:
                     await report()
