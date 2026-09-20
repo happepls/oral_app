@@ -2,11 +2,13 @@ import React, { StrictMode } from 'react';
 import { render, waitFor } from '@testing-library/react';
 import ProductAnalytics from './ProductAnalytics';
 import { trackPage, endAnalyticsConversation } from '../utils/productAnalytics';
-jest.mock('react-router-dom', () => ({ useLocation: () => ({ pathname: '/conversation', search: '?scenario=private' }) }), { virtual: true });
+let mockSearch = '?scenario=private';
+jest.mock('react-router-dom', () => ({ useLocation: () => ({ pathname: '/conversation', search: mockSearch }) }), { virtual: true });
 jest.mock('../contexts/AuthContext', () => ({ useAuth: () => ({ user: null }) }));
 
 beforeEach(() => {
   localStorage.clear();
+  mockSearch = '?scenario=private';
   global.fetch = jest.fn(async () => ({ ok: true, json: async () => ({ enabled: true }) }));
 });
 afterEach(() => jest.restoreAllMocks());
@@ -22,6 +24,11 @@ test('StrictMode tracks a sanitized page once without cookies or query secrets',
 test('opt out prevents even configuration requests', async () => {
   localStorage.setItem('analytics_opt_out', 'true');
   await trackPage('/');
+  expect(fetch).not.toHaveBeenCalled();
+});
+test('static tour never makes analytics requests', () => {
+  mockSearch = '?mode=tour';
+  render(<ProductAnalytics />);
   expect(fetch).not.toHaveBeenCalled();
 });
 test('disabled config and failures leave navigation unaffected', async () => {
