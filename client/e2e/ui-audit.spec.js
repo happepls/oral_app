@@ -84,10 +84,18 @@ for (const [name, url] of pages) {
     const consoleErrors = [];
     page.on('console', (message) => { if (message.type() === 'error' && !message.text().includes('ERR_BLOCKED_BY_CLIENT')) consoleErrors.push(message.text()); });
     await page.goto(url);
-    if (name === 'register') {
-      // Register is lazy loaded and fades in with Motion. Wait for the real
-      // final form before recording a baseline or measuring text contrast.
-      await expect(page.getByRole('tab', { name: /邮箱注册|Email/ })).toBeVisible();
+    // The dev server can still be compiling a lazy route after navigation.
+    // A visible body also matches the Suspense/auth spinner, not the page.
+    await expect(page.locator('.App')).toBeVisible();
+    await expect(page.locator('.App > [role="status"]')).toHaveCount(0, { timeout: 20_000 });
+    if (name === 'register' || name === 'login') {
+      // Both authentication forms fade in with Motion. Audit their settled
+      // content without changing the visual baseline or diff tolerance.
+      if (name === 'login') {
+        await expect(page.locator('#login-tab-email')).toBeVisible();
+      } else {
+        await expect(page.getByRole('tab', { name: /邮箱注册|Email/ })).toBeVisible();
+      }
       await page.waitForFunction(() => {
         let node = document.querySelector('h1')?.parentElement;
         while (node && !node.style.opacity) node = node.parentElement;
