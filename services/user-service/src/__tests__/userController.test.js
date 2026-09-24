@@ -107,6 +107,53 @@ describe('confirmCompleteTask readiness capability', () => {
   });
 });
 
+describe('automatic earned-score completion', () => {
+  beforeEach(() => jest.clearAllMocks());
+  afterEach(() => jest.restoreAllMocks());
+  const request = (body = {}) => ({ params: { userId: 'trusted-ws-user', id: '42' },
+    body: { automatic: true, mode: 'scene_theater', scoring_generation: 3, ...body } });
+
+  test('uses persisted score and generation without a readiness token', async () => {
+    jest.spyOn(User, 'confirmCompleteTaskById').mockResolvedValue({
+      completed_task: { id: 42, status: 'completed', scoring_generation: 3 }, next_task: { id: 43 },
+    });
+    jest.spyOn(User, 'evaluateAchievements').mockRejectedValue(new Error('optional unavailable'));
+    const res = mockRes();
+    await userController.confirmCompleteTaskInternal(request(), res);
+    expect(User.confirmCompleteTaskById).toHaveBeenCalledWith('trusted-ws-user', '42', 'scene_theater', 3);
+    expect(res.statusCode).toBe(200);
+    expect(res.body.data.next_task.id).toBe(43);
+    expect(redis.get).not.toHaveBeenCalled();
+  });
+
+  test.each(['stale_generation', 'not_ready', 'not_found'])('rejects %s without success', async error => {
+    jest.spyOn(User, 'confirmCompleteTaskById').mockResolvedValue({ error });
+    const res = mockRes();
+    await userController.confirmCompleteTaskInternal(request(), res);
+    expect(res.statusCode).toBe(error === 'not_found' ? 404 : 409);
+    expect(res.body).toEqual({ success: false, code: error });
+  });
+
+  test.each([{ mode: 'recall' }, { mode: 'daily_qa' }, { scoring_generation: -1 },
+    { scoring_generation: '3' }, { scoring_generation: undefined }])('rejects invalid automatic context %j', async body => {
+    const complete = jest.spyOn(User, 'confirmCompleteTaskById');
+    const res = mockRes();
+    await userController.confirmCompleteTaskInternal(request(body), res);
+    expect(res.statusCode).toBe(400);
+    expect(complete).not.toHaveBeenCalled();
+  });
+
+  test('browser cannot bypass readiness with an automatic flag or claimed score', async () => {
+    jest.spyOn(User, 'getTaskByIdForUser').mockResolvedValue({ id: 42, status: 'pending', score: 0 });
+    const complete = jest.spyOn(User, 'confirmCompleteTaskById');
+    const req = { ...request({ score: 9 }), user: { id: 'browser-user' } };
+    const res = mockRes();
+    await userController.confirmCompleteTask(req, res);
+    expect(res.statusCode).toBe(409);
+    expect(complete).not.toHaveBeenCalled();
+  });
+});
+
 // ─── Login: null-password (Google OAuth user) ────────────────────────
 
 describe('login – null-password path', () => {

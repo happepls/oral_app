@@ -28,10 +28,13 @@ async def test_restored_feedback_is_task_generation_and_score_bound_without_capa
 
 
 @pytest.mark.asyncio
-async def test_feedback_is_forwarded_and_qualified_window_clears_blocker():
-    callback = callback_for()
-    current = task()
+async def test_score_nine_completes_even_when_latest_quality_needs_work(monkeypatch):
+    from .test_task_confirmation import earned_callback, completion_response
     for quality, ready in [("needs_work", False), ("satisfactory", True)]:
+        callback = earned_callback(generation=2)
+        current = callback.user_context["active_goal"]["current_task"]
+        post = AsyncMock(return_value=completion_response(generation=2))
+        monkeypatch.setattr(omni, "_post_internal_task_confirmation", post)
         result = {
             "score": 9, "interaction_count": 30 if ready else 27,
             "scoring_generation": 2, "task_ready_to_complete": ready,
@@ -40,12 +43,14 @@ async def test_feedback_is_forwarded_and_qualified_window_clears_blocker():
             "practice_tip": "Specify a size: A small latte, please.",
             "reason": "Add the drink size.", "quality": quality,
         }
-        emitted = await omni._emit_scoring_result(callback, current, 9, [], result, "token")
-        payload = callback._safe_send.await_args.args[0]["payload"]
+        emitted = await omni._emit_scoring_result(callback, current, 42, [], result, "token")
+        payload = callback._safe_send.await_args_list[0].args[0]["payload"]
         assert payload["practice_tip"] == result["practice_tip"]
         assert payload["completion_blocker"] == result["completion_blocker"]
-        assert emitted["task_ready_to_complete"] == ready
+        assert emitted["task_completed"] is True
+        assert emitted["task_ready_to_complete"] is False
         assert emitted["scoring_generation"] == 2
+        assert callback._safe_send.await_args.args[0]["type"] == "task_completed"
 
 
 @pytest.mark.asyncio

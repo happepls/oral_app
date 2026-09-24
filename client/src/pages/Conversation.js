@@ -583,6 +583,7 @@ function Conversation() {
   const previousProgressRef = useRef(0); // Track previous progress to prevent unreasonable jumps
   const lastSeenTaskIdRef = useRef(null); // Track task ID to detect task switches
   const scoringGenerationByTaskRef = useRef(new Map()); // Reject late evaluations from before an explicit reset
+  const progressRevisionRef = useRef(0); // New WS progress invalidates older REST snapshots
   const [progressFeedback, setProgressFeedback] = useState(null);
   const [completionSheetDismissed, setCompletionSheetDismissed] = useState(false);
   const feedbackOrderRef = useRef(new Map());
@@ -1607,10 +1608,11 @@ function Conversation() {
            const searchParams = new URLSearchParams(window.location.search);
            const scenario = searchParams.get('scenario') || location.state?.scenario;
            const syncAttempt = connectionAttemptRef.current;
+           const syncRevision = progressRevisionRef.current;
            if (scenario) {
                // Re-fetch the latest goal state from DB to sync task progress
                userAPI.getActiveGoal().then(res => {
-                   if (syncAttempt !== connectionAttemptRef.current || resetInFlightRef.current || pendingResetRef.current) return;
+                   if (syncAttempt !== connectionAttemptRef.current || syncRevision !== progressRevisionRef.current || resetInFlightRef.current || pendingResetRef.current) return;
                    if (res && res.goal && res.goal.scenarios) {
                        let activeScenario = res.goal.scenarios.find(s => s.title.trim() === scenario.trim());
                        
@@ -2076,6 +2078,7 @@ function Conversation() {
            // Handle proficiency update notification with deduplication
            const profPayload = data.payload || {};
            if (!acceptScoringMessage(profPayload)) break;
+           progressRevisionRef.current += 1;
            const expectedGeneration = scoringGenerationByTaskRef.current.get(String(profPayload.task_id));
            const payloadGeneration = Number(profPayload.scoring_generation);
            const staleGeneration = expectedGeneration !== undefined && (
@@ -2203,6 +2206,9 @@ function Conversation() {
            console.log('✅ Task Completed:', data.payload);
            const taskPayload = data.payload || {};
            if (taskPayload.task_id && !acceptScoringMessage(taskPayload)) break;
+           progressRevisionRef.current += 1;
+           const completionRevision = progressRevisionRef.current;
+           const completionAttempt = connectionAttemptRef.current;
            setProgressFeedback(null);
            setTaskCompletionPending(false);
            setTaskReadyToComplete(null);
@@ -2250,6 +2256,7 @@ function Conversation() {
                setTimeout(async () => {
                    try {
                        const res = await userAPI.getActiveGoal();
+                       if (completionRevision !== progressRevisionRef.current || completionAttempt !== connectionAttemptRef.current || resetInFlightRef.current || pendingResetRef.current) return;
                        if (res && res.goal && res.goal.scenarios) {
                            let activeScenario = res.goal.scenarios.find(s => s.title.trim() === scenario?.trim());
                            
