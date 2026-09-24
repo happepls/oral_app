@@ -5,7 +5,7 @@
 > 请勿直接修改此文件！
 > 修改请前往: `core-rules.md`
 >
-> 最后同步时间: 2026-09-24 15:40:25
+> 最后同步时间: 2026-09-24 21:21:07
 > 同步脚本: `sync-core-rules.py`
 
 ---
@@ -67,7 +67,7 @@ docker compose logs ai-omni-service | grep -i "proficiency\|task_completed"
 
 - 真人场景主链路只在积累 3–4 个完整“用户回答 + AI 回复”轮次后调用 Qwen `/proficiency-scoring/batch-evaluate`；第 3 轮证据不足延至第 4 轮，`recall`、`daily_qa`、`tour`、`magic_repetition` 禁止进入评分。
 - 窗口质量到 delta 的映射由服务端执行并硬限制为 `0–3`，单次进度增长不得超过 33%；普通问候、离题、重复、错误窗口不得产生正向 delta，Qwen 失败返回 pending 且禁止规则 fallback 加分。
-- 子任务完成要求 `score >= 9`、至少三个成功评分窗口且最新窗口至少 satisfactory；未确认完成最高显示 99%。主动重置必须在事务中归零并提升 `scoring_generation`，使重置前开始的旧窗口与迟到评分失效。
+- 真人场景子任务累计 `score >= 9` 即自动完成并切换，不再要求末轮 satisfactory 或手动确认；原 99% 状态重连后也须恢复完成。由 user-service 校验持久化分数与 `scoring_generation` 后写入 completed，前端只在成功事件后显示 100%。主动重置仍须事务归零并提升代次，旧代次完成请求必须失效并触发重连。
 - 教学回复必须完全使用 `target_language`；魔法口令 `急急如律令`（允许中文标点）取消当前回复并推进任务。
 - 场景生成 `/generate-scenarios`、TTS `/tts` 均在 `ai-omni-service/app/main.py`；api-gateway 是纯 Nginx，`server.js` 为死代码。
 - Marker 重合成：剥离 `[TASK_*]` 后用 qwen3-tts-flash；COS 上传前必须 `_wav_extract_pcm()` 去 WAV 头，禁止用 `_trim_wav_onset()`。

@@ -379,8 +379,8 @@ User.getTaskByIdForUser = async (userId, taskId) => {
     return result.rows[0] || null;
 };
 
-User.confirmCompleteTaskById = async (userId, taskId, mode = null) => {
-    // 1. Load task — require the full server-side readiness contract.
+User.confirmCompleteTaskById = async (userId, taskId, mode = null, expectedGeneration = null) => {
+    // 1. Load owned progress; automatic scene completion is generation-bound.
     const taskRes = await db.query(
         `SELECT id, user_id, goal_id, scenario_title, task_description,
                 score, interaction_count, scoring_generation, status, feedback
@@ -390,8 +390,11 @@ User.confirmCompleteTaskById = async (userId, taskId, mode = null) => {
     );
     const task = taskRes.rows[0];
     if (!task) return { error: 'not_found' };
+    if (expectedGeneration !== null && Number(task.scoring_generation || 0) !== expectedGeneration) {
+        return { error: 'stale_generation', task };
+    }
     const alreadyCompleted = task.status === 'completed';
-    if (!alreadyCompleted && ((task.score || 0) < 9 || (task.interaction_count || 0) < 3)) {
+    if (!alreadyCompleted && ((task.score || 0) < 9 || (expectedGeneration === null && (task.interaction_count || 0) < 3))) {
         return { error: 'not_ready', task };
     }
 
@@ -404,13 +407,18 @@ User.confirmCompleteTaskById = async (userId, taskId, mode = null) => {
                  mode = COALESCE($2, mode)
              WHERE id = $1 AND user_id = $3
                AND status != 'completed'
-               AND score >= 9 AND interaction_count >= 3
+               AND score >= 9
+               AND ($4::integer IS NULL OR scoring_generation = $4)
+               AND ($4::integer IS NOT NULL OR interaction_count >= 3)
              RETURNING *`,
-            [taskId, mode || null, userId]
+            [taskId, mode || null, userId, expectedGeneration]
         );
         completedTask = completedRes.rows[0];
         if (!completedTask) {
             const racedTask = await User.getTaskByIdForUser(userId, taskId);
+            if (expectedGeneration !== null && Number(racedTask?.scoring_generation || 0) !== expectedGeneration) {
+                return { error: 'stale_generation', task: racedTask };
+            }
             if (!racedTask || racedTask.status !== 'completed') return { error: 'not_ready', task };
             completedTask = racedTask;
         }
@@ -439,7 +447,7 @@ User.confirmCompleteTaskById = async (userId, taskId, mode = null) => {
 
     // 4. Find next pending task in the same scenario (fallback: any pending in goal)
     let nextRes = await db.query(
-        `SELECT id, scenario_title, task_description, score, status
+        `SELECT id, scenario_title, task_description, score, status, interaction_count, scoring_generation
          FROM user_tasks
          WHERE goal_id = $1 AND user_id = $2
            AND scenario_title = $3
@@ -450,7 +458,7 @@ User.confirmCompleteTaskById = async (userId, taskId, mode = null) => {
     );
     if (nextRes.rows.length === 0) {
         nextRes = await db.query(
-            `SELECT id, scenario_title, task_description, score, status
+            `SELECT id, scenario_title, task_description, score, status, interaction_count, scoring_generation
              FROM user_tasks
              WHERE goal_id = $1 AND user_id = $2
                AND status != 'completed'
@@ -467,6 +475,8 @@ User.confirmCompleteTaskById = async (userId, taskId, mode = null) => {
             text: nextTaskRow.task_description,
             score: nextTaskRow.score,
             status: nextTaskRow.status,
+            interaction_count: nextTaskRow.interaction_count || 0,
+            scoring_generation: nextTaskRow.scoring_generation || 0,
         }
         : null;
 

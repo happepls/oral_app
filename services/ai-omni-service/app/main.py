@@ -768,6 +768,7 @@ async def _post_scoring_window(payload, token):
                 readiness_pending = (
                     bool(readiness_intent.get("ready"))
                     and not result.get("ready_token")
+                    and int(result.get("score") or 0) < 9
                 )
                 if result.get("evaluation_status") not in (
                     "evaluation_pending", "pending", "model_error"
@@ -804,13 +805,14 @@ async def _post_scoring_window(payload, token):
 
 
 async def _post_internal_task_confirmation(
-    user_service_url, user_id, task_id, mode, ready_token,
+    user_service_url, user_id, task_id, mode, ready_token, *, scoring_generation=None,
 ):
     """Confirm a task without relying on the websocket's expiring user JWT.
 
     The websocket user id was authenticated when the realtime ticket was
-    redeemed. User Service still verifies the task-bound readiness capability,
-    while INTERNAL_AUTH_SECRET authenticates this service-to-service call.
+    redeemed. User Service verifies either the legacy task-bound capability or
+    the persisted score and expected generation for automatic completion.
+    INTERNAL_AUTH_SECRET authenticates this service-to-service call.
     """
     internal_secret = os.getenv("INTERNAL_AUTH_SECRET")
     if not internal_secret:
@@ -822,7 +824,8 @@ async def _post_internal_task_confirmation(
             f"{user_service_url}/api/users/internal/users/"
             f"{encoded_user_id}/tasks/{encoded_task_id}/confirm-complete",
             headers={"X-Guaji-Internal-Auth": internal_secret},
-            json={"mode": mode, "ready_token": ready_token},
+            json=({"mode": mode, "automatic": True, "scoring_generation": scoring_generation}
+                  if scoring_generation is not None else {"mode": mode, "ready_token": ready_token}),
             timeout=5.0,
         )
 
@@ -998,12 +1001,140 @@ def _apply_confirmed_task_context(
         active_goal["current_task"] = None
 
 
+async def _complete_earned_scene_task(callback, current_task):
+    """Recover or finish earned progress through User Service, never UI percentages."""
+    if (getattr(callback, "mode", None) in ("recall", "daily_qa", "tour", "magic_repetition", "quick_experience")
+            or getattr(callback, "is_daily_qa_mode", False) is True
+            or session_phases.get(callback.phase_key, {}).get("phase") == "magic_repetition"
+            or not current_task.get("id") or int(current_task.get("score") or 0) < 9):
+        return False
+    # Serialize duplicate callbacks within a socket. DB generation/score checks
+    # are authoritative across sockets, resets and a lost completion response.
+    lock = callback.__dict__.setdefault("_earned_completion_lock", asyncio.Lock())
+    async with lock:
+        task_id = current_task["id"]
+        generation = int(current_task.get("scoring_generation") or 0)
+        completed = callback.__dict__.setdefault("_earned_completed_tasks", set())
+        identity = (str(task_id), generation)
+        if identity in completed:
+            return True
+        try:
+            response = await _post_internal_task_confirmation(
+                os.getenv("USER_SERVICE_URL", "http://user-service:3000"),
+                callback.user_id, task_id, "scene_theater", None,
+                scoring_generation=generation,
+            )
+            if response.status_code != 200:
+                logger.warning("[TASK_COMPLETE] task=%s generation=%s status=%s",
+                               task_id, generation, response.status_code)
+                if response.status_code == 409 and response.json().get("code") == "stale_generation":
+                    callback.scoring_reset_notified = True
+                    await callback._safe_send({
+                        "type": "connection_closed",
+                        "payload": {"code": 4002, "reconnectable": True,
+                                    "reason": "Task progress was reset; reconnect to refresh state"},
+                    })
+                return False
+            data = response.json().get("data") or {}
+            persisted = data.get("completed_task") or {}
+            if (str(persisted.get("id")) != str(task_id)
+                    or persisted.get("status") != "completed"
+                    or int(persisted.get("scoring_generation", -1)) != generation):
+                return False
+            await _apply_task_completion(callback, data, task_id)
+            completed.add(identity)
+            logger.info("[TASK_COMPLETE] task=%s generation=%s status=completed next_task=%s",
+                        task_id, generation, (data.get("next_task") or {}).get("id"))
+            return True
+        except Exception as exc:
+            logger.warning("[TASK_COMPLETE] retryable task=%s error=%s", task_id, type(exc).__name__)
+            return False
+
+
+async def _apply_task_completion(callback, confirm_data, confirm_task_id):
+    """Publish persisted completion and advance the scene context and tutor."""
+    completed_task = confirm_data.get('completed_task') or {}
+    next_task_obj = _next_task_in_confirmed_scenario(
+        completed_task,
+        confirm_data.get('next_task'),
+    )
+
+    # 通知前端任务切换
+    await callback._safe_send({
+        "type": "task_completed",
+        "payload": {
+            "task_title": completed_task.get('task_description') or completed_task.get('text', 'Task'),
+            "task_id": completed_task.get('id', confirm_task_id),
+            "scoring_generation": completed_task.get('scoring_generation', 0),
+            "scenario_title": completed_task.get('scenario_title') or callback.scenario,
+            "score": completed_task.get('score', 9),
+            "message": completed_task.get('feedback') or "Task completed!",
+            "next_task": (next_task_obj or {}).get('text') if isinstance(next_task_obj, dict) else None,
+        }
+    })
+
+    # 更新 user_context 到新任务。active_goal.current_task 是
+    # 评分与 prompt 的权威视图，顶层 current_task 仅为兼容。
+    _apply_confirmed_task_context(
+        callback.user_context,
+        completed_task,
+        next_task_obj,
+        confirm_data.get('current_proficiency'),
+    )
+
+    if not next_task_obj:
+        if callback.analytics_real_mode():
+            await callback.analytics.end()
+        active_goal = callback.user_context.get('active_goal') or {}
+        await _generate_and_emit_scenario_review(
+            callback,
+            completed_task.get('goal_id') or active_goal.get('id'),
+            completed_task.get('scenario_title') or callback.scenario,
+            list(callback.messages),
+        )
+
+    # 清理服务端 history + items，刷新 session prompt
+    callback.messages = []
+    callback.task_history_cutoff = 0
+    callback.current_turn_id = None
+    callback.just_switched_task = bool(next_task_obj)
+    callback._clear_dashscope_items(reason="TASK_SWITCH[user_confirmed]")
+    callback._update_session_prompt()
+
+    # Plan D: per-response directive 锁定新任务
+    try:
+        _next_task_for_directive = callback.user_context.get('next_task_text') or ''
+        _target_lang_directive = (
+            callback.user_context.get('target_language')
+            or (callback.user_context.get('active_goal') or {}).get('target_language')
+            or 'the target language'
+        )
+        if _next_task_for_directive:
+            callback.conversation.send_raw(json.dumps({
+                "type": "response.create",
+                "response": {
+                    "modalities": ["text", "audio"],
+                    "instructions": (
+                        f"The previous sub-task is COMPLETED. You are now starting the new sub-task: "
+                        f"\"{_next_task_for_directive}\". Greet briefly in {_target_lang_directive} and invite "
+                        f"the student to start this new sub-task immediately. Do NOT reference the previous sub-task. "
+                        f"Do NOT say \"task complete\" or \"let's move on\" — just start the new sub-task naturally."
+                    )
+                }
+            }))
+            logger.info(f"[TASK_CONFIRM] Switched to next task: {_next_task_for_directive[:60]}")
+        else:
+            logger.info("[TASK_CONFIRM] No more tasks — scenario may be complete")
+    except Exception as _directive_err:
+        logger.warning(f"[TASK_CONFIRM] Failed to inject per-response directive: {_directive_err}")
+
+
 async def _emit_scoring_result(callback, current_task, task_id, turn_ids, result, token):
     """Apply an already-persisted Workflow result to this websocket session."""
     current_score = int(current_task.get("score") or 0)
     interaction_count = int(current_task.get("interaction_count") or 0)
     delta = max(0, min(3, int(result.get("delta", 0) or 0)))
-    task_completed = bool(result.get("task_completed", False))
+    task_completed = False  # User Service confirms persistence and returns the next task.
     task_ready_to_complete = bool(result.get("task_ready_to_complete", False))
     score = int(result.get("score", current_score) or 0)
     count = int(result.get("interaction_count", interaction_count) or 0)
@@ -1011,6 +1142,11 @@ async def _emit_scoring_result(callback, current_task, task_id, turn_ids, result
     total = int(((callback.user_context or {}).get("active_goal") or {}).get("current_proficiency") or 0) + delta
     current_task["score"] = score
     current_task["interaction_count"] = count
+    current_task["scoring_generation"] = int(result.get("scoring_generation", current_task.get("scoring_generation", 0)) or 0)
+    authoritative = ((callback.user_context or {}).get("active_goal") or {}).get("current_task") or {}
+    if (str(authoritative.get("id")) == str(task_id)
+            and int(authoritative.get("scoring_generation") or 0) == current_task["scoring_generation"]):
+        authoritative.update(score=score, interaction_count=count)
 
     await callback._safe_send({
         "type": "proficiency_update",
@@ -1032,35 +1168,11 @@ async def _emit_scoring_result(callback, current_task, task_id, turn_ids, result
             "ready_token": result.get("ready_token"),
         },
     })
-    if task_completed:
-        refreshed = await get_user_context(token, callback.scenario)
-        if refreshed:
-            callback.user_context = refreshed
-        next_task = (((callback.user_context or {}).get("active_goal") or {}).get("current_task") or {})
-        has_next_task = (
-            next_task.get("id") and str(next_task.get("id")) != str(task_id)
-            and next_task.get("status") != "completed"
-        )
-        await callback._safe_send({
-            "type": "task_completed",
-            "payload": {
-                "task_id": task_id,
-                "task_title": current_task.get("task_description", "Task"),
-                "scenario_title": current_task.get("scenario_title", ""),
-                "next_task": (next_task.get("task_description") or next_task.get("text")) if has_next_task else None,
-                "score": score, "interaction_count": count,
-                "scoring_generation": int(result.get("scoring_generation", 0) or 0),
-                "evaluation_id": result.get("evaluation_id"),
-            },
-        })
-        if has_next_task:
-            callback._clear_dashscope_items("dynamic_task_complete")
-            callback.messages = []
-            callback.task_history_cutoff = 0
-            callback.current_turn_id = None
-            callback.just_switched_task = True
-            callback.user_context["next_task_text"] = next_task.get("task_description") or next_task.get("text")
-            callback._update_session_prompt()
+    if score >= 9:
+        task_completed = await _complete_earned_scene_task(callback, current_task)
+        # Automatic completion owns threshold progress; never re-offer the
+        # retired manual/quality gate if its request needs another attempt.
+        task_ready_to_complete = False
 
     return {
         "proficiency_delta": delta, "total_proficiency": total,
@@ -1290,7 +1402,7 @@ async def _handle_turn_with_accumulator(
             state["frozen"] = False
             state["awaiting_fourth"] = False
             _clear_scoring_claim(state)
-            if result.get("task_completed"):
+            if result.get("task_completed") or int(result.get("score") or 0) >= 9:
                 state["queue"] = []
             else:
                 claim = _claim_scoring_evaluation(state, generation, owner)
@@ -1326,6 +1438,12 @@ async def _evaluate_scene_turn_progress(
     """
     phase_info = session_phases.get(callback.phase_key, {})
     if getattr(callback, "scoring_reset_notified", False) is True:
+        return None
+    earned_task = ((callback.user_context or {}).get("active_goal") or {}).get("current_task") or {}
+    if int(earned_task.get("score") or 0) >= 9:
+        # A previously earned task needs completion recovery, not more model
+        # judgments. This also retries transient completion-service failures.
+        await _complete_earned_scene_task(callback, earned_task)
         return None
     user_messages = [m for m in callback.messages if m.get("role") == "user"]
     if not goal_id or not task_id or not user_messages:
@@ -3250,6 +3368,8 @@ class WebSocketCallback(OmniRealtimeCallback):
                             }
                         })
                         logger.info("connection_established sent successfully after delay")
+                        earned_task = (self.user_context.get("active_goal") or {}).get("current_task") or {}
+                        await _complete_earned_scene_task(self, earned_task)
                     except Exception as e:
                         logger.error(f"Failed to send connection established after delay: {e}")
                 else:
@@ -3425,7 +3545,7 @@ class WebSocketCallback(OmniRealtimeCallback):
                 # due to user_context update race conditions.
                 new_task = (
                     self.user_context.get('next_task_text')
-                    or self.user_context.get('current_task', {}).get('text')
+                    or (self.user_context.get('current_task') or {}).get('text')
                     or full_ctx.get('next_task_text')
                     or 'the next task'
                 )
@@ -5052,79 +5172,7 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query(None), ses
                             continue
 
                         confirm_data = confirm_resp.json().get('data', {}) or {}
-                        completed_task = confirm_data.get('completed_task') or {}
-                        next_task_obj = _next_task_in_confirmed_scenario(
-                            completed_task,
-                            confirm_data.get('next_task'),
-                        )
-
-                        # 通知前端任务切换
-                        await callback._safe_send({
-                            "type": "task_completed",
-                            "payload": {
-                                "task_title": completed_task.get('task_description') or completed_task.get('text', 'Task'),
-                                "task_id": completed_task.get('id', confirm_task_id),
-                                "scoring_generation": completed_task.get('scoring_generation', 0),
-                                "scenario_title": callback.user_context.get('custom_topic', 'General Practice').split(" (Tasks:")[0].strip(),
-                                "score": completed_task.get('score', 9),
-                                "message": completed_task.get('feedback') or "Task completed!",
-                                "next_task": (next_task_obj or {}).get('text') if isinstance(next_task_obj, dict) else None,
-                            }
-                        })
-
-                        # 更新 user_context 到新任务。active_goal.current_task 是
-                        # 评分与 prompt 的权威视图，顶层 current_task 仅为兼容。
-                        _apply_confirmed_task_context(
-                            callback.user_context,
-                            completed_task,
-                            next_task_obj,
-                            confirm_data.get('current_proficiency'),
-                        )
-
-                        if not next_task_obj:
-                            if callback.analytics_real_mode():
-                                await callback.analytics.end()
-                            active_goal = callback.user_context.get('active_goal') or {}
-                            await _generate_and_emit_scenario_review(
-                                callback,
-                                completed_task.get('goal_id') or active_goal.get('id'),
-                                completed_task.get('scenario_title') or callback.scenario,
-                                list(callback.messages),
-                            )
-
-                        # 清理服务端 history + items，刷新 session prompt
-                        callback.messages = []
-                        callback.task_history_cutoff = 0
-                        callback.just_switched_task = True
-                        callback._clear_dashscope_items(reason="TASK_SWITCH[user_confirmed]")
-                        callback._update_session_prompt()
-
-                        # Plan D: per-response directive 锁定新任务
-                        try:
-                            _next_task_for_directive = callback.user_context.get('next_task_text') or ''
-                            _target_lang_directive = (
-                                callback.user_context.get('target_language')
-                                or (callback.user_context.get('active_goal') or {}).get('target_language')
-                                or 'the target language'
-                            )
-                            if _next_task_for_directive:
-                                conversation.send_raw(json.dumps({
-                                    "type": "response.create",
-                                    "response": {
-                                        "modalities": ["text", "audio"],
-                                        "instructions": (
-                                            f"The previous sub-task is COMPLETED. You are now starting the new sub-task: "
-                                            f"\"{_next_task_for_directive}\". Greet briefly in {_target_lang_directive} and invite "
-                                            f"the student to start this new sub-task immediately. Do NOT reference the previous sub-task. "
-                                            f"Do NOT say \"task complete\" or \"let's move on\" — just start the new sub-task naturally."
-                                        )
-                                    }
-                                }))
-                                logger.info(f"[TASK_CONFIRM] Switched to next task: {_next_task_for_directive[:60]}")
-                            else:
-                                logger.info("[TASK_CONFIRM] No more tasks — scenario may be complete")
-                        except Exception as _directive_err:
-                            logger.warning(f"[TASK_CONFIRM] Failed to inject per-response directive: {_directive_err}")
+                        await _apply_task_completion(callback, confirm_data, confirm_task_id)
 
                     except Exception as confirm_err:
                         logger.error(f"[TASK_CONFIRM] Error handling user_confirmed_complete: {confirm_err}")

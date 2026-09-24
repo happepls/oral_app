@@ -863,9 +863,34 @@ exports.confirmCompleteTask = async (req, res) => {
 
 // AI Omni keeps a long-lived websocket session. Its user JWT can expire while
 // the user is still speaking, so the final task confirmation uses service auth
-// and the server-validated websocket user id. The task-bound readiness token is
-// still required and checked by confirmCompleteTaskForUser above.
+// and the server-validated websocket user id. Automatic completion checks the
+// persisted score and generation; legacy manual requests still require a token.
 exports.confirmCompleteTaskInternal = async (req, res) => {
+    // Only this service-authenticated route accepts automatic completion.
+    // The browser route still requires its task-bound readiness capability.
+    if (req.body?.automatic === true) {
+        const generation = req.body.scoring_generation;
+        if (!Number.isInteger(generation) || generation < 0 || req.body.mode !== 'scene_theater') {
+            return res.status(400).json({ success: false, message: 'Scene mode and scoring generation required' });
+        }
+        try {
+            const result = await User.confirmCompleteTaskById(
+                req.params.userId, req.params.id, 'scene_theater', generation
+            );
+            if (result.error) {
+                return res.status(result.error === 'not_found' ? 404 : 409).json({
+                    success: false, code: result.error,
+                });
+            }
+            // A secondary achievement failure must not hide committed completion.
+            try { await User.evaluateAchievements(req.params.userId); }
+            catch (error) { console.error('[User] Completion achievements unavailable:', error.message); }
+            return res.json({ success: true, data: result });
+        } catch (error) {
+            console.error('[User] Automatic completion failed:', error.message);
+            return res.status(500).json({ success: false, message: 'Task completion unavailable' });
+        }
+    }
     return confirmCompleteTaskForUser(req, res, req.params.userId);
 };
 

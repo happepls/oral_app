@@ -65,8 +65,11 @@ async function setup(page, options = {}) {
   await page.route('**/api/**', async route => {
     const url = new URL(route.request().url());
     const task = { id: 371, goal_id: 18, scenario_title: state.scenario, task_description: 'Order coffee', text: 'Order coffee',
-      status: 'pending', score: state.score, interaction_count: state.score === 0 ? 0 : 3, scoring_generation: state.generation };
-    const goal = { id: 18, target_language: 'en', status: 'active', scenarios: [{ title: state.scenario, tasks: [task] }] };
+      status: state.completed ? 'completed' : 'pending', score: state.score, interaction_count: state.score === 0 ? 0 : 3, scoring_generation: state.generation };
+    const tasks = [task];
+    if (state.nextTask) tasks.push({ id: 372, text: 'Explain your motivation', task_description: 'Explain your motivation',
+      scenario_title: state.scenario, status: 'pending', score: 0, interaction_count: 0, scoring_generation: 5 });
+    const goal = { id: 18, target_language: 'en', status: 'active', scenarios: [{ title: state.scenario, tasks }] };
     let data = {};
     if (url.pathname.endsWith('/reset-task')) {
       state.resets++;
@@ -85,7 +88,10 @@ async function setup(page, options = {}) {
       data = { ticket: `test-ticket-${state.tickets}` };
     } else if (url.pathname.includes('/users/profile')) data = { user };
     else if (url.pathname.includes('/v1/profile')) data = user;
-    else if (url.pathname.includes('/goals/active')) data = { goal };
+    else if (url.pathname.includes('/goals/active')) {
+      data = { goal };
+      if (state.beforeSnapshot) await state.beforeSnapshot();
+    }
     else if (url.pathname.includes('/v1/goals')) data = [goal];
     else if (url.pathname.includes('/users/goals')) data = { goals: [goal] };
     else if (url.pathname.includes('/v1/tasks')) data = [task];
@@ -97,7 +103,7 @@ async function setup(page, options = {}) {
   await page.goto('/conversation?scenario=' + encodeURIComponent(state.scenario) + (options.historyUrl ? '&sessionId=old-session&session=old-session' : ''));
   await expect(page.getByRole('list', { name: '场景子任务' })).toContainText('Order coffee');
   await expect.poll(() => state.tickets).toBe(1);
-  await expect(page.getByRole('progressbar', { name: '当前子任务进度', exact: true })).toHaveAttribute('aria-valuenow', String(Math.round(state.score / 9 * 100)));
+  await expect(page.getByRole('progressbar', { name: '当前子任务进度', exact: true })).toHaveAttribute('aria-valuenow', String(Math.min(99, Math.round(state.score / 9 * 100))));
   return state;
 }
 
@@ -111,6 +117,42 @@ async function emit(page, type, payload) {
 
 async function disconnect(page) {
   await emit(page, 'connection_closed', { code: 1007, message: 'Response stream timeout' });
+}
+
+for (const nextTask of [true, false]) {
+  test(`earned 99% switches automatically despite a late snapshot (next=${nextTask}) @critical`, async ({ page }) => {
+    const state = await setup(page, { scenario: '工作面试', score: 9, generation: 3, nextTask });
+    let release;
+    let requested = false;
+    state.beforeSnapshot = () => {
+      requested = true;
+      state.beforeSnapshot = null;
+      return new Promise(resolve => { release = resolve; });
+    };
+    await emit(page, 'connection_established', {});
+    await expect.poll(() => requested).toBe(true);
+    state.completed = true;
+    await emit(page, 'task_completed', { task_id: 371, task_title: 'Order coffee',
+      scenario_title: '工作面试', scoring_generation: 3, score: 9,
+      next_task: nextTask ? 'Explain your motivation' : null });
+    const progress = page.getByRole('progressbar', { name: '当前子任务进度', exact: true });
+    await expect(progress).toHaveAttribute('aria-valuenow', nextTask ? '0' : '100');
+    release();
+    await expect(page.getByRole('list', { name: '场景子任务' })).toContainText('checkOrder coffee');
+    // Wait past the completion refresh; both the late old snapshot and fresh
+    // completion snapshot must preserve the committed switch and final 100%.
+    await page.waitForTimeout(1800);
+    if (nextTask) {
+      await expect(progress).toHaveAttribute('aria-valuenow', '0');
+      await expect(page.getByRole('list', { name: '场景子任务' })).toContainText('→ Explain your motivation');
+      await emit(page, 'proficiency_update', { task_id: 372, scoring_generation: 5, task_score: 1,
+        interaction_count: 3, delta: 1, completed_window_count: 1, evaluation_status: 'completed', evaluation_id: 'next-window' });
+      await expect(progress).toHaveAttribute('aria-valuenow', '11');
+    } else {
+      await expect(page.getByRole('dialog', { name: '练习报告' })).toBeVisible();
+    }
+    expect(await page.evaluate(() => window.sentMessages.filter(m => m.type === 'user_confirmed_complete').length)).toBe(0);
+  });
 }
 
 test('工作面试 restores and advances generation 3 progress @critical', async ({ page }) => {
