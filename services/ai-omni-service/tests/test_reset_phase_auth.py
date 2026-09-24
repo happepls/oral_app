@@ -1,4 +1,5 @@
 from types import SimpleNamespace
+from typing import Optional, get_type_hints
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -6,6 +7,12 @@ import pytest
 from ._omni_stubs import load_main
 
 omni = load_main()
+
+
+def test_reset_phase_annotations_resolve_at_route_registration():
+    # Postponed annotations can hide a missing import with newer Pydantic or
+    # minimal test stubs, but CI's pinned Pydantic resolves them on import.
+    assert get_type_hints(omni.reset_phase)['user_id'] == Optional[str]
 
 
 @pytest.mark.asyncio

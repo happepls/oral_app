@@ -118,7 +118,11 @@ for (const failure of ['network', 503]) {
     const state = await setup(page, { ticketFailure: count => count === 2 ? failure : null });
     await disconnect(page);
     await expect.poll(() => state.tickets, { timeout: 10000 }).toBe(3);
-    await expect.poll(() => page.evaluate(() => window.testSockets.filter(s => s.readyState === 1).length)).toBe(1);
+    // CRA's development server also opens a hot-reload socket. Count only
+    // realtime conversation sockets, in both dev CI and the production bundle.
+    await expect.poll(() => page.evaluate(() => window.testSockets.filter(
+      s => s.readyState === 1 && s.url.includes('/realtime')
+    ).length)).toBe(1);
     await emit(page, 'proficiency_update', { task_id: 371, scoring_generation: 0, task_score: 5, interaction_count: 6,
       delta: 2, completed_window_count: 2, evaluation_status: 'completed', evaluation_id: 'recovered-window' });
     await expect(page.getByRole('progressbar', { name: '当前子任务进度', exact: true })).toHaveAttribute('aria-valuenow', '56');

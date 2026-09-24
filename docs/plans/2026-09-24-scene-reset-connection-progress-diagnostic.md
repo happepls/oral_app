@@ -144,7 +144,7 @@ PR合并和发布遵守AGENTS及oral-app-sdlc的人审门槛；本地修复不�
 | --- | --- | --- |
 | `npm run verify` | 0 | 最终score=100，findings=[]；覆盖根lint、契约、Node服务、Python、前端lint/test/build |
 | verifier内client测试 | 0 | 50 suites、572 tests通过 |
-| verifier内AI完整pytest | 0 | 249通过 |
+| verifier内AI完整pytest | 0 | 最终250通过（含路由注解解析回归） |
 | verifier内workflow完整pytest | 0 | 126通过（含模型执行期间重置回归） |
 | verifier内`test_scenario_batch_and_daily_qa.py --scenario all --mock` | 0 | 25通过 |
 | `docker compose build ai-omni-service workflow-service` | 0 | 最终Python源码重新构建成功，仅本地构建；没有启动或发布生产容器 |
@@ -167,6 +167,24 @@ AI全量及整个verify重新执行通过。首次浏览器回归两项定位错
 此方式只隔离浏览器stderr，保留实际Chrome、全部断言与退出码；配置及包装脚本不改仓库或应用。
 最终报告`quality/artifacts/scene-recovery-results.json`确认23 passed、1 skipped、unexpected=0、errors=[]。
 唯一skip是录音中重置的窄屏用例：该按钮产品设计仅桌面显示，桌面已执行通过。
+
+## 首轮CI反馈与修正
+
+[PR #63](https://github.com/happepls/oral_app/pull/63)首轮Python步骤exit2。
+用户提供错误为`PydanticUndefinedAnnotation: name 'Optional' is not defined`；
+这是新增`Optional[str]`遗漏导入，并非runner故障。本地AI镜像Pydantic 2.13.4没有在导入时暴露它，
+按CI合并依赖的Pydantic 2.6.1及Python 3.10配置后复现收集失败。
+补充`from typing import Optional`，新增`get_type_hints(reset_phase)`回归防止测试stub/较新依赖掩盖错误。
+同一配置修复后246个运行测试通过；镜像内不运行4个依赖仓库目录布局的既有静态测试，
+它们由本地完整250项套件覆盖。重新执行全仓verify、AI镜像构建均exit0。
+
+对CI使用的CRA开发服务器补测时，两个重连用例错误地把HMR热更新WebSocket算入连接数。
+已将断言限制为`/realtime`对话连接，保留“仅一个活动对话连接”和后续进度/麦克风恢复断言。
+生产bundle不包含HMR，因此原先生产bundle验证未暴露这个测试范围错误。
+
+治理日志也已核对：[SDLC run](https://github.com/happepls/oral_app/actions/runs/35945282992)
+外层绿色来自shadow模式；旧release证据的base/head和auth/scoring/ui分类不匹配本次diff，
+不能把外层绿色视为当前发布审批。PR保留draft，不覆盖旧根工件。
 
 ## 独立复审
 

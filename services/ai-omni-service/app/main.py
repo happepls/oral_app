@@ -14,6 +14,7 @@ import os
 import urllib.parse
 import uuid
 from datetime import datetime
+from typing import Optional
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Query, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
