@@ -270,32 +270,31 @@ export const userAPI = {
     });
     const result = await handleResponse(response);
 
-    // Step 2: Reset phase state in ai-omni-service (if user is available)
+    // The database reset is already committed. Surface a distinct partial
+    // failure so a retry only repeats phase reset, not the score generation.
     try {
-      const userStr = localStorage.getItem('user');
-      if (userStr) {
-        const user = JSON.parse(userStr);
-        const userId = user?.id || user?.userId;
-        if (userId) {
-          await fetch(`${API_BASE_URL}/ai/reset-phase`, {
-            method: 'POST',
-            headers: getAuthHeaders(),
-            credentials: 'include',
-            body: JSON.stringify({
-              user_id: String(userId),
-              scenario: scenarioTitle || '',
-              task_id: taskId || null,
-              scoring_generation: result.scoring_generation ?? null,
-              scoring_generations: result.tasks || [],
-            })
-          });
-          console.log('[resetTask] Phase state reset for user', userId);
-        }
-      }
+      await userAPI.resetTaskPhase(scenarioTitle);
     } catch (err) {
-      console.error('[resetTask] Failed to reset phase state:', err);
+      const partial = new Error('Task progress reset, but session phase reset failed');
+      partial.code = 'SCENARIO_RESET_PARTIAL';
+      partial.resetResult = result;
+      partial.status = err.status;
+      throw partial;
     }
 
+    return result;
+  },
+
+  async resetTaskPhase(scenarioTitle) {
+    // Identity comes from the httpOnly cookie, not a localStorage profile.
+    const response = await fetch(`${API_BASE_URL}/ai/reset-phase`, {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      credentials: 'include',
+      body: JSON.stringify({ scenario: scenarioTitle || '' }),
+    });
+    const result = await handleResponse(response, { redirectOnUnauthorized: false });
+    if (result?.success === false) throw new Error('Session phase reset failed');
     return result;
   },
 
@@ -717,7 +716,7 @@ export const conversationAPI = {
       credentials: 'include',
       ...(options.signal && { signal: options.signal })
     });
-    return handleResponse(response);
+    return handleResponse(response, { redirectOnUnauthorized: false });
   },
 
   async endSession(sessionId) {

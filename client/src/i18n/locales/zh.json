@@ -1,4 +1,9 @@
 {
+  "scene_reset_partial": "进度已重置，但会话恢复失败。请点击重试继续。",
+  "scene_reset_failed": "重置未完成，请重试；若网络中断，请重新连接以核对进度。",
+  "scene_reset_starting": "正在重新开始当前场景…",
+  "ws_ticket_failed": "无法建立安全连接，请稍后重试。",
+  "ws_retry_exhausted": "自动重连已达到上限，请点击重试。",
   "analytics_allow": "允许匿名访问统计（尊重浏览器隐私信号）",
   "analytics_privacy": "我们使用自托管 Umami 统计规范化页面访问及来源，不发送账号信息、对话内容或音频。访问事件保留 90 天，可在此关闭。服务端另保存注册与首次真人对话的时间用于汇总转化，关联记录随账号删除。",
   "task_progress_help_quality": "99%：累计分数已足，本轮表现还需改进。",

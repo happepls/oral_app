@@ -1,4 +1,9 @@
 {
+  "scene_reset_partial": "Der Fortschritt wurde zurückgesetzt, die Sitzung konnte jedoch nicht wiederhergestellt werden. Bitte erneut versuchen.",
+  "scene_reset_failed": "Das Zurücksetzen wurde nicht abgeschlossen. Bitte erneut versuchen. Bei einem Verbindungsabbruch erneut verbinden und den Fortschritt prüfen.",
+  "scene_reset_starting": "Dieses Szenario wird neu gestartet…",
+  "ws_ticket_failed": "Keine sichere Verbindung möglich. Bitte erneut versuchen.",
+  "ws_retry_exhausted": "Die maximale Anzahl automatischer Verbindungsversuche wurde erreicht. Bitte erneut versuchen.",
   "analytics_allow": "Anonyme Besuchsstatistik erlauben (beachtet Browser-Datenschutzsignale)",
   "analytics_privacy": "Selbst gehostetes Umami erfasst Seiten und Besuchsquellen ohne Kontodaten, Gesprächsinhalte oder Audio. Besuche werden 90 Tage gespeichert und können hier deaktiviert werden. Registrierungs- und Erstgesprächszeiten dienen der Konversionsstatistik; verknüpfte Daten werden mit dem Konto gelöscht.",
   "task_progress_help_quality": "99 %: Die Punktzahl reicht aus, aber die letzte Übung muss noch verbessert werden.",

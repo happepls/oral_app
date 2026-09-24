@@ -500,7 +500,58 @@ function Conversation() {
   const isManualDisconnectRef = useRef(false);
   const reconnectAttemptsRef = useRef(0);
   const reconnectTimerRef = useRef(null); // pending auto-reconnect setTimeout id; cleared on manual retry / reject
+  const stableConnectionTimerRef = useRef(null);
   const isRestoringSessionRef = useRef(false);
+  const connectionAttemptRef = useRef(0);
+  const resetInFlightRef = useRef(false);
+  const pendingResetRef = useRef(null);
+  const [isResettingScenario, setIsResettingScenario] = useState(false);
+
+  const clearStableConnectionTimer = useCallback(() => {
+    clearTimeout(stableConnectionTimerRef.current);
+    stableConnectionTimerRef.current = null;
+  }, []);
+
+  // Upstream can open successfully and fail immediately afterwards. Only a
+  // sustained ready connection earns a fresh automatic retry budget.
+  const markConnectionReady = useCallback(() => {
+    if (stableConnectionTimerRef.current) return;
+    const attempt = connectionAttemptRef.current;
+    stableConnectionTimerRef.current = setTimeout(() => {
+      stableConnectionTimerRef.current = null;
+      if (attempt === connectionAttemptRef.current && socketRef.current?.readyState === WebSocket.OPEN) {
+        reconnectAttemptsRef.current = 0;
+        setReconnectAttempts(0);
+      }
+    }, 30000);
+  }, []);
+
+  // Ticket acquisition and WebSocket closure share the same bounded retry
+  // budget. A failed ticket request has no socket to emit a close event.
+  const scheduleReconnect = useCallback((activeSessionId) => {
+    if (isManualDisconnectRef.current || wsRejectedRef.current || pendingResetRef.current
+        || resetInFlightRef.current || reconnectTimerRef.current) return;
+    const attempts = reconnectAttemptsRef.current;
+    if (attempts >= MAX_RECONNECT_ATTEMPTS) {
+      isRestoringSessionRef.current = false;
+      setIsRestoringSession(false);
+      setWebSocketError(t('ws_retry_exhausted'));
+      return;
+    }
+    reconnectAttemptsRef.current = attempts + 1;
+    setReconnectAttempts(attempts + 1);
+    setIsConnected(false);
+    isRestoringSessionRef.current = true;
+    setIsRestoringSession(true);
+    const attempt = connectionAttemptRef.current;
+    reconnectTimerRef.current = setTimeout(() => {
+      reconnectTimerRef.current = null;
+      if (attempt === connectionAttemptRef.current && !isManualDisconnectRef.current
+          && !wsRejectedRef.current && !pendingResetRef.current && !resetInFlightRef.current) {
+        connectWebSocketRef.current?.(activeSessionId);
+      }
+    }, Math.min(1000 * Math.pow(2, attempts), 10000));
+  }, [t]);
 
   // Default scenario templates are hoisted to module scope (see DEFAULT_SCENARIOS above).
 
@@ -1202,6 +1253,10 @@ function Conversation() {
   // - resetProgress: 是否重置进度（true=重新开始，false=继续练习）
   const handleRetryCurrentScenario = async (options = {}) => {
     const { keepHistory = true, resetProgress = false } = options;
+    if (resetInFlightRef.current) return;
+    resetInFlightRef.current = true;
+    setIsResettingScenario(true);
+    try {
     
     // Get scenario from URL params or state
     const searchParams = new URLSearchParams(window.location.search);
@@ -1212,27 +1267,50 @@ function Conversation() {
     console.log('Retrying scenario:', scenarioTitle, 'Keep history:', keepHistory, 'Reset progress:', resetProgress);
 
     // Only reset tasks if user explicitly wants to start over
+    let phaseResetFailed = false;
     if (resetProgress) {
+      let resetResult;
       try {
         if (scenarioTitle) {
           console.log('Resetting all tasks in scenario:', scenarioTitle);
-          const resetResult = await userAPI.resetTask(null, scenarioTitle);
-          scoringGenerationByTaskRef.current = new Map(
-            (resetResult?.tasks || []).map(task => [
-              String(task.task_id),
-              Number(task.scoring_generation),
-            ])
-          );
+          if (pendingResetRef.current?.scenarioTitle === scenarioTitle) {
+            resetResult = pendingResetRef.current.result;
+            await userAPI.resetTaskPhase(scenarioTitle);
+          } else {
+            resetResult = await userAPI.resetTask(null, scenarioTitle);
+          }
+          pendingResetRef.current = null;
+        } else {
+          throw new Error('Missing scenario');
         }
       } catch (err) {
         console.error('Failed to reset scenario:', err);
-        setMessages(prev => [...prev, {
-          type: 'system',
-          content: '重置失败，当前进度已保留，请重试。',
-          isFinal: true,
-        }]);
-        return;
+        resetResult = err.resetResult || pendingResetRef.current?.result;
+        if (!resetResult) {
+          setMessages(prev => [...prev, { type: 'system', content: t('scene_reset_failed'), isFinal: true }]);
+          return;
+        }
+        pendingResetRef.current = { result: resetResult, scenarioTitle };
+        phaseResetFailed = true;
       }
+      scoringGenerationByTaskRef.current = new Map(
+        (resetResult?.tasks || []).map(task => [String(task.task_id), Number(task.scoring_generation)])
+      );
+      // The committed reset invalidates the old connection even when phase
+      // recovery failed. Stop its audio/events before displaying zero progress.
+      connectionAttemptRef.current += 1;
+      clearStableConnectionTimer();
+      if (reconnectTimerRef.current) clearTimeout(reconnectTimerRef.current);
+      reconnectTimerRef.current = null;
+      socketRef.current?.removeAllListeners();
+      socketRef.current?.destroy();
+      socketRef.current = null;
+      recorderRef.current?.cancelRecording?.();
+      stopAudioPlayback();
+      setIsConnected(false);
+      setTasks(previous => previous.map(task => scoringGenerationByTaskRef.current.has(String(task.id))
+        ? { ...task, score: 0, interaction_count: 0, status: 'pending', scoring_generation: scoringGenerationByTaskRef.current.get(String(task.id)) }
+        : task));
     }
 
     setShowCompletionModal(false);
@@ -1274,9 +1352,17 @@ function Conversation() {
       setMessages([
         {
           type: 'system',
-          content: '重新开始练习当前场景...'
+          content: phaseResetFailed ? t('scene_reset_partial') : t('scene_reset_starting')
         }
       ]);
+    }
+
+    if (phaseResetFailed) {
+      isRestoringSessionRef.current = false;
+      setIsRestoringSession(false);
+      setWebSocketError(t('scene_reset_partial'));
+      localStorage.removeItem(_lsScenarioKey('task_progress_', scenarioTitle));
+      return;
     }
 
     // Refresh tasks from backend to get updated status
@@ -1322,12 +1408,7 @@ function Conversation() {
 
           setSessionId(null);
 
-          // Create new session which will trigger AI to use first task prompt
-          const newSessionId = 'sess_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
-          sessionStorage.setItem('session_id', newSessionId);
-          setSessionId(newSessionId);
-
-          console.log('New session created for retry:', newSessionId);
+          // Initialization creates the new session on the server after reload.
         }
       } catch (err) {
         console.error('Failed to reset session:', err);
@@ -1345,7 +1426,17 @@ function Conversation() {
     // For "continue practice", just close the modal and keep current state
     if (resetProgress) {
       console.log('Refreshing page to establish new connection...');
-      window.location.reload();
+      // A history URL otherwise wins over the cleared local session and
+      // restores the old conversation immediately after a successful reset.
+      const nextUrl = new URL(window.location.href);
+      nextUrl.searchParams.delete('sessionId');
+      nextUrl.searchParams.delete('session');
+      if (scenarioTitle) nextUrl.searchParams.set('scenario', scenarioTitle);
+      window.location.replace(nextUrl.toString());
+    }
+    } finally {
+      resetInFlightRef.current = false;
+      setIsResettingScenario(false);
     }
   };
 
@@ -1380,6 +1471,10 @@ function Conversation() {
 
   // Manual retry reconnect function
   const handleManualRetry = useCallback(() => {
+    if (pendingResetRef.current) {
+      void handleRetryCurrentScenario({ keepHistory: false, resetProgress: true });
+      return;
+    }
     console.log('Manual retry triggered');
     if (reconnectTimerRef.current) { clearTimeout(reconnectTimerRef.current); reconnectTimerRef.current = null; }
     setIsManualDisconnect(false);
@@ -1471,6 +1566,7 @@ function Conversation() {
       // Handle different message types
       switch (data.type) {
         case 'session_restored': {
+           markConnectionReady();
            const restored = data.payload || {};
            const restoredScore = Number(restored.score || 0);
            const restoredCount = Number(restored.interaction_count || 0);
@@ -1497,12 +1593,9 @@ function Conversation() {
            break;
         }
         case 'connection_established':
+           markConnectionReady();
            console.log('Connection established:', data.payload);
            // Only show toast once per page session to avoid spam
-           if (connectionToastShownRef.current) {
-               console.log('Connection toast already shown, skipping');
-               break;
-           }
            connectionToastShownRef.current = true;
 
            // Don't show connection message in chat - it's handled by UI status indicator
@@ -1513,9 +1606,11 @@ function Conversation() {
            // This is especially important after page refresh
            const searchParams = new URLSearchParams(window.location.search);
            const scenario = searchParams.get('scenario') || location.state?.scenario;
+           const syncAttempt = connectionAttemptRef.current;
            if (scenario) {
                // Re-fetch the latest goal state from DB to sync task progress
                userAPI.getActiveGoal().then(res => {
+                   if (syncAttempt !== connectionAttemptRef.current || resetInFlightRef.current || pendingResetRef.current) return;
                    if (res && res.goal && res.goal.scenarios) {
                        let activeScenario = res.goal.scenarios.find(s => s.title.trim() === scenario.trim());
                        
@@ -1543,13 +1638,16 @@ function Conversation() {
                            let currentTaskProgress = 0;
                            let currentTaskScore = 0;
 
+                           let foundCurrentTask = false;
                            activeScenario.tasks.forEach(t => {
                                if (typeof t === 'object') {
+                                   scoringGenerationByTaskRef.current.set(String(t.id), Number(t.scoring_generation || 0));
                                    if (t.status === 'completed') {
                                        newCompleted.add(t.text);
                                    } else if (t.status === 'pending' || t.status === 'in_progress') {
                                        // Get progress from the first incomplete task
-                                       if (currentTaskProgress === 0) {
+                                       if (!foundCurrentTask) {
+                                           foundCurrentTask = true;
                                            currentTaskScore = Number(t.score || 0);
                                            const interactionCount = Number(t.interaction_count || 0);
                                            currentTaskProgress = calculateTaskProgress({
@@ -2408,7 +2506,7 @@ function Conversation() {
            // Ignore unknown message types silently
            break;
       }
-  }, [setCurrentTaskProgress, setCurrentTaskScore, setEngagementLevel, setCompletedTasks, setTasks, location.state, userAPI, acceptScoringMessage]);
+  }, [setCurrentTaskProgress, setCurrentTaskScore, setEngagementLevel, setCompletedTasks, setTasks, location.state, userAPI, acceptScoringMessage, markConnectionReady]);
 
   const playAudioChunk = useCallback(async (audioDataOrPromise) => {
     if (isInterruptedRef.current) return; // Drop audio if interrupted
@@ -2447,6 +2545,10 @@ function Conversation() {
       console.log('connectWebSocket: missing user or sessionId', { user, effectiveSessionId, sessionId });
       return;
     }
+    if (pendingResetRef.current || resetInFlightRef.current) return;
+    const attemptId = ++connectionAttemptRef.current;
+    clearStableConnectionTimer();
+    setIsConnected(false);
 
     // Store in ref for later use
     connectWebSocketRef.current = connectWebSocket;
@@ -2504,12 +2606,20 @@ function Conversation() {
     try {
       realtime = await conversationAPI.createRealtimeTicket({ signal });
     } catch (error) {
-      if (error.name === 'AbortError' || signal?.aborted) return;
+      if (error.name === 'AbortError' || signal?.aborted || attemptId !== connectionAttemptRef.current) return;
       console.error('Failed to create realtime ticket:', error);
-      setWebSocketError('无法建立安全连接，请稍后重试');
+      setWebSocketError(t('ws_ticket_failed'));
+      if ([401, 403].includes(error.status)) {
+        wsRejectedRef.current = true;
+        setWsRejected(true);
+        isRestoringSessionRef.current = false;
+        setIsRestoringSession(false);
+      } else if (!error.status || error.status === 429 || error.status >= 500) {
+        scheduleReconnect(effectiveSessionId);
+      }
       return;
     }
-    if (signal?.aborted) return;
+    if (signal?.aborted || attemptId !== connectionAttemptRef.current) return;
     wsUrl = `${protocol}//${wsHost}/api/v1/realtime?ticket=${encodeURIComponent(realtime.ticket)}&sessionId=${encodeURIComponent(effectiveSessionId)}${scenario ? `&scenario=${encodeURIComponent(scenario)}` : ''}&voice=${encodeURIComponent(voice)}${mode ? `&mode=${encodeURIComponent(mode)}` : ''}`;
 
     // Create optimized WebSocket connection
@@ -2521,6 +2631,7 @@ function Conversation() {
       enableLogging: true,
       enableCompression: true
     });
+    const activeSocket = socketRef.current;
 
     // Set up network adaptive manager with WebSocket
     if (window.networkAdaptiveManager) {
@@ -2529,9 +2640,10 @@ function Conversation() {
 
     // Register event listeners BEFORE connecting to avoid missing events
     socketRef.current.addEventListener('open', () => {
+    if (socketRef.current !== activeSocket || attemptId !== connectionAttemptRef.current) return;
     console.log('WS Open (Optimized)');
-    setReconnectAttempts(0);
-    reconnectAttemptsRef.current = 0;
+    // Reset the retry budget only after an application-level ready message;
+    // a transport that opens then immediately fails must not loop forever.
     setIsConnected(!isRestoringSessionRef.current);
     setWebSocketError(null);
     // A successful open clears any prior rejection state.
@@ -2580,6 +2692,7 @@ function Conversation() {
     });
 
     socketRef.current.addEventListener('message', async (event) => {
+      if (socketRef.current !== activeSocket || attemptId !== connectionAttemptRef.current) return;
       console.log('[WS Message] Type:', event.data?.constructor?.name, 'Size:', event.data?.byteLength || event.data?.size || 'N/A');
       
       if (event.data instanceof ArrayBuffer) {
@@ -2621,12 +2734,15 @@ function Conversation() {
     });
 
     socketRef.current.addEventListener('error', (error) => {
+        if (socketRef.current !== activeSocket || attemptId !== connectionAttemptRef.current) return;
         console.error('WebSocket Error (Optimized):', error);
         setWebSocketError('连接异常');
         setIsConnected(false);
     });
 
     socketRef.current.addEventListener('close', async (event) => {
+        if (socketRef.current !== activeSocket || attemptId !== connectionAttemptRef.current) return;
+        clearStableConnectionTimer();
         console.log('WebSocket Closed (Optimized):', event.code, event.reason);
         setIsConnected(false);
 
@@ -2664,32 +2780,14 @@ function Conversation() {
             } else if (!isCleanClose && !manualDisconnect && attempts < MAX_RECONNECT_ATTEMPTS) {
                 setWebSocketError(`连接已关闭 (${event.code})`);
             } else if (attempts >= MAX_RECONNECT_ATTEMPTS) {
-                setWebSocketError(`已达到最大重试次数 (${MAX_RECONNECT_ATTEMPTS})，请刷新页面或点击重试`);
+                isRestoringSessionRef.current = false;
+                setIsRestoringSession(false);
+                setWebSocketError(t('ws_retry_exhausted'));
             }
             return;
         }
 
-        // Auto-reconnect with exponential backoff for unexpected disconnections
-        if (!manualDisconnect && attempts < MAX_RECONNECT_ATTEMPTS) {
-            if (reconnectTimerRef.current) return;
-            const attemptNum = attempts + 1;
-            console.log(`Attempting automatic reconnection ${attemptNum}/${MAX_RECONNECT_ATTEMPTS}...`);
-            setReconnectAttempts(attemptNum);
-            reconnectAttemptsRef.current = attemptNum;
-
-            // Exponential backoff: 1s, 2s, 4s, 8s, 10s
-            const delay = Math.min(1000 * Math.pow(2, attempts), 10000);
-
-            reconnectTimerRef.current = setTimeout(() => {
-                reconnectTimerRef.current = null;
-                // Check if we should still reconnect — read the ref .current (not the
-                // stale closure snapshot) so a manual retry during the backoff window
-                // cancels this pending reconnect instead of firing a spurious one.
-                if (!isManualDisconnectRef.current && reconnectAttemptsRef.current <= MAX_RECONNECT_ATTEMPTS) {
-                    connectWebSocketRef.current?.(effectiveSessionId);
-                }
-            }, delay);
-        }
+        scheduleReconnect(effectiveSessionId);
     });
 
     socketRef.current.addEventListener('pong', (data) => {
@@ -2707,8 +2805,10 @@ function Conversation() {
 
     // Start the connection AFTER all event listeners are registered
     socketRef.current.connect().catch(err => {
+      if (socketRef.current !== activeSocket || attemptId !== connectionAttemptRef.current) return;
       console.error('WebSocket connection failed:', err);
       setWebSocketError('连接失败，请刷新页面重试');
+      scheduleReconnect(effectiveSessionId);
     });
 
     // Start network monitoring
@@ -2716,7 +2816,7 @@ function Conversation() {
       window.networkAdaptiveManager.startMonitoring();
     }
 
-  }, [user, sessionId, playAudioChunk, handleJsonMessage]);
+  }, [user, sessionId, playAudioChunk, handleJsonMessage, scheduleReconnect, clearStableConnectionTimer, t]);
 
   // Init Session
   useEffect(() => {
@@ -2984,6 +3084,8 @@ function Conversation() {
 
       // Abort any pending API requests
       abortController.abort();
+      connectionAttemptRef.current += 1;
+      clearStableConnectionTimer();
 
       // Close WebSocket connection
       if (socketRef.current) {
@@ -3916,6 +4018,7 @@ function Conversation() {
                           handleRetryCurrentScenario({ keepHistory: false, resetProgress: true });
                         }
                       }}
+                      disabled={isResettingScenario}
                       className={`${isUserRecording ? 'hidden sm:flex' : 'flex'} flex-shrink-0 w-12 h-12 bg-amber-100 dark:bg-amber-900/30 hover:bg-amber-200 dark:hover:bg-amber-900/50 text-amber-700 dark:text-amber-300 rounded-xl items-center justify-center transition border border-amber-200 dark:border-amber-700`}
                       aria-label="重新练习当前场景"
                       title="重新练习"

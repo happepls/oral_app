@@ -1,4 +1,9 @@
 {
+  "scene_reset_partial": "La progression a été réinitialisée, mais la session n’a pas pu être rétablie. Réessayez.",
+  "scene_reset_failed": "La réinitialisation n’est pas terminée. Réessayez ; si le réseau a été coupé, reconnectez-vous pour vérifier la progression.",
+  "scene_reset_starting": "Redémarrage de ce scénario…",
+  "ws_ticket_failed": "Impossible d’établir une connexion sécurisée. Réessayez.",
+  "ws_retry_exhausted": "La limite de reconnexion automatique est atteinte. Réessayez.",
   "analytics_allow": "Autoriser les statistiques anonymes de visite (selon les préférences du navigateur)",
   "analytics_privacy": "Umami auto-hébergé mesure les pages et sources de visite sans données de compte, conversations ni audio. Les visites sont conservées 90 jours et peuvent être désactivées ici. Les dates d’inscription et de première conversation servent aux rapports de conversion ; les données liées sont supprimées avec le compte.",
   "task_progress_help_quality": "99 % : Le score est suffisant, mais la dernière pratique doit être améliorée.",
