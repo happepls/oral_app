@@ -334,7 +334,7 @@ def test_reset_generation_uses_a_new_window_and_evaluation_identity():
 
 
 @pytest.mark.asyncio
-async def test_stale_generation_is_discarded_without_websocket_update():
+async def test_stale_generation_is_discarded_and_requests_context_refresh_without_points():
     redis = FakeRedis()
     callback = callback_for()
     current_task = task()
@@ -352,7 +352,11 @@ async def test_stale_generation_is_discarded_without_websocket_update():
     state = json.loads(redis.data[key])
     assert state["turns"] == []
     assert state["queue"] == []
-    callback._safe_send.assert_not_awaited()
+    callback._safe_send.assert_awaited_once()
+    message = callback._safe_send.await_args.args[0]
+    assert message["type"] == "connection_closed"
+    assert message["payload"]["reconnectable"] is True
+    assert callback.scoring_reset_notified is True
 
 
 @pytest.mark.asyncio

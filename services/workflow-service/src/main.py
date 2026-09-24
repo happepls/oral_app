@@ -288,8 +288,8 @@ async def batch_evaluate_proficiency(
     """
     try:
         logger.info(
-            f"[BATCH_EVAL] user={request.user_id} goal={request.goal_id} "
-            f"task={request.task_id} turns={len(request.turn_window)}"
+            f"[BATCH_EVAL] goal={request.goal_id} task={request.task_id} "
+            f"generation={request.scoring_generation} turns={len(request.turn_window)}"
         )
         result = await batch_evaluation_workflow.evaluate_window(
             user_id=request.user_id,
@@ -305,8 +305,11 @@ async def batch_evaluate_proficiency(
             redis_client=cache.client if cache.is_connected() else None,
         )
         logger.info(
-            f"[BATCH_EVAL] result: delta={result.get('delta')} "
-            f"mode={result.get('teaching_mode')} "
+            f"[BATCH_EVAL] result: task={request.task_id} "
+            f"status={result.get('evaluation_status')} "
+            f"requested_generation={request.scoring_generation} "
+            f"current_generation={result.get('current_scoring_generation', result.get('scoring_generation'))} "
+            f"delta={result.get('delta')} "
             f"task_completed={result.get('task_completed')}"
         )
         return {"success": True, "data": result}

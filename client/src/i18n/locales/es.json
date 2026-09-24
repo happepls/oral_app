@@ -1,4 +1,9 @@
 {
+  "scene_reset_partial": "El progreso se restableció, pero no se pudo recuperar la sesión. Pulsa Reintentar.",
+  "scene_reset_failed": "El restablecimiento no terminó. Reinténtalo; si se cortó la red, vuelve a conectarte para comprobar el progreso.",
+  "scene_reset_starting": "Reiniciando este escenario…",
+  "ws_ticket_failed": "No se pudo establecer una conexión segura. Inténtalo de nuevo.",
+  "ws_retry_exhausted": "Se alcanzó el límite de reconexión automática. Pulsa Reintentar.",
   "analytics_allow": "Permitir estadísticas anónimas de visitas (respetando la privacidad del navegador)",
   "analytics_privacy": "Usamos Umami autoalojado para medir páginas y fuentes de visitas, sin datos de cuenta, conversaciones ni audio. Las visitas se conservan 90 días y pueden desactivarse aquí. Las fechas de registro y primera conversación permiten informes de conversión; los datos vinculados se eliminan con la cuenta.",
   "task_progress_help_quality": "99%: La puntuación es suficiente, pero la última práctica necesita mejorar.",

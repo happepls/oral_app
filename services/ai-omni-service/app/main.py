@@ -14,6 +14,7 @@ import os
 import urllib.parse
 import uuid
 from datetime import datetime
+from typing import Optional
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Query, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -258,6 +259,7 @@ async def get_user_context(token: str, scenario: str = None, *, profile_only: bo
                                     'scenario_title': matched_scenario.get('title', ''),
                                     'score': current_task.get('score', 0),
                                     'interaction_count': current_task.get('interaction_count', 0),
+                                    'scoring_generation': current_task.get('scoring_generation', 0),
                                     'keywords': current_task.get('keywords', []),
                                     'status': current_task.get('status'),
                                 }
@@ -280,6 +282,7 @@ async def get_user_context(token: str, scenario: str = None, *, profile_only: bo
                                     'scenario_title': current_scenario.get('title', ''),
                                     'score': current_task.get('score', 0),
                                     'interaction_count': current_task.get('interaction_count', 0),
+                                    'scoring_generation': current_task.get('scoring_generation', 0),
                                     'keywords': current_task.get('keywords', []),
                                     'status': current_task.get('status'),
                                 }
@@ -1242,7 +1245,22 @@ async def _handle_turn_with_accumulator(
                 state["frozen"] = False
                 _clear_scoring_claim(state)
                 await _save_scoring_window(redis, key, state, lock_key, finalize_owner)
-                logger.info("[BATCH_EVAL] discarded stale generation key=%s", key)
+                logger.info(
+                    "[BATCH_EVAL] discarded stale generation task=%s requested_generation=%s current_generation=%s",
+                    task_id, generation, result.get("current_scoring_generation"),
+                )
+                # Another session may have reset this task. Reconnect to load
+                # authoritative task/phase context; never re-label old turns
+                # with the new generation or award them points.
+                if getattr(callback, "scoring_reset_notified", False) is not True:
+                    callback.scoring_reset_notified = True
+                    await callback._safe_send({
+                        "type": "connection_closed",
+                        "payload": {
+                            "code": 4002, "reconnectable": True,
+                            "reason": "Task progress was reset; reconnect to refresh state",
+                        },
+                    })
                 break
 
             evidence_sufficient = bool(result.get("evidence_sufficient", len(window) == 4))
@@ -1307,6 +1325,8 @@ async def _evaluate_scene_turn_progress(
     suppress proficiency updates or task progress writes.
     """
     phase_info = session_phases.get(callback.phase_key, {})
+    if getattr(callback, "scoring_reset_notified", False) is True:
+        return None
     user_messages = [m for m in callback.messages if m.get("role") == "user"]
     if not goal_id or not task_id or not user_messages:
         logger.info(
@@ -5455,7 +5475,7 @@ from fastapi import HTTPException, Body, Request
 @app.post("/reset-phase")
 async def reset_phase(
     request: Request,
-    user_id: str = Body(..., description="用户 ID"),
+    user_id: Optional[str] = Body(default=None, description="用户 ID（可省略，由登录身份确定）"),
     scenario: str = Body(default="", description="场景名称"),
 ):
     """
@@ -5472,29 +5492,31 @@ async def reset_phase(
     if not token:
         raise HTTPException(status_code=401, detail="Authentication required")
 
-    user_context = await get_user_context(token)
+    user_context = await get_user_context(token, profile_only=True)
     if not user_context:
         raise HTTPException(status_code=401, detail="Invalid or expired token")
 
-    authenticated_user_id = str(user_context.get("id", ""))
-    if authenticated_user_id != str(user_id):
-        logger.warning(f"[reset-phase] Forbidden: token owner={authenticated_user_id}, requested user_id={user_id}")
+    authenticated_user_id = str(user_context.get("id") or "")
+    if not authenticated_user_id:
+        raise HTTPException(status_code=401, detail="Invalid or expired token")
+    if user_id is not None and authenticated_user_id != str(user_id):
+        logger.warning("[reset-phase] Forbidden: user_id mismatch")
         raise HTTPException(status_code=403, detail="Forbidden: user_id mismatch")
+    user_id = authenticated_user_id
 
     # --- 重置逻辑 ---
     try:
         phase_key = f"{user_id}:{scenario or ''}"
         if phase_key in session_phases:
-            old_phase = session_phases.copy_value(phase_key)
             session_phases[phase_key] = {
                 "phase": "magic_repetition",
                 "task_index": 0,
                 "magic_positive_streak": 0,
                 "memory_mode": False,
             }
-            logger.info(f"[reset-phase] Cleared session_phases[{phase_key}]: {old_phase} → reset")
+            logger.info("[reset-phase] Reset existing phase")
         else:
-            logger.info(f"[reset-phase] No session_phases found for key {phase_key}")
+            logger.info("[reset-phase] No existing phase to reset")
 
         return {"success": True, "message": "Phase state reset successfully"}
     except Exception as e:

@@ -1,4 +1,9 @@
 {
+  "scene_reset_partial": "O progresso foi redefinido, mas a sessão não pôde ser recuperada. Tente novamente.",
+  "scene_reset_failed": "A redefinição não foi concluída. Tente novamente; se a rede caiu, reconecte-se para verificar o progresso.",
+  "scene_reset_starting": "Reiniciando este cenário…",
+  "ws_ticket_failed": "Não foi possível estabelecer uma conexão segura. Tente novamente.",
+  "ws_retry_exhausted": "O limite de reconexões automáticas foi atingido. Tente novamente.",
   "analytics_allow": "Permitir estatísticas anônimas de visitas (respeita os sinais de privacidade do navegador)",
   "analytics_privacy": "Usamos Umami hospedado por nós para medir páginas e origens das visitas, sem dados da conta, conversas ou áudio. As visitas são mantidas por 90 dias e podem ser desativadas aqui. Datas de cadastro e primeira conversa permitem relatórios de conversão; registros vinculados são removidos com a conta.",
   "task_progress_help_quality": "99%: A pontuação é suficiente, mas a última prática precisa melhorar.",

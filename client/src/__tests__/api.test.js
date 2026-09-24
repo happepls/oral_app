@@ -11,7 +11,7 @@ global.fetch = jest.fn();
 
 describe('userAPI.resetTask()', () => {
   beforeEach(() => {
-    fetch.mockClear();
+    fetch.mockReset().mockResolvedValue({ ok: true, status: 200, json: async () => ({ success: true }) });
   });
 
   test('should call resetTask endpoint with correct URL', async () => {
@@ -133,7 +133,7 @@ describe('userAPI.resetTask()', () => {
     expect(result.progress).toBe(0);
   });
 
-  test('forwards the new scoring generation to phase reset', async () => {
+  test('resets phase with cookie identity after database reset', async () => {
     localStorage.getItem.mockReturnValueOnce(JSON.stringify({ id: 'user-1' }));
     fetch
       .mockResolvedValueOnce({
@@ -158,12 +158,25 @@ describe('userAPI.resetTask()', () => {
     await userAPI.resetTask('task-1', 'Cafe');
 
     expect(fetch.mock.calls[1][0]).toContain('/api/ai/reset-phase');
-    expect(JSON.parse(fetch.mock.calls[1][1].body)).toMatchObject({
-      user_id: 'user-1',
-      task_id: 'task-1',
-      scoring_generation: 3,
-      scoring_generations: [{ task_id: 'task-1', scoring_generation: 3 }],
-    });
+    expect(JSON.parse(fetch.mock.calls[1][1].body)).toEqual({ scenario: 'Cafe' });
+    expect(fetch.mock.calls[1][1].credentials).toBe('include');
+  });
+
+  test.each(['http', 'network'])('reports committed progress separately when phase reset fails: %s', async (failure) => {
+    const result = { tasks: [{ task_id: 371, scoring_generation: 1 }] };
+    fetch.mockResolvedValueOnce({ ok: true, status: 200, json: async () => ({ success: true, data: result }) });
+    if (failure === 'http') fetch.mockResolvedValueOnce({ ok: false, status: 503, json: async () => ({ message: 'Unavailable' }) });
+    else fetch.mockRejectedValueOnce(new TypeError('Failed to fetch'));
+    await expect(userAPI.resetTask(null, 'Cafe')).rejects.toMatchObject({ code: 'SCENARIO_RESET_PARTIAL', resetResult: result });
+    expect(fetch).toHaveBeenCalledTimes(2);
+    await userAPI.resetTaskPhase('Cafe');
+    expect(fetch.mock.calls.filter(([url]) => url.endsWith('/goals/reset-task'))).toHaveLength(1);
+  });
+
+  test('phase reset does not require a localStorage user profile', async () => {
+    localStorage.getItem.mockReturnValue(null);
+    await userAPI.resetTask(null, 'Cafe');
+    expect(fetch.mock.calls[1][0]).toContain('/api/ai/reset-phase');
   });
 
   test('should preserve task metadata after reset', async () => {
@@ -196,7 +209,7 @@ describe('userAPI.resetTask()', () => {
 
 describe('API Request Headers', () => {
   beforeEach(() => {
-    fetch.mockClear();
+    fetch.mockReset().mockResolvedValue({ ok: true, status: 200, json: async () => ({ success: true }) });
   });
 
   test('should include Content-Type header in requests', async () => {

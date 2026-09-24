@@ -252,6 +252,31 @@ async def test_old_scoring_generation_is_rejected_without_write():
 
 
 @pytest.mark.asyncio
+async def test_reset_during_model_evaluation_reports_current_generation_without_write():
+    workflow = BatchEvaluationWorkflow()
+    db = FakeDB()
+    turns = window(prefix="reset-in-flight")
+
+    async def model_then_reset(*args, **kwargs):
+        db.task.update(score=0, interaction_count=0, scoring_generation=1)
+        return {"quality": "strong", "evidence_sufficient": True, "reason": "good"}
+
+    with patch.object(workflow, "_call_llm", new=model_then_reset):
+        result = await workflow.evaluate_window(
+            user_id="u1", goal_id=7, task_id=42,
+            evaluation_id=workflow._derive_evaluation_id(0, turns),
+            scoring_generation=0, turn_window=turns, current_task=TASK,
+            native_language="Chinese", db_connection=db,
+        )
+    assert result["evaluation_status"] == "stale_generation"
+    assert result["scoring_generation"] == 0
+    assert result["current_scoring_generation"] == 1
+    assert result["delta"] == 0
+    assert db.task_updates == 0
+    assert not db.evaluations
+
+
+@pytest.mark.asyncio
 async def test_cached_final_is_rejected_after_generation_reset_before_qwen():
     workflow = BatchEvaluationWorkflow()
     db = FakeDB()

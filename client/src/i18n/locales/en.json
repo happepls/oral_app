@@ -1,4 +1,9 @@
 {
+  "scene_reset_partial": "Progress was reset, but session recovery failed. Select Retry to continue.",
+  "scene_reset_failed": "Reset did not finish. Retry; if the network dropped, reconnect to check progress.",
+  "scene_reset_starting": "Restarting this scenario…",
+  "ws_ticket_failed": "Unable to establish a secure connection. Please retry.",
+  "ws_retry_exhausted": "Automatic reconnection limit reached. Select Retry.",
   "analytics_allow": "Allow anonymous visit statistics (respects browser privacy signals)",
   "analytics_privacy": "We use self-hosted Umami for normalized page visits and referral sources, without account details, conversation content or audio. Visit events are retained for 90 days; you can disable them here. Server-side registration and first real conversation timestamps support aggregate conversion reports; linked records are deleted with the account.",
   "task_progress_help_quality": "99%: Your score is sufficient, but the latest practice needs improvement.",

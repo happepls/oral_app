@@ -243,6 +243,7 @@ Do not return a score or delta; the server owns score mapping."""
                 return {
                     **self._base_result(evaluation_id, scoring_generation, task_id, snapshot),
                     "evaluation_status": "stale_generation", "evidence_sufficient": True,
+                    "current_scoring_generation": current_generation,
                     "quality": quality, "delta": 0, "reason": reason,
                     "task_ready_to_complete": False,
                 }
