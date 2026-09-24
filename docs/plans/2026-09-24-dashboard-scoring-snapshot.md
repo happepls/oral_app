@@ -71,3 +71,20 @@
 上线验收使用用户指定的工作面试 URL：从数据库恢复当前分数，完成合法评分窗口后
 实时进度与数据库一致；每日问答慢/失败时 Discovery 场景入口仍可用。
 评分为零或 pending 的合法窗口不得伪装成正向进度。
+
+## 经验固化与反例
+
+用户明确要求将进度修复经验写入 `core-rules.md`，再由同步脚本生成各 Agent 入口。
+规则基于三轮独立缺口：AI 读取任务时遗漏代际、prompt 浅拷贝覆盖共享任务、
+第一方 REST SQL 遗漏代际。只修一个入口、只测 accumulator、只用 generation=0
+或构造字段齐全的浏览器夹具，都会让局部测试通过而生产仍失败。
+
+长期检查顺序为真实状态契约与生命周期，而非看到 0% 就修改显示公式。
+后端 completed/delta=1 与数据库 score=1 是本轮前端丢弃的证据；completed/delta=0
+则可能是合法评价，不能照此推断显示故障。health、RUNNING、合并、源码到位均不能代替
+一次真实评分结果传递到用户指定场景页面的验收。
+
+回归入口：AI `test_quick_profile_context.py` / `test_scoring_windows.py` 的上下文与
+prompt 刷新用例；Developer API `test/security.test.js` 的完整快照和旧 ID 用例；
+`client/e2e/scene-recovery.spec.js` 的工作面试代际 3、旧事件拒绝、重连与重置；
+`client/e2e/ui-audit.spec.js` 的辅助请求持续 pending 用例。

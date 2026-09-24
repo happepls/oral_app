@@ -5,7 +5,7 @@
 > 请勿直接修改此文件！
 > 修改请前往: `core-rules.md`
 >
-> 最后同步时间: 2026-09-02 12:57:26
+> 最后同步时间: 2026-09-24 15:40:25
 > 同步脚本: `sync-core-rules.py`
 
 ---
@@ -73,6 +73,17 @@ docker compose logs ai-omni-service | grep -i "proficiency\|task_completed"
 - Marker 重合成：剥离 `[TASK_*]` 后用 qwen3-tts-flash；COS 上传前必须 `_wav_extract_pcm()` 去 WAV 头，禁止用 `_trim_wav_onset()`。
 - 所有外部 TTS URL 经 `_validated_urlopen()`，仅允许 http(s) 及 `_ALLOWED_TTS_HOSTS`。
 - Qwen3.5 Omni Realtime 合法 voice 仅 `Tina`（默认）、`Serena`、`Evan`、`Arda`。
+
+## 进度更新防回归
+
+- 评分状态是完整契约：`task_id/id`、`score`、`interaction_count`、`scoring_generation` 必须贯穿 SQL、API、AI 上下文、REST 恢复与 WS 事件；检查真实调用链所有投影/重建分支，不能只补首个入口。字段缺失不能默认为合法代际 0；禁止移除 stale 校验、把旧窗口改成新代际或补分掩盖错误。
+- 提示词刷新只能修改独立的嵌套上下文副本；`dict.copy()` / 对象展开只隔离第一层，禁止经共享 `active_goal/current_task` 引用覆盖权威评分状态。测试必须经过真实 prompt 刷新后再评分，不能绕过中间步骤直接测试 accumulator。
+- 第一方目标/进度恢复统一使用 `/api/v1/goals/active` 的完整数据库快照，禁止拼接两个限额分页列表推断当前任务。任务优先匹配同场景有效 ID；复制目标遗留旧 ID 时回退到当前目标内的场景+任务文本，禁止跨目标匹配或泄漏身份。
+- 排查 0% 先关联用户给出的 URL/场景、北京时间、任务和实际部署版本，再对照数据库、workflow 结果、REST/WS 与页面。`evaluation_status=completed` 只表示评分窗口结束，不等于任务完成；区分合法零分、pending、stale 与“已写入正分但前端丢弃”，禁止仅凭 health/RUNNING/合并成功宣告修复。
+- 回归必须使用非零代际（例如 3），覆盖上下文读取→多次提示词刷新→完整窗口→落库→REST 恢复/WS 更新→页面进度，以及重置、重连、迟到旧消息和超过 100 条任务。只用 generation=0 或手工构造字段齐全的前端 mock，会掩盖真实接口遗漏；新契约上线先验证 backend，再发布 client。
+- 恢复路径只允许一个业务 WebSocket；替换前关闭旧连接并使旧回调失效，清理重试计时器，票据失败也必须进入有界重试。重置部分成功只重试未完成阶段，禁止重复提升代际；浏览器测试计数排除开发服务器 HMR 连接，但业务连接期望必须为 1。
+- Discovery 场景入口只等待权威目标快照；每日 AI 问答、历史和统计独立加载/失败，禁止以一个 `Promise.allSettled` 阻塞整页。用持续 pending 的辅助请求验证主内容可用，不能只测立即成功或失败。
+- 证据、反例与回归入口见 `docs/plans/2026-09-24-dashboard-scoring-snapshot.md`；早期上下文遗漏与浅拷贝反例见同目录 `2026-09-24-scene-reset-connection-progress-diagnostic.md`、`2026-09-24-scoring-prompt-context.md`。
 
 ## 学习模式关键契约
 
