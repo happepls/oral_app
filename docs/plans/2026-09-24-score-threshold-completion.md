@@ -52,16 +52,21 @@ cannot overwrite the accepted switch with 99%. The rule is recorded in
   scenario mocks, lint, contracts, secret checks and the production client build.
 - Scoped User Service Jest — 29 passed: score, ownership, generation reset,
   conditional-update race, idempotent replay, internal mode and browser boundary.
-- Scoped AI confirmation/scoring tests — 43 passed before adding the final
-  already-completed/expired-JWT regression; final full verifier passed afterward.
+- Scoped AI confirmation/scoring tests — 44 passed, including the final
+  already-completed/expired-JWT regression; full verifier passed afterward.
 - Real local PostgreSQL with temporary tables and rollback — earned completion,
   next generation, unchanged completion timestamp on replay, ownership,
   below-threshold rejection, and reset followed by re-earned score all passed.
-- Chromium desktop + WebKit mobile — four new delayed-snapshot tests passed;
-  expanded scene recovery suite is running. Tests verify the automatic event,
-  next-task selection and final practice report; no manual confirmation click.
+- Chromium desktop + WebKit mobile — four new delayed-snapshot tests passed
+  with exit 0. The expanded scene recovery run passed all 20 assertions but
+  exited 1 because two Chromium workers failed to stop within 300 seconds;
+  this is not recorded as a clean suite pass. Tests include next-task progress
+  at generation 5 and the final practice report; no manual confirmation click.
 - `python3 scripts/sdlc.py validate` and `git diff --check` — passed.
-- User Service Docker build passed; AI Docker build is still downloading wheels.
+- `docker compose build ai-omni-service user-service` — both images built
+  successfully after the mirror downloads completed.
+- PR #67 behavioral commit `2d3735d`: hosted backend `test`, `sdlc-artifacts`
+  and `sdlc-review` passed; hosted UI audit is still running at this record.
 
 Fresh-context review against `REVIEW.md` found reset retry, late REST restoration,
 final-task prompt null handling and legacy expired-JWT replay issues. All were
@@ -75,6 +80,11 @@ No production writes or successful deployment are claimed. Human merge is
 required. Deploy User Service before AI (new AI needs the extended internal
 confirmation route), then the client; verify actual running source and internal
 authentication, not only a deployment's Git label. Keep the existing Omni model.
+Read-only Zeabur preflight found User Service's Dockerfile override pinned to
+`FROM ghcr.io/happepls/oral_app/user-service:3f7e7f2`. After human merge and image
+publication, that override must be updated to the approved release image before
+redeploying User Service. AI and client have no Dockerfile override. No production
+configuration was changed by this preflight.
 Acceptance URL: `/conversation?scenario=工作面试`; existing earned tasks should
 complete on reconnection, and new score-9 windows should automatically advance.
 Use `[TASK_COMPLETE] task=… generation=… status=completed` plus DB status and the
