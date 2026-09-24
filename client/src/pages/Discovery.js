@@ -349,18 +349,13 @@ function Discovery() {
       try {
         if (!user.native_language) { navigate('/onboarding'); return; }
 
-        const goalRes = await userAPI.getActiveGoal();
+        const goalRes = await userAPI.getActiveGoal({ signal: abortController.signal });
         if (abortController.signal.aborted) return;
         if (!goalRes || !goalRes.goal) { navigate('/goal-setting'); return; }
         setActiveGoal(goalRes.goal);
         checkAchievement(goalRes.goal);
 
-        try {
-          const goalsRes = await userAPI.getUserGoals();
-          if (abortController.signal.aborted) return;
-          const other = (goalsRes.goals || []).filter(g => g.status === 'paused');
-          setHasOtherGoals(other.length > 0);
-        } catch { if (!abortController.signal.aborted) setHasOtherGoals(false); }
+        setHasOtherGoals(Boolean(goalRes.has_other_goals));
 
         if (goalRes.goal.scenarios?.length > 0) {
           setScenarios(goalRes.goal.scenarios);
@@ -368,52 +363,54 @@ function Discovery() {
           setScenarios(generateScenarios(goalRes.goal.target_language, goalRes.goal.interests));
         }
 
-        const [statsRes, histRes, checkinRes, qaRes, progressRes] = await Promise.allSettled([
-          historyAPI.getStats(user.id),
-          historyAPI.getUserHistory(user.id),
-          userAPI.getCheckinStats(),
-          aiAPI.getDailyQuestion({ signal: abortController.signal }),
-          userAPI.getDailyProgress(),
-        ]);
-        if (abortController.signal.aborted) return;
-
-        if (statsRes.status === 'fulfilled' && statsRes.value) {
-          const s = statsRes.value.data || statsRes.value;
-          setStats(s);
-        }
-        if (histRes.status === 'fulfilled' && histRes.value) {
-          const h = histRes.value.data || histRes.value;
-          if (Array.isArray(h)) setActiveSessions(h);
-        }
-        if (checkinRes.status === 'fulfilled' && checkinRes.value?.data) {
-          const d = checkinRes.value.data;
+        // The goal is sufficient to use the dashboard. Each optional resource
+        // owns its loading/error state and publishes as soon as it resolves.
+        const loadOptional = (request, onSuccess, onError = () => {}) => {
+          request.then(value => {
+            if (!abortController.signal.aborted) onSuccess(value);
+          }).catch(() => {
+            if (!abortController.signal.aborted) onError();
+          });
+        };
+        loadOptional(historyAPI.getStats(user.id), value => {
+          if (value) setStats(value.data || value);
+        });
+        loadOptional(historyAPI.getUserHistory(user.id), value => {
+          const history = value?.data || value;
+          if (Array.isArray(history)) setActiveSessions(history);
+        });
+        loadOptional(userAPI.getCheckinStats(), value => {
+          if (!value?.data) return;
+          const d = value.data;
           setCheckinStats({
             currentStreak: d.currentStreak || d.streak_count || 0,
             checkedInToday: d.checkedInToday || false,
             totalCheckins: d.totalCheckins || 0,
           });
-        }
-        if (qaRes.status === 'fulfilled' && qaRes.value?.question_text) {
-          setDailyQA(qaRes.value);
-          setDailyQAError(false);
-        } else {
+        });
+        loadOptional(aiAPI.getDailyQuestion({ signal: abortController.signal }), value => {
+          if (value?.question_text) setDailyQA(value);
+          setDailyQAError(!value?.question_text);
+          setDailyQALoading(false);
+        }, () => {
           setDailyQAError(true);
-        }
-        setDailyQALoading(false);
+          setDailyQALoading(false);
+        });
 
-        if (progressRes.status === 'fulfilled') {
-          const progress = { ...EMPTY_DAILY_PROGRESS, ...(progressRes.value?.data || progressRes.value || {}) };
+        loadOptional(userAPI.getDailyProgress(), value => {
+          const progress = { ...EMPTY_DAILY_PROGRESS, ...(value?.data || value || {}) };
           const today = new Date().toISOString().slice(0, 10);
           if (localStorage.getItem(`recall_completed_${today}`) === 'true') {
             progress.recallCompleted = true;
           }
           setDailyProgress(progress);
           setDailyProgressError(false);
-        } else {
+          setDailyProgressLoading(false);
+        }, () => {
           setDailyProgress(current => current || { ...EMPTY_DAILY_PROGRESS });
           setDailyProgressError(true);
-        }
-        setDailyProgressLoading(false);
+          setDailyProgressLoading(false);
+        });
 
         // Check daily QA pass status from database
         userAPI.getDailyQAPassStatus().then(res => {
@@ -446,7 +443,7 @@ function Discovery() {
   const hasLoadError = dashboardError || dailyProgressError || dailyQAError;
 
   useEffect(() => {
-    if (!loading && !hasLoadError) {
+    if (!loading && !dailyQALoading && !dailyProgressLoading && !hasLoadError) {
       autoRetryAttemptRef.current = 0;
       return undefined;
     }
@@ -481,7 +478,7 @@ function Discovery() {
       window.removeEventListener('focus', retryOnResume);
       document.removeEventListener('visibilitychange', handleVisibilityChange);
     };
-  }, [hasLoadError, loading]);
+  }, [hasLoadError, loading, dailyQALoading, dailyProgressLoading]);
 
   const retryDashboard = () => {
     autoRetryAttemptRef.current = 0;

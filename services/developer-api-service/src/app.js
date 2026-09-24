@@ -2,6 +2,7 @@ const crypto = require('crypto');
 const express = require('express');
 const fetch = require('node-fetch');
 const { createAuth, hash, error } = require('./auth');
+const { readActiveGoal } = require('./activeGoal');
 const OAUTH_SCOPES = new Set(['profile:read', 'profile:write', 'goals:read', 'goals:write', 'conversations:read', 'conversations:write', 'ai:generate', 'realtime:connect']);
 
 const PROFILE_FIELDS = new Set(['nickname', 'avatar_url', 'native_language', 'target_language', 'interests', 'daily_practice_goal', 'gender', 'birth_year', 'points']);
@@ -131,6 +132,14 @@ function createApp(options) {
       const values = entries.map(([, value]) => value);
       const { rows } = await db.query(`UPDATE users SET ${setters.join(', ')}, updated_at = NOW() WHERE id = $${values.length + 1} RETURNING id, username, email, nickname, avatar_url, native_language, target_language, interests, daily_practice_goal, gender, birth_year, points, subscription_status, updated_at`, [...values, req.delegated.user_id]);
       res.json({ data: rows[0], meta: { request_id: req.requestId } });
+    } catch (err) { next(err); }
+  });
+
+  app.get('/v1/goals/active', auth.requireScopes('goals:read'), async (req, res, next) => {
+    try {
+      const data = await readActiveGoal(db, req.delegated.user_id);
+      res.set('Cache-Control', 'no-store');
+      res.json({ data, meta: { request_id: req.requestId } });
     } catch (err) { next(err); }
   });
 
@@ -303,7 +312,7 @@ function createApp(options) {
       const values = [req.delegated.user_id, limit + 1];
       let condition = '';
       if (cursor) { values.push(cursor[0], cursor[1]); condition = 'AND (created_at, id) < ($3::timestamptz, $4::int)'; }
-      const { rows } = await db.query(`SELECT id, goal_id, scenario_title, task_description, status, score, interaction_count, feedback, completed_at, created_at, updated_at FROM user_tasks WHERE user_id = $1 ${condition} ORDER BY created_at DESC, id DESC LIMIT $2`, values);
+      const { rows } = await db.query(`SELECT id, goal_id, scenario_title, task_description, status, score, interaction_count, scoring_generation, feedback, completed_at, created_at, updated_at FROM user_tasks WHERE user_id = $1 ${condition} ORDER BY created_at DESC, id DESC LIMIT $2`, values);
       const hasMore = rows.length > limit;
       const data = rows.slice(0, limit);
       res.json({ data, meta: { request_id: req.requestId, next_cursor: hasMore ? encodeCursor(data.at(-1)) : null } });

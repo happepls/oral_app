@@ -324,11 +324,10 @@ describe('v1 learning contract', () => {
     expect(fetch.mock.calls[0][0]).toBe('/api/v1/profile');
     expect(fetch.mock.calls[0][1].credentials).toBe('include');
 
-    fetch.mockResolvedValueOnce(response([{ id: 1, status: 'active' }]));
-    fetch.mockResolvedValueOnce(response([]));
+    fetch.mockResolvedValueOnce(response({ goal: { id: 1, status: 'active' } }));
     await expect(userAPI.getActiveGoal()).resolves.toEqual({ goal: { id: 1, status: 'active' } });
-    expect(fetch.mock.calls[1][0]).toBe('/api/v1/goals?limit=100');
-    expect(fetch.mock.calls[2][0]).toBe('/api/v1/tasks?limit=100');
+    expect(fetch.mock.calls[1][0]).toBe('/api/v1/goals/active');
+    expect(fetch).toHaveBeenCalledTimes(2);
   });
 
   test('subscription reads preserve an unavailable state instead of imitating a free plan', async () => {
@@ -343,22 +342,15 @@ describe('v1 learning contract', () => {
     expect(fetch.mock.calls[0][1].credentials).toBe('include');
   });
 
-  test('active goals merge current task status from the task endpoint', async () => {
-    fetch.mockResolvedValueOnce(response([{ id: 7, status: 'active', scenarios: [{ title: 'Cafe', tasks: ['Order coffee'] }] }]));
-    fetch.mockResolvedValueOnce(response([{ id: 9, goal_id: 7, scenario_title: 'Cafe', task_description: 'Order coffee', status: 'completed', score: 9, interaction_count: 3, feedback: 'Great', completed_at: '2026-08-02T00:00:00Z' }]));
-
-    const result = await userAPI.getActiveGoal();
-
-    expect(result.goal.scenarios[0].tasks[0]).toEqual(expect.objectContaining({
-      id: 9,
-      text: 'Order coffee',
-      status: 'completed',
-      score: 9,
-      interaction_count: 3,
-      feedback: 'Great',
-      completed_at: '2026-08-02T00:00:00Z',
-      progress: 100,
-    }));
+  test('active goal preserves the authoritative generation without rebuilding paginated task lists', async () => {
+    const snapshot = { goal: { id: 18, scenarios: [{ title: '工作面试', tasks: [
+      { id: 371, text: 'Introduce your experience', score: 1, interaction_count: 3, scoring_generation: 3, progress: 11 },
+    ] }] }, has_other_goals: true };
+    fetch.mockResolvedValueOnce(response(snapshot));
+    const controller = new AbortController();
+    await expect(userAPI.getActiveGoal({ signal: controller.signal })).resolves.toEqual(snapshot);
+    expect(fetch).toHaveBeenCalledTimes(1);
+    expect(fetch.mock.calls[0][1]).toMatchObject({ credentials: 'include', signal: controller.signal });
   });
 
   test('writes and generation carry unique idempotency keys', async () => {

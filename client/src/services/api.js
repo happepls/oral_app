@@ -205,47 +205,12 @@ export const userAPI = {
   },
 
   async getActiveGoal(options = {}) {
-    const { signal } = options;
-    const requestOptions = {
+    const response = await fetch(`${V1_BASE_URL}/goals/active`, {
       headers: getAuthHeaders(),
       credentials: 'include',
-      ...(signal && { signal })
-    };
-    const [goalsResponse, tasksResponse] = await Promise.all([
-      fetch(`${V1_BASE_URL}/goals?limit=100`, requestOptions),
-      fetch(`${V1_BASE_URL}/tasks?limit=100`, requestOptions),
-    ]);
-    const [goals, tasks] = await Promise.all([handleResponse(goalsResponse), handleResponse(tasksResponse)]);
-    const goal = (Array.isArray(goals) ? goals : []).find((item) => item.status === 'active') || null;
-    if (!goal || !Array.isArray(goal.scenarios)) return { goal };
-
-    const currentTasks = (Array.isArray(tasks) ? tasks : []).filter((task) => String(task.goal_id) === String(goal.id));
-    return {
-      goal: {
-        ...goal,
-        scenarios: goal.scenarios.map((scenario) => ({
-          ...scenario,
-          tasks: (Array.isArray(scenario.tasks) ? scenario.tasks : []).map((task) => {
-            const text = typeof task === 'string' ? task : task.text;
-            const current = currentTasks.find((candidate) => candidate.scenario_title === scenario.title && candidate.task_description === text);
-            const score = current?.score || 0;
-            const completed = current?.status === 'completed';
-            return {
-              ...(typeof task === 'object' ? task : {}),
-              id: current?.id ?? null,
-              text,
-              status: current?.status || 'pending',
-              score,
-              interaction_count: current?.interaction_count || 0,
-              scoring_generation: current?.scoring_generation || 0,
-              feedback: current?.feedback || null,
-              completed_at: current?.completed_at || null,
-              progress: completed ? 100 : Math.min(99, Math.round((score / 9) * 100)),
-            };
-          }),
-        })),
-      },
-    };
+      signal: options.signal,
+    });
+    return handleResponse(response);
   },
 
   async getCurrentTask() {

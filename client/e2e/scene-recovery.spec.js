@@ -1,7 +1,7 @@
 const { test, expect } = require('@playwright/test');
 
 async function setup(page, options = {}) {
-  const state = { tickets: 0, resets: 0, phases: 0, sessions: 0, generation: 0, score: 3, ...options };
+  const state = { tickets: 0, resets: 0, phases: 0, sessions: 0, generation: 0, score: 3, scenario: 'Cafe', ...options };
   const user = { id: 'recovery-user', username: 'Practice', native_language: 'zh', target_language: 'en' };
   await page.addInitScript(({ user, flapConnections }) => {
     localStorage.setItem('user', JSON.stringify(user));
@@ -64,16 +64,16 @@ async function setup(page, options = {}) {
   await page.route(/tawk\.to|stripe\.com|dashscope|myqcloud|google/i, route => route.abort());
   await page.route('**/api/**', async route => {
     const url = new URL(route.request().url());
-    const task = { id: 371, goal_id: 18, scenario_title: 'Cafe', task_description: 'Order coffee', text: 'Order coffee',
+    const task = { id: 371, goal_id: 18, scenario_title: state.scenario, task_description: 'Order coffee', text: 'Order coffee',
       status: 'pending', score: state.score, interaction_count: state.score === 0 ? 0 : 3, scoring_generation: state.generation };
-    const goal = { id: 18, target_language: 'en', status: 'active', scenarios: [{ title: 'Cafe', tasks: [task] }] };
+    const goal = { id: 18, target_language: 'en', status: 'active', scenarios: [{ title: state.scenario, tasks: [task] }] };
     let data = {};
     if (url.pathname.endsWith('/reset-task')) {
       state.resets++;
       state.generation++;
       state.score = 0;
       await page.evaluate(({ generation, score }) => localStorage.setItem('test-task', JSON.stringify({ generation, score })), state);
-      data = { tasks: [{ task_id: 371, scoring_generation: state.generation }], scenario_title: 'Cafe' };
+      data = { tasks: [{ task_id: 371, scoring_generation: state.generation }], scenario_title: state.scenario };
     } else if (url.pathname.endsWith('/reset-phase')) {
       state.phases++;
       if (state.failPhase && state.phases === 1) return route.fulfill({ status: 503, contentType: 'application/json', body: JSON.stringify({ success: false }) });
@@ -94,10 +94,10 @@ async function setup(page, options = {}) {
     } else if (url.pathname.includes('/history/') || url.pathname.includes('/v1/conversations')) data = [];
     await route.fulfill({ contentType: 'application/json', body: JSON.stringify({ success: true, data }) });
   });
-  await page.goto('/conversation?scenario=Cafe' + (options.historyUrl ? '&sessionId=old-session&session=old-session' : ''));
+  await page.goto('/conversation?scenario=' + encodeURIComponent(state.scenario) + (options.historyUrl ? '&sessionId=old-session&session=old-session' : ''));
   await expect(page.getByRole('list', { name: '场景子任务' })).toContainText('Order coffee');
   await expect.poll(() => state.tickets).toBe(1);
-  await expect(page.getByRole('progressbar', { name: '当前子任务进度', exact: true })).toHaveAttribute('aria-valuenow', '33');
+  await expect(page.getByRole('progressbar', { name: '当前子任务进度', exact: true })).toHaveAttribute('aria-valuenow', String(Math.round(state.score / 9 * 100)));
   return state;
 }
 
@@ -112,6 +112,21 @@ async function emit(page, type, payload) {
 async function disconnect(page) {
   await emit(page, 'connection_closed', { code: 1007, message: 'Response stream timeout' });
 }
+
+test('工作面试 restores and advances generation 3 progress @critical', async ({ page }) => {
+  await setup(page, { scenario: '工作面试', score: 1, generation: 3 });
+  const progress = page.getByRole('progressbar', { name: '当前子任务进度', exact: true });
+  await expect(page).toHaveURL(/scenario=%E5%B7%A5%E4%BD%9C%E9%9D%A2%E8%AF%95/);
+  await expect(progress).toHaveAttribute('aria-valuenow', '11');
+  await emit(page, 'proficiency_update', { task_id: 371, scoring_generation: 3,
+    score: 3, interaction_count: 6, delta: 2, completed_window_count: 2,
+    evaluation_status: 'completed', evaluation_id: 'interview-current' });
+  await expect(progress).toHaveAttribute('aria-valuenow', '33');
+  await emit(page, 'proficiency_update', { task_id: 371, scoring_generation: 2,
+    score: 6, interaction_count: 9, delta: 3, completed_window_count: 3,
+    evaluation_status: 'completed', evaluation_id: 'interview-before-reset' });
+  await expect(progress).toHaveAttribute('aria-valuenow', '33');
+});
 
 for (const failure of ['network', 503]) {
   test(`upstream timeout recovers after a failed ticket (${failure}) @critical`, async ({ page }) => {

@@ -32,6 +32,7 @@ test.beforeEach(async ({ page }, testInfo) => {
     const url = route.request().url();
     let data = {};
     if (url.includes('/v1/profile')) data = seededUser;
+    else if (url.includes('/v1/goals/active')) data = { goal: activeGoal };
     else if (url.includes('/v1/goals')) data = [activeGoal];
     else if (url.includes('/v1/tasks')) data = [];
     else if (url.includes('/v1/conversations')) data = [];
@@ -202,15 +203,32 @@ test('@critical discovery keeps primary tasks visible and exposes semantic state
   expect(shellWidth).toBeLessThanOrEqual(Math.min(720, await page.evaluate(() => innerWidth)) + 1);
 });
 
+test('@critical discovery is usable while optional requests are still pending', async ({ page }) => {
+  let release;
+  const pending = new Promise(resolve => { release = resolve; });
+  for (const url of ['**/api/ai/daily-question', '**/api/v1/conversations?limit=100']) {
+    await page.route(url, async route => {
+      await pending;
+      await route.fulfill({ contentType: 'application/json', body: JSON.stringify({ data: [] }) });
+    });
+  }
+  try {
+    await page.goto('/discovery');
+    await expect(page.getByRole('heading', { name: /today's tasks|今日任务/i })).toBeVisible();
+    await expect(page.getByText(/^(Airport Check-in|机场值机)$/)).toBeVisible();
+    await expect(page.getByRole('button', { name: /recall|复述/i })).toBeEnabled();
+  } finally { release(); }
+});
+
 test('@critical discovery recovers after a transient dashboard request failure', async ({ page }) => {
   let goalRequests = 0;
-  await page.route('**/api/v1/goals?limit=100', async (route) => {
+  await page.route('**/api/v1/goals/active', async (route) => {
     goalRequests += 1;
     if (goalRequests === 1) return route.abort('failed');
     return route.fulfill({
       status: 200,
       contentType: 'application/json',
-      body: JSON.stringify({ success: true, data: [activeGoal] }),
+      body: JSON.stringify({ success: true, data: { goal: activeGoal } }),
     });
   });
 
@@ -231,10 +249,10 @@ test('@critical discovery locked scenario opens a keyboard-safe localized dialog
       { title: 'Job Interview', tasks: ['Introduce your experience'] },
     ],
   };
-  await page.route('**/api/v1/goals?limit=100', (route) => route.fulfill({
+  await page.route('**/api/v1/goals/active', (route) => route.fulfill({
     status: 200,
     contentType: 'application/json',
-    body: JSON.stringify({ success: true, data: [lockedGoal] }),
+    body: JSON.stringify({ success: true, data: { goal: lockedGoal } }),
   }));
   await page.goto('/discovery');
   await page.evaluate((useDark) => document.documentElement.classList.toggle('dark', useDark), testInfo.project.name.endsWith('-dark-en'));
@@ -250,21 +268,12 @@ test('@critical discovery locked scenario opens a keyboard-safe localized dialog
 });
 
 test('@critical discovery completion banner is keyboard actionable', async ({ page }) => {
-  await page.route('**/api/v1/tasks?limit=100', (route) => route.fulfill({
-    status: 200,
+  await page.route('**/api/v1/goals/active', (route) => route.fulfill({
     contentType: 'application/json',
-    body: JSON.stringify({
-      success: true,
-      data: [{
-        id: 10,
-        goal_id: 1,
-        scenario_title: 'Airport Check-in',
-        task_description: 'Ask where the counter is',
-        status: 'completed',
-        score: 9,
-        interaction_count: 3,
-      }],
-    }),
+    body: JSON.stringify({ data: { goal: { ...activeGoal, scenarios: [{
+      title: 'Airport Check-in', tasks: [{ id: 10, text: 'Ask where the counter is',
+        status: 'completed', score: 9, interaction_count: 9, scoring_generation: 3, progress: 100 }],
+    }] } } }),
   }));
   await page.goto('/discovery');
 

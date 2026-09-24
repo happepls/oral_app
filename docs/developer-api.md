@@ -44,4 +44,11 @@ curl -sS http://localhost:8081/api/v1/profile \
 
 高成本或写入请求必须带 `Idempotency-Key`。实时连接先调用 `POST /realtime/tickets`，再使用返回的 60 秒 ticket 连接 `ws://localhost:8081/api/v1/realtime?ticket=...`。
 
+`GET /goals/active`（`goals:read`）返回 `{ data: { goal, has_other_goals }, meta }`。
+`goal` 在没有当前目标时为 null；否则 `goal.scenarios[].tasks[]` 包含数据库中的
+`id`、`score`、`status`、`interaction_count`、`scoring_generation` 和 `progress`。
+该接口在一次数据库快照中读取当前目标及全部任务，不受列表接口的 100 条分页限制，
+响应禁止缓存。Discovery 与场景对话用此接口恢复状态；不要用默认代际 0 替代真实代际，
+也不要拼接两个分页列表推断当前任务。`GET /tasks` 同样保留 `scoring_generation`。
+
 正式契约见 `contracts/openapi-v1.yaml` 与 `contracts/asyncapi-v1.yaml`。TTS 的成功响应是 `audio/wav`，这是统一 JSON envelope 的显式二进制例外。
