@@ -80,6 +80,66 @@ test('profile contract preserves onboarding fields and subscription state', asyn
   assert.deepEqual(updateParams, [2, 1996, 43, userId]);
 });
 
+test('active goal snapshot preserves generation, scopes identity, and includes tasks beyond list pagination', async () => {
+  const db = fakeDb({ scopes: ['goals:read'] });
+  const query = db.query.bind(db);
+  db.query = async (sql, params) => {
+    if (!sql.includes('AS task_states')) return query(sql, params);
+    db.calls.push({ sql, params });
+    return { rows: [{ id: 18, status: 'active', has_other_goals: true,
+      scenarios: [{ title: '工作面试', tasks: ['Introduce your experience', { id: 373, text: 'Renamed task' },
+        { id: 999, text: 'Introduce your experience' }] }],
+      task_states: [
+        ...Array.from({ length: 101 }, (_, i) => ({ id: i, scenario_title: 'Other', task_description: 'Other' })),
+        { id: 371, scenario_title: '工作面试', task_description: 'Introduce your experience', score: 1, interaction_count: 3, scoring_generation: 3, status: 'pending' },
+        { id: 373, scenario_title: '工作面试', task_description: 'Original task', score: 9, interaction_count: 12, scoring_generation: 3, status: 'completed' },
+      ],
+    }] };
+  };
+  await withServer(db, async base => {
+    const response = await fetch(`${base}/v1/goals/active?user_id=attacker`, {
+      headers: { 'X-Guaji-API-Key': 'gj_test_key', Authorization: `Bearer ${token(['goals:read'])}` },
+    });
+    assert.equal(response.status, 200);
+    assert.equal(response.headers.get('cache-control'), 'no-store');
+    const { data } = await response.json();
+    assert.equal(data.has_other_goals, true);
+    const tasks = data.goal.scenarios[0].tasks;
+    assert.equal(tasks[0].scoring_generation, 3);
+    assert.equal(tasks[0].progress, 11);
+    assert.equal(tasks[1].id, 373);
+    assert.equal(tasks[1].progress, 100);
+    assert.equal(tasks[2].id, 371);
+    assert.equal(tasks[2].scoring_generation, 3);
+    assert.equal(tasks[2].progress, 11);
+    assert.equal(data.goal.task_states, undefined);
+  });
+  const reads = db.calls.filter(call => call.sql.includes('AS task_states'));
+  assert.equal(reads.length, 1);
+  assert.deepEqual(reads[0].params, [userId]);
+  assert.match(reads[0].sql, /FROM user_tasks WHERE user_id = \$1 AND goal_id = g.id/);
+});
+
+test('active goal requires read scope and supports first-party cookies without an active goal', async () => {
+  await withServer(fakeDb(), async base => {
+    const response = await fetch(`${base}/v1/goals/active`, {
+      headers: { 'X-Guaji-API-Key': 'gj_test_key', Authorization: `Bearer ${token()}` },
+    });
+    assert.equal(response.status, 403);
+  });
+  const db = fakeDb();
+  const query = db.query.bind(db);
+  db.query = async (sql, params) => sql.includes('INSERT INTO developer_user_grants')
+    ? { rows: [{ id: grantId }] } : query(sql, params);
+  const accessToken = jwt.sign({ id: userId, type: 'access' }, realtimeSecret,
+    { issuer: 'oral-app', audience: 'oral-app-users', expiresIn: '1h' });
+  await withServer(db, async base => {
+    const response = await fetch(`${base}/v1/goals/active`, { headers: { Cookie: `accessToken=${accessToken}` } });
+    assert.equal(response.status, 200);
+    assert.deepEqual((await response.json()).data, { goal: null, has_other_goals: false });
+  });
+});
+
 test('goal creation persists current proficiency', async () => {
   let goalInsert;
   const client = {

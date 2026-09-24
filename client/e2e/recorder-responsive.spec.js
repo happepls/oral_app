@@ -98,6 +98,7 @@ test.beforeEach(async ({ page }) => {
     let data = {};
     if (url.includes('/v1/profile')) data = user;
     else if (url.includes('/users/profile')) data = { user };
+    else if (url.includes('/v1/goals/active')) data = { goal: activeGoal };
     else if (url.includes('/v1/goals')) data = [activeGoal];
     else if (url.includes('/goals/active')) data = { goal: activeGoal };
     else if (url.includes('/users/goals')) data = { goals: [activeGoal] };

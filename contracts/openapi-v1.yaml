@@ -67,6 +67,14 @@ paths:
       responses:
         '200': { $ref: '#/components/responses/DataResponse' }
         default: { $ref: '#/components/responses/Error' }
+  /goals/active:
+    get:
+      operationId: getActiveGoal
+      summary: Read the active goal and all its task states in one database snapshot
+      description: Requires goals:read. Returns data.goal (null when absent) and data.has_other_goals. Scenario tasks include the database id, score, status, interaction_count, scoring_generation and progress. This read is not paginated and must not be cached.
+      responses:
+        '200': { $ref: '#/components/responses/DataResponse' }
+        default: { $ref: '#/components/responses/Error' }
   /goals:
     get:
       operationId: listGoals
