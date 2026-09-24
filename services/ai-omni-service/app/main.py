@@ -3270,6 +3270,9 @@ class WebSocketCallback(OmniRealtimeCallback):
             full_ctx = {**self.user_context}
             active_goal = self.user_context.get('active_goal') or {}
             if active_goal: full_ctx.update(active_goal)
+            # Prompt task selection must not replace the authoritative task used
+            # by scoring: a shallow user_context copy still shares active_goal.
+            full_ctx['active_goal'] = {**active_goal}
 
             if self.scenario and active_goal.get('scenarios'):
                 scenarios = active_goal.get('scenarios', [])
@@ -3299,9 +3302,9 @@ class WebSocketCallback(OmniRealtimeCallback):
                         full_ctx['custom_topic'] = self.user_context['custom_topic']
                         full_ctx['task_description'] = task_text  # Explicitly set for prompt template
 
-                        # Also update active_goal.current_task for prompt_manager
-                        # CRITICAL: preserve 'id' so proficiency/batch_evaluate can resolve the task row.
+                        # Select a task for the prompt without mutating live scoring state.
                         full_ctx['active_goal']['current_task'] = {
+                            **current_task,
                             'id': current_task.get('id'),
                             'scenario_title': self.scenario,
                             'task_description': task_text

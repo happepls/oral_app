@@ -1,6 +1,7 @@
 import unittest
 from unittest.mock import AsyncMock, Mock, patch
 import copy
+import asyncio
 
 from ._omni_stubs import load_main
 
@@ -8,6 +9,52 @@ omni = load_main()
 
 
 class QuickProfileContextTests(unittest.IsolatedAsyncioTestCase):
+    async def test_prompt_refresh_preserves_reset_generation_through_real_scoring_entrypoint(self):
+        from .test_scoring_windows import FakeRedis
+
+        task = {'id': 9, 'text': 'Order coffee', 'status': 'pending',
+                'score': 0, 'interaction_count': 0, 'scoring_generation': 2}
+        current = {**task, 'task_description': task['text'], 'scenario_title': 'Cafe'}
+        goal = {'id': 4, 'target_language': 'English', 'current_task': current,
+                'scenarios': [{'title': 'Cafe', 'tasks': [task]}]}
+        callback = omni.WebSocketCallback(
+            AsyncMock(), asyncio.get_running_loop(), {'active_goal': goal},
+            'test-token', 'u1', 'session', history_messages=[], scenario='Cafe',
+        )
+        callback.conversation = Mock()
+        callback._safe_send = AsyncMock()
+        redis = FakeRedis()
+        post = AsyncMock(return_value={
+            'evaluation_status': 'completed', 'evidence_sufficient': True,
+            'quality': 'satisfactory', 'delta': 2, 'score': 2,
+            'interaction_count': 3, 'scoring_generation': 2,
+            'completed_window_count': 1,
+        })
+        with patch.object(omni, 'session_phases', {callback.phase_key: {'phase': 'scene_theater'}}), \
+                patch.object(omni.prompt_manager, 'generate_scene_theater_prompt', return_value='Practice'), \
+                patch.object(omni, 'MultiModality', Mock(TEXT='text', AUDIO='audio')), \
+                patch.object(omni, '_get_redis_client', return_value=redis), \
+                patch.object(omni, '_post_scoring_window', post):
+            for number in range(3):
+                # Connection setup and later prompt refreshes both use this path.
+                callback._update_session_prompt()
+                turn_id = f'new-{number}'
+                callback.current_turn_id = turn_id
+                callback.messages.append({'role': 'user', 'turn_id': turn_id, 'content': 'Coffee please'})
+                await omni._evaluate_scene_turn_progress(callback, 4, 9, 'Which size?')
+
+        self.assertEqual(callback.conversation.update_session.call_count, 3)
+        self.assertEqual(post.await_count, 1)
+        payload = post.await_args.args[0]
+        self.assertEqual(payload['scoring_generation'], 2)
+        self.assertEqual(payload['current_task']['scoring_generation'], 2)
+        self.assertIs(goal['current_task'], current)
+        self.assertEqual(goal['current_task']['scoring_generation'], 2)
+        message = callback._safe_send.await_args.args[0]
+        self.assertEqual(message['type'], 'proficiency_update')
+        self.assertEqual(message['payload']['scoring_generation'], 2)
+        self.assertEqual(message['payload']['task_score'], 2)
+
     async def test_reset_generation_survives_both_context_paths_and_next_scoring_window(self):
         from .test_scoring_windows import FakeRedis, add_turn, callback_for
 
