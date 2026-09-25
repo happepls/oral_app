@@ -1,0 +1,26 @@
+# Copyright (c) 2026 shijunxiao <sjx18094552@gmail.com>
+# 仓库级项目与版权信息；各服务的依赖仍由各自的依赖文件管理。
+
+[project]
+name = "oral-app"
+version = "0.1.0"
+description = "Oral AI - a 24/7 AI-powered oral practice application."
+readme = "README.md"
+authors = [
+    {name = "shijunxiao", email = "sjx18094552@gmail.com"},
+]
+license = {text = """
+Copyright (c) 2026 shijunxiao <sjx18094552@gmail.com>
+
+Permission is granted to use, copy, modify, fork, and redistribute this
+project's original source code, provided that all forks and redistributed
+copies, including modified versions, retain the above copyright notice,
+the original author's name and email address, and this permission notice.
+
+Third-party code and dependencies remain subject to their own licenses
+and attribution requirements.
+
+允许使用、复制、修改、fork 和再分发本项目的原创源代码，但所有 fork
+及再分发副本（包括修改后的版本）必须保留上述 Copyright 声明、原作者
+姓名与邮箱，以及本许可声明。第三方代码及依赖仍遵循各自的许可证和署名要求。
+"""}
