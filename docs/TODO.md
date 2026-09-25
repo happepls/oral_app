@@ -2,10 +2,8 @@
 
 ## In Progress
 
-- 配置生产 INTERNAL_AUTH_SECRET 并重建/滚动部署受影响服务。
-- 在 Stripe test/live Dashboard 配置 Promotion Codes、Portal、Webhook，并完成最小真实交易。
-- 在 Tawk 配置 Ticketing、AI Assist 和人工转接 Shortcut。
-- 完成三类真实会话验收。
+
+
 - 部署后观察 24 小时错误率、历史保存、Webhook、备份和 DashScope 超时。
 
 - [x] [Release] 独立私有 COS `oral-backup-1317719935` 已配置 Lifecycle（daily 30 天、monthly 365 天）；2026-08-06 真实上传 3.90 MB bundle，双层 checksum 通过，并恢复至隔离 PostgreSQL/MongoDB。抽样计数完全一致（users 21、goals 33、tasks 784、conversations 8268、metrics 4）；演练临时库已删除，02:30 cron 容器健康。演练同时修复外层 checksum 绝对路径及 Mongo archive namespace 未重映射问题。

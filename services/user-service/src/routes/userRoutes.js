@@ -2,9 +2,11 @@ const express = require('express');
 const router = express.Router();
 const userController = require('../controllers/userController');
 const User = require('../models/user');
+const { validateGoalScenarios } = require('../middleware/goalScenarioValidation');
 const { protect, internalAuthWithNetworkSkip } = require('../middleware/enhancedAuthMiddleware'); // Updated to enhanced auth
 const {
   authRateLimiter,
+  generalRateLimiter,
   validateRegistration,
   validateLogin,
   handleValidationErrors
@@ -37,6 +39,7 @@ router.put('/api/users/profile', protect, userController.updateProfile);
 // Goal routes
 router.post('/api/users/goals', protect, userController.createGoal);
 router.get('/api/users/goals', protect, userController.getUserGoals);
+router.patch('/api/users/goals/:id/scenarios', protect, generalRateLimiter, validateGoalScenarios, handleValidationErrors, userController.replaceGoalScenarios);
 router.get('/api/users/goals/active', protect, userController.getActiveGoal);
 router.get('/api/users/goals/current-task', protect, userController.getCurrentTask);
 router.get('/api/users/goals/next-task', protect, userController.getNextPendingTask);

@@ -5,9 +5,22 @@ on:
     branches: [ master, develop ]
   pull_request:
     branches: [ master ]
+  schedule:
+    - cron: '23 18 * * 0' # Monday 02:23 Asia/Shanghai: full UI matrix
+  workflow_dispatch:
+    inputs:
+      full_ui_matrix:
+        description: Run all viewport/theme combinations
+        type: boolean
+        default: true
+
+concurrency:
+  group: ci-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   test:
+    if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
 
     steps:
@@ -105,7 +118,19 @@ jobs:
     - name: Install browser engines
       run: npm exec --prefix client -- playwright install --with-deps chrome webkit
     - name: Run deterministic viewport, theme, locale, accessibility, and WebKit checks
-      run: npm --prefix client run test:e2e
+      env:
+        FULL_UI_MATRIX: ${{ github.event_name == 'schedule' || inputs.full_ui_matrix == true }}
+      run: |
+        if [ "$FULL_UI_MATRIX" = "true" ]; then
+          npm --prefix client run test:e2e
+        else
+          # All cases on narrow/mobile-dark/desktop; critical cases on WebKit.
+          npm --prefix client run test:e2e -- \
+            --project=chromium-320 \
+            --project=chromium-desktop \
+            --project=chromium-390-dark-en \
+            --project=webkit-mobile
+        fi
     - name: Upload UI evidence
       if: always()
       uses: actions/upload-artifact@v4

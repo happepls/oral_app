@@ -5,6 +5,7 @@ import json
 import base64
 import asyncio
 import hashlib
+import hmac
 import logging
 import httpx
 import time
@@ -28,9 +29,13 @@ import dashscope
 try:
     from .dashscope_config import classify_connection_error, connect_with_retry, resolve_dashscope_config
     from . import product_analytics
+    from . import expression_feedback
+    from . import scenario_generation
 except ImportError:  # tests and direct `python app/main.py` load it as a module
     from dashscope_config import classify_connection_error, connect_with_retry, resolve_dashscope_config
     import product_analytics
+    import expression_feedback
+    import scenario_generation
 
 # --- Configuration & Logging ---
 logging.basicConfig(level=logging.INFO)
@@ -467,52 +472,8 @@ def _extract_inline_tips(ai_response: str) -> list:
 
 
 def _format_teaching_directive(result: dict, target_language: str, native_language: str) -> str:
-    """Format a one-time teaching directive to append to the session prompt.
-
-    Consumed by DashScope on the NEXT response only — the caller MUST restore
-    base prompt on the turn after (see WebSocketCallback.pending_directive).
-    """
-    mode = (result or {}).get("teaching_mode", "guide")
-
-    if mode == "correct":
-        guidance = (result or {}).get("correction_guidance") or {}
-        native_expl = guidance.get("native_explanation", "") or ""
-        correct_ex = guidance.get("correct_example", "") or ""
-        retry_inst = guidance.get("retry_instruction", "") or ""
-        # Bug D.3: if both example and retry_instruction are empty, the CORRECT
-        # directive would produce an empty/broken response. Gracefully degrade
-        # to GUIDE mode with native_explanation as hint.
-        if not correct_ex.strip() and not retry_inst.strip():
-            hint = native_expl or (result or {}).get("next_topic_hint") or ""
-            return (
-                "[TEACHING DIRECTIVE — ONE-TIME USE, DO NOT MENTION TO STUDENT]\n"
-                "Mode: GUIDE (degraded from CORRECT — no example available)\n"
-                "In your NEXT response, naturally steer the conversation toward:\n"
-                f"\"{hint}\"\n"
-                "Continue the current task. Weave this direction into your response naturally."
-            )
-        return (
-            "[TEACHING DIRECTIVE — ONE-TIME USE, DO NOT MENTION TO STUDENT]\n"
-            "Mode: CORRECT\n"
-            "In your NEXT response ONLY (3-4 sentences max):\n"
-            f"1. Briefly acknowledge the student's attempt (1 sentence, in {target_language}).\n"
-            f"2. [NATIVE: {native_expl}]\n"
-            f"   → You MAY briefly use {native_language} to deliver this explanation.\n"
-            f"3. Provide model example: \"{correct_ex}\"\n"
-            f"4. End with: \"{retry_inst}\"\n"
-            "IMPORTANT: After this ONE correction response, the "
-            f"\"YOU MUST RESPOND ENTIRELY IN {target_language}\" rule resumes from the NEXT response onward.\n"
-        )
-
-    # default: guide
-    hint = (result or {}).get("next_topic_hint") or ""
-    return (
-        "[TEACHING DIRECTIVE — ONE-TIME USE, DO NOT MENTION TO STUDENT]\n"
-        "Mode: GUIDE\n"
-        "In your NEXT response, naturally steer the conversation toward:\n"
-        f"\"{hint}\"\n"
-        "Continue the current task. Weave this direction into your response naturally."
-    )
+    """Compatibility entrypoint for response-scoped Scene Theater teaching."""
+    return expression_feedback.format_directive(result, target_language, native_language)
 
 
 _SCORING_WINDOW_TTL_SECONDS = 72 * 3600
@@ -3120,7 +3081,12 @@ class WebSocketCallback(OmniRealtimeCallback):
         self._last_open_time = 0       # Timestamp of last on_open
         self.auth_denied = False        # Set True after too many quick-close failures (rate-limit / access-denied)
         # One-turn evaluation state. turn_id remains stable across reconnects.
-        self.pending_directive = None       # One-turn teaching directive (consumed at upload_ai_task head)
+        self.pending_directive = None       # Consumed only by the next response.create
+        self.scene_base_prompt = ""
+        self.expression_input_sequence = 0
+        self.expression_response_sequence = 0
+        self.expression_jobs = set()
+        self.expression_error_streak = (None, None, 0)
         self.last_total_proficiency = None  # Cache of last known total; inline turns reuse to avoid DB query
         # Daily Q&A state (Feature 2)
         self.is_daily_qa_mode = False
@@ -3530,6 +3496,8 @@ class WebSocketCallback(OmniRealtimeCallback):
                     native_language=native_lang,
                     current_task_number=current_idx + 1,
                     total_tasks=total_tasks,
+                    target_level=str(full_ctx.get('target_level') or active_goal.get('target_level') or 'B1'),
+                    scene_teaching=expression_feedback.enabled() and self.mode not in expression_feedback.EXCLUDED_MODES,
                 )
                 logger.info(
                     f"[Phase] scene_theater prompt (single-task view): task #{current_idx + 1}/{total_tasks} = {current_task_text[:60]}"
@@ -3550,13 +3518,19 @@ class WebSocketCallback(OmniRealtimeCallback):
                     or 'the next task'
                 )
                 target_lang_for_switch = self.user_context.get('target_language') or full_ctx.get('target_language', 'the target language')
+                switch_language_rule = (
+                    f"REMINDER: Conduct this transition and all role dialogue in {target_lang}; follow the teaching-language exception above.\n"
+                    if expression_feedback.enabled() and self.mode not in expression_feedback.EXCLUDED_MODES
+                    and phase_info.get("phase") == "scene_theater"
+                    else f"REMINDER: Conduct this transition and ALL subsequent responses entirely in {target_lang_for_switch}.\n"
+                )
                 system_prompt += (
                     f"\n\n## TASK SWITCH — OVERRIDE ALL PREVIOUS CONTEXT\n"
                     f"The previous task is FULLY COMPLETED. Do NOT mention it again under any circumstances.\n"
                     f"You are now starting a completely fresh conversation for the NEW task: \"{new_task}\".\n"
                     f"Greet the student briefly and invite them to start this new task immediately.\n"
                     f"NEVER say 'Let's finish this task first' — it is already done.\n"
-                    f"REMINDER: Conduct this transition and ALL subsequent responses entirely in {target_lang_for_switch}.\n"
+                    + switch_language_rule
                 )
                 self.just_switched_task = False
                 logger.info(f"[TASK_SWITCH] Injected override directive for new task: {new_task}")
@@ -3584,6 +3558,7 @@ class WebSocketCallback(OmniRealtimeCallback):
                 logger.info(f"[BATCH_EVAL] Appending teaching directive to session prompt ({len(extra_directive)} chars)")
 
             logger.info(f"Sending System Prompt ({self.role}) full:\n{system_prompt}")
+            self.scene_base_prompt = system_prompt
             try:
                 self.conversation.update_session(
                     instructions=system_prompt,
@@ -3674,6 +3649,7 @@ class WebSocketCallback(OmniRealtimeCallback):
                 if event_name == 'input_audio_buffer.committed':
                     self.analytics.prepare(response.get('item_id'), self.analytics_real_mode())
                 elif event_name == 'response.created':
+                    self.expression_response_sequence = self.expression_input_sequence
                     self.analytics.response_started(rid)
                 # `rid` is captured by this event closure. Update all shared
                 # response/gate state only while holding the event lock so an
@@ -3734,17 +3710,6 @@ class WebSocketCallback(OmniRealtimeCallback):
                         async def upload_ai_task(d, r):
                             # Yield so any pending audio_transcript.done event can populate self.messages
                             await asyncio.sleep(0)
-
-                            # ── Consume one-time teaching directive (Feature 1) ──
-                            # The directive was injected on the PREVIOUS turn and consumed by DashScope
-                            # on THIS response. Restore base prompt so the next turn is clean.
-                            if self.pending_directive:
-                                logger.info("[BATCH_EVAL] Directive consumed — restoring base session prompt")
-                                self.pending_directive = None
-                                try:
-                                    self._update_session_prompt()
-                                except Exception as _de:
-                                    logger.warning(f"[BATCH_EVAL] Failed to restore base prompt: {_de}")
 
                             # ── Daily Q&A: detect [DAILY_QA_PASSED] (Feature 2) ──
                             daily_qa_from_audio_upload = False
@@ -4507,6 +4472,7 @@ class WebSocketCallback(OmniRealtimeCallback):
 
                         active_goal = self.user_context.get("active_goal") or {}
                         current_task = active_goal.get("current_task") or {}
+                        expression_feedback.schedule(self, session_phases, _get_redis_client(), WORKFLOW_SERVICE_URL)
                         asyncio.create_task(_evaluate_scene_turn_progress(
                             self,
                             active_goal.get("id"),
@@ -4542,6 +4508,10 @@ class WebSocketCallback(OmniRealtimeCallback):
 
     def on_close(self, code: int, message: str) -> None:
         self.is_connected = False
+        self.pending_directive = None
+        for job in tuple(self.expression_jobs):
+            if not self.loop.is_closed():
+                self.loop.call_soon_threadsafe(job.cancel)
         if self._audio_gate_grace_task is not None:
             grace_task = self._audio_gate_grace_task
             try:
@@ -4944,6 +4914,8 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query(None), ses
                         continue
                         
                 if msg_type == 'audio_stream':
+                    if not callback.user_audio_buffer:
+                        callback.expression_input_sequence += 1
                     audio_b64 = payload.get('audio')
                     sample_rate = payload.get('sample_rate', 16000)
                     audio_format = payload.get('format', 'pcm16')
@@ -4997,7 +4969,11 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query(None), ses
                         asyncio.create_task(upload_user_task(audio_data))
                     if callback.is_connected:
                         try:
-                            conversation.create_response()
+                            directive = expression_feedback.response_instructions(callback, session_phases)
+                            if directive:
+                                conversation.create_response(instructions=directive)
+                            else:
+                                conversation.create_response()
                         except Exception as e:
                             logger.error(f"Error creating response for audio: {e}")
                 elif msg_type == 'user_audio_cancelled':
@@ -5015,6 +4991,7 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query(None), ses
                                 logger.info(f"[DailyLimit] blocked(text) user={callback.user_id} {_info}")
                                 continue
                         callback.counts_against_quota = not quota_exempt
+                        callback.expression_input_sequence += 1
                         callback.interrupted_turn = False  # new user turn ends the interruption
                         text_message = {
                             "id": str(uuid.uuid4()),
@@ -5032,6 +5009,10 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query(None), ses
                             "turn_id": callback.current_turn_id,
                         })
                         callback.messages.append(text_message)
+                        if expression_feedback.scope(callback, session_phases):
+                            await callback._safe_send({"type": "user_transcript", "payload": {
+                                "text": text, "messageId": text_message["id"], "turn_id": callback.current_turn_id,
+                            }})
                         asyncio.create_task(save_single_message(
                             callback.session_id,
                             callback.user_id,
@@ -5046,7 +5027,11 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query(None), ses
                         if callback.is_connected:
                             try:
                                 conversation.send_raw(json.dumps({"type": "conversation.item.create", "item": {"type": "message", "role": "user", "content": [{"type": "input_text", "text": text}]}}))
-                                conversation.create_response()
+                                directive = expression_feedback.response_instructions(callback, session_phases)
+                                if directive:
+                                    conversation.create_response(instructions=directive)
+                                else:
+                                    conversation.create_response()
                             except Exception as e:
                                 logger.error(f"Error creating response for text: {e}")
                 elif msg_type == 'resend_magic_sentence':
@@ -5187,6 +5172,10 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query(None), ses
     finally:
         if heartbeat_task: heartbeat_task.cancel()
         if welcome_readiness_task: welcome_readiness_task.cancel()
+        callback.is_connected = False
+        callback.pending_directive = None
+        for job in tuple(callback.expression_jobs):
+            job.cancel()
         if conversation:
             try: conversation.close()
             except: pass
@@ -5751,6 +5740,38 @@ async def generate_scene_image(payload: dict = Body(...)):
 # ---------------------------------------------------------------------------
 # POST /generate-scenarios  (proxied from /api/ai/generate-scenarios via Nginx)
 # ---------------------------------------------------------------------------
+
+@app.post("/generate-scenario")
+async def generate_scenario(request: Request, payload: dict = Body(...)):
+    """Editor-only generation; public callers authenticate via developer API."""
+    internal_secret = os.getenv("INTERNAL_AUTH_SECRET", "")
+    supplied_secret = request.headers.get("X-Guaji-Internal-Auth", "")
+    if not internal_secret:
+        raise HTTPException(status_code=503, detail="场景生成服务未配置")
+    if not hmac.compare_digest(supplied_secret.encode(), internal_secret.encode()):
+        raise HTTPException(status_code=401, detail="未经授权")
+    try:
+        values = scenario_generation.validate_request(payload)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    try:
+        async with httpx.AsyncClient(timeout=30) as client:
+            response = await client.post(
+                f"{DASHSCOPE_CHAT_BASE}/compatible-mode/v1/chat/completions",
+                headers={"Authorization": f"Bearer {DASHSCOPE_CONFIG.chat_api_key}",
+                         "Content-Type": "application/json"},
+                json={"model": QWEN_TEXT_MODEL,
+                      "messages": scenario_generation.messages(values),
+                      "max_tokens": 1024, "response_format": {"type": "json_object"}},
+            )
+            response.raise_for_status()
+            content = response.json()["choices"][0]["message"]["content"]
+            return scenario_generation.validate_result(content, values["exclude_titles"])
+    except Exception as exc:
+        # Do not log user interests, upstream responses, or credential-bearing URLs.
+        logger.warning("[generate_scenario] Generation failed (%s)", type(exc).__name__)
+        raise HTTPException(status_code=502, detail="场景生成失败，请重试") from exc
+
 
 @app.post("/generate-scenarios")
 async def generate_scenarios(payload: dict = Body(...)):

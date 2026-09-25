@@ -150,15 +150,23 @@ export function prepareHistorySnapshot(messages) {
         || message.id
         || message.responseId
         || `conversation-turn-${index}-${role}`;
+      const text = typeof message.content === 'string' ? message.content : '';
+      // Recording/loading placeholders are UI state, not utterances. Keep an
+      // audio-only turn when its transcript has not arrived yet.
+      const content = text.trim() && !/^(?:\.{3}|…)$/.test(text.trim()) ? text : '';
+      const audioUrl = typeof message.audioUrl === 'string' ? message.audioUrl.trim() : '';
       return {
         id: String(stableId).slice(0, 128),
         role,
-        content: message.content,
-        audioUrl: message.audioUrl || null,
+        content,
+        audioUrl: audioUrl || null,
         ...(message.timestamp ? { timestamp: message.timestamp } : {}),
         ...(message.scenario ? { scenario: message.scenario } : {}),
         ...(message.task_id != null ? { task_id: String(message.task_id) } : {}),
         ...(message.turn_id ? { turn_id: message.turn_id } : {}),
       };
-    });
+    })
+    // Filter after assigning IDs so a loading bubble becoming saveable cannot
+    // renumber the fallback IDs of later turns in the same snapshot.
+    .filter(message => message.content || message.audioUrl);
 }

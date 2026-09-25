@@ -367,6 +367,16 @@ function createApp(options) {
   });
 
   app.post('/v1/ai/scenarios', auth.requireScopes('ai:generate'), requireIdempotency, proxyJson(`${aiUrl}/generate-scenarios`, aiTimeoutMs));
+  app.post('/v1/ai/scenario', auth.requireScopes('ai:generate'), requireIdempotency, async (req, res, next) => {
+    try {
+      if (!internalAuthSecret) throw error(503, 'scenario_generation_unavailable', 'Scenario generation is not configured');
+      const data = await requestJson(`${aiUrl}/generate-scenario`, {
+        method: 'POST', body: req.body, timeoutMs: aiTimeoutMs,
+        headers: { 'X-Guaji-Internal-Auth': internalAuthSecret },
+      });
+      res.json({ data, meta: { request_id: req.requestId } });
+    } catch (err) { next(err); }
+  });
   app.post('/v1/ai/tts', auth.requireScopes('ai:generate'), requireIdempotency, async (req, res, next) => {
     try {
       const upstream = await fetchWithTimeout(`${aiUrl}/tts`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(req.body) }, aiTimeoutMs);

@@ -1,12 +1,14 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { motion } from 'motion/react';
-import { Archive, ChevronDown, ChevronUp, MoreVertical, Plus, RotateCcw, Target, Flame, CheckCircle, Lock, Trash2 } from 'lucide-react';
+import { Archive, ChevronDown, ChevronUp, MoreVertical, Plus, RotateCcw, Target, Flame, CheckCircle, Lock, Trash2, Pencil } from 'lucide-react';
 import BottomNav from '../components/BottomNav';
 import { useAuth } from '../contexts/AuthContext';
 import { userAPI } from '../services/api';
 import { PERSONA_MAP } from '../config/personaConfig';
 import { useTranslation } from 'react-i18next';
+import GoalScenarioEditor from '../components/GoalScenarioEditor';
+import { publishGoalScenariosUpdate } from '../utils/goalScenarios';
 
 const VOICE_OPTIONS = Object.values(PERSONA_MAP).map(p => ({
   id: p.name, name: p.name, description: p.desc, subtitle: p.subtitle,
@@ -22,7 +24,7 @@ function getGoalProgress(goal) {
   return { completed, total, pct: Math.round((completed / total) * 100) };
 }
 
-function GoalCard({ goal, isActive, onPractice, onArchive, onRestore, onDelete, operating, index }) {
+function GoalCard({ goal, isActive, onPractice, onArchive, onRestore, onDelete, onEdit, operating, index }) {
   const { t } = useTranslation();
   const { completed, total, pct } = getGoalProgress(goal);
   const [expanded, setExpanded] = useState(false);
@@ -84,6 +86,9 @@ function GoalCard({ goal, isActive, onPractice, onArchive, onRestore, onDelete, 
             </button>
             {menuOpen && (
               <div className="absolute right-0 top-8 z-20 w-32 rounded-xl border border-slate-200 dark:border-slate-600 bg-white dark:bg-slate-800 shadow-lg p-1">
+                {['active', 'paused'].includes(goal.status) && <button type="button" onClick={() => { setMenuOpen(false); onEdit?.(); }} className="w-full flex items-center gap-2 px-3 py-2 text-xs rounded-lg hover:bg-slate-50 dark:hover:bg-slate-700">
+                  <Pencil className="w-3.5 h-3.5" />{t('qa_ui.edit_scenarios')}
+                </button>}
                 {['archived', 'abandoned'].includes(goal.status) ? (
                   <button type="button" onClick={() => { setMenuOpen(false); onRestore?.(); }} className="w-full flex items-center gap-2 px-3 py-2 text-xs rounded-lg hover:bg-slate-50 dark:hover:bg-slate-700">
                     <RotateCcw className="w-3.5 h-3.5" />{t('qa_ui.restore_goal', '恢复')}
@@ -180,13 +185,15 @@ function Goals() {
   const [archivedOpen, setArchivedOpen] = useState(false);
   const [operatingGoalId, setOperatingGoalId] = useState(null);
   const [operationError, setOperationError] = useState('');
+  const [editingGoal, setEditingGoal] = useState(null);
+  const [operationSuccess, setOperationSuccess] = useState('');
 
   useEffect(() => {
     const controller = new AbortController();
     const load = async () => {
       try {
         const [goalsRes, checkinRes] = await Promise.all([
-          userAPI.getUserGoals().catch(() => null),
+          userAPI.getUserGoals(),
           userAPI.getCheckinStats().catch(() => null),
         ]);
         if (controller.signal.aborted) return;
@@ -199,13 +206,14 @@ function Goals() {
       } catch (e) {
         if (controller.signal.aborted) return;
         console.error('Goals load error:', e);
+        setOperationError(e.message || t('qa_ui.goal_operation_failed', '操作失败，请重试'));
       } finally {
         if (!controller.signal.aborted) setLoading(false);
       }
     };
     load();
     return () => controller.abort();
-  }, [user?.daily_practice_goal]);
+  }, [user?.daily_practice_goal, t]);
 
   const handleVoiceChange = (id) => {
     setSelectedVoice(id);
@@ -319,6 +327,7 @@ function Goals() {
         </motion.div>
 
         <div className="px-4">
+          {operationSuccess && <p role="status" className="mb-3 rounded-xl bg-emerald-50 px-3 py-2 text-sm text-emerald-800">{operationSuccess}</p>}
           {operationError && (
             <p role="alert" className="mb-3 rounded-xl bg-red-50 dark:bg-red-900/20 px-3 py-2 text-sm text-red-600">
               {operationError}
@@ -337,6 +346,7 @@ function Goals() {
                   operating={operatingGoalId === g.id}
                   onArchive={() => runGoalOperation(g, 'archive')}
                   onDelete={() => runGoalOperation(g, 'delete')}
+                  onEdit={() => { setOperationSuccess(''); setEditingGoal(g); }}
                   onPractice={async () => {
                     if (g.status !== 'active') {
                       try {
@@ -484,6 +494,17 @@ function Goals() {
         </div>
       </main>
 
+      {editingGoal && <GoalScenarioEditor
+        goal={editingGoal}
+        nativeLanguage={user?.native_language}
+        onClose={() => setEditingGoal(null)}
+        onSaved={goal => {
+          setAllGoals(current => current.map(item => String(item.id) === String(goal.id) ? goal : item));
+          publishGoalScenariosUpdate(user?.id, goal.id);
+          setEditingGoal(null);
+          setOperationSuccess(t('qa_ui.scenario_saved'));
+        }}
+      />}
       <BottomNav currentPage="goals" />
     </div>
   );

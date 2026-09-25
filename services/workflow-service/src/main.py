@@ -24,6 +24,7 @@ from workflows.scenario_review import scenario_review_workflow
 from workflows.goal_planning import goal_planning_workflow
 from workflows.batch_evaluation import batch_evaluation_workflow
 from workflows.turn_evaluation import turn_evaluation_workflow
+from expression_routes import router as expression_router
 from cache import cache, get_user_language_with_cache
 
 
@@ -32,6 +33,7 @@ app = FastAPI(
     description="Workflow orchestration for Oral AI application",
     version="1.0.0"
 )
+app.include_router(expression_router)
 
 # Database connection pool
 db_pool = None

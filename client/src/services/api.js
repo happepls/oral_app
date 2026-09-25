@@ -43,6 +43,8 @@ const handleResponse = async (response, { redirectOnUnauthorized = true } = {}) 
   if (!response.ok) {
     const error = new Error(data.error?.message || data.message || `请求失败 (状态码: ${response.status})`);
     error.status = response.status;
+    error.fields = data.data?.errors || data.errors || [];
+    error.code = data.code || data.error?.code;
     throw error;
   }
   
@@ -213,6 +215,16 @@ export const userAPI = {
     return handleResponse(response);
   },
 
+  async updateGoalScenarios(goalId, scenarios) {
+    const response = await fetch(`${API_BASE_URL}/users/goals/${encodeURIComponent(goalId)}/scenarios`, {
+      method: 'PATCH',
+      headers: { ...getAuthHeaders(), 'Idempotency-Key': idempotencyKey() },
+      credentials: 'include',
+      body: JSON.stringify({ scenarios }),
+    });
+    return handleResponse(response);
+  },
+
   async getCurrentTask() {
     const response = await fetch(`${V1_BASE_URL}/tasks?limit=100`, {
       headers: getAuthHeaders(),
@@ -323,11 +335,13 @@ export const userAPI = {
   },
 
   async getUserGoals() {
-    const response = await fetch(`${V1_BASE_URL}/goals?limit=100`, {
+    // The editor needs authoritative task status/score for active AND paused
+    // goals. The paginated developer list contains presentation JSONB only.
+    const response = await fetch(`${API_BASE_URL}/users/goals`, {
       headers: getAuthHeaders(),
       credentials: 'include'
     });
-    return { goals: await handleResponse(response) };
+    return handleResponse(response);
   },
 
   async switchGoal(goalId) {
@@ -473,6 +487,17 @@ export const aiAPI = {
       headers: { ...getAuthHeaders(), 'Idempotency-Key': idempotencyKey() },
       credentials: 'include',
       body: JSON.stringify(goalParams)
+    });
+    return handleResponse(response);
+  },
+
+  async generateScenario(params, options = {}) {
+    const response = await fetch(`${V1_BASE_URL}/ai/scenario`, {
+      method: 'POST',
+      headers: { ...getAuthHeaders(), 'Idempotency-Key': idempotencyKey() },
+      credentials: 'include',
+      signal: options.signal,
+      body: JSON.stringify(params),
     });
     return handleResponse(response);
   },

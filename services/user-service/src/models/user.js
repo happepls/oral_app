@@ -1,4 +1,5 @@
 const db = require('./db');
+const { overlayGoalTasks, replaceGoalScenarios } = require('./goalScenarios');
 const bcrypt = require('bcryptjs');
 const fetch = require('node-fetch');
 
@@ -213,38 +214,7 @@ User.getActiveGoal = async (userId) => {
         const taskRes = await db.query(taskQuery, [goal.id]);
         const dbTasks = taskRes.rows;
 
-        // 3. Merge Status back into Scenarios JSON for Frontend
-        // We use the JSON structure in 'user_goals' as the template for order/structure,
-        // but overlay the status from 'user_tasks'.
-        if (goal.scenarios && Array.isArray(goal.scenarios)) {
-            goal.scenarios = goal.scenarios.map(scenario => {
-                const scenarioTasks = scenario.tasks.map(t => {
-                    const tText = typeof t === 'string' ? t : t.text;
-                    // Find matching DB task
-                    const dbTask = dbTasks.find(dbt => 
-                        dbt.scenario_title === scenario.title && 
-                        dbt.task_description === tText
-                    );
-                    
-                    // Return object with status and progress
-                    const taskScore = dbTask ? dbTask.score : 0;
-                    const taskCompleted = dbTask?.status === 'completed';
-                    const taskProgress = taskCompleted
-                        ? 100
-                        : Math.min(99, Math.round((taskScore / 9) * 100));
-                    return {
-                        id: dbTask ? dbTask.id : null,
-                        text: tText,
-                        status: dbTask ? dbTask.status : 'pending',
-                        score: taskScore,
-                        interaction_count: dbTask ? dbTask.interaction_count : 0,
-                        scoring_generation: dbTask ? dbTask.scoring_generation : 0,
-                        progress: taskProgress
-                    };
-                });
-                return { ...scenario, tasks: scenarioTasks };
-            });
-        }
+        return overlayGoalTasks(goal, dbTasks);
     } catch (e) {
         console.error('[User] Error merging task statuses:', e);
         // Fallback: return goal as is (tasks might be strings or objects without status)
@@ -503,50 +473,21 @@ User.getUserGoals = async (userId) => {
 
     const goalIds = rows.map(g => g.id);
     const tasksByGoalId = new Map();
-    try {
-        const taskRes = await db.query(
-            `SELECT * FROM user_tasks WHERE goal_id = ANY($1::int[])`,
-            [goalIds]
-        );
-        for (const t of taskRes.rows) {
-            if (!tasksByGoalId.has(t.goal_id)) tasksByGoalId.set(t.goal_id, []);
-            tasksByGoalId.get(t.goal_id).push(t);
-        }
-    } catch (e) {
-        console.error('[User] Error batch-fetching tasks for goals:', e);
+    // Editing decisions depend on authoritative task state. A failed task
+    // query must fail the request, never fabricate unlocked zero-score tasks.
+    const taskRes = await db.query(
+        `SELECT * FROM user_tasks WHERE goal_id = ANY($1::int[])`,
+        [goalIds]
+    );
+    for (const t of taskRes.rows) {
+        if (!tasksByGoalId.has(t.goal_id)) tasksByGoalId.set(t.goal_id, []);
+        tasksByGoalId.get(t.goal_id).push(t);
     }
 
-    for (const goal of rows) {
-        if (!goal.scenarios || !Array.isArray(goal.scenarios)) continue;
-        const dbTasks = tasksByGoalId.get(goal.id) || [];
-        goal.scenarios = goal.scenarios.map(scenario => {
-            const scenarioTasks = scenario.tasks.map(t => {
-                const tText = typeof t === 'string' ? t : t.text;
-                const dbTask = dbTasks.find(dbt =>
-                    dbt.scenario_title === scenario.title &&
-                    dbt.task_description === tText
-                );
-                const taskScore = dbTask ? dbTask.score : 0;
-                const taskCompleted = dbTask?.status === 'completed';
-                const taskProgress = taskCompleted
-                    ? 100
-                    : Math.min(99, Math.round((taskScore / 9) * 100));
-                return {
-                    id: dbTask ? dbTask.id : null,
-                    text: tText,
-                    status: dbTask ? dbTask.status : 'pending',
-                    score: taskScore,
-                    interaction_count: dbTask ? dbTask.interaction_count : 0,
-                    scoring_generation: dbTask ? dbTask.scoring_generation : 0,
-                    progress: taskProgress,
-                };
-            });
-            return { ...scenario, tasks: scenarioTasks };
-        });
-    }
-
-    return rows;
+    return rows.map(goal => overlayGoalTasks(goal, tasksByGoalId.get(goal.id) || []));
 };
+
+User.replaceGoalScenarios = (userId, goalId, scenarios) => replaceGoalScenarios(db, userId, goalId, scenarios);
 
 User.switchActiveGoal = async (userId, goalId) => {
     const client = await db.pool.connect();
