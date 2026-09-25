@@ -49,3 +49,16 @@ make a failing representative run pass. Before merging layout changes aimed
 specifically at an omitted width, also run that project or request the full
 matrix. Rollback consists of reverting the CI project selection; existing
 Playwright projects and baselines were never deleted.
+
+## Verification on 2026-09-25
+
+- YAML parsing, Bash syntax, project-name validation and Playwright collection
+  confirm 495 → 166 executions, with all 47 distinct cases retained.
+- CI runs CRA's development server, which creates an additional HMR WebSocket.
+  The new goal-editor tests initially counted it as a business connection;
+  a local development-server reproduction failed with expected 0 / received 1.
+  Counts now match `/api/v1/realtime` exactly, preserving the one-business-socket
+  and no-late-socket invariants. The four representative projects then passed
+  all 16 goal-editor cases in 52.4 seconds, with retries disabled.
+- Full CI runtime and outcome must come from the latest GitHub run, not the
+  collection count or this targeted test duration.

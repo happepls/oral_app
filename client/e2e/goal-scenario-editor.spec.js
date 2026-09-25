@@ -5,6 +5,12 @@ const makeGoal = () => ({ id: 7, description: '旅行英语练习', status: 'pau
   { title: '餐厅点餐', tasks: ['询问菜单', '点一份主菜', '请求结账'].map((text, i) => ({ id: i + 20, text, status: 'pending', score: i === 0 ? 3 : 0, interaction_count: i === 0 ? 4 : 0, scoring_generation: 3 })) },
 ] });
 
+// CRA also opens an HMR socket in CI. Count only the real conversation endpoint
+// so both dev-server and production-bundle runs enforce the same invariant.
+const countBusinessSockets = (page, openOnly = false) => page.evaluate(openOnly =>
+  window.sockets.filter(socket => new URL(socket.url).pathname === '/api/v1/realtime'
+    && (!openOnly || socket.readyState === 1)).length, openOnly);
+
 test('paused goal edits lock completed scenes and preserve failed edits @critical', async ({ page }, testInfo) => {
   let goal = makeGoal(); const saved = []; let fail = true;
   await page.addInitScript(() => { localStorage.setItem('user', JSON.stringify({ id: 'editor-user', username: 'Demo', native_language: 'zh' })); localStorage.setItem('ui_language', 'zh'); });
@@ -75,13 +81,13 @@ test('another tab editing the same goal closes its old business socket @critical
     await route.fulfill({ contentType: 'application/json', body: JSON.stringify({ data }) });
   });
   await page.goto('/conversation?scenario='+encodeURIComponent('餐厅点餐'));
-  await expect.poll(() => page.evaluate(() => window.sockets.filter(s => s.readyState === 1).length)).toBe(1);
+  await expect.poll(() => countBusinessSockets(page, true)).toBe(1);
   const notify = goalId => page.evaluate(goalId => window.dispatchEvent(new StorageEvent('storage', { key: `goal_scenarios_updated:editor-user:${goalId}`, newValue: JSON.stringify({ userId: 'editor-user', goalId: String(goalId) }) })), goalId);
   await notify(8);
-  expect(await page.evaluate(() => window.sockets.filter(s => s.readyState === 1).length)).toBe(1);
+  expect(await countBusinessSockets(page, true)).toBe(1);
   await notify(7);
   await expect(page.getByRole('dialog', { name: '练习场景已更新' })).toBeVisible();
-  expect(await page.evaluate(() => window.sockets.filter(s => s.readyState === 1).length)).toBe(0);
+  expect(await countBusinessSockets(page, true)).toBe(0);
   await page.getByRole('button', { name: '返回目标' }).click();
   await expect(page).toHaveURL(/\/goals$/);
 });
@@ -124,6 +130,6 @@ for (const delayed of ['goal', 'session']) {
     // Give the late init continuation an animation frame and a task turn. It
     // previously opened a socket behind the update dialog after these resolves.
     await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => setTimeout(resolve, 100))));
-    expect(await page.evaluate(() => window.sockets.length)).toBe(0);
+    expect(await countBusinessSockets(page)).toBe(0);
   });
 }
