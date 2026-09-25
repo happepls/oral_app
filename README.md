@@ -44,6 +44,8 @@ single-scenario regeneration. See [the API, progress protection and rollback](do
 - **Start Services**: `docker compose up -d --build`
 - **Frontend Dev**: `cd client && npm start` (Port 5001)
 - **Test Scenarios**: `source .venv/bin/activate && python test_client_scenario.py`
+- **UI Checks**: PRs use four representative combinations; the full matrix runs
+  weekly or manually. See [coverage and local commands](docs/ui-audit-matrix.md).
 
 ## Security Enhancements (Feb 2026)
 - **API Security**: Implemented comprehensive security middleware including rate limiting, JWT validation, input sanitization, CORS protection, and security headers
