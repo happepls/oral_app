@@ -28,6 +28,8 @@ import { cleanStreamingText, appendDelta, aiBubbleRenderState, stripAllMarkers, 
 import { normalizeConnectionError, shouldShowConnectionError } from './connectionErrorLogic';
 import { calculateTaskProgress, isCompletedWindowEvaluation, isCurrentScoringMessage } from './conversationProgress';
 import TaskProgressGuidance from '../components/TaskProgressGuidance';
+import ExpressionFeedback from '../components/ExpressionFeedback';
+import { isCurrentExpression } from './conversationExpressions';
 import { createPcmStreamScheduler, unpackPcmAudioPacket } from '../utils/pcmStreamScheduler';
 
 const MAGIC_TIPS = [
@@ -585,6 +587,9 @@ function Conversation() {
   const scoringGenerationByTaskRef = useRef(new Map()); // Reject late evaluations from before an explicit reset
   const progressRevisionRef = useRef(0); // New WS progress invalidates older REST snapshots
   const [progressFeedback, setProgressFeedback] = useState(null);
+  const expressionTurnsRef = useRef(new Set());
+  const latestExpressionTurnRef = useRef(null);
+  const expressionInterruptedResponsesRef = useRef(new Set());
   const [completionSheetDismissed, setCompletionSheetDismissed] = useState(false);
   const feedbackOrderRef = useRef(new Map());
   const activeScoringTask = tasks.find(task => typeof task === 'object'
@@ -1330,6 +1335,9 @@ function Conversation() {
       setTaskReadyToComplete(null);
       setTaskCompletionPending(false);
       feedbackOrderRef.current.clear();
+      expressionTurnsRef.current.clear();
+      latestExpressionTurnRef.current = null;
+      expressionInterruptedResponsesRef.current.clear();
       // 重置魔法重复阶段状态
       setMagicPassedTasks(new Set());
       setCurrentMagicSentence('');
@@ -1558,6 +1566,9 @@ function Conversation() {
 
   // Handle JSON messages from WebSocket
   const handleJsonMessage = useCallback((data) => {
+      const responseId = data.payload?.responseId || data.responseId;
+      if (responseId && expressionInterruptedResponsesRef.current.has(responseId)
+        && ['ai_message', 'ai_text_delta', 'ai_turn_started', 'audio_url', 'audio_done'].includes(data.type)) return;
       if (data.type === 'analytics_end_proof') {
         analyticsEndProofRef.current = data.payload?.proof || null;
         return;
@@ -2033,6 +2044,7 @@ function Conversation() {
         case 'user_transcript':
            // Display user's speech transcription in chat
            if (data.payload && data.payload.text) {
+             latestExpressionTurnRef.current = data.payload.turn_id || null;
              restoredAiContentKeysRef.current.clear();
              setMessages(prev => reconcileUserTranscript(prev, {
                text: data.payload.text,
@@ -2068,6 +2080,19 @@ function Conversation() {
                ? t('ws_error_invalid_scenario', '场景无效，请返回重新选择场景')
                : (errText || t('ws_error_rejected', '无法开始本次对话，请返回重新选择场景'))
            );
+           break;
+        }
+        case 'expression_feedback': {
+           const feedback = data.payload;
+           const params = new URLSearchParams(window.location.search);
+           if (['recall', 'daily_qa', 'tour', 'quick_experience', 'magic_repetition'].includes(params.get('mode'))
+             || currentPhaseRef.current !== 'scene_theater'
+             || !isCurrentExpression(feedback, activeScoringTaskRef.current, scoringGenerationByTaskRef.current, params.get('scenario'))
+             || feedback.turn_id !== latestExpressionTurnRef.current) break;
+           const key = `${feedback.task_id}:${feedback.scoring_generation}:${feedback.turn_id}`;
+           if (expressionTurnsRef.current.has(key)) break;
+           expressionTurnsRef.current.add(key);
+           setMessages(prev => [...prev, { type: 'expression_feedback', id: key, feedback }]);
            break;
         }
         case 'user_proficiency_feedback':
@@ -2705,8 +2730,9 @@ function Conversation() {
       if (event.data instanceof ArrayBuffer) {
         // Handle binary audio data
         console.log('[Audio] Received binary audio data, size:', event.data.byteLength);
-        receivedStreamAudioRef.current = true;
         const packet = unpackPcmAudioPacket(event.data);
+        if (expressionInterruptedResponsesRef.current.has(packet.responseId)) return;
+        receivedStreamAudioRef.current = true;
         if (
           aiTextReadyForAudioRef.current
           && (!packet.responseId || packet.responseId === activeAudioResponseIdRef.current)
@@ -2726,7 +2752,8 @@ function Conversation() {
         const conversion = event.data.arrayBuffer().then(unpackPcmAudioPacket);
         if (aiTextReadyForAudioRef.current) {
           playAudioChunk(conversion.then(packet => (
-            !packet.responseId || packet.responseId === activeAudioResponseIdRef.current
+            !expressionInterruptedResponsesRef.current.has(packet.responseId)
+              && (!packet.responseId || packet.responseId === activeAudioResponseIdRef.current)
               ? packet.pcm
               : new Uint8Array()
           )));
@@ -3236,6 +3263,7 @@ function Conversation() {
     console.log('🎤 Recording started, session ID:', newSessionId);
 
     // Always stop audio playback immediately (interrupt AI response)
+    latestExpressionTurnRef.current = null;
     stopAudioPlayback();
     isInterruptedRef.current = true; // Mark as interrupted
 
@@ -3822,6 +3850,31 @@ function Conversation() {
         )}
 
         {messages.map((msg, index) => {
+          if (msg.type === 'expression_feedback') {
+            const feedback = msg.feedback;
+            const scenario = new URLSearchParams(window.location.search).get('scenario');
+            if (currentPhase !== 'scene_theater' || !isCurrentExpression(feedback, activeScoringTask, scoringGenerationByTaskRef.current, scenario)) return null;
+            return <ExpressionFeedback key={msg.id} feedback={feedback}
+              disabled={!isConnected || isWaitingForAIResponse || isUserRecording || feedback.turn_id !== latestExpressionTurnRef.current}
+              onSend={(text, source) => {
+                if (source.turn_id !== latestExpressionTurnRef.current
+                  || !isCurrentExpression(source, activeScoringTaskRef.current, scoringGenerationByTaskRef.current, scenario)
+                  || socketRef.current?.getReadyState?.() !== WebSocket.OPEN) return false;
+                try {
+                  if (activeAudioResponseIdRef.current) expressionInterruptedResponsesRef.current.add(activeAudioResponseIdRef.current);
+                  stopAudioPlayback();
+                  isInterruptedRef.current = false;
+                  socketRef.current.send(JSON.stringify({ type: 'interrupt' }));
+                  if (socketRef.current.send(JSON.stringify({ type: 'text_message', payload: { text } })) === false) return false;
+                } catch { return false; }
+                latestExpressionTurnRef.current = null;
+                const messageId = `expression-${Date.now()}`;
+                currentUserMessageIdRef.current = messageId;
+                setMessages(prev => [...prev, { id: messageId, type: 'user', content: text, isFinal: true }]);
+                setIsWaitingForAIResponse(true);
+                return true;
+              }} />;
+          }
           
           if (msg.type === 'system') {
               return (

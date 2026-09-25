@@ -221,6 +221,7 @@ services:
       - CONVERSATION_SERVICE_URL=http://conversation-service:8083
       - MEDIA_SERVICE_URL=http://media-processing-service:3005
       - WORKFLOW_SERVICE_URL=http://workflow-service:3006
+      - SCENE_EXPRESSION_FEEDBACK_ENABLED=${SCENE_EXPRESSION_FEEDBACK_ENABLED:-true}
       - INTERNAL_AUTH_SECRET=${INTERNAL_AUTH_SECRET:?Set INTERNAL_AUTH_SECRET in the root .env}
       - ENABLE_MAGIC_PASSCODE=true
       # Local development reaches DashScope through the host proxy. Keep all
@@ -291,6 +292,10 @@ services:
       - REDIS_PORT=6379
       - REDIS_DB=0
       - BATCH_EVAL_MODEL=qwen3.7-flash
+      # Match ai-omni: the service env_file must not override the root key used
+      # for public DashScope endpoints. Dedicated endpoint credentials stay separate.
+      - QWEN3_OMNI_API_KEY=${QWEN3_OMNI_API_KEY:?Set QWEN3_OMNI_API_KEY in the root .env}
+      - SCENE_EXPRESSION_FEEDBACK_ENABLED=${SCENE_EXPRESSION_FEEDBACK_ENABLED:-true}
       - QWEN_TEXT_MODEL=qwen3.7-flash
       - INTERNAL_AUTH_SECRET=${INTERNAL_AUTH_SECRET:?Set INTERNAL_AUTH_SECRET in the root .env}
     env_file:

@@ -34,6 +34,9 @@ See [CI/CD Documentation](docs/cicd_pipeline.md) for detailed information.
 - Deep Personalization
 - Real-time Feedback
 
+Scene Theater now supports correction-first tutoring and selectable student
+expressions. See [the event protocol, offline checks, cost estimates and rollback](docs/scene-expression-feedback.md).
+
 ## Development Setup
 - **Start Services**: `docker compose up -d --build`
 - **Frontend Dev**: `cd client && npm start` (Port 5001)

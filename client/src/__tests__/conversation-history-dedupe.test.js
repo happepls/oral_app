@@ -5,6 +5,43 @@ import {
 } from '../utils/conversationHistory';
 
 describe('conversation history refresh de-duplication', () => {
+  test('omits an empty AI loading bubble without rejecting the completed user turn', () => {
+    expect(prepareHistorySnapshot([
+      { type: 'user', content: 'Hello', isFinal: true, id: 'u1' },
+      { type: 'ai', content: '', isFinal: false, responseId: 'a1' },
+      { type: 'expression_feedback', alternatives: ['Hello!'] },
+      { type: 'system', content: 'Progress updated' },
+    ])).toEqual([expect.objectContaining({ id: 'u1', role: 'user', content: 'Hello' })]);
+  });
+
+  test('does not save blank or interrupted recording placeholders', () => {
+    expect(prepareHistorySnapshot([
+      { type: 'ai', content: '  \n ', isFinal: true, audioUrl: ' ' },
+      { type: 'ai', isFinal: false },
+      { type: 'user', content: '...', isFinal: true },
+      { type: 'user', content: '…', isFinal: true },
+      { type: 'user', content: 'Partial transcript', isFinal: false },
+    ])).toEqual([]);
+  });
+
+  test('preserves audio-only turns and later enriches them under the same ID', () => {
+    const message = { type: 'ai', content: '', responseId: 'a1', audioUrl: 'reply.mp3' };
+    expect(prepareHistorySnapshot([message])).toEqual([
+      expect.objectContaining({ id: 'a1', content: '', audioUrl: 'reply.mp3' }),
+    ]);
+    expect(prepareHistorySnapshot([{ ...message, content: 'Hello', isFinal: true }])[0].id).toBe('a1');
+    expect(prepareHistorySnapshot([
+      { type: 'user', content: '...', isFinal: true, id: 'u1', audioUrl: 'recording.mp3' },
+    ])[0]).toEqual(expect.objectContaining({ id: 'u1', content: '', audioUrl: 'recording.mp3' }));
+  });
+
+  test('does not renumber legacy IDs when an earlier loading bubble gains text', () => {
+    const later = { type: 'user', content: 'Hello', isFinal: true };
+    const before = prepareHistorySnapshot([{ type: 'ai', content: '' }, later]);
+    const after = prepareHistorySnapshot([{ type: 'ai', content: 'Welcome' }, later]);
+    expect(before[0].id).toBe(after[1].id);
+  });
+
   test('merges adjacent text-only and audio-enriched versions of one bubble', () => {
     const result = collapseAdjacentHistoryDuplicates([
       { type: 'ai', content: 'Welcome back', audioUrl: null, historyId: 'text-version' },
