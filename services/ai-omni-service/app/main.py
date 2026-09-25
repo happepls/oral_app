@@ -5,6 +5,7 @@ import json
 import base64
 import asyncio
 import hashlib
+import hmac
 import logging
 import httpx
 import time
@@ -29,10 +30,12 @@ try:
     from .dashscope_config import classify_connection_error, connect_with_retry, resolve_dashscope_config
     from . import product_analytics
     from . import expression_feedback
+    from . import scenario_generation
 except ImportError:  # tests and direct `python app/main.py` load it as a module
     from dashscope_config import classify_connection_error, connect_with_retry, resolve_dashscope_config
     import product_analytics
     import expression_feedback
+    import scenario_generation
 
 # --- Configuration & Logging ---
 logging.basicConfig(level=logging.INFO)
@@ -5737,6 +5740,38 @@ async def generate_scene_image(payload: dict = Body(...)):
 # ---------------------------------------------------------------------------
 # POST /generate-scenarios  (proxied from /api/ai/generate-scenarios via Nginx)
 # ---------------------------------------------------------------------------
+
+@app.post("/generate-scenario")
+async def generate_scenario(request: Request, payload: dict = Body(...)):
+    """Editor-only generation; public callers authenticate via developer API."""
+    internal_secret = os.getenv("INTERNAL_AUTH_SECRET", "")
+    supplied_secret = request.headers.get("X-Guaji-Internal-Auth", "")
+    if not internal_secret:
+        raise HTTPException(status_code=503, detail="场景生成服务未配置")
+    if not hmac.compare_digest(supplied_secret.encode(), internal_secret.encode()):
+        raise HTTPException(status_code=401, detail="未经授权")
+    try:
+        values = scenario_generation.validate_request(payload)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    try:
+        async with httpx.AsyncClient(timeout=30) as client:
+            response = await client.post(
+                f"{DASHSCOPE_CHAT_BASE}/compatible-mode/v1/chat/completions",
+                headers={"Authorization": f"Bearer {DASHSCOPE_CONFIG.chat_api_key}",
+                         "Content-Type": "application/json"},
+                json={"model": QWEN_TEXT_MODEL,
+                      "messages": scenario_generation.messages(values),
+                      "max_tokens": 1024, "response_format": {"type": "json_object"}},
+            )
+            response.raise_for_status()
+            content = response.json()["choices"][0]["message"]["content"]
+            return scenario_generation.validate_result(content, values["exclude_titles"])
+    except Exception as exc:
+        # Do not log user interests, upstream responses, or credential-bearing URLs.
+        logger.warning("[generate_scenario] Generation failed (%s)", type(exc).__name__)
+        raise HTTPException(status_code=502, detail="场景生成失败，请重试") from exc
+
 
 @app.post("/generate-scenarios")
 async def generate_scenarios(payload: dict = Body(...)):

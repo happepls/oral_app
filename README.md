@@ -37,6 +37,9 @@ See [CI/CD Documentation](docs/cicd_pipeline.md) for detailed information.
 Scene Theater now supports correction-first tutoring and selectable student
 expressions. See [the event protocol, offline checks, cost estimates and rollback](docs/scene-expression-feedback.md).
 
+Active and paused goals support scenario editing, manual/AI additions, and
+single-scenario regeneration. See [the API, progress protection and rollback](docs/goal-scenario-editor.md).
+
 ## Development Setup
 - **Start Services**: `docker compose up -d --build`
 - **Frontend Dev**: `cd client && npm start` (Port 5001)

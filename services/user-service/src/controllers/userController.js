@@ -577,6 +577,26 @@ exports.getUserGoals = async (req, res) => {
     }
 };
 
+exports.replaceGoalScenarios = async (req, res) => {
+    try {
+        // Never accept client-side task IDs, scores, generations or status.
+        const scenarios = req.body.scenarios.map(({ title, tasks, image_url }) => ({
+            title, tasks, ...(image_url ? { image_url } : {}),
+        }));
+        const goal = await User.replaceGoalScenarios(req.user.id, Number(req.params.id), scenarios);
+        if (!goal) return res.status(404).json({ success: false, code: 'goal_not_found', message: '目标未找到' });
+        console.info('[GoalScenarios] updated', { goalId: goal.id, scenarioCount: scenarios.length });
+        return res.json({ success: true, goal });
+    } catch (error) {
+        if (error.status === 409) {
+            return res.status(409).json({ success: false, code: error.code, message: error.message,
+                ...(error.lockedScenarios ? { locked_scenarios: error.lockedScenarios } : {}) });
+        }
+        console.error('[GoalScenarios] update failed', { goalId: req.params.id, code: error.code || 'unknown' });
+        return res.status(500).json({ success: false, message: '保存场景失败，请稍后重试' });
+    }
+};
+
 exports.switchGoal = async (req, res) => {
     try {
         const { id } = req.params;

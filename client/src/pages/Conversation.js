@@ -30,6 +30,7 @@ import { calculateTaskProgress, isCompletedWindowEvaluation, isCurrentScoringMes
 import TaskProgressGuidance from '../components/TaskProgressGuidance';
 import ExpressionFeedback from '../components/ExpressionFeedback';
 import { isCurrentExpression } from './conversationExpressions';
+import { subscribeGoalScenariosUpdates } from '../utils/goalScenarios';
 import { createPcmStreamScheduler, unpackPcmAudioPacket } from '../utils/pcmStreamScheduler';
 
 const MAGIC_TIPS = [
@@ -505,6 +506,11 @@ function Conversation() {
   const stableConnectionTimerRef = useRef(null);
   const isRestoringSessionRef = useRef(false);
   const connectionAttemptRef = useRef(0);
+  const activeGoalIdRef = useRef(location.state?.goalId || null);
+  const [goalScenariosChanged, setGoalScenariosChanged] = useState(false);
+  const goalScenariosChangedRef = useRef(false);
+  const stopChangedGoalAudioRef = useRef(null);
+  const goalScenarioSubscriptionRef = useRef(null);
   const resetInFlightRef = useRef(false);
   const pendingResetRef = useRef(null);
   const [isResettingScenario, setIsResettingScenario] = useState(false);
@@ -996,6 +1002,7 @@ function Conversation() {
     setIsAISpeaking(false);
     setPlayingAudioUrl(null);
   };
+  stopChangedGoalAudioRef.current = stopAudioPlayback;
 
   // Play full audio (for AudioBar) - use proxy for cross-origin audio
   // autoQueue=false (default): interrupt current audio and play immediately (audio_back replay)
@@ -2570,6 +2577,7 @@ function Conversation() {
 
   // --- WebSocket Logic ---
   const connectWebSocket = useCallback(async (explicitSessionId = null, options = {}) => {
+    if (goalScenariosChangedRef.current) return;
     const { signal, suppressWelcome = false } = options;
     const effectiveSessionId = explicitSessionId || sessionId;
     // Cookie-based auth: check user instead of token
@@ -2908,7 +2916,12 @@ function Conversation() {
               let scenarios = [];
               let activeScenario = null;
 
-              if (goalRes?.goal?.id) activeGoalId = goalRes.goal.id;
+              if (goalRes?.goal?.id) {
+                activeGoalId = goalRes.goal.id;
+                activeGoalIdRef.current = activeGoalId;
+                goalScenarioSubscriptionRef.current?.check();
+                if (goalScenariosChangedRef.current) return;
+              }
               if (goalRes && goalRes.goal && goalRes.goal.scenarios) {
                   console.log('Available Scenarios:', goalRes.goal.scenarios.map(s => s.title));
                   console.log('Requested Scenario:', scenario);
@@ -3153,6 +3166,33 @@ function Conversation() {
       }
     };
   }, [token, user, isManualDisconnect]); // Removed connectWebSocket from dependencies to prevent infinite loop
+
+  // Replacing task IDs invalidates old scoring windows. Stop this tab's
+  // socket immediately and require re-entry, including renamed/deleted scenes.
+  useEffect(() => {
+    if (!user?.id || isTourMode || isDailyQAMode) return undefined;
+    const unsubscribe = subscribeGoalScenariosUpdates(user.id, () => activeGoalIdRef.current, () => {
+      if (goalScenariosChangedRef.current) return;
+      goalScenariosChangedRef.current = true;
+      isManualDisconnectRef.current = true;
+      connectionAttemptRef.current += 1;
+      clearStableConnectionTimer();
+      clearTimeout(reconnectTimerRef.current);
+      reconnectTimerRef.current = null;
+      socketRef.current?.removeAllListeners();
+      socketRef.current?.destroy();
+      socketRef.current = null;
+      recorderRef.current?.cancelRecording?.();
+      stopChangedGoalAudioRef.current?.();
+      setIsConnected(false);
+      setGoalScenariosChanged(true);
+    });
+    goalScenarioSubscriptionRef.current = unsubscribe;
+    return () => {
+      unsubscribe();
+      if (goalScenarioSubscriptionRef.current === unsubscribe) goalScenarioSubscriptionRef.current = null;
+    };
+  }, [user?.id, isTourMode, isDailyQAMode, clearStableConnectionTimer]);
 
   // Auto-scroll to bottom when messages change
   useEffect(() => {
@@ -3488,6 +3528,11 @@ function Conversation() {
 
   return (
     <div className="flex h-[100dvh] max-h-[100dvh] flex-col overflow-hidden max-w-lg mx-auto bg-background-light dark:bg-background-dark relative">
+      {goalScenariosChanged && <AccessibleDialog title={t('qa_ui.scenario_session_changed_title')} onClose={() => navigate('/goals', { replace: true })} closeLabel={t('qa_ui.scenario_return_goals')} showCloseButton={false} panelClassName="max-w-md rounded-2xl p-6">
+        <h2 className="text-lg font-semibold mb-3">{t('qa_ui.scenario_session_changed_title')}</h2>
+        <p className="text-sm mb-5">{t('qa_ui.scenario_session_changed')}</p>
+        <button type="button" className="w-full rounded-xl bg-primary text-white py-3 font-semibold" onClick={() => navigate('/goals', { replace: true })}>{t('qa_ui.scenario_return_goals')}</button>
+      </AccessibleDialog>}
 
       {/* ── Header: 场景图（有时）+ 简洁 nav bar ── */}
       <div className="w-full shrink-0">
