@@ -19,7 +19,7 @@ requireMatch(rootMatch && rootMatch[1].trim() === '', 'React root must stay empt
 const noScriptMatch = html.match(/<noscript>([\s\S]*?)<\/noscript>/);
 requireMatch(noScriptMatch, 'no-JavaScript fallback content missing');
 const noScript = noScriptMatch[1];
-requireMatch(noScript.includes('GuaJi AI 是什么？') && noScript.includes('练习过程会记录什么？'), 'no-JavaScript fallback FAQ missing');
+requireMatch(noScript.includes('Guaji AI 是什么？') && noScript.includes('练习过程会记录什么？'), 'no-JavaScript fallback FAQ missing');
 requireMatch(noScript.includes('按真实场景练习口语的 AI 语音伙伴'), 'no-JavaScript direct answer heading missing');
 
 const schemaMatch = html.match(/<script id="homepage-structured-data" type="application\/ld\+json">([\s\S]*?)<\/script>/);
@@ -39,7 +39,7 @@ for (const item of faq.mainEntity) {
 requireMatch(robots.includes('Disallow: /api/') && robots.includes('Disallow: /login'), 'robots private-route rules missing');
 requireMatch(robots.includes('Sitemap: https://guajiguaji.top/sitemap.xml'), 'robots sitemap declaration missing');
 requireMatch((sitemap.match(/<loc>/g) || []).length === 1 && sitemap.includes('<loc>https://guajiguaji.top/</loc>'), 'sitemap must contain only the canonical homepage');
-requireMatch(llms.includes('[GuaJi AI 首页](https://guajiguaji.top/)'), 'llms.txt canonical homepage missing');
+requireMatch(llms.includes('[Guaji AI 首页](https://guajiguaji.top/)'), 'llms.txt canonical homepage missing');
 requireMatch(!/https:\/\/guajiguaji\.top\/(login|register|api|discovery)/.test(llms), 'llms.txt exposes a private route');
 
 const bundles = fs.readdirSync(path.join(buildDir, 'static', 'js')).filter((name) => name.endsWith('.js'));
