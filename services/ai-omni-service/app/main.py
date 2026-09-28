@@ -58,10 +58,10 @@ logger.info(
 )
 
 # DashScope endpoint switching (China default vs international/Zeabur).
-# DASHSCOPE_WS_URL: realtime WSS base. Empty/None → SDK uses China default.
+# DASHSCOPE_WS_URL: workspace-specific realtime WSS endpoint for Qwen3.8.
 #   ⚠️ When url is passed to OmniRealtimeConversation, the SDK appends
 #   "?model={model}" itself — the env value MUST NOT contain a query string.
-#   Intl value: wss://dashscope-intl.aliyuncs.com/api-ws/v1/realtime (NO ?model=)
+#   wss://<workspace>.ap-southeast-1.maas.aliyuncs.com/api-ws/v1/realtime
 # DASHSCOPE_HTTP_BASE: REST base host, default China endpoint.
 _DASHSCOPE_HTTP_CHINA = "https://dashscope.aliyuncs.com"
 DASHSCOPE_HTTP_BASE = DASHSCOPE_CONFIG.http_base
@@ -4630,7 +4630,7 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query(None), ses
             from quick_experience import run_quick_experience
         await run_quick_experience(
             websocket, user_context, _get_redis_client(), DASHSCOPE_CONFIG,
-            QWEN_TEXT_MODEL, os.getenv('QWEN3_OMNI_MODEL', 'qwen3.5-omni-flash-realtime'),
+            QWEN_TEXT_MODEL, os.getenv('QWEN3_OMNI_MODEL', 'qwen3.8-omni-flash-realtime'),
             _daily_turn_key(user_id), _daily_turn_limit(user_context),
             analytics_emit=lambda event: product_analytics.enqueue(
                 _get_redis_client(), user_id, f'quick_{user_id}', event
@@ -4756,10 +4756,10 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query(None), ses
     def connect_dashscope():
         try:
             logger.info(f"Connecting to DashScope for session {session_id}")
-            # url=None → SDK uses China default. Intl env value must NOT contain
-            # a query string; SDK appends ?model={model} itself.
+            # Use the workspace endpoint without a query string;
+            # the SDK appends ?model={model} itself.
             conversation = OmniRealtimeConversation(
-                model=os.getenv("QWEN3_OMNI_MODEL", "qwen3.5-omni-flash-realtime"),
+                model=os.getenv("QWEN3_OMNI_MODEL", "qwen3.8-omni-flash-realtime"),
                 callback=callback,
                 url=DASHSCOPE_CONFIG.ws_url,
                 api_key=DASHSCOPE_CONFIG.ws_api_key,
