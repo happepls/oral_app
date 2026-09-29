@@ -1,4 +1,9 @@
 {
+  "expression_feedback_clarify": "인식된 내용을 확인해 주세요",
+  "teaching_transcribing": "답변을 받아쓰는 중…",
+  "teaching_analyzing": "이번 표현을 분석하는 중…",
+  "teaching_rendering": "이번 답변을 준비하는 중…",
+  "teaching_retry": "이번 답변을 처리하지 못했어요. 다시 녹음하거나 잠시 후 시도해 주세요.",
   "expression_feedback_title": "표현 피드백",
   "expression_feedback_correct": "조금 고쳐서 다시 말해 보세요",
   "expression_feedback_polish": "더 자연스럽게 표현해 보세요",

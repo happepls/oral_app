@@ -3,7 +3,7 @@ import { fireEvent, render, screen } from '@testing-library/react';
 import { createInstance } from 'i18next';
 import { I18nextProvider } from 'react-i18next';
 import ExpressionFeedback from '../components/ExpressionFeedback';
-import { isCurrentExpression } from '../pages/conversationExpressions';
+import { isCurrentExpression, isCurrentTeachingState } from '../pages/conversationExpressions';
 import zh from '../i18n/locales/zh.json';
 
 const feedback = {
@@ -65,4 +65,28 @@ test('only exact nonzero authoritative task generation is accepted', () => {
   generations.set('42', 4);
   expect(accept(feedback)).toBe(false);
   expect(isCurrentExpression(feedback, { id: 42 }, new Map(), 'Restaurant')).toBe(false);
+});
+
+test('clarification shows recognized text without invented example chips and sends an edited new answer', async () => {
+  const clarification = { ...feedback, protocol_version: 2, teaching_mode: 'clarify', errors: [], alternatives: [],
+    user_text: '予算は五十か五百です。', clarification_question: '金額と単位を確認してください。' };
+  const { values } = await setup({ feedback: clarification });
+  expect(screen.getByRole('textbox')).toHaveValue(clarification.user_text);
+  expect(screen.getByText(clarification.clarification_question)).toBeInTheDocument();
+  expect(screen.queryByText('点选句子作为自己的回答发送，也可以跟着说一遍。')).not.toBeInTheDocument();
+  fireEvent.change(screen.getByRole('textbox'), { target: { value: '予算は五百円です。' } });
+  fireEvent.click(screen.getByRole('button', { name: '发送我的回答' }));
+  expect(values.onSend).toHaveBeenCalledWith('予算は五百円です。', clarification);
+  expect(isCurrentExpression(clarification, { id: 42, scoring_generation: 3 }, new Map(), 'Restaurant')).toBe(true);
+  expect(isCurrentExpression({ ...clarification, protocol_version: 1 }, { id: 42, scoring_generation: 3 }, new Map(), 'Restaurant')).toBe(false);
+});
+
+test('waiting and retry states are bound to the current recording and generation', () => {
+  const state = { ...feedback, protocol_version: 2, input_id: 'record-2', status: 'analyzing' };
+  const task = { id: 42, scoring_generation: 3 };
+  expect(isCurrentTeachingState(state, task, new Map(), 'Restaurant', 'record-2')).toBe(true);
+  for (const bad of [{ ...state, input_id: 'record-1' }, { ...state, scoring_generation: 4 },
+    { ...state, protocol_version: 1 }, { ...state, status: 'anything' }, { ...state, turn_id: null }]) {
+    expect(isCurrentTeachingState(bad, task, new Map(), 'Restaurant', 'record-2')).toBe(false);
+  }
 });

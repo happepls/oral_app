@@ -179,6 +179,11 @@ Required concepts/keywords: {current_task.get('keywords') or []}
 
 {turns}
 
+Judge ONLY the Student utterances as evidence of student ability and achievements.
+Tutor utterances are conversational context, including corrections and model
+student sentences. Never credit the student for a tutor's example, invented fact,
+budget, team size or achievement. A tutor's praise is not evidence of mastery.
+
 Choose exactly one quality:
 - mastered: fully correct, natural, detailed, and directly completes the task
 - strong: correct, relevant, and clear with only minor limitations

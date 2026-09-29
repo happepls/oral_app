@@ -102,7 +102,7 @@ test('scene expressions send student text once and preserve task progress @criti
   await expect(card.getByRole('textbox')).toHaveValue(feedback.alternatives[0]);
   await expect(chip).toBeDisabled();
   const sent = await page.evaluate(() => window.sentMessages.filter(m => m.type === 'text_message'));
-  expect(sent).toEqual([{ type: 'text_message', payload: { text: feedback.alternatives[0] } }]);
+  expect(sent).toEqual([{ type: 'text_message', payload: { text: feedback.alternatives[0], input_id: expect.any(String) } }]);
   const pcm = responseId => page.evaluate(responseId => {
     const id = new TextEncoder().encode(responseId);
     const packet = new Uint8Array(4 + id.length + 8192);
@@ -121,6 +121,24 @@ test('scene expressions send student text once and preserve task progress @criti
   await pcm('a2');
   await expect.poll(() => page.evaluate(() => window.pcmStarts)).toBe(1);
   await expect(page.getByRole('progressbar', { name: '当前子任务进度', exact: true })).toHaveAttribute('aria-valuenow', '33');
+  const current = { ...feedback, protocol_version: 2, turn_id: 'u2', input_id: sent[0].payload.input_id };
+  await emit('teaching_state', { ...current, status: 'analyzing' });
+  await expect(page.getByRole('status').filter({ hasText: '正在分析本轮表达' })).toBeVisible();
+  await emit('teaching_state', { ...current, input_id: 'old-recording', status: 'retry' });
+  await expect(page.getByRole('status').filter({ hasText: '正在分析本轮表达' })).toBeVisible();
+  await emit('expression_feedback', { ...current, teaching_mode: 'clarify', errors: [], alternatives: [],
+    user_text: '予算は五十か五百です。', clarification_question: '金額と単位を確認してください。' });
+  await emit('teaching_state', { ...current, status: 'ready' });
+  const clarification = card.filter({ hasText: '请先确认识别内容' });
+  await expect(clarification.getByRole('textbox')).toHaveValue('予算は五十か五百です。');
+  await expect(page.getByRole('progressbar', { name: '当前子任务进度', exact: true })).toHaveAttribute('aria-valuenow', '33');
+  await clarification.scrollIntoViewIfNeeded();
+  await page.screenshot({ path: testInfo.outputPath('current-turn-clarification.png') });
+  await clarification.getByRole('textbox').fill('予算は五百円です。');
+  await clarification.getByRole('button', { name: '发送我的回答' }).click();
+  await expect.poll(() => page.evaluate(() => window.sentMessages.filter(m => m.type === 'text_message').length)).toBe(2);
+  await emit('teaching_state', { ...current, status: 'retry' });
+  await expect(page.getByText('本轮暂时无法完成，请重新录音或稍后重试。')).toHaveCount(0);
   await page.evaluate(() => { window.confirm = () => true; });
   await Promise.all([
     page.waitForEvent('framenavigated', { predicate: frame => frame === page.mainFrame() }),

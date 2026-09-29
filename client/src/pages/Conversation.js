@@ -29,7 +29,7 @@ import { normalizeConnectionError, shouldShowConnectionError } from './connectio
 import { calculateTaskProgress, isCompletedWindowEvaluation, isCurrentScoringMessage } from './conversationProgress';
 import TaskProgressGuidance from '../components/TaskProgressGuidance';
 import ExpressionFeedback from '../components/ExpressionFeedback';
-import { isCurrentExpression } from './conversationExpressions';
+import { isCurrentExpression, isCurrentTeachingState } from './conversationExpressions';
 import { subscribeGoalScenariosUpdates } from '../utils/goalScenarios';
 import { createPcmStreamScheduler, unpackPcmAudioPacket } from '../utils/pcmStreamScheduler';
 
@@ -461,6 +461,8 @@ function Conversation() {
   // first audio frame from this AI turn starts playing. Drives the mascot
   // `thinking` expression during the request→response gap (test case 6.x).
   const [isWaitingForAIResponse, setIsWaitingForAIResponse] = useState(false);
+  const [teachingState, setTeachingState] = useState(null);
+  useEffect(() => { if (!isConnected) setTeachingState(null); }, [isConnected]);
   const [webSocketError, setWebSocketError] = useState(null);
   // Set true when the backend explicitly rejects this connection (e.g.
   // "Invalid scenario" error frame, or a 1008/4400 close). Guards the close
@@ -1343,6 +1345,7 @@ function Conversation() {
       setTaskCompletionPending(false);
       feedbackOrderRef.current.clear();
       expressionTurnsRef.current.clear();
+      setTeachingState(null);
       latestExpressionTurnRef.current = null;
       expressionInterruptedResponsesRef.current.clear();
       // 重置魔法重复阶段状态
@@ -1573,6 +1576,11 @@ function Conversation() {
 
   // Handle JSON messages from WebSocket
   const handleJsonMessage = useCallback((data) => {
+      if (data.payload?.protocol_version === 2 && ['user_transcript', 'ai_message', 'expression_feedback', 'teaching_state'].includes(data.type)) {
+        const params = new URLSearchParams(window.location.search);
+        if (!isCurrentTeachingState({ ...data.payload, status: data.type === 'teaching_state' ? data.payload.status : 'ready' },
+          activeScoringTaskRef.current, scoringGenerationByTaskRef.current, params.get('scenario'), currentUserMessageIdRef.current)) return;
+      }
       const responseId = data.payload?.responseId || data.responseId;
       if (responseId && expressionInterruptedResponsesRef.current.has(responseId)
         && ['ai_message', 'ai_text_delta', 'ai_turn_started', 'audio_url', 'audio_done'].includes(data.type)) return;
@@ -2087,6 +2095,12 @@ function Conversation() {
                ? t('ws_error_invalid_scenario', '场景无效，请返回重新选择场景')
                : (errText || t('ws_error_rejected', '无法开始本次对话，请返回重新选择场景'))
            );
+           break;
+        }
+        case 'teaching_state': {
+           const status = data.payload.status;
+           setTeachingState(status === 'ready' ? null : data.payload);
+           if (status === 'retry' || status === 'ready') setIsWaitingForAIResponse(false);
            break;
         }
         case 'expression_feedback': {
@@ -3285,6 +3299,7 @@ function Conversation() {
         return;
     }
     setIsUserRecording(true);
+    setTeachingState(null);
     // Starting a new turn cancels any pending `thinking` from the previous one.
     setIsWaitingForAIResponse(false);
     if (!practiceStartTimeRef.current) practiceStartTimeRef.current = Date.now();
@@ -3358,7 +3373,7 @@ function Conversation() {
                 const b64 = btoa(binary);
                 socketRef.current.send(JSON.stringify({
                     type: 'audio_stream',
-                    payload: { audio: b64 }
+                    payload: { audio: b64, input_id: currentUserMessageIdRef.current }
                 }));
             } else {
                 console.warn('⚠️ Cannot send buffered audio - WebSocket not connected, state:', wsReadyState);
@@ -3894,6 +3909,13 @@ function Conversation() {
           </div>
         )}
 
+        {teachingState && isConnected && isCurrentTeachingState(teachingState, activeScoringTask,
+          scoringGenerationByTaskRef.current, new URLSearchParams(window.location.search).get('scenario'), currentUserMessageIdRef.current) && (
+          <p role="status" aria-live="polite" className="mx-4 my-3 text-sm text-muted-foreground">
+            {t(`teaching_${teachingState.status}`)}
+          </p>
+        )}
+
         {messages.map((msg, index) => {
           if (msg.type === 'expression_feedback') {
             const feedback = msg.feedback;
@@ -3905,16 +3927,21 @@ function Conversation() {
                 if (source.turn_id !== latestExpressionTurnRef.current
                   || !isCurrentExpression(source, activeScoringTaskRef.current, scoringGenerationByTaskRef.current, scenario)
                   || socketRef.current?.getReadyState?.() !== WebSocket.OPEN) return false;
+                const messageId = `expression-${Date.now()}`;
+                const previousInputId = currentUserMessageIdRef.current;
+                currentUserMessageIdRef.current = messageId;
                 try {
                   if (activeAudioResponseIdRef.current) expressionInterruptedResponsesRef.current.add(activeAudioResponseIdRef.current);
                   stopAudioPlayback();
                   isInterruptedRef.current = false;
                   socketRef.current.send(JSON.stringify({ type: 'interrupt' }));
-                  if (socketRef.current.send(JSON.stringify({ type: 'text_message', payload: { text } })) === false) return false;
-                } catch { return false; }
+                  if (socketRef.current.send(JSON.stringify({ type: 'text_message', payload: { text, input_id: messageId } })) === false) {
+                    currentUserMessageIdRef.current = previousInputId;
+                    return false;
+                  }
+                } catch { currentUserMessageIdRef.current = previousInputId; return false; }
                 latestExpressionTurnRef.current = null;
-                const messageId = `expression-${Date.now()}`;
-                currentUserMessageIdRef.current = messageId;
+                setTeachingState(null);
                 setMessages(prev => [...prev, { id: messageId, type: 'user', content: text, isFinal: true }]);
                 setIsWaitingForAIResponse(true);
                 return true;

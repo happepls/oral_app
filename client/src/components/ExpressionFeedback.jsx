@@ -3,12 +3,13 @@ import { useTranslation } from 'react-i18next';
 
 export default function ExpressionFeedback({ feedback, disabled = false, onSend }) {
   const { t } = useTranslation();
-  const [text, setText] = useState('');
+  const [text, setText] = useState(feedback?.teaching_mode === 'clarify' ? feedback.user_text || '' : '');
   const [sent, setSent] = useState(false);
   const [failed, setFailed] = useState(false);
   const alternatives = Array.isArray(feedback?.alternatives)
     ? feedback.alternatives.filter(item => typeof item === 'string' && item.trim()) : [];
-  if (!feedback || alternatives.length < 2 || !onSend) return null;
+  const isClarification = feedback?.teaching_mode === 'clarify';
+  if (!feedback || (!isClarification && alternatives.length < 2) || !onSend) return null;
   const errors = Array.isArray(feedback.errors) ? feedback.errors : [];
   const unavailable = disabled || sent;
   const send = value => {
@@ -21,13 +22,14 @@ export default function ExpressionFeedback({ feedback, disabled = false, onSend 
   return (
     <aside aria-label={t('expression_feedback_title')} className="mx-4 my-3 p-4 rounded-2xl border border-border bg-card text-foreground text-sm break-words">
       <p className="font-semibold">{t(`expression_feedback_${feedback.off_topic ? 'off_topic' : feedback.teaching_mode}`)}</p>
+      {isClarification && <p className="mt-2">{feedback.clarification_question}</p>}
       {errors.map((error, index) => (
         <div key={index} className="mt-2">
           <p><span className="line-through text-muted-foreground">{error.original}</span>{' → '}<span className="font-medium">{error.corrected}</span></p>
           <p className="mt-1 text-muted-foreground">{error.explanation_l1}</p>
         </div>
       ))}
-      <p className="mt-3 text-muted-foreground">{t('expression_feedback_choose')}</p>
+      {!isClarification && <p className="mt-3 text-muted-foreground">{t('expression_feedback_choose')}</p>}
       <div className="flex flex-col gap-2 mt-2">
         {alternatives.map(item => (
           <button key={item} type="button" disabled={unavailable} onClick={() => send(item)}

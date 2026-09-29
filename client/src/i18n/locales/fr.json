@@ -1,4 +1,9 @@
 {
+  "expression_feedback_clarify": "Confirmez les paroles reconnues",
+  "teaching_transcribing": "Transcription de votre réponse…",
+  "teaching_analyzing": "Analyse de cette réponse…",
+  "teaching_rendering": "Préparation du retour…",
+  "teaching_retry": "Impossible de terminer cet échange. Enregistrez à nouveau ou réessayez dans un instant.",
   "expression_feedback_title": "Conseils d’expression",
   "expression_feedback_correct": "Corrigez ce point et réessayez",
   "expression_feedback_polish": "Rendez votre expression plus naturelle",

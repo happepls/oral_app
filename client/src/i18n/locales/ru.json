@@ -1,4 +1,9 @@
 {
+  "expression_feedback_clarify": "Подтвердите распознанный текст",
+  "teaching_transcribing": "Распознаём ваш ответ…",
+  "teaching_analyzing": "Анализируем этот ответ…",
+  "teaching_rendering": "Готовим обратную связь…",
+  "teaching_retry": "Не удалось обработать этот ответ. Запишите его снова или повторите попытку чуть позже.",
   "expression_feedback_title": "Советы по формулировке",
   "expression_feedback_correct": "Исправьте эту ошибку и попробуйте ещё раз",
   "expression_feedback_polish": "Выразите мысль естественнее",
