@@ -1,0 +1,881 @@
+{
+  "data_origin": "synthetic fixtures only; no user conversation records",
+  "release_gate": "blocked: factual hallucination and incorrect teaching decisions in workflow output",
+  "review_note": "transport/mechanical checks do not imply semantic correctness; per-run semantic_pass=null means automatic runner did not judge semantics. Full human-readable review is in the companion local-verification document.",
+  "runs": [
+    {
+      "source_file": "locked-script-2026-09-28.json",
+      "started_at": "2026-09-28T09:20:33.363246+00:00",
+      "finished_at": "2026-09-28T09:21:48.800664+00:00",
+      "model": "qwen3.8-omni-flash-realtime",
+      "sdk_version": "1.26.5",
+      "strategy": "locked_script",
+      "input_kind": "synthetic_text",
+      "scenario": "自我介绍与职业背景说明",
+      "task": "自己紹介と職務経歴の説明。これまでの仕事と担当した役割を日本語で説明する。",
+      "results": [
+        {
+          "branch": "correct",
+          "repeat": 1,
+          "semantic_pass": null,
+          "response_done_ms": 4685,
+          "status": "completed",
+          "error_type": null,
+          "transcript": "「管理するました」は正しくありません。「管理する」の丁寧な過去形は「管理しました」です。私は五人のチームを管理しました。もう一度、この文を言ってみてください。",
+          "first_text_ms": 1327,
+          "first_audio_ms": 1989,
+          "audio_chunks": 47,
+          "transport_pass": true
+        },
+        {
+          "branch": "correct",
+          "repeat": 2,
+          "semantic_pass": null,
+          "response_done_ms": 6421,
+          "status": "completed",
+          "error_type": null,
+          "transcript": "「管理するました」は正しくありません。「管理する」の丁寧な過去形は「管理しました」です。私は五人のチームを管理しました。もう一度、この文を言ってみてください。",
+          "first_text_ms": 1396,
+          "first_audio_ms": 2064,
+          "audio_chunks": 46,
+          "transport_pass": true
+        },
+        {
+          "branch": "correct",
+          "repeat": 3,
+          "semantic_pass": null,
+          "response_done_ms": 8324,
+          "status": "completed",
+          "error_type": null,
+          "transcript": "「管理するました」は正しくありません。「管理する」の丁寧な過去形は「管理しました」です。私は五人のチームを管理しました。もう一度、この文を言ってみてください。",
+          "first_text_ms": 1451,
+          "first_audio_ms": 1910,
+          "audio_chunks": 47,
+          "transport_pass": true
+        },
+        {
+          "branch": "clarify",
+          "repeat": 1,
+          "semantic_pass": null,
+          "response_done_ms": 3298,
+          "status": "completed",
+          "error_type": null,
+          "transcript": "予算は五十と五百のどちらで、単位は何ですか。人数は十五と五十のどちらですか。",
+          "first_text_ms": 1439,
+          "first_audio_ms": 1893,
+          "audio_chunks": 22,
+          "transport_pass": true
+        },
+        {
+          "branch": "clarify",
+          "repeat": 2,
+          "semantic_pass": null,
+          "response_done_ms": 3256,
+          "status": "completed",
+          "error_type": null,
+          "transcript": "予算は五十と五百のどちらで、単位は何ですか。人数は十五と五十のどちらですか。",
+          "first_text_ms": 1170,
+          "first_audio_ms": 1725,
+          "audio_chunks": 26,
+          "transport_pass": true
+        },
+        {
+          "branch": "clarify",
+          "repeat": 3,
+          "semantic_pass": null,
+          "response_done_ms": 4068,
+          "status": "completed",
+          "error_type": null,
+          "transcript": "预算是五十还是五百，单位是什么？人数是十五还是五十？",
+          "first_text_ms": 1394,
+          "first_audio_ms": 2016,
+          "audio_chunks": 20,
+          "transport_pass": true
+        },
+        {
+          "branch": "advance",
+          "repeat": 1,
+          "semantic_pass": null,
+          "response_done_ms": 5181,
+          "status": "completed",
+          "error_type": null,
+          "transcript": "チームを率いて予約システムを三か月で納期通りにリリースした経歴が、明確に伝わります。チーム内では、どのように役割を分担しましたか。",
+          "first_text_ms": 2751,
+          "first_audio_ms": 3136,
+          "audio_chunks": 37,
+          "transport_pass": true
+        },
+        {
+          "branch": "advance",
+          "repeat": 2,
+          "semantic_pass": null,
+          "response_done_ms": 5073,
+          "status": "completed",
+          "error_type": null,
+          "transcript": "チームを率いて予約システムを三か月で納期通りにリリースした経歴が、明確に伝わります。チーム内では、どのように役割を分担しましたか。",
+          "first_text_ms": 2646,
+          "first_audio_ms": 3091,
+          "audio_chunks": 38,
+          "transport_pass": true
+        },
+        {
+          "branch": "advance",
+          "repeat": 3,
+          "semantic_pass": null,
+          "response_done_ms": 3616,
+          "status": "completed",
+          "error_type": null,
+          "transcript": "チームを率いて予約システムを三か月で納期通りにリリースした経歴が、明確に伝わります。チーム内では、どのように役割を分担しましたか。",
+          "first_text_ms": 1140,
+          "first_audio_ms": 1732,
+          "audio_chunks": 38,
+          "transport_pass": true
+        }
+      ]
+    },
+    {
+      "source_file": "script-only-2026-09-29.json",
+      "started_at": "2026-09-29T01:22:44.625925+00:00",
+      "finished_at": "2026-09-29T01:23:40.349197+00:00",
+      "model": "qwen3.8-omni-flash-realtime",
+      "sdk_version": "1.26.5",
+      "strategy": "script_only",
+      "input_kind": "synthetic_text",
+      "scenario": "自我介绍与职业背景说明",
+      "task": "自己紹介と職務経歴の説明。これまでの仕事と担当した役割を日本語で説明する。",
+      "results": [
+        {
+          "branch": "correct",
+          "repeat": 1,
+          "semantic_pass": null,
+          "response_done_ms": 4744,
+          "status": "completed",
+          "error_type": null,
+          "transcript": "「管理するました」は正しくありません。「管理する」の丁寧な過去形は「管理しました」です。私は五人のチームを管理しました。もう一度、この文を言ってみてください。",
+          "first_text_ms": 697,
+          "first_audio_ms": 1201,
+          "audio_chunks": 42,
+          "transport_pass": true
+        },
+        {
+          "branch": "correct",
+          "repeat": 2,
+          "semantic_pass": null,
+          "response_done_ms": 5217,
+          "status": "completed",
+          "error_type": null,
+          "transcript": "「管理するました」は正しくありません。「管理する」の丁寧な過去形は「管理しました」です。私は五人のチームを管理しました。もう一度、この文を言ってみてください。",
+          "first_text_ms": 854,
+          "first_audio_ms": 1115,
+          "audio_chunks": 44,
+          "transport_pass": true
+        },
+        {
+          "branch": "correct",
+          "repeat": 3,
+          "semantic_pass": null,
+          "response_done_ms": 4091,
+          "status": "completed",
+          "error_type": null,
+          "transcript": "「管理するました」は正しくありません。「管理する」の丁寧な過去形は「管理しました」です。私は五人のチームを管理しました。もう一度、この文を言ってみてください。",
+          "first_text_ms": 1077,
+          "first_audio_ms": 1225,
+          "audio_chunks": 46,
+          "transport_pass": true
+        },
+        {
+          "branch": "clarify",
+          "repeat": 1,
+          "semantic_pass": null,
+          "response_done_ms": 3630,
+          "status": "completed",
+          "error_type": null,
+          "transcript": "予算は五十と五百のどちらで、単位は何ですか。人数は十五と五十のどちらですか。",
+          "first_text_ms": 1221,
+          "first_audio_ms": 1669,
+          "audio_chunks": 27,
+          "transport_pass": true
+        },
+        {
+          "branch": "clarify",
+          "repeat": 2,
+          "semantic_pass": null,
+          "response_done_ms": 3509,
+          "status": "completed",
+          "error_type": null,
+          "transcript": "予算は五十と五百のどちらで、単位は何ですか。人数は十五と五十のどちらですか。",
+          "first_text_ms": 642,
+          "first_audio_ms": 1001,
+          "audio_chunks": 25,
+          "transport_pass": true
+        },
+        {
+          "branch": "clarify",
+          "repeat": 3,
+          "semantic_pass": null,
+          "status": null,
+          "error_type": "TimeoutError",
+          "transcript": "",
+          "first_text_ms": null,
+          "first_audio_ms": null,
+          "audio_chunks": 0,
+          "transport_pass": false
+        },
+        {
+          "branch": "advance",
+          "repeat": 1,
+          "semantic_pass": null,
+          "response_done_ms": 2571,
+          "status": "completed",
+          "error_type": null,
+          "transcript": "チームを率いて予約システムを三か月で納期通りにリリースした経歴が、明確に伝わります。チーム内では、どのように役割を分担しましたか。",
+          "first_text_ms": 805,
+          "first_audio_ms": 1433,
+          "audio_chunks": 37,
+          "transport_pass": true
+        },
+        {
+          "branch": "advance",
+          "repeat": 2,
+          "semantic_pass": null,
+          "response_done_ms": 3998,
+          "status": "completed",
+          "error_type": null,
+          "transcript": "チームを率いて予約システムを三か月で納期通りにリリースした経歴が、明確に伝わります。チーム内では、どのように役割を分担しましたか。",
+          "first_text_ms": 1160,
+          "first_audio_ms": 1599,
+          "audio_chunks": 32,
+          "transport_pass": true
+        },
+        {
+          "branch": "advance",
+          "repeat": 3,
+          "semantic_pass": null,
+          "status": null,
+          "error_type": "TimeoutError",
+          "transcript": "",
+          "first_text_ms": null,
+          "first_audio_ms": null,
+          "audio_chunks": 0,
+          "transport_pass": false
+        }
+      ]
+    },
+    {
+      "source_file": "script-only-2026-09-29-retry1.json",
+      "started_at": "2026-09-29T01:23:50.653366+00:00",
+      "finished_at": "2026-09-29T01:24:25.995250+00:00",
+      "model": "qwen3.8-omni-flash-realtime",
+      "sdk_version": "1.26.5",
+      "strategy": "script_only",
+      "input_kind": "synthetic_text",
+      "scenario": "自我介绍与职业背景说明",
+      "task": "自己紹介と職務経歴の説明。これまでの仕事と担当した役割を日本語で説明する。",
+      "results": [
+        {
+          "branch": "correct",
+          "repeat": 1,
+          "semantic_pass": null,
+          "response_done_ms": 2877,
+          "status": "completed",
+          "error_type": null,
+          "transcript": "「管理するました」は正しくありません。「管理する」の丁寧な過去形は「管理しました」です。私は五人のチームを管理しました。もう一度、この文を言ってみてください。",
+          "first_text_ms": 511,
+          "first_audio_ms": 858,
+          "audio_chunks": 46,
+          "transport_pass": true
+        },
+        {
+          "branch": "correct",
+          "repeat": 2,
+          "semantic_pass": null,
+          "response_done_ms": 2829,
+          "status": "completed",
+          "error_type": null,
+          "transcript": "「管理するました」は正しくありません。「管理する」の丁寧な過去形は「管理しました」です。私は五人のチームを管理しました。もう一度、この文を言ってみてください。",
+          "first_text_ms": 475,
+          "first_audio_ms": 815,
+          "audio_chunks": 44,
+          "transport_pass": true
+        },
+        {
+          "branch": "correct",
+          "repeat": 3,
+          "semantic_pass": null,
+          "response_done_ms": 3073,
+          "status": "completed",
+          "error_type": null,
+          "transcript": "「管理するました」は正しくありません。「管理する」の丁寧な過去形は「管理しました」です。私は五人のチームを管理しました。もう一度、この文を言ってみてください。",
+          "first_text_ms": 841,
+          "first_audio_ms": 1040,
+          "audio_chunks": 45,
+          "transport_pass": true
+        },
+        {
+          "branch": "clarify",
+          "repeat": 1,
+          "semantic_pass": null,
+          "response_done_ms": 2169,
+          "status": "completed",
+          "error_type": null,
+          "transcript": "予算は五十と五百のどちらで、単位は何ですか。人数は十五と五十のどちらですか。",
+          "first_text_ms": 572,
+          "first_audio_ms": 940,
+          "audio_chunks": 26,
+          "transport_pass": true
+        },
+        {
+          "branch": "clarify",
+          "repeat": 2,
+          "semantic_pass": null,
+          "response_done_ms": 1764,
+          "status": "completed",
+          "error_type": null,
+          "transcript": "予算は五十と五百のどちらで、単位は何ですか。人数は十五と五十のどちらですか。",
+          "first_text_ms": 480,
+          "first_audio_ms": 798,
+          "audio_chunks": 24,
+          "transport_pass": true
+        },
+        {
+          "branch": "clarify",
+          "repeat": 3,
+          "semantic_pass": null,
+          "response_done_ms": 1778,
+          "status": "completed",
+          "error_type": null,
+          "transcript": "予算は五十と五百のどちらで、単位は何ですか。人数は十五と五十のどちらですか。",
+          "first_text_ms": 420,
+          "first_audio_ms": 757,
+          "audio_chunks": 24,
+          "transport_pass": true
+        },
+        {
+          "branch": "advance",
+          "repeat": 1,
+          "semantic_pass": null,
+          "response_done_ms": 2667,
+          "status": "completed",
+          "error_type": null,
+          "transcript": "チームを率いて予約システムを三か月で納期通りにリリースした経歴が、明確に伝わります。チーム内では、どのように役割を分担しましたか。",
+          "first_text_ms": 537,
+          "first_audio_ms": 912,
+          "audio_chunks": 37,
+          "transport_pass": true
+        },
+        {
+          "branch": "advance",
+          "repeat": 2,
+          "semantic_pass": null,
+          "response_done_ms": 2903,
+          "status": "completed",
+          "error_type": null,
+          "transcript": "チームを率いて予約システムを三か月で納期通りにリリースした経歴が、明確に伝わります。チーム内では、どのように役割を分担しましたか。",
+          "first_text_ms": 659,
+          "first_audio_ms": 1026,
+          "audio_chunks": 39,
+          "transport_pass": true
+        },
+        {
+          "branch": "advance",
+          "repeat": 3,
+          "semantic_pass": null,
+          "response_done_ms": 2576,
+          "status": "completed",
+          "error_type": null,
+          "transcript": "チームを率いて予約システムを三か月で納期通りにリリースした経歴が、明確に伝わります。チーム内では、どのように役割を分担しましたか。",
+          "first_text_ms": 494,
+          "first_audio_ms": 871,
+          "audio_chunks": 36,
+          "transport_pass": true
+        }
+      ]
+    },
+    {
+      "source_file": "integration-2026-09-29.json",
+      "started_at": "2026-09-29T01:48:29.296767+00:00",
+      "finished_at": "2026-09-29T01:49:28.563103+00:00",
+      "model": "qwen3.8-omni-flash-realtime",
+      "input_kind": "synthetic_text",
+      "scenario": "自我介绍与职业背景说明",
+      "results": [
+        {
+          "expected_branch": "correct",
+          "repeat": 1,
+          "passed": false,
+          "evaluation_ms": 5089,
+          "feedback": null,
+          "failure_type": "ValueError"
+        },
+        {
+          "expected_branch": "correct",
+          "repeat": 2,
+          "passed": false,
+          "evaluation_ms": 4303,
+          "feedback": null,
+          "failure_type": "ValueError"
+        },
+        {
+          "expected_branch": "correct",
+          "repeat": 3,
+          "passed": false,
+          "evaluation_ms": 4015,
+          "feedback": null,
+          "failure_type": "ValueError"
+        },
+        {
+          "expected_branch": "clarify",
+          "repeat": 1,
+          "passed": true,
+          "evaluation_ms": 3784,
+          "feedback": {
+            "protocol_version": 2,
+            "teaching_mode": "clarify",
+            "off_topic": false,
+            "next_question_locked": "",
+            "correction_explanation": "",
+            "retry_prompt": "",
+            "acknowledgement": "",
+            "clarification_question": "お仕事の具体的な内容（例：プロジェクト名、担当した役割）と、予算の単位（例：万円、ドル）を教えてください。人数は最終的に何人でしたか？",
+            "uncertain_details": [
+              "具体的なお仕事の内容や役割",
+              "予算の通貨単位",
+              "正確な人数"
+            ],
+            "fact_quotes": [
+              "予算は五十、いや五百くらいで、人数は十五か五十でした。"
+            ],
+            "errors": [],
+            "alternatives": []
+          },
+          "speech": "お仕事の具体的な内容（例：プロジェクト名、担当した役割）と、予算の単位（例：万円、ドル）を教えてください。人数は最終的に何人でしたか？",
+          "branch": "clarify",
+          "semantic_pass": null,
+          "response_done_ms": 3450,
+          "status": "completed",
+          "error_type": null,
+          "transcript": "お仕事の具体的な内容（例：プロジェクト名、担当した役割）と、予算の単位（例：万円、ドル）を教えてください。人数は最終的に何人でしたか？",
+          "first_text_ms": 760,
+          "first_audio_ms": 1088,
+          "audio_chunks": 44,
+          "transport_pass": true,
+          "exact_speech": true,
+          "validated_release_ms": 7234
+        },
+        {
+          "expected_branch": "clarify",
+          "repeat": 2,
+          "passed": true,
+          "evaluation_ms": 3480,
+          "feedback": {
+            "protocol_version": 2,
+            "teaching_mode": "clarify",
+            "off_topic": false,
+            "next_question_locked": "",
+            "correction_explanation": "",
+            "retry_prompt": "",
+            "acknowledgement": "",
+            "clarification_question": "予算の単位は何ですか（例：万円、ドル）？人数は15人ですか、それとも50人ですか？",
+            "uncertain_details": [
+              "Budget unit (e.g., ten thousand yen, dollars)",
+              "Exact number of people (15 or 50)"
+            ],
+            "fact_quotes": [
+              "予算は五十、いや五百くらいで",
+              "人数は十五か五十でした"
+            ],
+            "errors": [],
+            "alternatives": []
+          },
+          "speech": "予算の単位は何ですか（例：万円、ドル）？人数は15人ですか、それとも50人ですか？",
+          "branch": "clarify",
+          "semantic_pass": null,
+          "response_done_ms": 2926,
+          "status": "completed",
+          "error_type": null,
+          "transcript": "予算の単位は何ですか（例：万円、ドル）？人数は15人ですか、それとも50人ですか？",
+          "first_text_ms": 653,
+          "first_audio_ms": 1338,
+          "audio_chunks": 28,
+          "transport_pass": true,
+          "exact_speech": true,
+          "validated_release_ms": 6406
+        },
+        {
+          "expected_branch": "clarify",
+          "repeat": 3,
+          "passed": true,
+          "evaluation_ms": 3165,
+          "feedback": {
+            "protocol_version": 2,
+            "teaching_mode": "clarify",
+            "off_topic": false,
+            "next_question_locked": "",
+            "correction_explanation": "",
+            "retry_prompt": "",
+            "acknowledgement": "",
+            "clarification_question": "予算の単位（例：元、万円）と、人数は正確にどちらですか？",
+            "uncertain_details": [
+              "Budget unit (e.g., RMB, Yen)",
+              "Exact number of people"
+            ],
+            "fact_quotes": [],
+            "errors": [],
+            "alternatives": []
+          },
+          "speech": "予算の単位（例：元、万円）と、人数は正確にどちらですか？",
+          "branch": "clarify",
+          "semantic_pass": null,
+          "response_done_ms": 2048,
+          "status": "completed",
+          "error_type": null,
+          "transcript": "予算の単位（例：元、万円）と、人数は正確にどちらですか？",
+          "first_text_ms": 539,
+          "first_audio_ms": 1041,
+          "audio_chunks": 24,
+          "transport_pass": true,
+          "exact_speech": true,
+          "validated_release_ms": 5213
+        },
+        {
+          "expected_branch": "advance",
+          "repeat": 1,
+          "passed": false,
+          "evaluation_ms": 6116,
+          "feedback": null,
+          "failure_type": "ValueError"
+        },
+        {
+          "expected_branch": "advance",
+          "repeat": 2,
+          "passed": false,
+          "evaluation_ms": 6104,
+          "feedback": null,
+          "failure_type": "ValueError"
+        },
+        {
+          "expected_branch": "advance",
+          "repeat": 3,
+          "passed": false,
+          "evaluation_ms": 6100,
+          "feedback": null,
+          "failure_type": "ValueError"
+        }
+      ]
+    },
+    {
+      "source_file": "integration-2026-09-29-prompt2.json",
+      "started_at": "2026-09-29T01:51:22.116611+00:00",
+      "finished_at": "2026-09-29T01:52:39.983253+00:00",
+      "model": "qwen3.8-omni-flash-realtime",
+      "input_kind": "synthetic_text",
+      "scenario": "自我介绍与职业背景说明",
+      "results": [
+        {
+          "expected_branch": "correct",
+          "repeat": 1,
+          "mechanical_pass": false,
+          "semantic_pass": null,
+          "evaluation_ms": 3877,
+          "feedback": null,
+          "failure_type": "ValueError"
+        },
+        {
+          "expected_branch": "correct",
+          "repeat": 2,
+          "mechanical_pass": false,
+          "semantic_pass": null,
+          "evaluation_ms": 2533,
+          "feedback": null,
+          "failure_type": "ValueError"
+        },
+        {
+          "expected_branch": "correct",
+          "repeat": 3,
+          "mechanical_pass": true,
+          "semantic_pass": null,
+          "evaluation_ms": 3394,
+          "feedback": {
+            "protocol_version": 2,
+            "teaching_mode": "correct",
+            "off_topic": false,
+            "next_question_locked": "",
+            "correction_explanation": "「管理するました」→「管理しました」：动词辞书形后接「ました」时，需变为ます形（管理します）再变过去式（管理しました）。",
+            "retry_prompt": "もう一度言ってみてください。",
+            "acknowledgement": "",
+            "clarification_question": "",
+            "uncertain_details": [],
+            "fact_quotes": [
+              "私は五人のチームを管理するました。"
+            ],
+            "errors": [
+              {
+                "original": "管理するました",
+                "explanation_l1": "「管理する」是辞书形，过去式应为「管理しました」，不能直接加「ました」。",
+                "corrected": "管理しました"
+              }
+            ],
+            "alternatives": [
+              "私は五人のチームを管理しました。",
+              "私は五人のチームをまとめました。"
+            ]
+          },
+          "speech": "「管理するました」→「管理しました」：动词辞书形后接「ました」时，需变为ます形（管理します）再变过去式（管理しました）。 「管理する」是辞书形，过去式应为「管理しました」，不能直接加「ました」。 私は五人のチームを管理しました。 もう一度言ってみてください。",
+          "branch": "correct",
+          "response_done_ms": 5093,
+          "status": "completed",
+          "error_type": null,
+          "transcript": "「管理するました」→「管理しました」：动词辞书形后接「ました」时，需变为ます形（管理します）再变过去式（管理しました）。 「管理する」是辞书形，过去式应为「管理しました」，不能直接加「ました」。 私は五人のチームを管理しました。 もう一度言ってみてください。",
+          "first_text_ms": 645,
+          "first_audio_ms": 1193,
+          "audio_chunks": 71,
+          "transport_pass": true,
+          "exact_speech": true,
+          "validated_release_ms": 8487
+        },
+        {
+          "expected_branch": "clarify",
+          "repeat": 1,
+          "mechanical_pass": true,
+          "semantic_pass": null,
+          "evaluation_ms": 3213,
+          "feedback": {
+            "protocol_version": 2,
+            "teaching_mode": "clarify",
+            "off_topic": false,
+            "next_question_locked": "",
+            "correction_explanation": "",
+            "retry_prompt": "",
+            "acknowledgement": "",
+            "clarification_question": "人数は15人ですか、それとも50人ですか。また、予算の単位は何ですか（例：万元、円）？",
+            "uncertain_details": [
+              "人数が15か50で不明",
+              "予算の単位が不明"
+            ],
+            "fact_quotes": [
+              "予算は五十、いや五百くらいで、人数は十五か五十でした。"
+            ],
+            "errors": [],
+            "alternatives": []
+          },
+          "speech": "人数は15人ですか、それとも50人ですか。また、予算の単位は何ですか（例：万元、円）？",
+          "branch": "clarify",
+          "response_done_ms": 3672,
+          "status": "completed",
+          "error_type": null,
+          "transcript": "人数は15人ですか、それとも50人ですか。また、予算の単位は何ですか（例：万元、円）？",
+          "first_text_ms": 684,
+          "first_audio_ms": 1246,
+          "audio_chunks": 30,
+          "transport_pass": true,
+          "exact_speech": true,
+          "validated_release_ms": 6885
+        },
+        {
+          "expected_branch": "clarify",
+          "repeat": 2,
+          "mechanical_pass": true,
+          "semantic_pass": null,
+          "evaluation_ms": 2386,
+          "feedback": {
+            "protocol_version": 2,
+            "teaching_mode": "clarify",
+            "off_topic": false,
+            "next_question_locked": "",
+            "correction_explanation": "",
+            "retry_prompt": "",
+            "acknowledgement": "",
+            "clarification_question": "人数と予算の単位を教えてください。人数は15人ですか？予算は500万円ですか？",
+            "uncertain_details": [
+              "人数の正確な数値と単位",
+              "予算の正確な数値と単位"
+            ],
+            "fact_quotes": [
+              "予算は五十、いや五百くらいで、人数は十五か五十でした。"
+            ],
+            "errors": [],
+            "alternatives": []
+          },
+          "speech": "人数と予算の単位を教えてください。人数は15人ですか？予算は500万円ですか？",
+          "branch": "clarify",
+          "response_done_ms": 3096,
+          "status": "completed",
+          "error_type": null,
+          "transcript": "人数と予算の単位を教えてください。人数は15人ですか？予算は500万円ですか？",
+          "first_text_ms": 847,
+          "first_audio_ms": 1594,
+          "audio_chunks": 28,
+          "transport_pass": true,
+          "exact_speech": true,
+          "validated_release_ms": 5482
+        },
+        {
+          "expected_branch": "clarify",
+          "repeat": 3,
+          "mechanical_pass": false,
+          "semantic_pass": null,
+          "evaluation_ms": 2606,
+          "feedback": {
+            "protocol_version": 2,
+            "teaching_mode": "clarify",
+            "off_topic": false,
+            "next_question_locked": "",
+            "correction_explanation": "",
+            "retry_prompt": "",
+            "acknowledgement": "",
+            "clarification_question": "予算の単位と人数の正確な数字を教えていただけますか？",
+            "uncertain_details": [
+              "予算の具体的な金額とその単位（例：万元、元）",
+              "人数の正確な数字"
+            ],
+            "fact_quotes": [
+              "予算は五十、いや五百くらいで、人数は十五か五十でした。"
+            ],
+            "errors": [],
+            "alternatives": []
+          },
+          "speech": "予算の単位と人数の正確な数字を教えていただけますか？",
+          "branch": "clarify",
+          "status": null,
+          "error_type": "TimeoutError",
+          "transcript": "",
+          "first_text_ms": null,
+          "first_audio_ms": null,
+          "audio_chunks": 0,
+          "transport_pass": false,
+          "exact_speech": false,
+          "validated_release_ms": 2606
+        },
+        {
+          "expected_branch": "advance",
+          "repeat": 1,
+          "mechanical_pass": false,
+          "semantic_pass": null,
+          "evaluation_ms": 3040,
+          "feedback": {
+            "protocol_version": 2,
+            "teaching_mode": "correct",
+            "off_topic": false,
+            "next_question_locked": "",
+            "correction_explanation": "「予約システム」を「予約管理システム」に修正しました。",
+            "retry_prompt": "もう一度言ってみてください。",
+            "acknowledgement": "",
+            "clarification_question": "",
+            "uncertain_details": [],
+            "fact_quotes": [
+              "私は五人のチームを率いて、予約システムを開発しました。納期は三か月で、予定どおりにリリースしました。"
+            ],
+            "errors": [
+              {
+                "original": "予約システム",
+                "explanation_l1": "在A1级别中，更具体和常见的表达是'预约管理系统'。",
+                "corrected": "予約管理システム"
+              }
+            ],
+            "alternatives": [
+              "私は五人のチームを率いて、予約管理システムを開発しました。納期は三か月で、予定どおりにリリースしました。",
+              "私は五人のチームを率いて、予約システムを作りました。納期は三か月で、ちゃんと終わりました。"
+            ]
+          },
+          "speech": "「予約システム」を「予約管理システム」に修正しました。 在A1级别中，更具体和常见的表达是'预约管理系统'。 私は五人のチームを率いて、予約管理システムを開発しました。納期は三か月で、予定どおりにリリースしました。 もう一度言ってみてください。",
+          "branch": "advance",
+          "response_done_ms": 4705,
+          "status": "completed",
+          "error_type": null,
+          "transcript": "「予約システム」を「予約管理システム」に修正しました。 在A1级别中，更具体和常见的表达是'预约管理系统'。 私は五人のチームを率いて、予約管理システムを開発しました。納期は三か月で、予定どおりにリリースしました。 もう一度言ってみてください。",
+          "first_text_ms": 1023,
+          "first_audio_ms": 1346,
+          "audio_chunks": 72,
+          "transport_pass": true,
+          "exact_speech": true,
+          "validated_release_ms": 7745
+        },
+        {
+          "expected_branch": "advance",
+          "repeat": 2,
+          "mechanical_pass": false,
+          "semantic_pass": null,
+          "evaluation_ms": 2712,
+          "feedback": {
+            "protocol_version": 2,
+            "teaching_mode": "polish",
+            "off_topic": false,
+            "next_question_locked": "",
+            "correction_explanation": "",
+            "retry_prompt": "",
+            "acknowledgement": "数字の表記と「予定どおり」の使い方が自然です。",
+            "clarification_question": "",
+            "uncertain_details": [],
+            "fact_quotes": [
+              "私は五人のチームを率いて、予約システムを開発しました。",
+              "納期は三か月で、予定どおりにリリースしました。"
+            ],
+            "errors": [],
+            "alternatives": [
+              "私は5人のチームを率いて予約システムを開発しました。納期は3か月で、予定通りにリリースできました。",
+              "私は5人からなるチームを率いて予約システムの開発を担当しました。納期は3か月で、無事にリリースすることができました。"
+            ]
+          },
+          "speech": "数字の表記と「予定どおり」の使い方が自然です。 私は5人のチームを率いて予約システムを開発しました。納期は3か月で、予定通りにリリースできました。",
+          "branch": "advance",
+          "status": null,
+          "error_type": "TimeoutError",
+          "transcript": "",
+          "first_text_ms": null,
+          "first_audio_ms": null,
+          "audio_chunks": 0,
+          "transport_pass": false,
+          "exact_speech": false,
+          "validated_release_ms": 2712
+        },
+        {
+          "expected_branch": "advance",
+          "repeat": 3,
+          "mechanical_pass": false,
+          "semantic_pass": null,
+          "evaluation_ms": 3781,
+          "feedback": {
+            "protocol_version": 2,
+            "teaching_mode": "correct",
+            "off_topic": false,
+            "next_question_locked": "",
+            "correction_explanation": "「予約システム」をより自然な「予約管理システム」に修正しました。",
+            "retry_prompt": "修正した文をもう一度繰り返してください。",
+            "acknowledgement": "",
+            "clarification_question": "",
+            "uncertain_details": [],
+            "fact_quotes": [
+              "私は五人のチームを率いて",
+              "予約システムを開発しました",
+              "納期は三か月で",
+              "予定どおりにリリースしました"
+            ],
+            "errors": [
+              {
+                "original": "予約システム",
+                "explanation_l1": "“预约系统”在日语商务语境中通常表述为“予約管理システム”，更准确。",
+                "corrected": "予約管理システム"
+              }
+            ],
+            "alternatives": [
+              "私は五人のチームを率いて、予約管理システムを開発しました。納期は三か月で、予定どおりにリリースしました。",
+              "私は五人のチームを率いて、予約システムの開発を担当しました。納期は三か月で、予定どおりにリリースしました。"
+            ]
+          },
+          "speech": "「予約システム」をより自然な「予約管理システム」に修正しました。 “预约系统”在日语商务语境中通常表述为“予約管理システム”，更准确。 私は五人のチームを率いて、予約管理システムを開発しました。納期は三か月で、予定どおりにリリースしました。 修正した文をもう一度繰り返してください。",
+          "branch": "advance",
+          "response_done_ms": 10357,
+          "status": "completed",
+          "error_type": null,
+          "transcript": "「予約システム」をより自然な「予約管理システム」に修正しました。 “预约系统”在日语商务语境中通常表述为“予約管理システム”，更准确。 私は五人のチームを率いて、予約管理システムを開発しました。納期は三か月で、予定どおりにリリースしました。 修正した文をもう一度繰り返してください。",
+          "first_text_ms": 777,
+          "first_audio_ms": 1504,
+          "audio_chunks": 81,
+          "transport_pass": true,
+          "exact_speech": true,
+          "validated_release_ms": 14138
+        }
+      ]
+    }
+  ]
+}

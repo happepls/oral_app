@@ -1,4 +1,9 @@
 {
+  "expression_feedback_clarify": "请先确认识别内容",
+  "teaching_transcribing": "正在识别你的回答…",
+  "teaching_analyzing": "正在分析本轮表达…",
+  "teaching_rendering": "正在准备本轮回复…",
+  "teaching_retry": "本轮暂时无法完成，请重新录音或稍后重试。",
   "expression_feedback_title": "表达建议",
   "expression_feedback_correct": "改正这一点，再试一次",
   "expression_feedback_polish": "这样说更自然",

@@ -1,4 +1,9 @@
 {
+  "expression_feedback_clarify": "Confirma el texto reconocido",
+  "teaching_transcribing": "Transcribiendo tu respuesta…",
+  "teaching_analyzing": "Analizando esta respuesta…",
+  "teaching_rendering": "Preparando tus comentarios…",
+  "teaching_retry": "No se pudo completar este turno. Vuelve a grabar o inténtalo en un momento.",
   "expression_feedback_title": "Sugerencias de expresión",
   "expression_feedback_correct": "Corrige este detalle e inténtalo de nuevo",
   "expression_feedback_polish": "Exprésate de forma más natural",

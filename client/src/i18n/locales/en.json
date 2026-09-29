@@ -1,4 +1,9 @@
 {
+  "expression_feedback_clarify": "Please confirm what you said",
+  "teaching_transcribing": "Transcribing your answer…",
+  "teaching_analyzing": "Analyzing this answer…",
+  "teaching_rendering": "Preparing your feedback…",
+  "teaching_retry": "We couldn't complete this turn. Please record again or retry shortly.",
   "expression_feedback_title": "Expression feedback",
   "expression_feedback_correct": "Try that again with a small correction",
   "expression_feedback_polish": "Make your expression more natural",

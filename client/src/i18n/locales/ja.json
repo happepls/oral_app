@@ -1,4 +1,9 @@
 {
+  "expression_feedback_clarify": "認識された内容を確認してください",
+  "teaching_transcribing": "回答を文字にしています…",
+  "teaching_analyzing": "今回の表現を確認しています…",
+  "teaching_rendering": "今回の返答を準備しています…",
+  "teaching_retry": "今回は処理できませんでした。もう一度録音するか、少し待ってお試しください。",
   "expression_feedback_title": "表現のアドバイス",
   "expression_feedback_correct": "少し直して、もう一度言ってみましょう",
   "expression_feedback_polish": "もっと自然な表現にしましょう",

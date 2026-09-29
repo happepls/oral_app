@@ -1,4 +1,9 @@
 {
+  "expression_feedback_clarify": "Bitte bestätige den erkannten Text",
+  "teaching_transcribing": "Deine Antwort wird transkribiert…",
+  "teaching_analyzing": "Diese Antwort wird analysiert…",
+  "teaching_rendering": "Deine Rückmeldung wird vorbereitet…",
+  "teaching_retry": "Diese Runde konnte nicht abgeschlossen werden. Nimm erneut auf oder versuche es gleich noch einmal.",
   "expression_feedback_title": "Tipps zur Formulierung",
   "expression_feedback_correct": "Korrigiere diesen Punkt und versuche es erneut",
   "expression_feedback_polish": "Drücke dich natürlicher aus",
