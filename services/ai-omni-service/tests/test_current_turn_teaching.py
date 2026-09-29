@@ -9,6 +9,7 @@ import pytest
 from .test_expression_feedback import callback, Redis, omni
 from .test_scoring_windows import FakeRedis
 import current_turn_teaching as teaching
+import audio_evidence
 
 RESULT = dict(protocol_version=2, teaching_mode="correct", off_topic=False,
               errors=[dict(original="want eat", corrected="want to eat", explanation_l1="want 后接 to。")],
@@ -159,7 +160,11 @@ async def test_inflight_results_invalidated_before_any_output(transport, change)
 @pytest.mark.asyncio
 async def test_asr_identity_timeout_late_duplicate_and_next_recording(transport, monkeypatch):
     cb = setup()
+    monkeypatch.setattr(audio_evidence, "hear", AsyncMock(return_value={
+        "status": "clear", "heard_text": "I want eat steak.", "uncertain_spans": []}))
     monkeypatch.setattr(teaching, "ASR_TIMEOUT", .025)
+    cb.audio_evidence.begin("record-1")
+    cb.audio_evidence.commit(b'\x00\x01' * 1600)
     await cb.current_turn_teaching.begin("record-1")
     await cb.current_turn_teaching.commit_audio()
     await event(cb, "input_audio_buffer.committed", item_id="audio-1")
@@ -169,6 +174,8 @@ async def test_asr_identity_timeout_late_duplicate_and_next_recording(transport,
     transport.post.assert_not_awaited()
     cb.expression_input_sequence += 1
     monkeypatch.setattr(teaching, "ASR_TIMEOUT", 5)
+    cb.audio_evidence.begin("record-2")
+    cb.audio_evidence.commit(b'\x00\x01' * 1600)
     await cb.current_turn_teaching.begin("record-2")
     await cb.current_turn_teaching.commit_audio()
     await event(cb, "input_audio_buffer.committed", item_id="audio-1")  # duplicate old ack must not consume new reservation

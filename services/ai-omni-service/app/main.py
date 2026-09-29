@@ -31,12 +31,14 @@ try:
     from . import product_analytics
     from . import expression_feedback
     from .current_turn_teaching import CurrentTurnTeaching
+    from .audio_evidence import SceneAudioEvidence, assessment_text, assessment_history
     from . import scenario_generation
 except ImportError:  # tests and direct `python app/main.py` load it as a module
     from dashscope_config import classify_connection_error, connect_with_retry, resolve_dashscope_config
     import product_analytics
     import expression_feedback
     from current_turn_teaching import CurrentTurnTeaching
+    from audio_evidence import SceneAudioEvidence, assessment_text, assessment_history
     import scenario_generation
 
 # --- Configuration & Logging ---
@@ -314,6 +316,8 @@ async def save_single_message(
     scenario: str = None,
     task_id: int = None,
     turn_id: str = None,
+    input_source: str = None,
+    audio_evidence: dict = None,
 ):
     """Idempotently upsert one realtime message through the internal API."""
     conv_service_url = os.getenv("CONVERSATION_SERVICE_URL", "http://localhost:8083")
@@ -332,6 +336,8 @@ async def save_single_message(
             "scenario": scenario,
             "task_id": str(task_id) if task_id is not None else None,
             "turn_id": turn_id,
+            **({"input_source": "audio"} if input_source == "audio" else {}),
+            **({"audio_evidence": audio_evidence} if audio_evidence and audio_evidence.get("status") != "pending" else {}),
         }],
     }
     headers = {"X-Guaji-Internal-Auth": internal_secret}
@@ -834,6 +840,7 @@ async def _generate_and_emit_scenario_review(
         isinstance(existing, dict)
         and existing.get("scenario_title") == scenario_title
         and existing.get("analysis")
+        and existing["analysis"].get("evaluation_status") != "pending"
     ):
         await callback._safe_send({"type": "scenario_review", "payload": existing})
         logger.info(
@@ -843,7 +850,7 @@ async def _generate_and_emit_scenario_review(
         )
         return existing
 
-    recent_history = list(conversation_history or [])[-50:]
+    recent_history = assessment_history(list(conversation_history or [])[-50:])
     user_turn_count = sum(
         1
         for message in recent_history
@@ -873,6 +880,7 @@ async def _generate_and_emit_scenario_review(
         async with httpx.AsyncClient(timeout=60.0) as client:
             response = await client.post(
                 f"{WORKFLOW_SERVICE_URL}/api/workflows/scenario-review/generate",
+                headers={"X-Guaji-Internal-Auth": os.getenv("INTERNAL_AUTH_SECRET", "")},
                 json={
                     "user_id": callback.user_id,
                     "goal_id": goal_id,
@@ -1462,10 +1470,12 @@ async def _evaluate_scene_turn_progress(
         or active_goal.get("native_language")
         or "中文"
     )
-    latest_user = next(
-        ((m.get("content") or "") for m in reversed(user_messages)),
-        "",
-    )
+    student_message = user_messages[-1]
+    latest_user = assessment_text(student_message)
+    if latest_user is None:
+        logger.info("[BATCH_EVAL] skip uncertain audio turn=%s generation=%s",
+                    student_message.get("turn_id"), current_task["scoring_generation"])
+        return None
     result = await _handle_turn_with_accumulator(
         callback,
         callback.conversation,
@@ -1478,7 +1488,7 @@ async def _evaluate_scene_turn_progress(
         current_task,
         native_language,
         callback.token,
-        **({"turn_message": turn_snapshot["user"]} if turn_snapshot is not None else {}),
+        turn_message=student_message,
     )
     if not result:
         return None
@@ -2957,7 +2967,7 @@ async def call_proficiency_workflow(user_id: str, goal_id: int, task_id: int, co
                             user_context['next_task_text'] = None
 
                             # Guard: require at least 3 real user turns before deep evaluation
-                            recent_history = conversation_history[-50:]
+                            recent_history = assessment_history(conversation_history[-50:])
                             user_msg_count = sum(1 for m in recent_history if (m.get('role') == 'user') and (m.get('content') or '').strip())
                             if user_msg_count < 3:
                                 logger.warning(
@@ -2987,7 +2997,8 @@ async def call_proficiency_workflow(user_id: str, goal_id: int, task_id: int, co
                                         "completed_tasks": [],  # 由 workflow 从数据库获取
                                         "conversation_history": recent_history  # 最近 50 轮对话
                                     },
-                                    headers={"Authorization": f"Bearer {token}"}
+                                    headers={"Authorization": f"Bearer {token}",
+                                             "X-Guaji-Internal-Auth": os.getenv("INTERNAL_AUTH_SECRET", "")}
                                 )
                                 if review_resp.status_code == 200:
                                     review_data = review_resp.json()
@@ -3098,6 +3109,7 @@ class WebSocketCallback(OmniRealtimeCallback):
         self.expression_response_sequence = 0
         self.expression_jobs = set()
         self.expression_error_streak = (None, None, 0)
+        self.audio_evidence = SceneAudioEvidence(self, session_phases, DASHSCOPE_CONFIG, save_single_message)
         self.current_turn_teaching = CurrentTurnTeaching(
             self, session_phases, _get_redis_client, WORKFLOW_SERVICE_URL,
             save_single_message, _evaluate_scene_turn_progress,
@@ -3286,6 +3298,7 @@ class WebSocketCallback(OmniRealtimeCallback):
         explicitly delete the items. Call this on any task/phase switch.
         """
         self.current_turn_teaching.invalidate()
+        self.audio_evidence.invalidate()
         if not self.conversation:
             self.item_ids = []
             return
@@ -3647,9 +3660,8 @@ class WebSocketCallback(OmniRealtimeCallback):
         )
 
         # Log all events for debugging
-        if event_name not in ['response.audio.delta', 'response.audio_transcript.delta', 'response.audio.done', 'response.audio_transcript.done']:
+        if event_name not in ['response.audio.delta', 'response.audio_transcript.delta', 'response.text.delta', 'response.audio.done', 'response.audio_transcript.done']:
             logger.info(f"DashScope Event: {event_name}, RID: {rid}")
-            logger.info(f"Detailed Event Data: {json.dumps(response)[:3000]}")
 
         if event_name == 'session.created':
             self._mark_latency_stage("session_created")
@@ -3664,6 +3676,23 @@ class WebSocketCallback(OmniRealtimeCallback):
             self._trigger_welcome_message()
         async def process_event_unlocked():
             try:
+                # The callback may have waited on the event lock while the
+                # connection was replaced. Reject before consuming new queues.
+                if response.get("_teaching_epoch", self.current_turn_teaching.connection_epoch) != self.current_turn_teaching.connection_epoch:
+                    return
+                if event_name == 'input_audio_buffer.committed':
+                    self.audio_evidence.committed(str(response.get('item_id') or ''))
+                elif event_name == 'response.created':
+                    self.audio_evidence.response_started(rid)
+                if event_name.startswith('response.') and (
+                        self.audio_evidence.stale_response(rid)
+                        or (self.audio_evidence.applies() and rid in self.ignored_response_ids)):
+                    self.ignored_response_ids.add(rid)
+                    return
+                if (event_name == 'error' and self.audio_evidence.pending_responses
+                        and 'none active response' not in str((response.get('error') or {}).get('message', '')).lower()):
+                    await self.audio_evidence.abort()
+                    return
                 if await self.current_turn_teaching.handle_event(response, rid):
                     return
                 if event_name == 'input_audio_buffer.committed':
@@ -4301,8 +4330,8 @@ class WebSocketCallback(OmniRealtimeCallback):
                                                         await self.analytics.end()
                                                     try:
                                                         # Get conversation history for review
-                                                        conv_history = self.messages[-50:] if len(self.messages) > 50 else self.messages
-                                                        logger.info(f"Scenario review: conv_history length={len(conv_history)}, messages={self.messages[:3]}...")
+                                                        conv_history = assessment_history(self.messages[-50:])
+                                                        logger.info("Scenario review: history_count=%s", len(conv_history))
 
                                                         # Guard: require at least 3 real user turns before deep evaluation
                                                         user_msg_count = sum(1 for m in conv_history if (m.get('role') == 'user') and (m.get('content') or '').strip())
@@ -4339,7 +4368,8 @@ class WebSocketCallback(OmniRealtimeCallback):
                                                                     "completed_tasks": [],
                                                                     "conversation_history": conv_history
                                                                 },
-                                                                headers={"Authorization": f"Bearer {self.token}"}
+                                                                headers={"Authorization": f"Bearer {self.token}",
+                                                                         "X-Guaji-Internal-Auth": os.getenv("INTERNAL_AUTH_SECRET", "")}
                                                             )
                                                         if review_resp is not None and review_resp.status_code == 200:
                                                             review_data = review_resp.json()
@@ -4405,9 +4435,6 @@ class WebSocketCallback(OmniRealtimeCallback):
                             # Normal input (not magic passcode) - send transcript and add to history
                             current_task = (self.user_context.get("active_goal") or {}).get("current_task") or {}
                             turn_id = message_id
-                            self.current_turn_id = turn_id
-                            if user_transcript.strip():
-                                await self.analytics.accept(turn_id, self.analytics_real_mode())
                             msg = {
                                 "id": message_id,
                                 "role": "user",
@@ -4417,6 +4444,12 @@ class WebSocketCallback(OmniRealtimeCallback):
                                 "task_id": current_task.get("id"),
                                 "turn_id": turn_id,
                             }
+                            if self.audio_evidence.applies() and not self.audio_evidence.attach(msg, transcription_id):
+                                logger.info("[AUDIO_EVIDENCE] discarded unbound ASR")
+                                return
+                            self.current_turn_id = turn_id
+                            if user_transcript.strip():
+                                await self.analytics.accept(turn_id, self.analytics_real_mode())
                             await self._safe_send({
                                 "type": "user_transcript",
                                 "payload": {
@@ -4424,7 +4457,9 @@ class WebSocketCallback(OmniRealtimeCallback):
                                     "text": user_transcript, "messageId": msg["id"], "turn_id": turn_id,
                                 },
                             })
-                            if self.last_user_audio_url: msg['audioUrl'] = self.last_user_audio_url; self.last_user_audio_url = None
+                            if not self.audio_evidence.applies() and self.last_user_audio_url:
+                                msg['audioUrl'] = self.last_user_audio_url
+                                self.last_user_audio_url = None
                             self.messages.append(msg)
                             if self.current_turn_teaching.applies():
                                 await self.current_turn_teaching.transcribed(msg)
@@ -4439,6 +4474,7 @@ class WebSocketCallback(OmniRealtimeCallback):
                                 scenario=msg.get("scenario"),
                                 task_id=msg.get("task_id"),
                                 turn_id=msg.get("turn_id"),
+                                input_source=msg.get("input_source"), audio_evidence=msg.get("audio_evidence"),
                             ))
                 elif event_name in ['response.audio_transcript.done', 'response.text.done']:
                     if not self.full_response_text:
@@ -4501,12 +4537,16 @@ class WebSocketCallback(OmniRealtimeCallback):
                         current_task = active_goal.get("current_task") or {}
                         if not self.current_turn_teaching.applies():
                             expression_feedback.schedule(self, session_phases, _get_redis_client(), WORKFLOW_SERVICE_URL)
-                            asyncio.create_task(_evaluate_scene_turn_progress(
-                                self,
-                                active_goal.get("id"),
-                                current_task.get("id"),
-                                self.full_response_text,
-                            ))
+                            snapshot = self.audio_evidence.snapshot(rid)
+                            latest_user = next((m for m in reversed(self.messages) if m.get('role') == 'user'), {})
+                            if snapshot is not None or latest_user.get('input_source') != 'audio':
+                                asyncio.create_task(_evaluate_scene_turn_progress(
+                                    self,
+                                    active_goal.get("id"),
+                                    current_task.get("id"),
+                                    self.full_response_text,
+                                    **({'turn_snapshot': snapshot} if snapshot is not None else {}),
+                                ))
 
                     # Note: Task scoring is handled by proficiency_scoring workflow after each user interaction
                     # No need to manually update score here based on AI response keywords
@@ -4537,6 +4577,7 @@ class WebSocketCallback(OmniRealtimeCallback):
     def on_close(self, code: int, message: str) -> None:
         self.is_connected = False
         if not self.loop.is_closed():
+            self.loop.call_soon_threadsafe(lambda: self.audio_evidence.invalidate(disconnected=True))
             epoch = self.current_turn_teaching.connection_epoch
             self.loop.call_soon_threadsafe(lambda: self.current_turn_teaching.invalidate()
                                           if epoch == self.current_turn_teaching.connection_epoch else None)
@@ -4948,6 +4989,7 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query(None), ses
                 if msg_type == 'audio_stream':
                     if not callback.user_audio_buffer:
                         callback.expression_input_sequence += 1
+                        callback.audio_evidence.begin(payload.get('input_id', ''))
                         if callback.current_turn_teaching.applies():
                             await callback.current_turn_teaching.begin(payload.get('input_id', ''))
                     audio_b64 = payload.get('audio')
@@ -4990,6 +5032,8 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query(None), ses
                     # audio/text deltas of every response after the first interrupt.
                     callback.interrupted_turn = False
                     if callback.user_audio_buffer:
+                        audio_data = bytes(callback.user_audio_buffer)
+                        audio_record = callback.audio_evidence.commit(audio_data)
                         if callback.is_connected:
                             try:
                                 if callback.current_turn_teaching.applies():
@@ -4997,18 +5041,43 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query(None), ses
                                 conversation.commit()
                             except Exception as e:
                                 logger.error(f"Error committing audio: {e}")
+                                if audio_record is not None:
+                                    await callback.audio_evidence.abort()
                                 if callback.current_turn_teaching.applies():
                                     await callback.current_turn_teaching.fail(callback.current_turn_teaching.turn, "audio_commit_failed", reconnect=True)
-                        audio_data = bytes(callback.user_audio_buffer)
                         callback.user_audio_buffer = bytearray()
-                        async def upload_user_task(d):
+                        async def upload_user_task(d, record):
                             url = await callback.upload_audio_to_cos(d, 'user_audio')
-                            if url: callback.last_user_audio_url = url
-                        asyncio.create_task(upload_user_task(audio_data))
+                            if not url:
+                                return
+                            if record is None:
+                                callback.last_user_audio_url = url
+                                return
+                            # Associate uploads with their own acknowledged input,
+                            # never the next turn through last_user_audio_url.
+                            try:
+                                await asyncio.wait_for(record['asr_ready'].wait(), 5)
+                            except asyncio.TimeoutError:
+                                return
+                            message = record.get('message')
+                            if message is None:
+                                return
+                            message['audioUrl'] = url
+                            await save_single_message(
+                                callback.session_id, callback.user_id, 'user', message['content'], url,
+                                message_id=message['id'], timestamp=message['timestamp'],
+                                scenario=message.get('scenario'), task_id=message.get('task_id'),
+                                turn_id=message.get('turn_id'), input_source=message.get('input_source'),
+                                audio_evidence=message.get('audio_evidence'))
+                        asyncio.create_task(upload_user_task(audio_data, audio_record))
                     if callback.is_connected and not callback.current_turn_teaching.applies():
                         try:
                             directive = expression_feedback.response_instructions(callback, session_phases)
-                            if directive:
+                            if callback.audio_evidence.applies():
+                                job = asyncio.create_task(callback.audio_evidence.reply(callback.audio_evidence.current, directive))
+                                callback.expression_jobs.add(job)
+                                job.add_done_callback(callback.expression_jobs.discard)
+                            elif directive:
                                 conversation.create_response(instructions=directive)
                             else:
                                 conversation.create_response()
@@ -5016,6 +5085,7 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query(None), ses
                             logger.error(f"Error creating response for audio: {e}")
                 elif msg_type == 'user_audio_cancelled':
                     callback.user_audio_buffer = bytearray()
+                    callback.audio_evidence.invalidate()
                     callback.current_turn_teaching.invalidate()
                     logger.info("User cancelled audio input, buffer cleared")
                 elif msg_type in ['text_message', 'input_text']:
@@ -5031,6 +5101,7 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query(None), ses
                                 continue
                         callback.counts_against_quota = not quota_exempt
                         callback.expression_input_sequence += 1
+                        callback.audio_evidence.invalidate()
                         callback.interrupted_turn = False  # new user turn ends the interruption
                         text_message = {
                             "id": str(uuid.uuid4()),
@@ -5165,6 +5236,7 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query(None), ses
                             callback._update_session_prompt()
                             logger.info("[Phase] force_advance_magic → all done, scene_theater")
                 elif msg_type == 'interrupt':
+                    callback.audio_evidence.invalidate()
                     callback.current_turn_teaching.invalidate()
                     callback.interrupted_turn = True
                     if callback.current_response_id: callback.ignored_response_ids.add(callback.current_response_id)
@@ -5221,6 +5293,7 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query(None), ses
         if heartbeat_task: heartbeat_task.cancel()
         if welcome_readiness_task: welcome_readiness_task.cancel()
         callback.is_connected = False
+        callback.audio_evidence.invalidate(disconnected=True)
         callback.current_turn_teaching.invalidate()
         callback.pending_directive = None
         for job in tuple(callback.expression_jobs):

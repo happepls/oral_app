@@ -94,6 +94,7 @@ class Turn:
     request_json: str
     task_json: str
     user_text: str = ""
+    input_source: str = ""
 
     def payload(self):
         return dict(goal_id=self.identity[1], task_id=self.identity[2],
@@ -120,7 +121,8 @@ class CurrentTurnTeaching:
 
     def bind_callback(self):
         """An old SDK socket must never feed a replacement connection's state."""
-        if not self.applies():
+        audio = getattr(self.cb, "audio_evidence", None)
+        if not self.applies() and not (audio and audio.applies()):
             return self.cb
         self.connection_epoch += 1
         epoch, owner = self.connection_epoch, self
@@ -128,6 +130,8 @@ class CurrentTurnTeaching:
             if owner.connection_epoch != epoch:
                 return
             owner.invalidate()
+            if audio:
+                audio.invalidate(disconnected=True)
             owner.commit_queue.clear()
             owner.asr_items.clear()
             owner.committed_items.clear()
@@ -297,13 +301,30 @@ class CurrentTurnTeaching:
     async def transcribed(self, message):
         if not self.valid(self.turn):
             return
-        turn = replace(self.turn, turn_id=message["turn_id"], user_text=message["content"], timestamp=message["timestamp"])
+        turn = replace(self.turn, turn_id=message["turn_id"], user_text=message["content"],
+                       timestamp=message["timestamp"], input_source=message.get("input_source", ""))
         self.turn = turn
         await self.state(turn, "analyzing")
         self.spawn(self.evaluate(turn))
 
     async def evaluate(self, turn):
         try:
+            audio = getattr(self.cb, "audio_evidence", None)
+            evidence = await audio.resolve(turn.turn_id) if audio else None
+            if not self.valid(turn):
+                return
+            if turn.input_source == "audio" and evidence is None:
+                await self.fail(turn, "audio_evidence_unavailable")
+                return
+            if evidence is not None:
+                if evidence.get("status") != "clear":
+                    # No uncertain input reaches the text evaluator or scoring.
+                    # The native audio tutor asks for a repeat in the default path;
+                    # this optional scripted path retains its neutral retry state.
+                    await self.fail(turn, "audio_uncertain")
+                    return
+                turn = replace(turn, user_text=evidence["heard_text"])
+                self.turn = turn
             async def request():
                 redis = self.redis_factory()
                 secret = os.getenv("INTERNAL_AUTH_SECRET", "")

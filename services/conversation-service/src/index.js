@@ -232,13 +232,14 @@ app.get('/history/:sessionId', requireUser, async (req, res) => {
   }
 });
 
-async function forwardMessages(sessionId, userId, messages) {
+async function forwardMessages(sessionId, userId, messages, trusted = false) {
+  const { historyMessages } = require('./historyMessages');
   const historyResponse = await fetch(
     `http://history-analytics-service:3004/api/history/session/${encodeURIComponent(sessionId)}/messages`,
     {
       method: 'POST',
       headers: historyWriteHeaders,
-      body: JSON.stringify({ userId, messages })
+      body: JSON.stringify({ userId, messages: historyMessages(messages, trusted) })
     }
   );
   if (!historyResponse.ok) {
@@ -257,7 +258,7 @@ app.post('/internal/history/:sessionId/messages', requireInternalService, async 
     return res.status(400).json({ message: 'userId and messages are required.' });
   }
   try {
-    await forwardMessages(sessionId, String(userId), messages);
+    await forwardMessages(sessionId, String(userId), messages, true);
     res.status(201).json({ message: 'Messages saved successfully.' });
   } catch (error) {
     console.error(`Internal history write failed for ${sessionId}:`, error.message);
