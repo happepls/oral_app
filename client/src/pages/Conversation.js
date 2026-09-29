@@ -28,8 +28,7 @@ import { cleanStreamingText, appendDelta, aiBubbleRenderState, stripAllMarkers, 
 import { normalizeConnectionError, shouldShowConnectionError } from './connectionErrorLogic';
 import { calculateTaskProgress, isCompletedWindowEvaluation, isCurrentScoringMessage } from './conversationProgress';
 import TaskProgressGuidance from '../components/TaskProgressGuidance';
-import ExpressionFeedback from '../components/ExpressionFeedback';
-import { isCurrentExpression, isCurrentTeachingState } from './conversationExpressions';
+import { isCurrentTeachingState } from './conversationExpressions';
 import { subscribeGoalScenariosUpdates } from '../utils/goalScenarios';
 import { createPcmStreamScheduler, unpackPcmAudioPacket } from '../utils/pcmStreamScheduler';
 
@@ -595,8 +594,6 @@ function Conversation() {
   const scoringGenerationByTaskRef = useRef(new Map()); // Reject late evaluations from before an explicit reset
   const progressRevisionRef = useRef(0); // New WS progress invalidates older REST snapshots
   const [progressFeedback, setProgressFeedback] = useState(null);
-  const expressionTurnsRef = useRef(new Set());
-  const latestExpressionTurnRef = useRef(null);
   const expressionInterruptedResponsesRef = useRef(new Set());
   const [completionSheetDismissed, setCompletionSheetDismissed] = useState(false);
   const feedbackOrderRef = useRef(new Map());
@@ -1344,9 +1341,7 @@ function Conversation() {
       setTaskReadyToComplete(null);
       setTaskCompletionPending(false);
       feedbackOrderRef.current.clear();
-      expressionTurnsRef.current.clear();
       setTeachingState(null);
-      latestExpressionTurnRef.current = null;
       expressionInterruptedResponsesRef.current.clear();
       // 重置魔法重复阶段状态
       setMagicPassedTasks(new Set());
@@ -2059,7 +2054,6 @@ function Conversation() {
         case 'user_transcript':
            // Display user's speech transcription in chat
            if (data.payload && data.payload.text) {
-             latestExpressionTurnRef.current = data.payload.turn_id || null;
              restoredAiContentKeysRef.current.clear();
              setMessages(prev => reconcileUserTranscript(prev, {
                text: data.payload.text,
@@ -2104,16 +2098,8 @@ function Conversation() {
            break;
         }
         case 'expression_feedback': {
-           const feedback = data.payload;
-           const params = new URLSearchParams(window.location.search);
-           if (['recall', 'daily_qa', 'tour', 'quick_experience', 'magic_repetition'].includes(params.get('mode'))
-             || currentPhaseRef.current !== 'scene_theater'
-             || !isCurrentExpression(feedback, activeScoringTaskRef.current, scoringGenerationByTaskRef.current, params.get('scenario'))
-             || feedback.turn_id !== latestExpressionTurnRef.current) break;
-           const key = `${feedback.task_id}:${feedback.scoring_generation}:${feedback.turn_id}`;
-           if (expressionTurnsRef.current.has(key)) break;
-           expressionTurnsRef.current.add(key);
-           setMessages(prev => [...prev, { type: 'expression_feedback', id: key, feedback }]);
+           // Compatibility metadata only. Teaching examples and clarification
+           // questions are presented in the tutor's normal text/audio reply.
            break;
         }
         case 'user_proficiency_feedback':
@@ -3318,7 +3304,7 @@ function Conversation() {
     console.log('🎤 Recording started, session ID:', newSessionId);
 
     // Always stop audio playback immediately (interrupt AI response)
-    latestExpressionTurnRef.current = null;
+    if (activeAudioResponseIdRef.current) expressionInterruptedResponsesRef.current.add(activeAudioResponseIdRef.current);
     stopAudioPlayback();
     isInterruptedRef.current = true; // Mark as interrupted
 
@@ -3918,34 +3904,7 @@ function Conversation() {
 
         {messages.map((msg, index) => {
           if (msg.type === 'expression_feedback') {
-            const feedback = msg.feedback;
-            const scenario = new URLSearchParams(window.location.search).get('scenario');
-            if (currentPhase !== 'scene_theater' || !isCurrentExpression(feedback, activeScoringTask, scoringGenerationByTaskRef.current, scenario)) return null;
-            return <ExpressionFeedback key={msg.id} feedback={feedback}
-              disabled={!isConnected || isWaitingForAIResponse || isUserRecording || feedback.turn_id !== latestExpressionTurnRef.current}
-              onSend={(text, source) => {
-                if (source.turn_id !== latestExpressionTurnRef.current
-                  || !isCurrentExpression(source, activeScoringTaskRef.current, scoringGenerationByTaskRef.current, scenario)
-                  || socketRef.current?.getReadyState?.() !== WebSocket.OPEN) return false;
-                const messageId = `expression-${Date.now()}`;
-                const previousInputId = currentUserMessageIdRef.current;
-                currentUserMessageIdRef.current = messageId;
-                try {
-                  if (activeAudioResponseIdRef.current) expressionInterruptedResponsesRef.current.add(activeAudioResponseIdRef.current);
-                  stopAudioPlayback();
-                  isInterruptedRef.current = false;
-                  socketRef.current.send(JSON.stringify({ type: 'interrupt' }));
-                  if (socketRef.current.send(JSON.stringify({ type: 'text_message', payload: { text, input_id: messageId } })) === false) {
-                    currentUserMessageIdRef.current = previousInputId;
-                    return false;
-                  }
-                } catch { currentUserMessageIdRef.current = previousInputId; return false; }
-                latestExpressionTurnRef.current = null;
-                setTeachingState(null);
-                setMessages(prev => [...prev, { id: messageId, type: 'user', content: text, isFinal: true }]);
-                setIsWaitingForAIResponse(true);
-                return true;
-              }} />;
+            return null; // Ignore metadata restored from older clients too.
           }
           
           if (msg.type === 'system') {
