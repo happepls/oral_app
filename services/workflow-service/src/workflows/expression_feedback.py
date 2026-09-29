@@ -27,6 +27,17 @@ empty. Ask for a retry, never add a new question or offer wine/other purchases.
 polish: correct but unnatural; affirm a specific success, offer upgrades, no new
 question. advance: correct and natural; at most ONE short question strictly within
 current_task; never invent, preview or announce completion of other tasks.
+For a narrow speech-act task already expressed successfully, advance MUST provide
+a concrete speaking invitation in next_question_locked, not an empty string:
+model ONE different equivalent student sentence and invite practice of it. Preserve
+intent and facts; another valid wording is NOT a correction. Use previous_ai_text
+and user_text to avoid repeating a version just modeled or successfully spoken.
+Example for checking flight punctuality: next_question_locked can be
+"Try another way: 'Excuse me, is my flight on schedule?'". After that version is
+used successfully, choose a different equivalent such as "will my flight be on
+time". Do not ask about luggage or gates, or assert the flight is actually on time.
+Keep the whole field short and include at most one question mark. Alternatives
+should support this same-intent practice; never invent an error to demand it.
 For off-topic text set off_topic=true, mode=correct, errors=[], question empty.
 Respond with exactly one short acknowledgement redirecting to current_task;
 do not explain football or ask any off-topic follow-up. Alternatives then model
@@ -48,7 +59,7 @@ Student "I'd like the ribeye, medium rare, please." => advance, errors=[],
 alternatives=["I'll have the ribeye, medium rare, please.",
 "Could I have the ribeye cooked medium rare, please?"],
 question='Would you like a side with your steak?' ONLY if sides are in current_task.
-Otherwise question='' or one question within the explicitly stated task.
+Otherwise invite an equivalent phrasing within the explicitly stated task.
 """
 
 
@@ -78,8 +89,12 @@ def _student_voice(text, language):
     pattern = next((p for names, p in patterns if lang in names), None)
     if not pattern or not re.search(pattern, text, re.I):
         return False
-    # Reject common tutor/provider questions even when they contain first person.
-    if re.search(r"\b(would|do|can|could|are|have|will) you\b|\b(let me|can I (get|help|offer) you|you should|please (repeat|say|try))\b", text, re.I):
+    # Learners can ask a provider "Could you tell me ...?" or "Can you check
+    # my ...?". Reject provider offers/instructions, not every second-person
+    # request that still speaks from the learner's explicit me/my perspective.
+    if re.search(r"\b(would you like|do you want|let me|can I (get|help|offer) you|you should|please (repeat|say|try))\b", text, re.I):
+        return False
+    if re.search(r"\b(?:repeat|say|read)(?:\s+(?:it|this|that))?\s+after me\b|\b(?:repeat|say|read)\s+my\s+(?:sentence|words|example|phrase)\b", text, re.I):
         return False
     return True
 
