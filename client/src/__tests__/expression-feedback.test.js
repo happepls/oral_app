@@ -21,11 +21,12 @@ async function setup(props = {}) {
   return { ...render(wrap(values)), values, wrap };
 }
 
-test('chip fills answer and sends once as a student utterance', async () => {
+test('chip sends once without a text input or separate submit button', async () => {
   const { values } = await setup();
   const chip = screen.getByRole('button', { name: feedback.alternatives[0] });
   fireEvent.click(chip);
-  expect(screen.getByRole('textbox')).toHaveValue(feedback.alternatives[0]);
+  expect(screen.queryByRole('textbox')).not.toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: '发送我的回答' })).not.toBeInTheDocument();
   expect(values.onSend).toHaveBeenCalledWith(feedback.alternatives[0], feedback);
   fireEvent.click(chip);
   expect(values.onSend).toHaveBeenCalledTimes(1);
@@ -33,14 +34,14 @@ test('chip fills answer and sends once as a student utterance', async () => {
   expect(screen.getByText('已发送回答')).toBeInTheDocument();
 });
 
-test('student can edit and submit; failed send stays retryable', async () => {
+test('failed chip send stays retryable without a text input', async () => {
   const onSend = jest.fn().mockReturnValueOnce(false).mockReturnValueOnce(true);
   await setup({ onSend });
-  fireEvent.change(screen.getByRole('textbox'), { target: { value: 'I would like steak.' } });
-  fireEvent.click(screen.getByRole('button', { name: '发送我的回答' }));
+  const chip = screen.getByRole('button', { name: feedback.alternatives[0] });
+  fireEvent.click(chip);
   expect(screen.getByRole('status')).toHaveTextContent('发送未成功');
-  fireEvent.click(screen.getByRole('button', { name: '发送我的回答' }));
-  expect(onSend).toHaveBeenLastCalledWith('I would like steak.', feedback);
+  fireEvent.click(chip);
+  expect(onSend).toHaveBeenLastCalledWith(feedback.alternatives[0], feedback);
 });
 
 test('missing feedback silently renders nothing; errors optional; disconnected disables', async () => {

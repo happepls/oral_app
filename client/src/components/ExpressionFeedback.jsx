@@ -38,7 +38,7 @@ export default function ExpressionFeedback({ feedback, disabled = false, onSend 
           </button>
         ))}
       </div>
-      <form className="mt-3" onSubmit={event => { event.preventDefault(); send(text); }}>
+      {isClarification && <form className="mt-3" onSubmit={event => { event.preventDefault(); send(text); }}>
         <label className="block text-muted-foreground">
           {t('expression_feedback_edit')}
           <textarea rows={2} maxLength={1000} value={text} disabled={unavailable}
@@ -49,9 +49,10 @@ export default function ExpressionFeedback({ feedback, disabled = false, onSend 
           className="mt-2 min-h-11 px-3 rounded-lg bg-primary text-white disabled:opacity-50 focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2">
           {t(sent ? 'expression_feedback_sent' : 'expression_feedback_send')}
         </button>
-        {failed && <p role="status" className="mt-2">{t('expression_feedback_retry')}</p>}
-        {disabled && !sent && <p className="mt-2 text-muted-foreground">{t('expression_feedback_disabled')}</p>}
-      </form>
+      </form>}
+      {!isClarification && sent && <p role="status" className="mt-2 text-muted-foreground">{t('expression_feedback_sent')}</p>}
+      {failed && <p role="status" className="mt-2">{t('expression_feedback_retry')}</p>}
+      {disabled && !sent && <p className="mt-2 text-muted-foreground">{t('expression_feedback_disabled')}</p>}
     </aside>
   );
 }

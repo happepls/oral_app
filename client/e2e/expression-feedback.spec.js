@@ -89,6 +89,8 @@ test('scene expressions send student text once and preserve task progress @criti
   await emit('expression_feedback', feedback);
   await expect(card).toHaveCount(1);
   await expect(card).toContainText('want 后接 to');
+  await expect(card.getByRole('textbox')).toHaveCount(0);
+  await expect(card.getByRole('button', { name: '发送我的回答' })).toHaveCount(0);
   await expect(page.getByRole('progressbar', { name: '当前子任务进度', exact: true })).toHaveAttribute('aria-valuenow', '33');
   await emit('expression_feedback', { ...feedback, turn_id: 'old', scoring_generation: 2 });
   await expect(card).toHaveCount(1);
@@ -99,7 +101,8 @@ test('scene expressions send student text once and preserve task progress @criti
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(page.viewportSize().width + 1);
   await page.screenshot({ path: testInfo.outputPath('expression-feedback.png') });
   await chip.press('Enter');
-  await expect(card.getByRole('textbox')).toHaveValue(feedback.alternatives[0]);
+  await expect(card.getByRole('textbox')).toHaveCount(0);
+  await expect(card.getByRole('status')).toHaveText('已发送回答');
   await expect(chip).toBeDisabled();
   const sent = await page.evaluate(() => window.sentMessages.filter(m => m.type === 'text_message'));
   expect(sent).toEqual([{ type: 'text_message', payload: { text: feedback.alternatives[0], input_id: expect.any(String) } }]);
