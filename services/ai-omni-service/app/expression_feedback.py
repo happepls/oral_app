@@ -10,6 +10,11 @@ import re
 
 import httpx
 
+try:
+    from .audio_evidence import assessment_text
+except ImportError:
+    from audio_evidence import assessment_text
+
 logger = logging.getLogger(__name__)
 TTL = 72 * 3600
 EXCLUDED_MODES = {"magic_repetition", "daily_qa", "quick_experience", "tour", "recall"}
@@ -103,6 +108,9 @@ def schedule(callback, phases, redis, workflow_url):
                  if m.get("role") == "user" and m.get("turn_id") == turn_id), None)
     if not user or not user.get("content", "").strip():
         return
+    evaluated_text = assessment_text(user)
+    if evaluated_text is None:
+        return
     goal = callback.user_context.get("active_goal") or {}
     task = goal.get("current_task") or {}
     # Same precedence as _update_session_prompt: the active goal can override a
@@ -115,7 +123,7 @@ def schedule(callback, phases, redis, workflow_url):
         target_language=profile.get("target_language") or "English",
         native_language=profile.get("native_language") or "Chinese",
         level=str(profile.get("target_level") or "B1"),
-        user_text=user["content"], previous_ai_text=previous_ai[-2000:],
+        user_text=evaluated_text, previous_ai_text=previous_ai[-2000:],
     ))
     # Snapshot sequence before spawning: a new recording invalidates late work
     # even before its ASR result supplies a new turn_id.

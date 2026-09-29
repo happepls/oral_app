@@ -386,7 +386,7 @@ async def test_final_task_generates_persists_and_emits_review_without_user_jwt(m
     )
 
     assert captured["url"].endswith("/api/workflows/scenario-review/generate")
-    assert "headers" not in captured
+    assert "X-Guaji-Internal-Auth" in captured["headers"]
     assert captured["json"]["user_id"] == "user-1"
     assert captured["json"]["goal_id"] == 7
     assert captured["json"]["conversation_history"] == history
@@ -428,3 +428,20 @@ async def test_matching_persisted_review_is_reused_without_regeneration(monkeypa
 
     assert result == review
     assert callback.sent == [{"type": "scenario_review", "payload": review}]
+
+
+@pytest.mark.asyncio
+async def test_pending_persisted_review_retries_after_transient_evaluation_failure(monkeypatch):
+    from types import SimpleNamespace
+    pending = {"scenario_title": "Cafe", "analysis": {"evaluation_status": "pending", "overall_score": None}}
+    completed = {"scenario_title": "Cafe", "analysis": {"evaluation_status": "completed", "overall_score": 80}, "persisted": True}
+    cb = SimpleNamespace(user_id="synthetic", user_context={"scenario_review": pending}, _safe_send=AsyncMock())
+    response = SimpleNamespace(status_code=200, json=lambda: {"success": True, "data": completed})
+    client = AsyncMock()
+    client.__aenter__.return_value = client
+    client.post.return_value = response
+    monkeypatch.setattr(omni.httpx, "AsyncClient", lambda **kwargs: client)
+    history = [{"role": "user", "content": text} for text in ["One", "Two", "Three"]]
+    result = await omni._generate_and_emit_scenario_review(cb, 7, "Cafe", history)
+    client.post.assert_awaited_once()
+    assert result["analysis"]["overall_score"] == 80

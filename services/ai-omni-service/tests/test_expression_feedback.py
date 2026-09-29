@@ -62,6 +62,19 @@ async def run(cb, redis):
 
 
 @pytest.mark.asyncio
+async def test_feedback_uses_heard_audio_instead_of_display_asr(transport):
+    cb = callback()
+    cb.messages[-1].update(content='corrupted ASR', input_source='audio', audio_evidence={
+        'status': 'clear', 'heard_text': 'I want eat steak.', 'uncertain_spans': []})
+    await run(cb, Redis())
+    assert transport.post.call_args.kwargs['json']['user_text'] == 'I want eat steak.'
+    transport.post.reset_mock()
+    cb.messages[-1]['audio_evidence']['status'] = 'uncertain'
+    await run(cb, Redis())
+    transport.post.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_real_prompt_refresh_feedback_retry_and_reconnect_dedupe(transport):
     cb, redis = callback(), Redis()
     authority = copy.deepcopy(cb.user_context)
