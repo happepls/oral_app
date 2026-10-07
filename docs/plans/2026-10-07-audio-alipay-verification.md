@@ -33,6 +33,12 @@ PostgreSQL 测试使用隔离临时容器及独立 schema，无生产写入。St
 
 ## 发布条件与回滚
 
+### 最新 master 集成
+
+PR 创建后发现 master 已包含 PR69–72（Qwen3.8/current-turn teaching/audio evidence）。在 `/tmp/oral-audio-alipay-review` 隔离工作区合并 `4765da6`，未修改用户原工作区的未提交文件；Conversation 与 AI 自动合并无文本冲突。集成回归：client55 suites/634 tests、AI368 tests、六项 Chromium/WebKit 回归及 client build 全通过。初次隔离 `npm run verify` 因缺服务 node_modules / Python环境失败，随后链接本机依赖重跑；不是将失败伪记为通过。
+
+依赖补齐后集成 `npm run verify` 再次 pass/100；集成 AI Docker镜像构建成功；staged gitleaks clean。独立集成复审额外跑 AI teaching/audio52项与client14项通过，无未关闭high/critical。PR最终代码在隔离工作区，原工作区保留原提交及用户dirty文件，未强制更新覆盖。
+
 1. 人工评审 PR；禁止自动合并或直推 master。真实 iPhone/iPad Safari 至少10轮听音、后台恢复和网络切换尚未执行，不能声明线上卡顿已消失。
 2. 备份目标数据库后，在 user-service 运行 `node src/scripts/migrate-prepaid.js`。增量迁移初始化已有来源，新增默认free与NOT NULL；先后端再前端。此命令尚未对生产执行。
 3. live Stripe 核对产品 metadata、weekly499/year9900 USD目录、Dashboard Alipay资格及开启状态。Webhook 配置 completed、async_payment_succeeded、async_payment_failed、expired、charge.refunded 和原订阅事件，保留 raw body/签名校验与 WAF Skip。
