@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate, useSearchParams, useLocation } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { useTranslation } from 'react-i18next';
@@ -39,12 +39,15 @@ function Subscription() {
   // Account billing always has a deterministic in-product return target.
   // This also avoids returning to a Stripe Checkout history entry.
   const handleBack = () => navigate('/profile', { replace: isCancelled });
-  const { products, loading, unavailable, retry } = usePricingCatalog();
+  const { products, prepaidOffers, loading, unavailable, retry } = usePricingCatalog();
+  const checkoutKeysRef = useRef(new Map());
   const [checkoutLoading, setCheckoutLoading] = useState(null);
   const [currentSubscription, setCurrentSubscription] = useState(null);
   const [subscriptionLoading, setSubscriptionLoading] = useState(Boolean(user));
   const [subscriptionError, setSubscriptionError] = useState(false);
   const [showSuccess, setShowSuccess] = useState(false);
+  const [paymentState, setPaymentState] = useState(null);
+  const [statusRetry, setStatusRetry] = useState(0);
   const [promoCode, setPromoCode] = useState('');
   const [promoError, setPromoError] = useState('');
   const [promoApplied, setPromoApplied] = useState(null);
@@ -54,7 +57,8 @@ function Subscription() {
 
   useEffect(() => {
     if (!stripeSessionId) return;
-    setShowSuccess(true);
+    setShowSuccess(false);
+    setPaymentState('pending');
     // After Stripe redirects back, the subscription_status is written by an
     // async webhook that often hasn't landed yet. Poll refreshProfile a few
     // times so the user object is `active` (and AuthContext fully re-ready)
@@ -62,24 +66,33 @@ function Subscription() {
     // user is hydrated and can sit blank until a manual refresh.
     let cancelled = false;
     let tries = 0;
-    const MAX_TRIES = 5;
+    let timer;
+    const MAX_TRIES = 10;
     const tick = async () => {
       tries += 1;
-      let updated = null;
+      let status = null;
       try {
-        updated = refreshProfile ? await refreshProfile() : null;
+        const response = await fetch(`${API_BASE}/stripe/checkout/${encodeURIComponent(stripeSessionId)}/status`, { credentials: 'include' });
+        if (!response.ok) throw new Error('Checkout status unavailable');
+        status = await response.json();
       } catch { /* keep polling */ }
       if (cancelled) return;
-      const active = updated?.subscription_status === 'active';
-      if (active || tries >= MAX_TRIES) {
-        navigate('/profile');
+      if (status?.status === 'fulfilled') {
+        setShowSuccess(true);
+        setPaymentState('fulfilled');
+        try { await refreshProfile?.(); } catch { /* retry through profile */ }
+        if (!cancelled) navigate('/profile');
+      } else if (['failed', 'expired', 'refunded'].includes(status?.status)) {
+        setPaymentState(status.status);
+      } else if (tries >= MAX_TRIES) {
+        setPaymentState('pending_retry');
       } else {
-        setTimeout(tick, 1500);
+        timer = setTimeout(tick, 1500);
       }
     };
     tick();
-    return () => { cancelled = true; };
-  }, [stripeSessionId, navigate, refreshProfile]);
+    return () => { cancelled = true; clearTimeout(timer); };
+  }, [stripeSessionId, navigate, refreshProfile, statusRetry]);
 
   useEffect(() => {
     if (user) {
@@ -145,7 +158,7 @@ function Subscription() {
     }
   };
 
-  const handleCheckout = async (priceId) => {
+  const handleCheckout = async (priceId, billingMode = 'subscription') => {
     if (!user) {
       navigate('/login');
       return;
@@ -154,7 +167,11 @@ function Subscription() {
     setCheckoutError('');
     setCheckoutLoading(priceId);
     try {
-      const body = { priceId };
+      const purchaseKey = `${priceId}:${billingMode}:${promoApplied?.code || ''}`;
+      if (!checkoutKeysRef.current.has(purchaseKey)) {
+        checkoutKeysRef.current.set(purchaseKey, window.crypto?.randomUUID?.() || `${Date.now()}_${Math.random().toString(36).slice(2)}`);
+      }
+      const body = { priceId, billingMode, requestKey: checkoutKeysRef.current.get(purchaseKey) };
       if (promoApplied) {
         body.promotionCode = promoApplied.code;
       }
@@ -177,6 +194,7 @@ function Subscription() {
         console.error('Refused checkout redirect to disallowed URL:', data.url);
         setCheckoutError(t('qa_ui.subscription_checkout_url_error'));
       } else {
+        if ([400, 409].includes(res.status)) checkoutKeysRef.current.delete(purchaseKey);
         // 4xx/5xx / Stripe 配置缺失等
         console.error('Checkout failed:', res.status, data);
         setCheckoutError(t('qa_ui.subscription_checkout_error'));
@@ -255,6 +273,21 @@ function Subscription() {
   const isSubscribed = currentSubscription?.status === 'active' || 
                        currentSubscription?.subscription?.status === 'active' ||
                        user?.subscription_status === 'active';
+  const billingSource = currentSubscription?.billingSource || user?.billing_source;
+  const prepaidExpiresAt = currentSubscription?.prepaidExpiresAt || user?.prepaid_expires_at;
+
+  useEffect(() => {
+    if (!prepaidExpiresAt || billingSource !== 'prepaid') return;
+    let timer;
+    const checkExpiry = () => {
+      const remaining = new Date(prepaidExpiresAt).getTime() - Date.now();
+      if (remaining <= 0) { void refreshProfile?.(); void fetchSubscription(); }
+      else timer = setTimeout(checkExpiry, Math.min(remaining + 50, 2147483647));
+    };
+    checkExpiry();
+    return () => clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [prepaidExpiresAt, billingSource, refreshProfile]);
 
   return (
     <div className="mx-auto min-h-[100dvh] w-full max-w-lg pb-24" style={{ background: 'var(--background)' }}>
@@ -304,16 +337,16 @@ function Subscription() {
                 <p className="font-semibold text-indigo-700 dark:text-indigo-300">{t('qa_ui.subscription_active')}</p>
               </div>
               <p className="text-sm text-slate-600 dark:text-slate-400">
-                {t('qa_ui.subscription_active_body')}
+                {billingSource === 'prepaid' ? t('qa_ui.prepaid_expires', { date: new Date(prepaidExpiresAt).toLocaleString(i18n.language) }) : t('qa_ui.subscription_active_body')}
               </p>
             </div>
-            <button
+            {billingSource !== 'prepaid' && <button
               onClick={handleManageSubscription}
               disabled={portalLoading}
               className="px-4 py-2 text-sm font-medium text-indigo-600 border border-indigo-300 rounded-lg hover:bg-indigo-50 dark:hover:bg-indigo-900/30 disabled:opacity-50"
             >
               {portalLoading ? t('qa_ui.subscription_portal_opening') : t('qa_ui.subscription_manage')}
-            </button>
+            </button>}
           </div>
           {portalError && (
             <p role="alert" className="mt-3 text-sm text-red-600 dark:text-red-400">{portalError}</p>
@@ -321,6 +354,12 @@ function Subscription() {
         </div>
       )}
 
+      {paymentState && paymentState !== 'fulfilled' && (
+        <div role="status" className="mx-4 mb-4 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
+          <p>{t(['failed', 'expired', 'refunded'].includes(paymentState) ? 'qa_ui.payment_not_completed' : 'qa_ui.payment_pending')}</p>
+          <button type="button" className="mt-2 min-h-[44px] underline" onClick={() => setStatusRetry(n => n + 1)}>{t('qa_ui.retry')}</button>
+        </div>
+      )}
       {subscriptionError && !isSubscribed && (
         <div role="alert" className="mx-4 mb-4 flex items-center justify-between gap-3 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-200">
           <span>{t('qa_ui.subscription_status_error')}</span>
@@ -413,7 +452,7 @@ function Subscription() {
                   }
                   handleCheckout(price.id);
                 }}
-                disabled={loading || product.reference || !price?.id || checkoutLoading === price?.id || isSubscribed || subscriptionLoading || subscriptionError}
+                disabled={loading || product.reference || !price?.id || Boolean(checkoutLoading) || isSubscribed || subscriptionLoading || subscriptionError}
                 className={`w-full py-3 rounded-xl font-medium transition-all ${
                   isSubscribed
                     ? 'bg-slate-300 dark:bg-slate-600 text-slate-500 dark:text-slate-400 cursor-not-allowed'
@@ -427,11 +466,21 @@ function Subscription() {
                   : subscriptionError
                     ? t('qa_ui.subscription_status_unavailable_short')
                   : isSubscribed
-                    ? t('qa_ui.subscription_subscribed')
+                    ? t(billingSource === 'prepaid' ? 'qa_ui.billing_auto_renew' : 'qa_ui.subscription_subscribed')
                     : checkoutLoading === price?.id
                       ? t('qa_ui.subscription_processing')
                       : t('qa_ui.subscription_subscribe_now')}
               </button>
+              <p className="mt-2 text-center text-xs text-slate-500">{t('qa_ui.billing_auto_renew')}</p>
+              {prepaidOffers.some(offer => offer.priceId === price?.id) && (
+                <button type="button"
+                  disabled={loading || subscriptionLoading || subscriptionError || Boolean(checkoutLoading) || (isSubscribed && billingSource !== 'prepaid')}
+                  onClick={() => handleCheckout(price.id, 'prepaid')}
+                  className="mt-3 w-full min-h-[44px] rounded-xl border border-primary p-3 text-primary disabled:opacity-50 focus-visible:ring-2">
+                  {t(isAnnual ? 'qa_ui.prepaid_buy_year' : 'qa_ui.prepaid_buy_week')}
+                </button>
+              )}
+              {prepaidOffers.some(offer => offer.priceId === price?.id) && <p className="mt-2 text-center text-xs text-slate-500">{t('qa_ui.prepaid_manual_renew')}</p>}
             </div>
           );
         })}
@@ -482,7 +531,7 @@ function Subscription() {
 
       <div className="px-4 mt-8">
         <p className="text-xs text-center text-slate-600 dark:text-slate-400">
-          {t('qa_ui.subscription_renewal')}
+          {billingSource === 'prepaid' ? t('qa_ui.prepaid_manual_renew') : <>{t('qa_ui.billing_auto_renew')} · {t('qa_ui.subscription_renewal')}</>}
           <br />
           {t('qa_ui.subscription_stripe')}
         </p>

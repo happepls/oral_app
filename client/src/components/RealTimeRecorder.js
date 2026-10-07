@@ -30,6 +30,7 @@ const generateBars = (level, prevBars) => {
 const RealTimeRecorder = forwardRef(({
   isConnected,
   onStart,
+  onBeforeStart,
   onStop,
   onCancel,
   enableCompression = true,
@@ -136,6 +137,9 @@ const RealTimeRecorder = forwardRef(({
   const startRecording = async () => {
     if (isStartingRef.current) return;
     if (!isConnected) { alert('AI 导师尚未连接，请稍后再试'); return; }
+
+    // Unlock playback in Safari's original gesture, before permission awaits.
+    onBeforeStart?.();
 
     isStartingRef.current = true;
     isCancelledRef.current = false;
