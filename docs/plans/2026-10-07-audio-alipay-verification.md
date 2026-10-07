@@ -39,6 +39,8 @@ PR 创建后发现 master 已包含 PR69–72（Qwen3.8/current-turn teaching/au
 
 依赖补齐后集成 `npm run verify` 再次 pass/100；集成 AI Docker镜像构建成功；staged gitleaks clean。独立集成复审额外跑 AI teaching/audio52项与client14项通过，无未关闭high/critical。PR最终代码在隔离工作区，原工作区保留原提交及用户dirty文件，未强制更新覆盖。
 
+首轮 GitHub CI 全量test与两项SDLC checks通过，UI audit7项失败：3个订阅截图因支付宝关闭时仍增加说明改变高度，4个教学用例仅发送171ms音频却未发送done。修正为仅在提供双轨时展示新增说明，原信用卡页面保持原截图；教学fixture补完整短回复的done事件。未放宽断言或替换截图。客户端634项再次通过，320px与desktop订阅截图/教学回归通过，CI需要重跑确认。
+
 1. 人工评审 PR；禁止自动合并或直推 master。真实 iPhone/iPad Safari 至少10轮听音、后台恢复和网络切换尚未执行，不能声明线上卡顿已消失。
 2. 备份目标数据库后，在 user-service 运行 `node src/scripts/migrate-prepaid.js`。增量迁移初始化已有来源，新增默认free与NOT NULL；先后端再前端。此命令尚未对生产执行。
 3. live Stripe 核对产品 metadata、weekly499/year9900 USD目录、Dashboard Alipay资格及开启状态。Webhook 配置 completed、async_payment_succeeded、async_payment_failed、expired、charge.refunded 和原订阅事件，保留 raw body/签名校验与 WAF Skip。

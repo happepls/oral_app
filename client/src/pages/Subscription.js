@@ -471,7 +471,7 @@ function Subscription() {
                       ? t('qa_ui.subscription_processing')
                       : t('qa_ui.subscription_subscribe_now')}
               </button>
-              <p className="mt-2 text-center text-xs text-slate-500">{t('qa_ui.billing_auto_renew')}</p>
+              {prepaidOffers.length > 0 && <p className="mt-2 text-center text-xs text-slate-500">{t('qa_ui.billing_auto_renew')}</p>}
               {prepaidOffers.some(offer => offer.priceId === price?.id) && (
                 <button type="button"
                   disabled={loading || subscriptionLoading || subscriptionError || Boolean(checkoutLoading) || (isSubscribed && billingSource !== 'prepaid')}
@@ -531,7 +531,7 @@ function Subscription() {
 
       <div className="px-4 mt-8">
         <p className="text-xs text-center text-slate-600 dark:text-slate-400">
-          {billingSource === 'prepaid' ? t('qa_ui.prepaid_manual_renew') : <>{t('qa_ui.billing_auto_renew')} · {t('qa_ui.subscription_renewal')}</>}
+          {billingSource === 'prepaid' ? t('qa_ui.prepaid_manual_renew') : prepaidOffers.length > 0 ? <>{t('qa_ui.billing_auto_renew')} · {t('qa_ui.subscription_renewal')}</> : t('qa_ui.subscription_renewal')}
           <br />
           {t('qa_ui.subscription_stripe')}
         </p>
