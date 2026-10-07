@@ -112,7 +112,7 @@ test('Safari autoplay rejection preserves complete short PCM for the explicit un
   await page.screenshot({ path: testInfo.outputPath('audio-unlocked.png') });
 });
 
-test('prepaid renewal displays expiry and payment confirmation waits for fulfillment @critical', async ({ page }, testInfo) => {
+test('active prepaid membership is clear and renewal requires an explicit action @critical', async ({ page }, testInfo) => {
   await setup(page);
   const prepaidUser = { ...user, subscription_status: 'active', billing_source: 'prepaid', prepaid_expires_at: '2030-01-01T00:00:00Z' };
   await page.route('**/api/users/profile', route => route.fulfill({ json: { success: true, data: { user: prepaidUser } } }));
@@ -129,7 +129,11 @@ test('prepaid renewal displays expiry and payment confirmation waits for fulfill
   await page.goto('/subscription');
   await expect(page.getByText('会员有效期至', { exact: false })).toBeVisible();
   await expect(page.getByRole('button', { name: '管理订阅', exact: true })).toHaveCount(0);
-  const buy = page.getByRole('button', { name: '支付宝购买周卡 · $4.99' });
+  await expect(page.getByRole('button', { name: /支付宝/ })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: '立即订阅', exact: true })).toHaveCount(0);
+  for (const button of await page.getByRole('button', { name: '已订阅', exact: true }).all()) await expect(button).toBeDisabled();
+  await page.getByRole('button', { name: '续购会员', exact: true }).click();
+  const buy = page.getByRole('button', { name: '续购会员', exact: true }).first();
   await expect(buy).toBeEnabled();
   await buy.click();
   await expect(page.getByRole('alert')).toBeVisible();
@@ -142,10 +146,72 @@ test('prepaid renewal displays expiry and payment confirmation waits for fulfill
   const axe = await new AxeBuilder({ page }).analyze();
   expect(axe.violations.filter(v => ['serious', 'critical'].includes(v.impact))).toEqual([]);
   let fulfilled = false;
-  await page.route('**/api/stripe/checkout/cs_test/status', route => route.fulfill({ json: { status: fulfilled ? 'fulfilled' : 'pending' } }));
+  await page.route('**/api/stripe/checkout/cs_test/status', route => route.fulfill({ json: {
+    status: fulfilled ? 'fulfilled' : 'pending',
+    membership: { status: 'active', billingSource: 'prepaid', prepaidExpiresAt: prepaidUser.prepaid_expires_at },
+  } }));
   await page.goto('/subscription/success?session_id=cs_test');
   await expect(page.getByText('付款已提交，正在确认会员开通。')).toBeVisible();
   await expect(page.getByText('支付成功', { exact: false })).toHaveCount(0);
   fulfilled = true;
-  await expect(page).toHaveURL(/\/profile$/);
+  await expect(page.getByText('订阅成功！感谢你的支持')).toBeVisible();
+  await expect(page).toHaveURL(/\/subscription\/success/);
+  await expect(page.getByRole('button', { name: '立即订阅', exact: true })).toHaveCount(0);
+});
+
+test('subscribe directly requests multi-method one-time Checkout without a payment dialog @critical', async ({ page }, testInfo) => {
+  await setup(page);
+  await page.route('**/api/stripe/subscription', route => route.fulfill({ json: { status: 'free' } }));
+  await page.route('**/api/stripe/products-with-prices', route => route.fulfill({ json: {
+    data: [{ id: 'weekly', metadata: { tier: 'weekly' }, prices: [{ id: 'price_weekly', unit_amount: 499, currency: 'usd', active: true, recurring: { interval: 'week' } }] }],
+    prepaidOffers: [{ tier: 'weekly', priceId: 'price_weekly' }],
+  } }));
+  const purchases = [];
+  await page.route('**/api/stripe/checkout', route => {
+    purchases.push(route.request().postDataJSON());
+    return route.fulfill({ status: 409, json: { code: 'CHECKOUT_PROCESSING' } });
+  });
+  await page.goto('/subscription');
+  const opener = page.getByRole('button', { name: '立即订阅', exact: true });
+  await expect(opener).toBeEnabled();
+  await expect(page.getByRole('button', { name: /支付宝/ })).toHaveCount(0);
+  await opener.click();
+  await expect(page.getByRole('dialog')).toHaveCount(0);
+  await expect(page.getByRole('alert')).toHaveText('已有订单正在处理，请等待付款确认后再试。');
+  await opener.click();
+  expect(purchases.map(p => p.billingMode)).toEqual(['prepaid', 'prepaid']);
+  expect(purchases.every(p => p.replacePending === true)).toBe(true);
+  await page.screenshot({ path: testInfo.outputPath('payment-choice.png') });
+  expect(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth + 1)).toBe(false);
+  expect((await new AxeBuilder({ page }).analyze()).violations.filter(v => ['serious', 'critical'].includes(v.impact))).toEqual([]);
+});
+
+test('fulfillment snapshot overrides stale auth and slow membership reads @critical', async ({ page }, testInfo) => {
+  await setup(page);
+  let reads = 0;
+  await page.route('**/api/stripe/subscription', async route => {
+    const stale = ++reads === 1;
+    await new Promise(resolve => setTimeout(resolve, 1200));
+    await route.fulfill({ json: stale ? { status: 'free', billingSource: null }
+      : { status: 'active', billingSource: 'prepaid', prepaidExpiresAt: '2030-01-01T00:00:00Z' } });
+  });
+  await page.route('**/api/stripe/products-with-prices', route => route.fulfill({ json: {
+    data: [{ id: 'annual', metadata: { tier: 'annual' }, prices: [{ id: 'price_annual', unit_amount: 9900, currency: 'usd', active: true, recurring: { interval: 'year' } }] }],
+    prepaidOffers: [{ tier: 'annual', priceId: 'price_annual' }],
+  } }));
+  await page.route('**/api/stripe/checkout/cs_paid/status', async route => {
+    await new Promise(resolve => setTimeout(resolve, 300));
+    await route.fulfill({ json: {
+      status: 'fulfilled', membership: { status: 'active', billingSource: 'prepaid', prepaidExpiresAt: '2030-01-01T00:00:00Z' },
+    } });
+  });
+  await page.goto('/subscription/success?session_id=cs_paid');
+  await expect(page.getByText('订阅成功！感谢你的支持')).toBeVisible();
+  await expect(page.getByText('会员有效期至', { exact: false })).toBeVisible();
+  const subscribed = page.getByRole('button', { name: '已订阅', exact: true });
+  await expect(subscribed).toBeDisabled();
+  await page.waitForTimeout(1500);
+  await expect(subscribed).toBeDisabled();
+  await expect(page.getByRole('button', { name: '立即订阅', exact: true })).toHaveCount(0);
+  await page.screenshot({ path: testInfo.outputPath('fulfilled-membership.png'), fullPage: true });
 });

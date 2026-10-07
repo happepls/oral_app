@@ -141,7 +141,7 @@ router.get('/subscription', protect, async (req, res) => {
 router.post('/checkout', protect, async (req, res) => {
   try {
     const user = await stripeService.getUserById(req.user.id);
-    const { priceId, promotionCode, billingMode = 'subscription', requestKey } = req.body;
+    const { priceId, promotionCode, billingMode = 'subscription', requestKey, replacePending } = req.body;
 
     if (!priceId) {
       return res.status(400).json({ error: 'Price ID is required' });
@@ -171,12 +171,13 @@ router.post('/checkout', protect, async (req, res) => {
         promoId = promo.id;
       }
       const session = await prepaidService.createCheckout({ user, priceId, mode: billingMode,
-        requestKey: requestKey || require('crypto').randomUUID(), baseUrl, promoId });
+        requestKey: requestKey || require('crypto').randomUUID(), baseUrl, promoId, replacePending: replacePending === true });
 
       res.json(session);
     } catch (sessionError) {
       console.error('Error creating checkout session:', sessionError);
       res.status(sessionError.status || (sessionError.code === 'INVALID_PROMOTION_CODE' ? 400 : 500)).json({
+        ...(sessionError.code === 'CHECKOUT_PROCESSING' ? { code: sessionError.code } : {}),
         error: sessionError.code === 'INVALID_PROMOTION_CODE'
           ? 'Promotion code is invalid or expired'
           : sessionError.status ? sessionError.message : 'Failed to create checkout session'

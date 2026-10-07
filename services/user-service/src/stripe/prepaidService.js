@@ -51,7 +51,7 @@ class PrepaidService {
     });
   }
 
-  async createCheckout({ user, priceId, mode, requestKey, baseUrl, promoId }) {
+  async createCheckout({ user, priceId, mode, requestKey, baseUrl, promoId, replacePending = false }) {
     if (!['subscription', 'prepaid'].includes(mode)) throw billingError('Invalid billing mode', 400);
     if (!/^[a-zA-Z0-9_-]{8,100}$/.test(requestKey)) throw billingError('Invalid checkout request key', 400);
     if (mode === 'prepaid' && !this.enabled()) throw billingError('Prepaid checkout is not enabled', 503);
@@ -78,6 +78,26 @@ class PrepaidService {
         }
         const pending = await client.query("SELECT * FROM prepaid_orders WHERE user_id=$1 AND status IN ('creating','pending') ORDER BY created_at LIMIT 1", [user.id]);
         order = pending.rows[0];
+        if (order && replacePending === true) {
+          // Keep the user lock while resolving the previous reservation. Recover
+          // ambiguous creates with their original idempotency key before switching.
+          let previous = order.checkout_session_id
+            ? await stripe.checkout.sessions.retrieve(order.checkout_session_id)
+            : await stripe.checkout.sessions.create(order.checkout_params, { idempotencyKey: `checkout:${order.id}` });
+          const switching = order.price_id !== priceId || order.billing_mode !== mode;
+          if (switching && previous.status === 'open' && previous.payment_status === 'unpaid') {
+            previous = await stripe.checkout.sessions.expire(previous.id);
+          }
+          if (previous.status === 'expired') {
+            await client.query("UPDATE prepaid_orders SET checkout_session_id=$2,status='expired' WHERE id=$1 AND status IN ('creating','pending')", [order.id, previous.id]);
+            order = null;
+          } else if (switching || previous.status !== 'open') {
+            throw Object.assign(billingError('An existing checkout is processing; wait for confirmation'), { code: 'CHECKOUT_PROCESSING' });
+          } else {
+            await client.query("UPDATE prepaid_orders SET checkout_session_id=$2,status='pending' WHERE id=$1 AND status='creating'", [order.id, previous.id]);
+            order.checkout_session_id = previous.id;
+          }
+        }
         if (order && (order.price_id !== priceId || order.billing_mode !== mode)) throw billingError('Another checkout is pending; finish or expire it first');
         if (!order) {
           const id = randomUUID();

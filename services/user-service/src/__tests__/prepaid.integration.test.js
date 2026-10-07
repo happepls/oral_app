@@ -55,14 +55,20 @@ integration('prepaid SQL fulfillment', () => {
           sessions.set(session.id, session); return session;
         }),
         retrieve: jest.fn(async id => sessions.get(id)),
+        expire: jest.fn(async id => {
+          const session = sessions.get(id);
+          if (session.status !== 'open') throw new Error('Session is not open');
+          session.status = 'expired'; session.url = null;
+          return session;
+        }),
       } },
       paymentIntents: { retrieve: jest.fn(async id => ({ metadata: [...sessions.values()].find(s => s.payment_intent.id === id).metadata })) },
     };
     service = new PrepaidService({ pool, query: (...args) => pool.query(...args) }, async () => stripe);
   });
-  async function checkout(key = randomUUID(), mode = 'prepaid') {
+  async function checkout(key = randomUUID(), mode = 'prepaid', replacePending = false) {
     const user = (await pool.query('SELECT * FROM users WHERE id=$1', [userId])).rows[0];
-    return service.createCheckout({ user, priceId: 'price_week', mode, requestKey: key, baseUrl: 'http://localhost:5001' });
+    return service.createCheckout({ user, priceId: 'price_week', mode, requestKey: key, baseUrl: 'http://localhost:5001', replacePending });
   }
   async function snapshot() { return (await pool.query('SELECT * FROM users WHERE id=$1', [userId])).rows[0]; }
 
@@ -155,5 +161,52 @@ integration('prepaid SQL fulfillment', () => {
     const calls = stripe.checkout.sessions.create.mock.calls;
     expect(calls[1][0]).toEqual(calls[2][0]);
     expect(calls[1][1]).toEqual(calls[2][1]);
+  });
+
+  test('deliberately switching payment methods expires only the old unpaid checkout', async () => {
+    const first = await checkout();
+    sessions.get(first.sessionId).payment_status = 'unpaid';
+    await expect(checkout(randomUUID(), 'subscription')).rejects.toMatchObject({ status: 409 });
+    const second = await checkout(randomUUID(), 'subscription', true);
+    expect(second.sessionId).not.toBe(first.sessionId);
+    expect(stripe.checkout.sessions.expire).toHaveBeenCalledWith(first.sessionId);
+    expect((await service.status(userId, first.sessionId)).status).toBe('expired');
+    expect((await service.status(userId, second.sessionId)).status).toBe('pending');
+    expect((await snapshot()).prepaid_expires_at).toBeNull();
+    expect(stripe.checkout.sessions.create.mock.calls[1][0].mode).toBe('subscription');
+  });
+
+  test('expired Stripe sessions are reconciled even without their webhook', async () => {
+    const first = await checkout();
+    sessions.get(first.sessionId).status = 'expired';
+    const second = await checkout(randomUUID(), 'subscription', true);
+    expect(second.sessionId).not.toBe(first.sessionId);
+    expect(stripe.checkout.sessions.expire).not.toHaveBeenCalled();
+    expect((await service.status(userId, first.sessionId)).status).toBe('expired');
+  });
+
+  test('reopening the same pending purchase reuses its Stripe session', async () => {
+    const first = await checkout();
+    expect((await checkout(randomUUID(), 'prepaid', true)).sessionId).toBe(first.sessionId);
+    expect(stripe.checkout.sessions.create).toHaveBeenCalledTimes(1);
+    expect(stripe.checkout.sessions.expire).not.toHaveBeenCalled();
+  });
+
+  test.each(['complete', 'open'])('a paid %s session cannot be replaced', async status => {
+    const first = await checkout();
+    sessions.get(first.sessionId).status = status;
+    await expect(checkout(randomUUID(), 'subscription', true)).rejects.toMatchObject({ status: 409, code: 'CHECKOUT_PROCESSING' });
+    expect(stripe.checkout.sessions.expire).not.toHaveBeenCalled();
+    expect(stripe.checkout.sessions.create).toHaveBeenCalledTimes(1);
+    expect((await service.status(userId, first.sessionId)).status).toBe('pending');
+  });
+
+  test('a failed expiration retains the reservation and does not create another checkout', async () => {
+    const first = await checkout();
+    sessions.get(first.sessionId).payment_status = 'unpaid';
+    stripe.checkout.sessions.expire.mockRejectedValueOnce(new Error('lost connection'));
+    await expect(checkout(randomUUID(), 'subscription', true)).rejects.toThrow('lost connection');
+    expect(stripe.checkout.sessions.create).toHaveBeenCalledTimes(1);
+    expect((await service.status(userId, first.sessionId)).status).toBe('pending');
   });
 });
