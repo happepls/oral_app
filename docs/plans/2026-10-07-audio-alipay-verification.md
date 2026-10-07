@@ -23,6 +23,7 @@
 | 浏览器 | `PLAYWRIGHT_BASE_URL=http://127.0.0.1:5003 npm --prefix client run test:e2e -- e2e/audio-prepaid.spec.js --project=webkit-mobile --project=chromium-390`：6 passed |
 | 仓库质量 | `npm run verify`：pass / 100；`python3 scripts/sdlc.py validate`：clean |
 | 构建 | `npm --prefix client run build` 成功，有仓库既有 lint 警告；`docker compose build ai-omni-service user-service` 成功，仅构建未部署 |
+| 静态与密钥检查 | scoped ESLint：0 errors / 4既有 warnings；`git diff --check` clean；提交前 `gitleaks git --staged --verbose --config .gitleaks.toml` 与 pre-commit scan 均无泄漏 |
 
 PostgreSQL 测试使用隔离临时容器及独立 schema，无生产写入。Stripe API 边界由模拟器替代，签名验证使用官方 SDK；不能视为真实 Stripe Checkout 支付验收。迁移重复执行、真实默认新用户、重复并发履约、退款先到、身份篡改、订单互斥均覆盖。
 
