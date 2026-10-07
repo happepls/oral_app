@@ -32,16 +32,24 @@ empty. Ask for a retry, never add a new question or offer wine/other purchases.
 polish: correct but unnatural; affirm a specific success, offer upgrades, no new
 question. advance: correct and natural; at most ONE short question strictly within
 current_task; never invent, preview or announce completion of other tasks.
-For a narrow speech-act task already expressed successfully, next_question_locked
-may be empty. Do NOT prescribe another phrasing or invite repetition of a correct
-answer unless the student requests wording practice. A candidate question may ask
-only for genuinely missing or ambiguous information essential to current_task,
-never incidental background from the wider scenario. Use previous_ai_text and
-user_text to avoid answered questions; the speaking partner also checks full
-history, including facts supplied in separate turns. Never invent a follow-up
-merely to fill turns or claim task completion. For a name-and-visit-purpose task,
-'I'm Alex, here for an interview' needs no question about ID, appointments or
-interview details. Keep the field short with at most one question mark.
+For a narrow speech-act task already expressed successfully, normally provide
+ONE meaningful next_question_locked: invite a fresh, explicitly hypothetical
+situation practicing the SAME communication goal, changing only one relevant
+detail (such as visit purpose or visitor identity). Give a short situation cue
+and an open question, not a full model sentence to copy. For example: 'For a
+practice visit, imagine you are delivering equipment. What would you tell the
+guard?' The pretend detail is not a correction or a claim about real student
+facts. Do NOT prescribe another phrasing of a correct answer unless requested.
+For purpose variation keep the latest name and visitor identity; for identity
+variation keep the latest practice purpose. Never change both in one invitation.
+Prioritize genuinely missing or ambiguous essential information over variations;
+never ask incidental background from the wider scenario. Use previous_ai_text
+and user_text to avoid answered questions and repeated variations; the speaking
+partner also checks full history and facts supplied in separate turns. If the
+student declines practice or no suitable variation remains, question may be empty.
+Never claim task completion or invent permissions. For a name-and-visit-purpose
+task, do not ask about ID, appointments or interview details. Keep the field short
+with at most one question mark.
 Alternatives are optional reference expressions, not required spoken homework;
 never invent an error to demand them.
 For off-topic text set off_topic=true, mode=correct, errors=[], question empty.
@@ -65,7 +73,8 @@ Student "I'd like the ribeye, medium rare, please." => advance, errors=[],
 alternatives=["I'll have the ribeye, medium rare, please.",
 "Could I have the ribeye cooked medium rare, please?"],
 question='Would you like a side with your steak?' ONLY if sides are in current_task.
-Otherwise leave question empty; do not demand an equivalent phrasing.
+Otherwise invite a clearly hypothetical variation of ordering inside current_task,
+such as a different meal; never demand an equivalent phrasing of the same order.
 """
 
 

@@ -207,7 +207,10 @@ async def test_successful_separate_turns_do_not_restart_drill_after_real_refresh
     instructions = feedback.response_instructions(cb, omni.session_phases)
     assert "information supplied across separate turns counts" in instructions
     assert "Reject a candidate" in instructions
-    assert "give a brief in-character acknowledgement" in instructions
+    assert "explicitly hypothetical situation" in instructions
+    assert "not a model sentence to copy" in instructions
+    assert "do not overwrite real facts" in instructions
+    assert "If the student declines practice" in instructions
     assert "CRITICAL SCOPE LOCK" in instructions
     assert "SUCCESS MUST LEAD TO PRACTICE" not in instructions
     assert "choose another equivalent phrasing" not in instructions

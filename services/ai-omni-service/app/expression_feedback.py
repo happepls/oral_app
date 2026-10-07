@@ -67,7 +67,9 @@ def format_directive(result, target_language, native_language):
                   json.dumps(question, ensure_ascii=False),
                   "Respond naturally in character to the student's meaning. A correct answer does not require another phrasing or repetition invitation; offer wording practice only if the student requests it.",
                   "Use the full dialogue history, including details given across separate turns. Reject a candidate that asks for an already-known fact, unnecessary background, a rewrite of a successful answer, or anything outside the CURRENT sub-task.",
-                  "If the candidate is empty or unnecessary and the required information is already clear, give a brief in-character acknowledgement. Do not manufacture questions or drills to fill turns, invent facts or permissions, or announce task completion."]
+                  "If the candidate is empty or unsuitable and the required information is already clear, acknowledge briefly and invite ONE fresh, explicitly hypothetical situation inside the SAME communication goal, changing only one relevant detail such as visit purpose or visitor identity. Use a short situation cue and at most one question, not a model sentence to copy. Mark it as pretend practice; do not overwrite real facts or reuse a variation already practiced.",
+                  "When varying purpose, keep the latest name and visitor identity; when varying a pretend name or identity, keep the latest practice purpose. Never change both in one invitation.",
+                  "If the student declines practice or no suitable variation remains, acknowledge without insisting. Never invent permissions, move to another speech act, or announce task completion."]
     return "\n".join(lines)
 
 

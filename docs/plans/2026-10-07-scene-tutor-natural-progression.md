@@ -15,8 +15,11 @@ private conversation text or account identifiers as evidence.
 
 Speak primarily as the scenario counterpart. Count known details across turns;
 ask only for missing or ambiguous information essential to the visible subtask.
-A correct, complete answer may receive a short in-character acknowledgement.
-Do not manufacture questions, demand another phrasing or open unrelated topics.
+A correct, complete answer receives brief acknowledgement and an invitation to
+a fresh, explicitly hypothetical situation practicing the same communication goal.
+Change purpose while retaining identity, or identity while retaining purpose;
+give a situation cue, not a complete sentence to copy. Respect declined practice.
+Do not demand another phrasing of the same answer or open unrelated topics.
 Keep genuine-error correction and one-sentence off-topic redirection. Completion
 and task switching remain controlled by the unchanged backend scoring contract.
 The disabled current-turn evaluator receives the same wording-policy correction
@@ -56,3 +59,32 @@ and authoritative task progression. No task reset is required.
 Rollback: retained local `oral_app-ai-omni-service:before-tutor-natural` and
 `oral_app-workflow-service:before-tutor-natural` images; restore their latest tags
 and recreate only those services with the existing acceptance compose override.
+
+## Phone acceptance refinement, 2026-10-08
+
+The user confirmed that mandatory rephrasing disappeared but requested further
+guidance after successful expression, through another purpose or identity within
+the same subtask. Updated all four prompt paths and the generation-3 callback
+regression to reflect this accepted policy. Added current-turn protocol coverage
+that accepts hypothetical follow-up questions while rejecting hypothetical details
+inserted as factual student evidence. Scoring and persistence remain unchanged.
+
+Actual checks: AI suite 371 passed; workflow suite 211 passed. A combined pytest
+invocation initially failed collection because both services use a `tests` package;
+the suites passed when run in separate processes. After final prompt tightening,
+focused AI feedback tests: 24 passed. `npm run verify` passed (100); SDLC clean.
+
+Nine live synthetic Realtime cases completed with audio and passed manual review:
+missing purpose; complete facts across turns; repeated correct answer; stale rewrite
+candidate; request to continue; off-topic input; a completed delivery variation;
+declined practice; explicit identity variation. The final identity case changed a
+pretend name while retaining interview purpose. Earlier probes exposed praise-only
+replies and simultaneous identity/purpose changes; tightened guidance before the
+final runs. These probes are semantic samples, not guarantees of every model reply.
+
+Rebuilt/recreated only local AI and workflow services. All deployed prompt files
+match source. Running workflow API now returns `advance`, no errors, and a clearly
+hypothetical equipment-delivery invitation with one question for a synthetic valid
+name-and-interview-purpose answer. Prior-version local images retained under
+`:before-tutor-variations`. Re-enter the scene for phone acceptance without resetting
+progress. PR #75 remains draft; no merge or production deployment performed.
