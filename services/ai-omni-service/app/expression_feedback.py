@@ -65,8 +65,9 @@ def format_directive(result, target_language, native_language):
         lines += ["Only if the NEW answer is also correct, at most one question within the CURRENT sub-task.",
                   "Use this candidate only if still relevant and not already answered; otherwise do not ask it:",
                   json.dumps(question, ensure_ascii=False),
-                  "For a narrow speech-act task already expressed correctly, do not stop at praise. Model ONE different equivalent phrasing of the same intent and invite the student to say it. This is optional phrasing practice, not correction of an error.",
-                  "If the candidate is empty or already practiced, use the dialogue history to choose another equivalent phrasing or wording cue inside this task; never invent new facts or repeat a version already said successfully."]
+                  "Respond naturally in character to the student's meaning. A correct answer does not require another phrasing or repetition invitation; offer wording practice only if the student requests it.",
+                  "Use the full dialogue history, including details given across separate turns. Reject a candidate that asks for an already-known fact, unnecessary background, a rewrite of a successful answer, or anything outside the CURRENT sub-task.",
+                  "If the candidate is empty or unnecessary and the required information is already clear, give a brief in-character acknowledgement. Do not manufacture questions or drills to fill turns, invent facts or permissions, or announce task completion."]
     return "\n".join(lines)
 
 

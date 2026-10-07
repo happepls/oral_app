@@ -188,6 +188,36 @@ def test_prompt_examples_scope_confidentiality_and_language_exception():
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("candidate", ["", "What is your name?", "Try another way: I'm Alex, here for an interview."])
+async def test_successful_separate_turns_do_not_restart_drill_after_real_refresh(transport, candidate):
+    cb = callback()
+    task = cb.user_context["active_goal"]["current_task"]
+    task.update(task_description="Tell the guard your name and visit purpose", score=6,
+                interaction_count=7)
+    cb.user_context["active_goal"]["scenarios"][0]["tasks"][0].update(task)
+    cb.messages = [dict(role="user", content="I'm Alex.", turn_id="name"),
+                   dict(role="assistant", content="What brings you here?"),
+                   dict(role="user", content="I'm here for an interview.", turn_id="turn-1")]
+    transport.post.return_value.json.side_effect = lambda: dict(success=True, data=dict(
+        RESULT, teaching_mode="advance", errors=[], next_question_locked=candidate))
+    authority = copy.deepcopy(cb.user_context["active_goal"])
+    for _ in range(3):
+        cb._update_session_prompt()
+    await run(cb, Redis())
+    instructions = feedback.response_instructions(cb, omni.session_phases)
+    assert "information supplied across separate turns counts" in instructions
+    assert "Reject a candidate" in instructions
+    assert "give a brief in-character acknowledgement" in instructions
+    assert "CRITICAL SCOPE LOCK" in instructions
+    assert "SUCCESS MUST LEAD TO PRACTICE" not in instructions
+    assert "choose another equivalent phrasing" not in instructions
+    assert cb.user_context["active_goal"] == authority
+    packet = cb._safe_send.call_args.args[0]["payload"]
+    assert packet["scoring_generation"] == 3
+    assert feedback.response_instructions(cb, omni.session_phases) is None
+
+
+@pytest.mark.asyncio
 async def test_realtime_audio_and_text_are_not_blocked_by_feedback(transport, monkeypatch):
     cb, redis = callback(), Redis()
     released, started = asyncio.Event(), asyncio.Event()

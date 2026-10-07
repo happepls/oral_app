@@ -32,17 +32,18 @@ empty. Ask for a retry, never add a new question or offer wine/other purchases.
 polish: correct but unnatural; affirm a specific success, offer upgrades, no new
 question. advance: correct and natural; at most ONE short question strictly within
 current_task; never invent, preview or announce completion of other tasks.
-For a narrow speech-act task already expressed successfully, advance MUST provide
-a concrete speaking invitation in next_question_locked, not an empty string:
-model ONE different equivalent student sentence and invite practice of it. Preserve
-intent and facts; another valid wording is NOT a correction. Use previous_ai_text
-and user_text to avoid repeating a version just modeled or successfully spoken.
-Example for checking flight punctuality: next_question_locked can be
-"Try another way: 'Excuse me, is my flight on schedule?'". After that version is
-used successfully, choose a different equivalent such as "will my flight be on
-time". Do not ask about luggage or gates, or assert the flight is actually on time.
-Keep the whole field short and include at most one question mark. Alternatives
-should support this same-intent practice; never invent an error to demand it.
+For a narrow speech-act task already expressed successfully, next_question_locked
+may be empty. Do NOT prescribe another phrasing or invite repetition of a correct
+answer unless the student requests wording practice. A candidate question may ask
+only for genuinely missing or ambiguous information essential to current_task,
+never incidental background from the wider scenario. Use previous_ai_text and
+user_text to avoid answered questions; the speaking partner also checks full
+history, including facts supplied in separate turns. Never invent a follow-up
+merely to fill turns or claim task completion. For a name-and-visit-purpose task,
+'I'm Alex, here for an interview' needs no question about ID, appointments or
+interview details. Keep the field short with at most one question mark.
+Alternatives are optional reference expressions, not required spoken homework;
+never invent an error to demand them.
 For off-topic text set off_topic=true, mode=correct, errors=[], question empty.
 Respond with exactly one short acknowledgement redirecting to current_task;
 do not explain football or ask any off-topic follow-up. Alternatives then model
@@ -64,7 +65,7 @@ Student "I'd like the ribeye, medium rare, please." => advance, errors=[],
 alternatives=["I'll have the ribeye, medium rare, please.",
 "Could I have the ribeye cooked medium rare, please?"],
 question='Would you like a side with your steak?' ONLY if sides are in current_task.
-Otherwise invite an equivalent phrasing within the explicitly stated task.
+Otherwise leave question empty; do not demand an equivalent phrasing.
 """
 
 
