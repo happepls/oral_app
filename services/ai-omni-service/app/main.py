@@ -1712,15 +1712,26 @@ async def _incr_daily_turn_once(rc, user_id: str, turn_id: str):
         logger.warning("[DailyLimit] atomic turn increment failed: %s", type(e).__name__)
         return None
 
+def _has_pro_membership(user_ctx: dict) -> bool:
+    ctx = user_ctx or {}
+    if "stripe_subscription_status" not in ctx:
+        return ctx.get("subscription_status") == "active"
+    if ctx.get("stripe_subscription_status") in ("active", "trialing"):
+        return True
+    try:
+        expiry = datetime.fromisoformat(str(ctx.get("prepaid_expires_at") or "").replace("Z", "+00:00"))
+        return expiry.timestamp() > time.time()
+    except (TypeError, ValueError, OverflowError):
+        return False
+
 def _daily_turn_limit(user_ctx: dict) -> int:
-    status = (user_ctx or {}).get("subscription_status")
-    return PRO_DAILY_TURNS if status == "active" else FREE_DAILY_TURNS
+    return PRO_DAILY_TURNS if _has_pro_membership(user_ctx) else FREE_DAILY_TURNS
 
 async def _check_daily_limit(rc, user_id: str, user_ctx: dict):
     """返回 (blocked: bool, info: dict)。info 含 tier/used/limit，供 WS 事件用。"""
     limit = _daily_turn_limit(user_ctx)
     used = await _get_daily_turns(rc, user_id)
-    tier = "pro" if (user_ctx or {}).get("subscription_status") == "active" else "free"
+    tier = "pro" if _has_pro_membership(user_ctx) else "free"
     return (used >= limit, {"tier": tier, "used": used, "limit": limit})
 
 
@@ -2774,8 +2785,7 @@ def _assert_pro(user_ctx: dict) -> None:
     Pro source of truth: `subscription_status == 'active'` on the users table
     (set by Stripe webhook handlers in user-service).
     """
-    status = (user_ctx or {}).get("subscription_status")
-    if status != "active":
+    if not _has_pro_membership(user_ctx):
         raise HTTPException(status_code=403, detail="pro_required")
 
 
@@ -3082,6 +3092,7 @@ class WebSocketCallback(OmniRealtimeCallback):
         self.restored_state = None
         self.user_audio_buffer = bytearray()
         self.ai_audio_buffer = bytearray()
+        self.ai_audio_buffers_by_response = {}
         self.last_user_audio_url = None
         self._skip_next_magic_pass = False  # Set True after task-switch trigger to avoid false detection
         self.last_ai_audio_url = None
@@ -3719,7 +3730,10 @@ class WebSocketCallback(OmniRealtimeCallback):
                     audio_data = response.get('delta')
                     if audio_data:
                         self._mark_latency_stage("first_audio")
-                        try: self.ai_audio_buffer.extend(base64.b64decode(audio_data))
+                        try:
+                            buffer = self.ai_audio_buffers_by_response.setdefault(self.current_response_id, bytearray())
+                            buffer.extend(base64.b64decode(audio_data, validate=True))
+                            self.ai_audio_buffer = buffer
                         except: pass
                         frame = {"type": "audio_response", "payload": audio_data, "role": self.role, "responseId": self.current_response_id}
                         if self._audio_gate_text_sent:
@@ -3748,9 +3762,11 @@ class WebSocketCallback(OmniRealtimeCallback):
                         self._audio_gate_text_sent = True
                         await self._flush_audio_gate(self._audio_gate_response_id)
                 elif event_name == 'response.audio.done':
-                    if self.ai_audio_buffer:
-                        data = bytes(self.ai_audio_buffer)
-                        self.ai_audio_buffer = bytearray()
+                    response_audio = self.ai_audio_buffers_by_response.pop(self.current_response_id, bytearray())
+                    if response_audio:
+                        data = bytes(response_audio)
+                        if self.ai_audio_buffer is response_audio:
+                            self.ai_audio_buffer = bytearray()
 
                         # 获取goal_id和task_id用于工作流调用
                         goal_id = self.user_context.get('active_goal', {}).get('id')
@@ -3884,7 +3900,7 @@ class WebSocketCallback(OmniRealtimeCallback):
                                 # Now save the complete message with audio URL to history
                                 # Find the message in self.messages by response ID and update it
                                 for msg in reversed(self.messages):
-                                    if msg.get('role') == 'assistant' and not msg.get('audioUrl'):
+                                    if msg.get('role') == 'assistant' and msg.get('responseId') == r:
                                         msg['audioUrl'] = url
                                         await save_single_message(
                                             self.session_id,
@@ -4498,7 +4514,9 @@ class WebSocketCallback(OmniRealtimeCallback):
                             "task_id": ((self.user_context.get("active_goal") or {}).get("current_task") or {}).get("id"),
                             "turn_id": self.current_turn_id,
                         }
-                        if self.last_ai_audio_url: msg['audioUrl'] = self.last_ai_audio_url; self.last_ai_audio_url = None
+                        response_audio_url = getattr(self, 'audio_urls_by_response', {}).get(response_id)
+                        if response_audio_url:
+                            msg['audioUrl'] = response_audio_url
                         self.messages.append(msg)
                         asyncio.create_task(save_single_message(
                             self.session_id,

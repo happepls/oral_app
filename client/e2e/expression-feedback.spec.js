@@ -136,6 +136,7 @@ test('tutor replies show guidance without cards and preserve task progress @crit
     user_text: 'A steak, medium or medium rare.', clarification_question: 'Did you mean medium or medium rare?' });
   await emit('ai_message', { ...current, content: 'Did you mean medium or medium rare?', responseId: 'a2' });
   await pcm('a2');
+  await emit('response.audio.done', { responseId: 'a2' });
   await expect.poll(() => page.evaluate(() => window.pcmStarts)).toBe(1);
   await emit('teaching_state', { ...current, status: 'ready' });
   await expect(page.getByText('Did you mean medium or medium rare?')).toBeVisible();

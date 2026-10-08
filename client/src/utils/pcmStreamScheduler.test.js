@@ -76,8 +76,8 @@ describe('PcmStreamScheduler', () => {
     expect(context.decodeAudioData).not.toHaveBeenCalled();
     expect(buffers[0].data[0]).toBeCloseTo(1000 / 32768);
     expect(buffers[1].data[0]).toBeCloseTo(2000 / 32768);
-    expect(sources[0].start).toHaveBeenCalledWith(10.02);
-    expect(sources[1].start.mock.calls[0][0]).toBeGreaterThan(10.02);
+    expect(sources[0].start).toHaveBeenCalledWith(10.04);
+    expect(sources[1].start.mock.calls[0][0]).toBeGreaterThan(10.04);
   });
 
   test('carries an odd trailing byte into the next chunk', async () => {
@@ -103,11 +103,11 @@ describe('PcmStreamScheduler', () => {
     expect(sources).toHaveLength(0);
 
     await scheduler.enqueue(pcm16(...new Array(1440).fill(2))); // +60ms
-    expect(sources).toHaveLength(2);
+    expect(sources).toHaveLength(1);
     expect(scheduler.hasScheduledAudio).toBe(true);
-    expect(sources[1].start.mock.calls[0][0]).toBeCloseTo(
-      sources[0].start.mock.calls[0][0] + 0.1,
-    );
+    expect(sources[0].buffer.duration).toBeCloseTo(0.16);
+    expect(sources[0].buffer.data[2399]).toBeCloseTo(1 / 32768);
+    expect(sources[0].buffer.data[2400]).toBeCloseTo(2 / 32768);
   });
 
   test('flush schedules a final response shorter than the priming threshold', async () => {
@@ -130,8 +130,9 @@ describe('PcmStreamScheduler', () => {
 
     await scheduler.enqueue(pcm16(...new Array(2400).fill(2))); // only 100ms
     expect(sources).toHaveLength(1);
-    await scheduler.enqueue(pcm16(...new Array(1440).fill(3))); // reaches 160ms
-    expect(sources).toHaveLength(3);
+    await scheduler.enqueue(pcm16(...new Array(5280).fill(3))); // reaches adaptive 320ms
+    expect(sources).toHaveLength(2);
+    expect(sources[1].buffer.duration).toBeCloseTo(0.32);
   });
 
   test('stop invalidates late asynchronous chunks and permits a new generation', async () => {
@@ -150,5 +151,33 @@ describe('PcmStreamScheduler', () => {
     expect(sources).toHaveLength(1);
     scheduler.stop();
     expect(sources[0].stop).toHaveBeenCalledTimes(1);
+  });
+
+  test('default primes 320ms and late short tails still play after done and underrun', async () => {
+    const { context, sources } = fakeAudioContext();
+    const scheduler = createPcmStreamScheduler(context);
+    await scheduler.enqueue(pcm16(...new Array(7200).fill(11))); // 300ms
+    expect(sources).toHaveLength(0);
+    await scheduler.enqueue(pcm16(...new Array(480).fill(12)));
+    expect(sources).toHaveLength(1);
+    expect(sources[0].start).toHaveBeenCalledWith(10.04);
+    await scheduler.flush();
+    sources[0].onended();
+    await scheduler.enqueue(pcm16(123));
+    expect(sources).toHaveLength(2);
+    expect(sources[1].buffer.data[0]).toBeCloseTo(123 / 32768);
+  });
+
+  test('old done cannot flush a new generation and rejected conversion preserves following bytes', async () => {
+    const { context, sources } = fakeAudioContext();
+    const scheduler = createPcmStreamScheduler(context);
+    const old = scheduler.generation;
+    scheduler.stop();
+    await expect(scheduler.enqueue(Promise.reject(new Error('bad blob')))).rejects.toThrow('bad blob');
+    await scheduler.enqueue(pcm16(987));
+    expect(await scheduler.flush(old)).toBe(false);
+    expect(sources).toHaveLength(0);
+    await scheduler.flush();
+    expect(sources[0].buffer.data[0]).toBeCloseTo(987 / 32768);
   });
 });

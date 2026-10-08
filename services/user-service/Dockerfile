@@ -11,6 +11,7 @@ COPY package*.json ./
 # Dependencies are prepared on the host before image rebuilds.
 COPY node_modules ./node_modules
 COPY src ./src
+COPY migrations ./migrations
 
 # Change ownership of the app directory to the appuser
 RUN chown -R appuser:appuser /usr/src/app

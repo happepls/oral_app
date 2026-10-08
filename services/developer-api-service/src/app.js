@@ -118,7 +118,7 @@ function createApp(options) {
   });
   app.get('/v1/profile', auth.requireScopes('profile:read'), async (req, res, next) => {
     try {
-      const { rows } = await db.query('SELECT id, username, email, nickname, avatar_url, native_language, target_language, interests, daily_practice_goal, gender, birth_year, points, subscription_status, created_at, updated_at FROM users WHERE id = $1', [req.delegated.user_id]);
+      const { rows } = await db.query("SELECT id, username, email, nickname, avatar_url, native_language, target_language, interests, daily_practice_goal, gender, birth_year, points, CASE WHEN COALESCE(stripe_subscription_status,subscription_status) IN ('active','trialing') OR prepaid_expires_at > NOW() THEN 'active' ELSE COALESCE(stripe_subscription_status,subscription_status) END AS subscription_status, created_at, updated_at FROM users WHERE id = $1", [req.delegated.user_id]);
       if (!rows[0]) throw error(404, 'profile_not_found', 'Profile not found');
       res.json({ data: rows[0], meta: { request_id: req.requestId } });
     } catch (err) { next(err); }
@@ -130,7 +130,7 @@ function createApp(options) {
       if (!entries.length || entries.length !== Object.keys(req.body || {}).length) throw error(400, 'profile_fields_invalid', 'Only documented profile fields may be updated');
       const setters = entries.map(([key], i) => `${key} = $${i + 1}`);
       const values = entries.map(([, value]) => value);
-      const { rows } = await db.query(`UPDATE users SET ${setters.join(', ')}, updated_at = NOW() WHERE id = $${values.length + 1} RETURNING id, username, email, nickname, avatar_url, native_language, target_language, interests, daily_practice_goal, gender, birth_year, points, subscription_status, updated_at`, [...values, req.delegated.user_id]);
+      const { rows } = await db.query(`UPDATE users SET ${setters.join(', ')}, updated_at = NOW() WHERE id = $${values.length + 1} RETURNING id, username, email, nickname, avatar_url, native_language, target_language, interests, daily_practice_goal, gender, birth_year, points, CASE WHEN COALESCE(stripe_subscription_status,subscription_status) IN ('active','trialing') OR prepaid_expires_at > NOW() THEN 'active' ELSE COALESCE(stripe_subscription_status,subscription_status) END AS subscription_status, updated_at`, [...values, req.delegated.user_id]);
       res.json({ data: rows[0], meta: { request_id: req.requestId } });
     } catch (err) { next(err); }
   });
