@@ -42,6 +42,112 @@ def test_http_body_survives_authorization_middleware(monkeypatch):
     assert paid.await_args.args[0] == 'owned-scene'
 
 
+@pytest.mark.parametrize('path', ['/daily-question/re-answer', '/daily-question/change-question'])
+@pytest.mark.parametrize('headers', [{'Authorization': 'Bearer test'}, {'Cookie': 'accessToken=test'}])
+def test_bodyless_pro_controls_reach_authority_and_handler(monkeypatch, path, headers):
+    access = AsyncMock(return_value=ACCESS)
+    monkeypatch.setattr(main, 'check_request_access', access)
+    monkeypatch.setattr(main, 'get_user_context', AsyncMock(return_value={'id': USER, 'access': ACCESS}))
+    monkeypatch.setattr(main, '_get_redis_client', lambda: Mock(delete=AsyncMock()))
+    monkeypatch.setattr(main, 'handle_daily_question', AsyncMock(return_value={'question_text': 'Synthetic question'}))
+    monkeypatch.setattr(main, '_advance_daily_qa_pool', AsyncMock(return_value={'question_text': 'Synthetic question'}))
+    response = TestClient(main.app).post(path, headers=headers)
+    assert response.status_code == 200
+    assert response.json()['data']['question_text'] == 'Synthetic question'
+    assert access.await_args.args[1:] == ({}, 'pro')
+
+
+@pytest.mark.parametrize('path', ['/daily-question/re-answer', '/daily-question/change-question'])
+@pytest.mark.parametrize('status', [401, 403, 503])
+def test_bodyless_pro_controls_fail_closed(monkeypatch, path, status):
+    monkeypatch.setattr(main, 'check_request_access', AsyncMock(side_effect=HTTPException(status, 'denied')))
+    provider = AsyncMock()
+    monkeypatch.setattr(main, 'handle_daily_question', provider)
+    monkeypatch.setattr(main, '_advance_daily_qa_pool', provider)
+    assert TestClient(main.app).post(path).status_code == status
+    provider.assert_not_called()
+
+
+@pytest.mark.parametrize('content', ['not-json', '[]'])
+def test_nonempty_invalid_json_still_rejects_before_authority(monkeypatch, content):
+    access = AsyncMock()
+    monkeypatch.setattr(main, 'check_request_access', access)
+    assert TestClient(main.app).post('/daily-question/re-answer', content=content).status_code == 400
+    access.assert_not_called()
+
+
+@pytest.mark.parametrize('input_kind', ['text', 'audio', 'uncommitted_audio'])
+@pytest.mark.parametrize('exit_kind', ['disconnect', 'authority_denial', 'provider_error'])
+def test_exit_settles_committed_input_with_real_redis(monkeypatch, input_kind, exit_kind):
+    url = os.getenv('SCENE_ACCESS_TEST_REDIS_URL')
+    if not url:
+        pytest.skip('SCENE_ACCESS_TEST_REDIS_URL required for actual Redis settlement')
+    import redis
+    import redis.asyncio as async_redis
+    from uuid import uuid4
+    user = str(uuid4())
+    sync_client = redis.Redis.from_url(url, decode_responses=True)
+    authority = AsyncMock(return_value=ACCESS)
+    clients = []
+    def redis_client():
+        if not clients:
+            clients.append(async_redis.Redis.from_url(url, decode_responses=True))
+        return clients[0]
+    for flag in ['SCENE_AUDIO_EVIDENCE_ENABLED', 'SCENE_CURRENT_TURN_TEACHING_ENABLED', 'SCENE_EXPRESSION_FEEDBACK_ENABLED']:
+        monkeypatch.setenv(flag, 'false')
+    monkeypatch.setattr(main, 'check_token_access', AsyncMock(return_value=ACCESS))
+    monkeypatch.setattr(main, 'check_access', authority)
+    monkeypatch.setattr(main, 'get_user_context', AsyncMock(return_value={'id': user, 'active_goal': {'id': 7, 'target_language': 'English', 'scenarios': [], 'current_task': {}}}))
+    monkeypatch.setattr(main, '_get_redis_client', redis_client)
+    monkeypatch.setattr(main.WebSocketCallback, 'upload_audio_to_cos', AsyncMock(return_value=None))
+    provider = Mock()
+    callbacks = []
+    def create_provider(**kwargs):
+        callbacks.append(kwargs['callback'])
+        callbacks[-1].is_connected = True
+        return provider
+    monkeypatch.setattr(main, 'OmniRealtimeConversation', create_provider)
+    original = httpx.AsyncClient
+    monkeypatch.setattr(main.httpx, 'AsyncClient', lambda *a, **kw: original(transport=httpx.MockTransport(lambda req: httpx.Response(404, json={}))))
+    counter = main._daily_turn_key(user)
+    sync_client.set(counter, main.FREE_DAILY_TURNS - 1)
+    claimed_turn = None
+    try:
+        with TestClient(main.app).websocket_connect(f'/stream?token=test&sessionId=exit-{user}&scenario=fourth') as ws:
+            assert ws.receive_json()['type'] == 'phase_transition'
+            if exit_kind == 'provider_error':
+                provider.create_response.side_effect = RuntimeError('synthetic provider failure')
+            if input_kind == 'text':
+                ws.send_json({'type': 'text_message', 'payload': {'text': 'Synthetic paid answer'}})
+            else:
+                ws.send_json({'type': 'audio_stream', 'payload': {'audio': 'AAAA'}})
+                if input_kind == 'audio':
+                    ws.send_json({'type': 'user_audio_ended', 'payload': {}})
+            ws.send_json({'type': 'ping', 'payload': {}})
+            assert ws.receive_json()['type'] == 'pong'
+            claimed_turn = next(iter(callbacks[0].quota_reservations), None) or callbacks[0].pending_audio_reservation
+            assert sync_client.zcard(f'{counter}:pending') == 1
+            if exit_kind == 'authority_denial':
+                authority.side_effect = HTTPException(403, 'scene_locked')
+                ws.send_json({'type': 'audio_stream', 'payload': {'audio': 'AAAA'}})
+                assert ws.receive_json()['payload']['status'] == 403
+                assert ws.receive()['code'] == 1008
+            elif exit_kind == 'provider_error':
+                # Trigger the generic malformed-message exit after provider failure.
+                ws.send_text('{')
+                ws.close()
+        assert int(sync_client.get(counter)) == main.FREE_DAILY_TURNS - (input_kind == 'uncommitted_audio')
+        assert sync_client.zcard(f'{counter}:pending') == 0
+        assert provider.create_response.call_count == (input_kind != 'uncommitted_audio')
+    finally:
+        if claimed_turn:
+            import hashlib
+            marker = hashlib.sha256(f'{user}\0{claimed_turn}'.encode()).hexdigest()
+            sync_client.delete(f'daily_turn_seen:v1:{marker}')
+        sync_client.delete(counter, f'{counter}:pending')
+        sync_client.close()
+
+
 @pytest.mark.parametrize('status,reason', [(403, 'scene_locked'), (503, 'authorization_unavailable')])
 def test_direct_websocket_denied_before_context_or_provider(monkeypatch, status, reason):
     monkeypatch.setattr(main, 'check_token_access', AsyncMock(side_effect=HTTPException(status, reason)))

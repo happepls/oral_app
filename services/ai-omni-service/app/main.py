@@ -186,7 +186,10 @@ async def authorize_ai_request(request, call_next):
     if request.url.path in operations and request.method != 'OPTIONS':
         from fastapi.responses import JSONResponse
         try:
-            payload = await request.json() if request.method == 'POST' else dict(request.query_params)
+            if request.method == 'POST':
+                payload = await request.json() if await request.body() else {}
+            else:
+                payload = dict(request.query_params)
             if not isinstance(payload, dict):
                 raise HTTPException(400, 'invalid_request')
             await check_request_access(request, payload, operations[request.url.path])
@@ -5478,6 +5481,13 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query(None), ses
         callback.pending_directive = None
         for job in tuple(callback.expression_jobs):
             job.cancel()
+        # Disconnect, expiry denial and provider errors cannot refund submitted
+        # input. Only uncommitted audio may release its reservation without charge.
+        try:
+            await _release_input_reservations(callback, settle_committed=True)
+        except HTTPException:
+            # Preserve the pending claim if Redis cannot durably settle it.
+            logger.error("[DailyLimit] disconnect settlement unavailable")
         if conversation:
             try: conversation.close()
             except: pass
