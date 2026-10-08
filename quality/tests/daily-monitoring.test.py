@@ -131,12 +131,27 @@ class BackupTests(unittest.TestCase):
         exported = entrypoint.split('names=(', 1)[1].split(')', 1)[0].split()
         self.assertIn('BACKUP_MONITOR_ENABLED', exported)
 
-    def run_backup(self, fail_upload=False, fail_publish=False, enabled=True):
+    def run_backup(self, fail_upload=False, fail_publish=False, enabled=True, fail_mongo=False,
+                   mongo_uri='mongodb://fixture:private-password@fixture.invalid/history'):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             commands = {
                 'pg_dump': 'for arg in "$@"; do case "$arg" in --file=*) touch "${arg#--file=}";; esac; done',
-                'mongodump': 'for arg in "$@"; do case "$arg" in --archive=*) touch "${arg#--archive=}";; esac; done',
+                'mongodump': '''python3 - "$@" <<'PY'
+import json, os, stat, sys
+from pathlib import Path
+args = sys.argv[1:]
+config = Path(next(arg.split('=', 1)[1] for arg in args if arg.startswith('--config=')))
+record = dict(argv=args, config_path=str(config), config=config.read_text(),
+              mode=stat.S_IMODE(config.stat().st_mode))
+Path(os.environ['MONGO_RECORD']).write_text(json.dumps(record))
+if os.environ['FAIL_MONGO'] == '1':
+    print('driver failure leaked credentials: ' + os.environ['MONGO_URI'], file=sys.stderr)
+    print('driver stdout leaked credentials: ' + os.environ['MONGO_URI'])
+    sys.exit(1)
+archive = Path(next(arg.split('=', 1)[1] for arg in args if arg.startswith('--archive=')))
+archive.touch()
+PY''',
                 'coscli': 'echo upload >> "$TRACE"; exit "$FAIL_UPLOAD"',
                 'psql': 'echo publish >> "$TRACE"; exit "$FAIL_PUBLISH"',
             }
@@ -146,14 +161,21 @@ class BackupTests(unittest.TestCase):
                 target.chmod(0o755)
             env = {**os.environ, 'PATH': str(root) + os.pathsep + os.environ['PATH'],
                    'POSTGRES_HOST': 'fixture', 'POSTGRES_PORT': '5432', 'POSTGRES_DB': 'fixture',
-                   'POSTGRES_USER': 'fixture', 'PGPASSWORD': 'fixture', 'MONGO_URI': 'fixture',
+                   'POSTGRES_USER': 'fixture', 'PGPASSWORD': 'fixture', 'MONGO_URI': mongo_uri,
                    'BACKUP_COS_BUCKET': 'fixture', 'BACKUP_COS_REGION': 'fixture',
                    'COS_SECRET_ID': 'fixture', 'COS_SECRET_KEY': 'fixture',
                    'BACKUP_STATUS_FILE': str(root / 'status.json'), 'BACKUP_ALERT_WEBHOOK': '',
                    'BACKUP_MONITOR_ENABLED': str(enabled).lower(), 'TRACE': str(root / 'trace'),
-                   'FAIL_UPLOAD': str(int(fail_upload)), 'FAIL_PUBLISH': str(int(fail_publish))}
+                   'FAIL_UPLOAD': str(int(fail_upload)), 'FAIL_PUBLISH': str(int(fail_publish)),
+                   'FAIL_MONGO': str(int(fail_mongo)), 'MONGO_RECORD': str(root / 'mongo-record.json')}
             result = subprocess.run(['bash', str(ROOT / 'services/backup-service/backup.sh')], env=env, capture_output=True, text=True)
-            return result.returncode, (root / 'trace').read_text().splitlines()
+            self.backup_stdout = result.stdout
+            self.backup_stderr = result.stderr
+            self.mongo_record = json.loads((root / 'mongo-record.json').read_text())
+            self.mongo_config_removed = not Path(self.mongo_record['config_path']).exists()
+            self.backup_status_exists = (root / 'status.json').exists()
+            trace = (root / 'trace').read_text().splitlines() if (root / 'trace').exists() else []
+            return result.returncode, trace
 
     def test_success_publishes_after_all_uploads(self):
         code, trace = self.run_backup()
@@ -171,6 +193,30 @@ class BackupTests(unittest.TestCase):
         code, trace = self.run_backup(enabled=False)
         self.assertEqual(0, code)
         self.assertNotIn('publish', trace)
+
+    def test_mongo_credentials_only_in_private_config_with_safe_escaping(self):
+        # Unusual scalar characters prove serialization cannot inject YAML keys.
+        uri = 'mongodb://fixture:private"\\password@fixture.invalid/history?note=\n\t\r\x01中文'
+        code, trace = self.run_backup(mongo_uri=uri)
+        self.assertEqual(0, code)
+        self.assertIn('publish', trace)
+        self.assertEqual(0o600, self.mongo_record['mode'])
+        self.assertEqual(uri, json.loads(self.mongo_record['config'].removeprefix('uri: ').strip()))
+        self.assertTrue(self.mongo_config_removed)
+        self.assertNotIn('--uri', ' '.join(self.mongo_record['argv']))
+        self.assertNotIn('private', ' '.join(self.mongo_record['argv']))
+        self.assertNotIn(uri, self.backup_stdout + self.backup_stderr)
+        self.assertNotIn('private', self.backup_stdout + self.backup_stderr)
+
+    def test_mongo_failure_suppresses_credentials_and_never_publishes_success(self):
+        code, trace = self.run_backup(fail_mongo=True)
+        self.assertNotEqual(0, code)
+        self.assertEqual([], trace)
+        self.assertFalse(self.backup_status_exists)
+        self.assertTrue(self.mongo_config_removed)
+        self.assertNotIn('private-password', self.backup_stdout + self.backup_stderr)
+        self.assertNotIn('mongodb://', self.backup_stdout + self.backup_stderr)
+        self.assertEqual('MongoDB backup failed; sensitive details suppressed\n', self.backup_stderr)
 
 
 if __name__ == '__main__':
