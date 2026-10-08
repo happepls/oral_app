@@ -89,9 +89,10 @@ async def test_real_prompt_refresh_feedback_retry_and_reconnect_dedupe(transport
     assert "want" in packet["payload"]["errors"][0]["explanation_l1"]
     instructions = feedback.response_instructions(cb, omni.session_phases)
     assert "CRITICAL SCOPE LOCK" in instructions and "NO new question" in instructions
-    assert "ONE short teaching sentence in Chinese" in instructions
-    assert "already-correct" in instructions
-    assert feedback.response_instructions(cb, omni.session_phases) is None
+    assert "ONE short teaching explanation in Chinese" in instructions
+    assert "previously correct answer never exempts a NEW answer" in instructions
+    assert "PRIVATE PREVIOUS-ATTEMPT NOTES" not in feedback.response_instructions(cb, omni.session_phases)
+    assert cb.pending_directive is None
     cb.conversation.create_response.assert_not_called()  # never inject a second spoken turn
     await run(cb, redis)
     reconnected = callback()
@@ -170,10 +171,10 @@ async def test_failures_and_missing_generation_do_not_block(transport, monkeypat
 
 
 @pytest.mark.asyncio
-async def test_off_topic_directive_one_sentence_no_question_and_no_json():
+async def test_previous_off_topic_notes_cannot_force_current_redirect():
     directive = omni._format_teaching_directive(dict(RESULT, off_topic=True), "English", "Chinese")
-    assert "exactly one short polite acknowledgement" in directive
-    assert "no question" in directive
+    assert "decide independently whether the new input is on-topic" in directive
+    assert "NOT a decision for the CURRENT answer" in directive
     assert "explanation_l1" not in directive and "teaching_mode" not in directive
 
 
@@ -185,6 +186,76 @@ def test_prompt_examples_scope_confidentiality_and_language_exception():
     assert "exactly ONE short teaching explanation in Chinese" in prompt
     assert "Role dialogue and model student utterances use ONLY English" in prompt
     assert "push the student to say MORE" not in prompt
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("candidate", ["", "What is your name?", "Try another way: I'm Alex, here for an interview."])
+async def test_successful_separate_turns_do_not_restart_drill_after_real_refresh(transport, candidate):
+    cb = callback()
+    task = cb.user_context["active_goal"]["current_task"]
+    task.update(task_description="Tell the guard your name and visit purpose", score=6,
+                interaction_count=7)
+    cb.user_context["active_goal"]["scenarios"][0]["tasks"][0].update(task)
+    cb.messages = [dict(role="user", content="I'm Alex.", turn_id="name"),
+                   dict(role="assistant", content="What brings you here?"),
+                   dict(role="user", content="I'm here for an interview.", turn_id="turn-1")]
+    transport.post.return_value.json.side_effect = lambda: dict(success=True, data=dict(
+        RESULT, teaching_mode="advance", errors=[], next_question_locked=candidate))
+    authority = copy.deepcopy(cb.user_context["active_goal"])
+    for _ in range(3):
+        cb._update_session_prompt()
+    await run(cb, Redis())
+    instructions = feedback.response_instructions(cb, omni.session_phases)
+    assert "Count details given" in instructions
+    if candidate:
+        assert candidate not in feedback.format_directive(
+            dict(RESULT, errors=[], next_question_locked=candidate), "English", "Chinese")
+    assert "explicitly hypothetical situation" in instructions
+    assert "not a complete answer to copy" in instructions
+    assert "never evidence about the student's real life" in instructions
+    assert "If the student declines practice" in instructions
+    assert "CRITICAL SCOPE LOCK" in instructions
+    assert "SUCCESS MUST LEAD TO PRACTICE" not in instructions
+    assert "choose another equivalent phrasing" not in instructions
+    assert cb.user_context["active_goal"] == authority
+    packet = cb._safe_send.call_args.args[0]["payload"]
+    assert packet["scoring_generation"] == 3
+    assert "PRIVATE PREVIOUS-ATTEMPT NOTES" not in feedback.response_instructions(cb, omni.session_phases)
+    assert cb.pending_directive is None
+
+
+@pytest.mark.asyncio
+async def test_previous_success_does_not_schedule_new_situation_or_override_repair(transport):
+    cb = callback()
+    cb.messages[-1]["content"] = "I'm here to deliver document."
+    candidate = "Imagine a new visit for collecting a package. What would you tell me?"
+    transport.post.return_value.json.side_effect = lambda: dict(success=True, data=dict(
+        RESULT, teaching_mode="advance", errors=[], next_question_locked=candidate))
+    cb._update_session_prompt()
+    authority = copy.deepcopy(cb.user_context["active_goal"])
+    await run(cb, Redis())
+    instructions = feedback.response_instructions(cb, omni.session_phases)
+    assert candidate not in instructions
+    assert instructions.count("# CORRECTION FIRST") == 1
+    assert "NO new hypothetical situation until that error is fixed" in instructions
+    assert "SUPPORT:" in instructions and "REPAIR:" in instructions
+    assert cb.user_context["active_goal"] == authority
+
+
+@pytest.mark.asyncio
+async def test_current_cue_is_frozen_even_when_feedback_has_not_arrived():
+    cb = callback()
+    cb.messages = [dict(role="assistant", content="Old interview visit"),
+                   dict(role="assistant", content="Imagine returning a borrowed item."),
+                   dict(role="user", content="Does borrow mean return?")]
+    cb.task_history_cutoff = 1
+    cb._update_session_prompt()
+    instructions = feedback.response_instructions(cb, omni.session_phases)
+    assert "# CURRENT RESPONSE CONTEXT" in instructions
+    context = instructions.split("# CURRENT RESPONSE CONTEXT")[-1]
+    assert "returning a borrowed item" in context and "Old interview" not in context
+    assert "Do not re-ask known identity" in context
+    assert cb.pending_directive is None
 
 
 @pytest.mark.asyncio

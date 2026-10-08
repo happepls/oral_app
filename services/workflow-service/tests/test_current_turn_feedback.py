@@ -65,6 +65,23 @@ def advance():
     )
 
 
+def test_hypothetical_visit_question_keeps_original_fact_evidence():
+    context = dict(EN_CONTEXT, current_task="Tell the guard your name and visit purpose",
+                   user_text="I'm Riley and I'm here for an interview.")
+    value = dict(advance(), alternatives=["I'm Riley, here for an interview.",
+                 "My name is Riley. I'm here for an interview."],
+                 acknowledgement="Thanks, Riley.", fact_quotes=["Riley", "interview"],
+                 next_question_locked="For a practice visit, imagine you are delivering equipment. What would you tell the guard?")
+    original = copy.deepcopy(value)
+    result = feedback.validate_current_feedback(value, context)
+    assert result == original and value == original
+    assert result["fact_quotes"] == ["Riley", "interview"]
+    assert not result["retry_prompt"] and not result["errors"]
+    assert not {"score", "delta", "task_completed"}.intersection(result)
+    with pytest.raises(ValueError):
+        feedback.validate_current_feedback(dict(value, fact_quotes=["delivering equipment"]), context)
+
+
 def test_complete_correction_preserves_both_repairs_without_mutating_inputs():
     value, context = correction(), copy.deepcopy(EN_CONTEXT)
     original = copy.deepcopy(value)
