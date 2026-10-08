@@ -2,6 +2,7 @@ const { WebSocketServer, WebSocket } = require('ws');
 const jwt = require('jsonwebtoken');
 const url = require('url');
 const http = require('http');
+const { checkAccess } = require('./sceneAccess');
 
 const sessions = new Map();
 const activeConnections = new Map();
@@ -56,6 +57,7 @@ wss.on('connection', async function connection(clientWs, req) {
 
     if (!token) {
       console.log('Connection rejected: No token provided.');
+      clientWs.send(JSON.stringify({ type: 'error', payload: { status: 401, code: 'authentication_required', message: 'authentication_required' } }));
       clientWs.close(1008, 'Authorization token is required.');
       return;
     }
@@ -65,12 +67,14 @@ wss.on('connection', async function connection(clientWs, req) {
       decoded = jwt.verify(token, JWT_SECRET);
     } catch (err) {
       console.log(`Connection rejected: Invalid token. ${err.message}`);
+      clientWs.send(JSON.stringify({ type: 'error', payload: { status: 401, code: 'authentication_required', message: 'authentication_required' } }));
       clientWs.close(1008, 'Invalid or expired authorization token.');
       return;
     }
 
-    if (usesRealtimeTicket && decoded.type !== 'realtime_ticket') {
+    if ((usesRealtimeTicket && decoded.type !== 'realtime_ticket') || (!usesRealtimeTicket && decoded.type !== 'access')) {
       console.log('Connection rejected: token is not a realtime ticket.');
+      clientWs.send(JSON.stringify({ type: 'error', payload: { status: 401, code: 'authentication_required', message: 'authentication_required' } }));
       clientWs.close(1008, 'Invalid realtime ticket.');
       return;
     }
@@ -88,6 +92,11 @@ wss.on('connection', async function connection(clientWs, req) {
       : token;
 
     const userId = decoded.id;
+    if (!userId) {
+      clientWs.send(JSON.stringify({ type: 'error', payload: { status: 401, code: 'authentication_required', message: 'authentication_required' } }));
+      clientWs.close(1008, 'authentication_required');
+      return;
+    }
     const sessionId = queryObject.sessionId;
     const scenario = queryObject.scenario;
     const voice = queryObject.voice;
@@ -95,7 +104,16 @@ wss.on('connection', async function connection(clientWs, req) {
     const rawMode = queryObject.mode;
     const mode = (rawMode && ALLOWED_MODES.has(rawMode)) ? rawMode : null;
     if (rawMode && !mode) {
-      console.warn(`[comms] Rejected unknown mode='${rawMode}' from client; forwarding without mode`);
+      clientWs.send(JSON.stringify({ type: 'error', payload: { status: 403, code: 'mode_invalid', message: 'mode_invalid' } }));
+      clientWs.close(1008, 'mode_invalid');
+      return;
+    }
+
+    const authorization = await checkAccess(userId, scenario, mode);
+    if (!authorization.allowed) {
+      clientWs.send(JSON.stringify({ type: 'error', payload: { status: authorization.status, code: authorization.reason, message: authorization.reason } }));
+      clientWs.close(authorization.status === 503 ? 1011 : 1008, authorization.reason);
+      return;
     }
 
     if (!sessionId) {

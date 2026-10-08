@@ -3,13 +3,16 @@
 function overlayGoalTasks(goal, dbTasks) {
   if (!Array.isArray(goal.scenarios)) return goal;
   const taskByIdentity = new Map(dbTasks.map(task => [JSON.stringify([task.scenario_title, task.task_description]), task]));
+  const taskById = new Map(dbTasks.map(task => [String(task.id), task]));
   return {
     ...goal,
     scenarios: goal.scenarios.map(scenario => ({
       ...scenario,
       tasks: scenario.tasks.map(task => {
         const text = typeof task === 'string' ? task : task.text;
-        const row = taskByIdentity.get(JSON.stringify([scenario.title, text]));
+        const idRow = task?.id != null ? taskById.get(String(task.id)) : null;
+        const row = (idRow?.scenario_title === scenario.title ? idRow : null)
+          || taskByIdentity.get(JSON.stringify([scenario.title, text]));
         const score = row ? row.score : 0;
         return {
           id: row ? row.id : null, text,

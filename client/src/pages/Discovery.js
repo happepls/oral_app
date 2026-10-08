@@ -93,7 +93,6 @@ function getDifficulty(index) {
 }
 
 // 免费用户初始解锁的场景数；完成解锁区间后会自动扩展。
-const FREE_INITIAL_UNLOCK = 3;
 
 const EMPTY_DAILY_PROGRESS = {
   recallCompleted: false,
@@ -107,23 +106,6 @@ const EMPTY_DAILY_PROGRESS = {
 };
 
 const DISCOVERY_AUTO_RETRY_DELAYS_MS = [2000, 5000, 10000];
-
-// 计算免费用户的累计解锁数：初始 3 个，已解锁场景全部完成（pct===100）后扩展 +1。
-// scenarios 数组顺序即解锁顺序。
-function calcUnlockedCount(scenarios) {
-  let unlocked = Math.min(FREE_INITIAL_UNLOCK, scenarios.length);
-  while (unlocked < scenarios.length) {
-    const allPrevDone = scenarios.slice(0, unlocked).every(s => calcScenarioProgress(s) === 100);
-    if (!allPrevDone) break;
-    unlocked += 1;
-  }
-  return unlocked;
-}
-
-function isScenarioUnlocked(index, unlockedCount, isPro) {
-  if (isPro) return true;
-  return index < unlockedCount;
-}
 
 function getScenarioCardState(scenario, unlocked, pct) {
   if (!unlocked) return 'locked';
@@ -239,7 +221,7 @@ function Discovery() {
   const autoRetryAttemptRef = useRef(0);
   const hasLoadedDashboardRef = useRef(false);
 
-  const isPro = user?.subscription_status === 'active';
+  const isPro = activeGoal?.access?.membership?.active === true;
 
   const handleOpenQAPool = async () => {
     setShowQAPool(true);
@@ -609,12 +591,12 @@ function Discovery() {
   };
 
   // ── 派生数据（useMemo 避免每次 render 重算） ──
-  const unlockedCount = useMemo(() => calcUnlockedCount(scenarios), [scenarios]);
+  const unlockedCount = activeGoal?.access?.unlocked_count ?? 0;
 
   // 自动解锁提示：unlockedCount 从 N 增长到 N+1 时，显示 toast。
   // 首次加载只记录基线，不弹（避免页面打开就 toast）。Pro 用户全解锁，无需提示。
   useEffect(() => {
-    if (user?.subscription_status === 'active' || scenarios.length === 0) return;
+    if (isPro || scenarios.length === 0) return;
     const prev = prevUnlockedCountRef.current;
     if (prev !== null && unlockedCount > prev) {
       const newScenario = scenarios[unlockedCount - 1];
@@ -626,18 +608,18 @@ function Discovery() {
       }
     }
     prevUnlockedCountRef.current = unlockedCount;
-  }, [unlockedCount, scenarios, user]);
+  }, [unlockedCount, scenarios, isPro]);
 
   const enrichedScenarios = useMemo(() => scenarios.map((s, i) => {
     const pct = calcScenarioProgress(s);
     const practiceStatus = getScenarioPracticeStatus(s);
-    const unlocked = isScenarioUnlocked(i, unlockedCount, isPro);
+    const unlocked = activeGoal?.access?.scenarios?.find(access => access.title === s.title)?.allowed === true;
     const cardState = getScenarioCardState(s, unlocked, pct);
     // image_url 优先来自后端 scenario 数据（若曾持久化），否则用懒加载 state
     const imageUrl = s.image_url || scenarioImages[s.title] || '';
     const displayTitle = getScenarioDisplayTitle(s.title, i, i18n.resolvedLanguage || i18n.language);
     return { ...s, displayTitle, pct, practiceStatus, unlocked, cardState, difficulty: getDifficulty(i), emoji: getEmoji(s.title), imageUrl, index: i };
-  }), [scenarios, unlockedCount, isPro, scenarioImages, i18n.resolvedLanguage, i18n.language]);
+  }), [scenarios, activeGoal, scenarioImages, i18n.resolvedLanguage, i18n.language]);
 
   // 懒加载已解锁场景的 AI 配图：一次只取一张（节流），sessionStorage 跨页缓存，
   // 失败/超时静默回退 emoji。锁定卡不生成，省文生图成本。

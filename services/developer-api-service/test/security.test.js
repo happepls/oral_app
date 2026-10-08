@@ -28,10 +28,21 @@ function fakeDb({ grantActive = true, scopes = ['profile:read'] } = {}) {
 }
 
 async function withServer(db, callback, options = {}) {
-  const server = createApp({ db, delegatedSecret: secret, realtimeSecret, ...options }).listen(0, '127.0.0.1');
+  const http = require('node:http');
+  const { readActiveGoal } = require('../src/activeGoal');
+  const authority = http.createServer(async (req, res) => {
+    assert.equal(req.headers['x-guaji-internal-auth'], 'access-test-secret');
+    assert.match(req.url, new RegExp(`/internal/users/${userId}/access$`));
+    const data = await readActiveGoal(db, userId);
+    data.access = { membership: { active: false, status: 'free', source: null }, unlocked_count: Math.min(3, data.goal?.scenarios?.length || 0), scenarios: [] };
+    res.setHeader('content-type', 'application/json');
+    res.end(JSON.stringify({ data }));
+  }).listen(0, '127.0.0.1');
+  await new Promise(resolve => authority.once('listening', resolve));
+  const server = createApp({ db, delegatedSecret: secret, realtimeSecret, internalAuthSecret: 'access-test-secret', userServiceUrl: `http://127.0.0.1:${authority.address().port}`, ...options }).listen(0, '127.0.0.1');
   await new Promise((resolve) => server.once('listening', resolve));
   try { await callback(`http://127.0.0.1:${server.address().port}`); }
-  finally { await new Promise((resolve) => server.close(resolve)); }
+  finally { await new Promise((resolve) => server.close(resolve)); await new Promise(resolve => authority.close(resolve)); }
 }
 
 test('all v1 calls require a valid API key and return the standard error envelope', async () => {
@@ -136,7 +147,7 @@ test('active goal requires read scope and supports first-party cookies without a
   await withServer(db, async base => {
     const response = await fetch(`${base}/v1/goals/active`, { headers: { Cookie: `accessToken=${accessToken}` } });
     assert.equal(response.status, 200);
-    assert.deepEqual((await response.json()).data, { goal: null, has_other_goals: false });
+    assert.deepEqual((await response.json()).data, { goal: null, has_other_goals: false, access: { membership: { active: false, status: 'free', source: null }, unlocked_count: 0, scenarios: [] } });
   });
 });
 
@@ -327,6 +338,38 @@ test('upstream timeouts and unavailable dependencies use stable error codes', as
   } finally {
     await new Promise((resolve) => slow.close(resolve));
   }
+});
+
+test('AI authorization denial preserves 403 and 503 and forwards only trusted identity', async () => {
+  const http = require('node:http');
+  let status = 403;
+  let received;
+  const ai = http.createServer((req, res) => {
+    received = req.headers;
+    res.writeHead(status, { 'content-type': 'application/json' });
+    res.end(JSON.stringify({ detail: status === 403 ? 'scene_locked' : 'authorization_unavailable' }));
+  }).listen(0, '127.0.0.1');
+  await new Promise(resolve => ai.once('listening', resolve));
+  const db = fakeDb({ scopes: ['ai:generate'] });
+  const query = db.query.bind(db);
+  db.query = async (sql, params) => sql.includes('INSERT INTO developer_idempotency_keys')
+    ? { rows: [{ idempotency_key: params[3] }] } : query(sql, params);
+  try {
+    await withServer(db, async base => {
+      for (const denied of [403, 503]) {
+        status = denied;
+        const response = await fetch(`${base}/v1/ai/scenario`, {
+          method: 'POST', headers: { 'content-type': 'application/json', 'X-Guaji-API-Key': 'gj_test_key',
+            Authorization: `Bearer ${token(['ai:generate'])}`, 'Idempotency-Key': `denial-${denied}`,
+            'X-Guaji-User-Id': 'attacker', 'X-Guaji-Internal-Auth': 'attacker' },
+          body: JSON.stringify({ scenario_title: 'fourth', user_id: 'attacker', subscription_status: 'active' }),
+        });
+        assert.equal(response.status, denied);
+        assert.equal(received['x-guaji-user-id'], userId);
+        assert.equal(received['x-guaji-internal-auth'], 'access-test-secret');
+      }
+    }, { aiUrl: `http://127.0.0.1:${ai.address().port}` });
+  } finally { await new Promise(resolve => ai.close(resolve)); }
 });
 
 test('idempotency keys are isolated by grant, user, method, and path', async () => {

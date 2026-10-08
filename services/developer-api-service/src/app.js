@@ -2,7 +2,6 @@ const crypto = require('crypto');
 const express = require('express');
 const fetch = require('node-fetch');
 const { createAuth, hash, error } = require('./auth');
-const { readActiveGoal } = require('./activeGoal');
 const OAUTH_SCOPES = new Set(['profile:read', 'profile:write', 'goals:read', 'goals:write', 'conversations:read', 'conversations:write', 'ai:generate', 'realtime:connect']);
 
 const PROFILE_FIELDS = new Set(['nickname', 'avatar_url', 'native_language', 'target_language', 'interests', 'daily_practice_goal', 'gender', 'birth_year', 'points']);
@@ -15,6 +14,11 @@ const decodeCursor = (value) => {
 function createApp(options) {
   const { db, delegatedSecret, realtimeSecret, internalAuthSecret, conversationUrl = 'http://conversation-service:8083', historyUrl = 'http://history-analytics-service:3004', aiUrl = 'http://ai-omni-service:8082', rateLimitMax = 120, upstreamTimeoutMs = 10000 } = options;
   const aiTimeoutMs = options.aiTimeoutMs ?? (options.upstreamTimeoutMs === undefined ? 35000 : upstreamTimeoutMs);
+  const userServiceUrl = options.userServiceUrl || process.env.USER_SERVICE_URL || 'http://user-service:3000';
+  function identityHeaders(req) {
+    if (!internalAuthSecret) throw error(503, 'authorization_unavailable', 'Service authorization is not configured');
+    return { 'X-Guaji-Internal-Auth': internalAuthSecret, 'X-Guaji-User-ID': String(req.delegated.user_id) };
+  }
   const app = express();
   const auth = createAuth({ db, delegatedSecret, realtimeSecret });
   app.disable('x-powered-by');
@@ -137,7 +141,11 @@ function createApp(options) {
 
   app.get('/v1/goals/active', auth.requireScopes('goals:read'), async (req, res, next) => {
     try {
-      const data = await readActiveGoal(db, req.delegated.user_id);
+      let authority;
+      try {
+        authority = await requestJson(`${userServiceUrl}/api/users/internal/users/${encodeURIComponent(req.delegated.user_id)}/access`, { headers: identityHeaders(req) });
+      } catch (_) { throw error(503, 'authorization_unavailable', 'Authorization service is unavailable'); }
+      const data = authority.data;
       res.set('Cache-Control', 'no-store');
       res.json({ data, meta: { request_id: req.requestId } });
     } catch (err) { next(err); }
@@ -372,14 +380,14 @@ function createApp(options) {
       if (!internalAuthSecret) throw error(503, 'scenario_generation_unavailable', 'Scenario generation is not configured');
       const data = await requestJson(`${aiUrl}/generate-scenario`, {
         method: 'POST', body: req.body, timeoutMs: aiTimeoutMs,
-        headers: { 'X-Guaji-Internal-Auth': internalAuthSecret },
+        headers: identityHeaders(req),
       });
       res.json({ data, meta: { request_id: req.requestId } });
     } catch (err) { next(err); }
   });
   app.post('/v1/ai/tts', auth.requireScopes('ai:generate'), requireIdempotency, async (req, res, next) => {
     try {
-      const upstream = await fetchWithTimeout(`${aiUrl}/tts`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(req.body) }, aiTimeoutMs);
+      const upstream = await fetchWithTimeout(`${aiUrl}/tts`, { method: 'POST', headers: { 'content-type': 'application/json', ...identityHeaders(req) }, body: JSON.stringify(req.body) }, aiTimeoutMs);
       if (!upstream.ok) throw await upstreamError(upstream);
       const contentType = upstream.headers.get('content-type') || 'audio/wav';
       const audio = await upstream.buffer();
@@ -442,7 +450,7 @@ function createApp(options) {
   function proxyJson(url, timeoutMs) {
     return async (req, res, next) => {
       try {
-        const upstream = await requestJson(url, { method: 'POST', body: req.body, timeoutMs });
+        const upstream = await requestJson(url, { method: 'POST', body: req.body, timeoutMs, headers: identityHeaders(req) });
         res.json({ data: upstream?.data ?? upstream, meta: { request_id: req.requestId } });
       }
       catch (err) { next(err); }
@@ -466,7 +474,7 @@ function createApp(options) {
   async function upstreamError(response) {
     let details;
     try { details = await response.json(); } catch { details = undefined; }
-    return error(response.status >= 500 ? 502 : response.status, 'upstream_error', 'Upstream request failed', details);
+    return error(response.status === 503 ? 503 : response.status >= 500 ? 502 : response.status, 'upstream_error', 'Upstream request failed', details);
   }
 
   app.use((req, _res, next) => next(error(404, 'not_found', 'Endpoint not found')));

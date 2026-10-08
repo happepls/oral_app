@@ -18,6 +18,10 @@ from datetime import datetime
 from typing import Optional
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Query, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+try:
+    from .scene_access import check_access, check_token_access, check_request_access, deny_websocket
+except ImportError:
+    from scene_access import check_access, check_token_access, check_request_access, deny_websocket
 from pydantic import BaseModel
 from dashscope.audio.qwen_omni import (
     OmniRealtimeCallback,
@@ -169,6 +173,30 @@ session_phases: _TTLDict = _TTLDict(ttl=_SESSION_PHASES_TTL, maxsize=_SESSION_PH
 app = FastAPI()
 
 
+@app.middleware('http')
+async def authorize_ai_request(request, call_next):
+    operations = {
+        '/generate-scene-image': 'practice', '/generate-scenario-image': 'practice',
+        '/generate-scenarios': 'generate', '/generate-scenario': 'generate',
+        '/tts': 'generate', '/translate': 'generate', '/reset-phase': 'practice',
+        '/daily-recall': 'generate', '/daily-question': 'generate',
+        '/daily-question/re-answer': 'pro', '/daily-question/change-question': 'pro',
+        '/daily-question/pool': 'pro', '/daily-question/select': 'pro',
+    }
+    if request.url.path in operations and request.method != 'OPTIONS':
+        from fastapi.responses import JSONResponse
+        try:
+            payload = await request.json() if request.method == 'POST' else dict(request.query_params)
+            if not isinstance(payload, dict):
+                raise HTTPException(400, 'invalid_request')
+            await check_request_access(request, payload, operations[request.url.path])
+        except HTTPException as error:
+            return JSONResponse({'detail': error.detail}, status_code=error.status_code)
+        except (ValueError, TypeError):
+            return JSONResponse({'detail': 'invalid_request'}, status_code=400)
+    return await call_next(request)
+
+
 @app.on_event('startup')
 async def start_product_analytics():
     if product_analytics.enabled():
@@ -240,9 +268,7 @@ async def get_user_context(token: str, scenario: str = None, *, profile_only: bo
                         scenarios = active_goal.get('scenarios', [])
                         matched_scenario = None
                         for s in scenarios:
-                            if s.get('title', '').lower() == scenario.lower() or \
-                               scenario.lower() in s.get('title', '').lower() or \
-                               s.get('title', '').lower() in scenario.lower():
+                            if s.get('title') == scenario:
                                 matched_scenario = s
                                 break
                         
@@ -268,7 +294,7 @@ async def get_user_context(token: str, scenario: str = None, *, profile_only: bo
                                     'scenario_title': matched_scenario.get('title', ''),
                                     'score': current_task.get('score', 0),
                                     'interaction_count': current_task.get('interaction_count', 0),
-                                    'scoring_generation': current_task.get('scoring_generation', 0),
+                                    'scoring_generation': current_task.get('scoring_generation'),
                                     'keywords': current_task.get('keywords', []),
                                     'status': current_task.get('status'),
                                 }
@@ -291,7 +317,7 @@ async def get_user_context(token: str, scenario: str = None, *, profile_only: bo
                                     'scenario_title': current_scenario.get('title', ''),
                                     'score': current_task.get('score', 0),
                                     'interaction_count': current_task.get('interaction_count', 0),
-                                    'scoring_generation': current_task.get('scoring_generation', 0),
+                                    'scoring_generation': current_task.get('scoring_generation'),
                                     'keywords': current_task.get('keywords', []),
                                     'status': current_task.get('status'),
                                 }
@@ -1714,6 +1740,8 @@ async def _incr_daily_turn_once(rc, user_id: str, turn_id: str):
 
 def _has_pro_membership(user_ctx: dict) -> bool:
     ctx = user_ctx or {}
+    if isinstance(ctx.get('access'), dict):
+        return ctx['access'].get('membership', {}).get('active') is True
     if "stripe_subscription_status" not in ctx:
         return ctx.get("subscription_status") == "active"
     if ctx.get("stripe_subscription_status") in ("active", "trialing"):
@@ -1733,6 +1761,73 @@ async def _check_daily_limit(rc, user_id: str, user_ctx: dict):
     used = await _get_daily_turns(rc, user_id)
     tier = "pro" if _has_pro_membership(user_ctx) else "free"
     return (used >= limit, {"tier": tier, "used": used, "limit": limit})
+
+
+async def _reserve_daily_slot(rc, user_id, user_ctx, reservation):
+    if rc is None:
+        raise HTTPException(503, 'quota_unavailable')
+    limit = _daily_turn_limit(user_ctx)
+    script = '''
+    redis.call('ZREMRANGEBYSCORE', KEYS[2], '-inf', ARGV[1])
+    local used = tonumber(redis.call('GET', KEYS[1]) or '0')
+    local pending = redis.call('ZCARD', KEYS[2])
+    local exists = redis.call('ZSCORE', KEYS[2], ARGV[3])
+    if used + pending + (exists and 0 or 1) > tonumber(ARGV[4]) then return {0, used, pending} end
+    redis.call('ZADD', KEYS[2], ARGV[2], ARGV[3])
+    redis.call('EXPIRE', KEYS[2], ARGV[5])
+    return {1, used, pending}
+    '''
+    try:
+        now = time.time()
+        admitted, used, pending = await rc.eval(script, 2, _daily_turn_key(user_id), f'{_daily_turn_key(user_id)}:pending', now, now + 300, reservation, limit, _DAILY_TURN_TTL_SECONDS)
+    except Exception:
+        raise HTTPException(503, 'quota_unavailable') from None
+    return not bool(admitted), {'status': 429, 'tier': 'pro' if _has_pro_membership(user_ctx) else 'free', 'used': int(used), 'pending': int(pending), 'limit': limit}
+
+
+async def _finish_reserved_turn(rc, user_id, turn_id, reservation):
+    marker = hashlib.sha256(f'{user_id}\0{turn_id}'.encode()).hexdigest()
+    script = '''
+    redis.call('ZREM', KEYS[3], ARGV[3])
+    if redis.call('SET', KEYS[1], '1', 'NX', 'EX', ARGV[1]) then
+      local count = redis.call('INCR', KEYS[2])
+      redis.call('EXPIRE', KEYS[2], ARGV[2])
+      return count
+    end
+    return tonumber(redis.call('GET', KEYS[2]) or '0')
+    '''
+    try:
+        return int(await rc.eval(script, 3, f'daily_turn_seen:v1:{marker}', _daily_turn_key(user_id), f'{_daily_turn_key(user_id)}:pending', _DAILY_TURN_DEDUPE_TTL_SECONDS, _DAILY_TURN_TTL_SECONDS, reservation))
+    except Exception:
+        return None
+
+
+async def _release_input_reservations(callback, settle_committed=False):
+    # Interruption may cancel playback, but cannot refund an admitted paid input.
+    committed = dict(getattr(callback, 'quota_reservations', {})) if settle_committed else {}
+    if settle_committed and getattr(callback, 'awaiting_audio_turn', False) and getattr(callback, 'pending_audio_reservation', None):
+        reservation = callback.pending_audio_reservation
+        committed[reservation] = reservation
+    if committed:
+        rc = _get_redis_client()
+        for turn_id, reservation in committed.items():
+            if rc is None or await _finish_reserved_turn(rc, callback.user_id, turn_id, reservation) is None:
+                raise HTTPException(503, 'quota_unavailable')
+    tokens = list(getattr(callback, 'quota_reservations', {}).values())
+    if getattr(callback, 'pending_audio_reservation', None):
+        tokens.append(callback.pending_audio_reservation)
+    if tokens:
+        rc = _get_redis_client()
+        if rc is None:
+            raise HTTPException(503, 'quota_unavailable')
+        try:
+            await rc.zrem(f'{_daily_turn_key(callback.user_id)}:pending', *tokens)
+        except Exception:
+            raise HTTPException(503, 'quota_unavailable') from None
+    callback.quota_reservations = {}
+    callback.pending_audio_reservation = None
+    callback.awaiting_audio_turn = False
+    callback.counts_against_quota = False
 
 
 def _is_quota_exempt_mode(callback) -> bool:
@@ -3083,6 +3178,9 @@ class WebSocketCallback(OmniRealtimeCallback):
         # context must be included in the prompt so reconnects remain coherent.
         self.task_history_cutoff = 0
         self.current_turn_id = None
+        self.quota_reservations = {}
+        self.pending_audio_reservation = None
+        self.awaiting_audio_turn = False
         self.processed_turn_ids = {
             str(message.get("turn_id"))
             for message in history_messages
@@ -3282,9 +3380,9 @@ class WebSocketCallback(OmniRealtimeCallback):
                 for attempt, delay in enumerate((0, 0.2, 0.5), start=1):
                     if delay:
                         await asyncio.sleep(delay)
-                    count = await _incr_daily_turn_once(
-                        _get_redis_client(), self.user_id, turn_id
-                    )
+                    reservation = getattr(self, 'quota_reservations', {}).get(turn_id)
+                    count = (await _finish_reserved_turn(_get_redis_client(), self.user_id, turn_id, reservation)
+                             if reservation else await _incr_daily_turn_once(_get_redis_client(), self.user_id, turn_id))
                     if count is not None:
                         break
                     logger.warning(
@@ -3293,8 +3391,10 @@ class WebSocketCallback(OmniRealtimeCallback):
                     )
                 if count is not None:
                     self.processed_quota_turn_ids.add(turn_id)
+                    getattr(self, 'quota_reservations', {}).pop(turn_id, None)
                     if str(self.current_turn_id or "") == turn_id:
                         self.counts_against_quota = False
+                        self.awaiting_audio_turn = False
             finally:
                 self.quota_turns_inflight.discard(turn_id)
 
@@ -4052,6 +4152,7 @@ class WebSocketCallback(OmniRealtimeCallback):
                                                     async with httpx.AsyncClient(timeout=25) as _client:
                                                         resp = await _client.post(
                                                             "http://localhost:8082/generate-scene-image",
+                                                            headers={"X-Guaji-Internal-Auth": os.getenv("INTERNAL_AUTH_SECRET", ""), "X-Guaji-User-ID": str(self.user_id)},
                                                             json={"scenario_title": self.scenario or "", "tasks": tasks_for_advance}
                                                         )
                                                         image_url = resp.json().get("image_url", "")
@@ -4446,6 +4547,7 @@ class WebSocketCallback(OmniRealtimeCallback):
 
                             # Don't add magic passcode to conversation history
                             logger.info("Magic passcode skipped from conversation history")
+                            await _release_input_reservations(self)
                             return  # Exit early
                         else:
                             # Normal input (not magic passcode) - send transcript and add to history
@@ -4464,6 +4566,9 @@ class WebSocketCallback(OmniRealtimeCallback):
                                 logger.info("[AUDIO_EVIDENCE] discarded unbound ASR")
                                 return
                             self.current_turn_id = turn_id
+                            if self.pending_audio_reservation:
+                                self.quota_reservations[turn_id] = self.pending_audio_reservation
+                                self.pending_audio_reservation = None
                             if user_transcript.strip():
                                 await self.analytics.accept(turn_id, self.analytics_real_mode())
                             await self._safe_send({
@@ -4684,9 +4789,11 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query(None), ses
         auth_header = websocket.headers.get("authorization", "")
         if auth_header.startswith("Bearer "):
             token = auth_header[7:]
+        elif websocket.cookies.get('accessToken'):
+            token = websocket.cookies['accessToken']
     if not token or not sessionId:
-        await websocket.send_json({"type": "error", "payload": {"message": "Unauthorized"}})
-        await websocket.close(); return
+        await deny_websocket(websocket, HTTPException(401, 'authentication_required'))
+        return
 
     # 白名单校验：防止注入特殊字符
     if not _SESSION_ID_RE.match(sessionId):
@@ -4703,17 +4810,30 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query(None), ses
         await websocket.send_json({"type": "error", "payload": {"message": "Invalid voice"}})
         await websocket.close(); return
 
+    try:
+        await check_token_access(token, scenario, mode)
+    except HTTPException as error:
+        await deny_websocket(websocket, error)
+        return
     user_context = (await get_user_context(token, profile_only=True)
                     if mode == 'quick_experience' else await get_user_context(token, scenario))
     if not user_context:
-        await websocket.send_json({"type": "error", "payload": {"message": "Invalid token"}})
-        await websocket.close(); return
+        await deny_websocket(websocket, HTTPException(503, 'authorization_unavailable'))
+        return
     user_id_raw = user_context.get('id')
     if not user_id_raw:
         logger.error(f"User context missing 'id': {user_context}")
         await websocket.send_json({"type": "error", "payload": {"message": "Invalid user context"}})
         await websocket.close(); return
     user_id, session_id = str(user_id_raw), sessionId
+    scene_goal_id = (user_context.get('active_goal') or {}).get('id')
+    try:
+        access = await check_access(user_id, scenario, mode, scene_goal_id)
+        user_context['access'] = access
+        user_context['subscription_status'] = access['membership']['status']
+    except HTTPException as error:
+        await deny_websocket(websocket, error)
+        return
     if mode == 'quick_experience':
         try:
             from .quick_experience import run_quick_experience
@@ -4726,6 +4846,7 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query(None), ses
             analytics_emit=lambda event: product_analytics.enqueue(
                 _get_redis_client(), user_id, f'quick_{user_id}', event
             ),
+            authorization_refresh=lambda: check_access(user_id, scenario, mode),
         )
         return
     if voice: user_context['voice'] = voice
@@ -4952,6 +5073,29 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query(None), ses
                 message = await websocket.receive_text()
                 data = json.loads(message)
                 msg_type, payload = data.get('type'), data.get('payload', {})
+                text_turn_id = str(uuid.uuid4()) if msg_type in ('text_message', 'input_text') else None
+                if msg_type not in ('ping', 'interrupt', 'user_audio_cancelled'):
+                    try:
+                        access = await check_access(callback.user_id, callback.scenario, mode, scene_goal_id)
+                        callback.user_context['access'] = access
+                        callback.user_context['subscription_status'] = access['membership']['status']
+                        if mode == 'recall' and session_phases.get(callback.phase_key, {}).get('phase') != 'magic_repetition':
+                            raise HTTPException(403, 'recall_finished')
+                    except HTTPException as error:
+                        callback.user_audio_buffer = bytearray()
+                        await deny_websocket(websocket, error)
+                        break
+                if msg_type in ('audio_stream', 'text_message', 'input_text') and not _is_quota_exempt_mode(callback):
+                    if callback.quota_reservations or callback.awaiting_audio_turn or (text_turn_id and callback.pending_audio_reservation):
+                        await websocket.send_json({'type': 'error', 'payload': {'status': 429, 'code': 'turn_in_progress', 'message': 'turn_in_progress'}})
+                        continue
+                    reservation = (callback.pending_audio_reservation or str(uuid.uuid4())) if msg_type == 'audio_stream' else text_turn_id
+                    _blocked, _info = await _reserve_daily_slot(_get_redis_client(), callback.user_id, callback.user_context, reservation)
+                    if _blocked:
+                        await websocket.send_json({'type': 'daily_limit_reached', **_info})
+                        continue
+                    if msg_type == 'audio_stream':
+                        callback.pending_audio_reservation = reservation
 
                 # Log messages except ping (which is too frequent)
                 if msg_type != 'ping':
@@ -5035,15 +5179,23 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query(None), ses
                         except Exception as e:
                             logger.error(f"Error decoding audio data: {e}")
                 elif msg_type == 'user_audio_ended':
+                    if callback.awaiting_audio_turn:
+                        await websocket.send_json({'type': 'error', 'payload': {'status': 429, 'code': 'turn_in_progress', 'message': 'turn_in_progress'}})
+                        continue
+                    if not callback.user_audio_buffer:
+                        continue
                     quota_exempt = _is_quota_exempt_mode(callback)
                     if not quota_exempt:
                         _rc = _get_redis_client()
-                        _blocked, _info = await _check_daily_limit(_rc, callback.user_id, callback.user_context)
+                        reservation = callback.pending_audio_reservation or str(uuid.uuid4())
+                        _blocked, _info = await _reserve_daily_slot(_rc, callback.user_id, callback.user_context, reservation)
                         if _blocked:
                             callback.user_audio_buffer = bytearray()  # 丢弃未提交的本地音频
                             await websocket.send_json({"type": "daily_limit_reached", **_info})
                             logger.info(f"[DailyLimit] blocked(audio) user={callback.user_id} {_info}")
                             continue
+                        callback.pending_audio_reservation = reservation
+                        callback.awaiting_audio_turn = True
                     callback.counts_against_quota = not quota_exempt
                     # New user turn: the previous turn's interruption is over —
                     # without this reset the delta gate at on-event drops ALL
@@ -5102,7 +5254,11 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query(None), ses
                         except Exception as e:
                             logger.error(f"Error creating response for audio: {e}")
                 elif msg_type == 'user_audio_cancelled':
+                    if callback.awaiting_audio_turn or callback.quota_reservations:
+                        await websocket.send_json({'type': 'error', 'payload': {'status': 409, 'code': 'turn_in_progress', 'message': 'Submitted input cannot be cancelled; interrupt the response instead'}})
+                        continue
                     callback.user_audio_buffer = bytearray()
+                    await _release_input_reservations(callback)
                     callback.audio_evidence.invalidate()
                     callback.current_turn_teaching.invalidate()
                     logger.info("User cancelled audio input, buffer cleared")
@@ -5112,7 +5268,7 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query(None), ses
                         quota_exempt = _is_quota_exempt_mode(callback)
                         if not quota_exempt:
                             _rc = _get_redis_client()
-                            _blocked, _info = await _check_daily_limit(_rc, callback.user_id, callback.user_context)
+                            _blocked, _info = await _reserve_daily_slot(_rc, callback.user_id, callback.user_context, text_turn_id)
                             if _blocked:
                                 await websocket.send_json({"type": "daily_limit_reached", **_info})
                                 logger.info(f"[DailyLimit] blocked(text) user={callback.user_id} {_info}")
@@ -5122,13 +5278,15 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query(None), ses
                         callback.audio_evidence.invalidate()
                         callback.interrupted_turn = False  # new user turn ends the interruption
                         text_message = {
-                            "id": str(uuid.uuid4()),
+                            "id": text_turn_id,
                             "role": "user",
                             "content": text,
                             "timestamp": datetime.utcnow().isoformat(),
                         }
                         current_task = (callback.user_context.get("active_goal") or {}).get("current_task") or {}
                         callback.current_turn_id = text_message["id"]
+                        if not quota_exempt:
+                            callback.quota_reservations[text_turn_id] = text_turn_id
                         if callback.current_turn_teaching.applies():
                             await callback.current_turn_teaching.begin(payload.get('input_id', ''), text_message)
                         callback.analytics.prepare(callback.current_turn_id, callback.analytics_real_mode() and bool(text.strip()))
@@ -5257,6 +5415,7 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query(None), ses
                     callback.audio_evidence.invalidate()
                     callback.current_turn_teaching.invalidate()
                     callback.interrupted_turn = True
+                    await _release_input_reservations(callback, settle_committed=True)
                     if callback.current_response_id: callback.ignored_response_ids.add(callback.current_response_id)
                     # Only cancel when a response is actually in flight — DashScope
                     # returns an invalid_request_error event ("Conversation has none
@@ -5302,6 +5461,9 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query(None), ses
                         logger.error(traceback.format_exc())
             except WebSocketDisconnect:
                 logger.info(f"WebSocket disconnected for session {session_id}")
+                break
+            except HTTPException as error:
+                await deny_websocket(websocket, error)
                 break
             except Exception as e:
                 logger.error(f"WS error: {e}")
