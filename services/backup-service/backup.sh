@@ -50,10 +50,34 @@ pg_dump \
   --no-privileges \
   --file="${BUNDLE}/postgres.dump"
 
-mongodump \
-  --uri="${MONGO_URI}" \
+# Emit a JSON-quoted scalar (also valid YAML) with bash builtins only: the
+# backup image deliberately has no Python/Node dependency. Environment values
+# cannot contain NUL; escape every other JSON control character explicitly.
+json_escape() {
+  local value="$1" character escaped code octal
+  value="${value//\\/\\\\}"
+  value="${value//\"/\\\"}"
+  for ((code=1; code<32; code++)); do
+    printf -v octal '\\%03o' "${code}"
+    printf -v character '%b' "${octal}"
+    printf -v escaped '\\u%04x' "${code}"
+    value="${value//${character}/${escaped}}"
+  done
+  printf '%s' "${value}"
+}
+MONGO_CONFIG="${BACKUP_TMP_DIR}/mongo-tools.yaml"
+(
+  umask 077
+  printf 'uri: "%s"\n' "$(json_escape "${MONGO_URI}")" > "${MONGO_CONFIG}"
+)
+if ! mongodump \
+  --config="${MONGO_CONFIG}" \
   --archive="${BUNDLE}/mongo.archive.gz" \
-  --gzip
+  --gzip >/dev/null 2>&1; then
+  echo "MongoDB backup failed; sensitive details suppressed" >&2
+  exit 1
+fi
+rm -f -- "${MONGO_CONFIG}"
 
 (
   cd "${BUNDLE}"
