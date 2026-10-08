@@ -8,6 +8,8 @@ const redis = require('../utils/redisClient');
 const { sendEmail } = require('../utils/mailer');
 const twilioVerify = require('../utils/twilioVerify');
 const aliyunSms = require('../utils/aliyunSms');
+const { accessFor } = require('../models/sceneAccess');
+const loginAccessSummary = user => ({ membership: accessFor(user, null).membership });
 const { normalizePhone, reservePhoneAttempt } = require('../utils/phoneAuth');
 
 // 短信通道路由：+86（中国大陆）走阿里云，其他走 Twilio。
@@ -167,6 +169,7 @@ exports.login = async (req, res) => {
     // 3. Set httpOnly cookie and respond
     const userWithoutPassword = { ...user };
     delete userWithoutPassword.password;
+    userWithoutPassword.access = loginAccessSummary(user);
 
     const token = generateToken(user.id);
     res.cookie('accessToken', token, COOKIE_OPTIONS);
@@ -206,6 +209,7 @@ exports.googleSignIn = async (req, res) => {
       // Remove password if it exists
       const userWithoutPassword = { ...user };
       delete userWithoutPassword.password;
+      userWithoutPassword.access = loginAccessSummary(user);
 
       const jwtToken = generateToken(user.id);
       res.cookie('accessToken', jwtToken, COOKIE_OPTIONS);
@@ -278,6 +282,7 @@ exports.getProfile = async (req, res) => {
     
     // Remove password from user object
     const { password, ...userWithoutPassword } = user;
+    userWithoutPassword.access = loginAccessSummary(user);
     
     res.json({
       success: true,
@@ -366,17 +371,22 @@ exports.createGoal = async (req, res) => {
 exports.getActiveGoal = async (req, res) => {
     try {
         const userId = req.user.id;
-        const goal = await User.getActiveGoal(userId);
+        const { readAccess } = require('../models/sceneAccess');
+        const snapshot = await readAccess(require('../models/db'), userId);
+        if (!snapshot) return res.status(401).json({ success: false, message: 'account_unavailable' });
+        const goal = snapshot.goal;
+        res.set('Cache-Control', 'no-store');
 
         res.json({
             success: true,
             data: {
-                goal: goal
+                goal: goal,
+                access: snapshot.access
             }
         });
     } catch (error) {
         console.error('Get Active Goal Error:', error);
-        res.status(500).json({
+        res.status(503).json({
             success: false,
             message: '获取当前目标时服务器错误'
         });
@@ -1519,6 +1529,7 @@ exports.phoneLogin = async (req, res) => {
         const user = await User.findOrCreateByPhone(phone);
         const userWithoutPassword = { ...user };
         delete userWithoutPassword.password;
+        userWithoutPassword.access = loginAccessSummary(user);
 
         const token = generateToken(user.id);
         res.cookie('accessToken', token, COOKIE_OPTIONS);

@@ -11,7 +11,14 @@ const pages = [
 ];
 const user = { id: '00000000-0000-4000-8000-000000000001', username: 'quality_user', nickname: 'Quality User', native_language: 'zh', target_language: 'en', onboarding_tour_completed: true };
 const onboardingUser = { ...user, nickname: '', native_language: 'Chinese' };
-const activeGoal = { id: 1, target_language: 'en', target_level: 'Beginner', current_proficiency: 10, status: 'active', scenarios: [{ title: 'Airport Check-in', tasks: [{ id: 1, text: 'Ask where the counter is', status: 'pending', score: 0 }] }] };
+const activeGoal = {
+  id: 1, target_language: 'en', target_level: 'Beginner', current_proficiency: 10, status: 'active',
+  scenarios: [{ title: 'Airport Check-in', tasks: [{ id: 1, text: 'Ask where the counter is', status: 'pending', score: 0, interaction_count: 0, scoring_generation: 3 }] }],
+  access: {
+    membership: { active: false, status: 'free', source: null }, unlocked_count: 1,
+    scenarios: [{ title: 'Airport Check-in', allowed: true, reason: null }],
+  },
+};
 
 test.beforeEach(async ({ page }, testInfo) => {
   const isPublic = /\b(landing|welcome|login|register)\b/.test(testInfo.title);
@@ -242,6 +249,12 @@ test('@critical discovery recovers after a transient dashboard request failure',
 test('@critical discovery locked scenario opens a keyboard-safe localized dialog', async ({ page }, testInfo) => {
   const lockedGoal = {
     ...activeGoal,
+    access: {
+      membership: { active: false, status: 'free', source: null }, unlocked_count: 3,
+      scenarios: ['Airport Check-in', 'Hotel Booking', 'Ordering Coffee', 'Job Interview'].map((title, index) => ({
+        title, allowed: index < 3, reason: index < 3 ? null : 'scene_locked',
+      })),
+    },
     scenarios: [
       { title: 'Airport Check-in', tasks: ['Ask where the counter is'] },
       { title: 'Hotel Booking', tasks: ['Request a quiet room'] },
