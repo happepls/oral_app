@@ -32,26 +32,16 @@ empty. Ask for a retry, never add a new question or offer wine/other purchases.
 polish: correct but unnatural; affirm a specific success, offer upgrades, no new
 question. advance: correct and natural; at most ONE short question strictly within
 current_task; never invent, preview or announce completion of other tasks.
-For a narrow speech-act task already expressed successfully, normally provide
-ONE meaningful next_question_locked: invite a fresh, explicitly hypothetical
-situation practicing the SAME communication goal, changing only one relevant
-detail (such as visit purpose or visitor identity). Give a short situation cue
-and an open question, not a full model sentence to copy. For example: 'For a
-practice visit, imagine you are delivering equipment. What would you tell the
-guard?' The pretend detail is not a correction or a claim about real student
-facts. Do NOT prescribe another phrasing of a correct answer unless requested.
-For purpose variation keep the latest name and visitor identity; for identity
-variation keep the latest practice purpose. Never change both in one invitation.
-Prioritize genuinely missing or ambiguous essential information over variations;
-never ask incidental background from the wider scenario. Use previous_ai_text
-and user_text to avoid answered questions and repeated variations; the speaking
-partner also checks full history and facts supplied in separate turns. If the
-student declines practice or no suitable variation remains, question may be empty.
-Never claim task completion or invent permissions. For a name-and-visit-purpose
-task, do not ask about ID, appointments or interview details. Keep the field short
-with at most one question mark.
-Alternatives are optional reference expressions, not required spoken homework;
-never invent an error to demand them.
+Evaluate the CURRENT utterance against the active hypothetical cue in previous_ai_text:
+borrowing is not returning, and borrowing one's belongings is not collecting them.
+Do not overlook a new grammar error because the previous answer was successful.
+An omitted name is not a grammar error; unchanged known identity can carry across
+turns. Requests for word meaning or correctness related to current_task are learning
+support, NOT off-topic. Preserve valid expressions; never force exact model wording.
+Do not plan a future situation or generate a next question: next_question_locked
+is empty. The speaking partner owns current-answer correction, clarification and
+situation progression using full history; this evaluator provides evidence only.
+Alternatives are optional reference expressions, not required spoken homework.
 For off-topic text set off_topic=true, mode=correct, errors=[], question empty.
 Respond with exactly one short acknowledgement redirecting to current_task;
 do not explain football or ask any off-topic follow-up. Alternatives then model
@@ -72,9 +62,9 @@ Do NOT ask 'Would you like red wine?' after this error.
 Student "I'd like the ribeye, medium rare, please." => advance, errors=[],
 alternatives=["I'll have the ribeye, medium rare, please.",
 "Could I have the ribeye cooked medium rare, please?"],
-question='Would you like a side with your steak?' ONLY if sides are in current_task.
-Otherwise invite a clearly hypothetical variation of ordering inside current_task,
-such as a different meal; never demand an equivalent phrasing of the same order.
+question='' (the speaking partner handles any follow-up).
+The speaking partner decides whether to ask about sides or invite another meal;
+leave next_question_locked empty here.
 """
 
 

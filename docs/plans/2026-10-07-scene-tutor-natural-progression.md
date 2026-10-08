@@ -13,9 +13,12 @@ equivalent-phrasing drills. The base Scene Theater prompt, response-scoped teach
 directive and workflow evaluator all prescribed this behavior. Do not persist
 private conversation text or account identifiers as evidence.
 
-Speak primarily as the scenario counterpart. Count known details across turns;
+Speak primarily as the scenario counterpart. One ordered current-answer policy
+chooses support, clarification, repair, missing information or progression. Freeze
+the latest partner cue on every response; previous-turn evaluation is advisory
+evidence and cannot schedule a new situation. Count known details across turns;
 ask only for missing or ambiguous information essential to the visible subtask.
-A correct, complete answer receives brief acknowledgement and an invitation to
+Only a correct, complete answer receives brief acknowledgement and an invitation to
 a fresh, explicitly hypothetical situation practicing the same communication goal.
 Change purpose while retaining identity, or identity while retaining purpose;
 give a situation cue, not a complete sentence to copy. Respect declined practice.
@@ -88,3 +91,39 @@ hypothetical equipment-delivery invitation with one question for a synthetic val
 name-and-interview-purpose answer. Prior-version local images retained under
 `:before-tutor-variations`. Re-enter the scene for phone acceptance without resetting
 progress. PR #75 remains draft; no merge or production deployment performed.
+
+## Current-answer policy refactor, 2026-10-08
+
+User acceptance found new situation invitations bypassing actual errors, known
+names being demanded again, and language questions being treated as off-topic.
+Replaced the accumulated prompt rules with `scene_teaching_policy.py`: one ordered
+policy shared by session and response instructions. The previous evaluator's
+questions and alternatives are no longer injected into future speech. Its minimal
+repair evidence remains advisory and expires after one response. Workflow prompt
+now evaluates expression evidence without planning future situations.
+
+Every eligible response receives a frozen latest-partner-utterance context even
+when asynchronous feedback has not arrived. This keeps a vocabulary explanation
+inside the active hypothetical visit rather than reverting to an earlier visit.
+Current genuine errors require minimal repair and retry within that situation;
+valid phrasing, known identity and concise answers are accepted. Scoring, generation,
+audio transport and the disabled serialized-teaching path are unchanged.
+
+Verification: AI 373 passed; workflow 211 passed; `npm run verify` pass (100);
+SDLC clean. Added real callback coverage with generation 3 for previous-success
+notes, feedback-not-yet-arrived, task-history cutoff and one-time note consumption.
+Six focused live Realtime cases completed with audio: wrong active purpose,
+new missing-article error, repaired grammar, meaning support, correctness support,
+and valid synonymous wording. Errors stayed on the original situation; repaired
+and valid expressions received a new situation. Language support explained the
+relevant distinction within the current cue. Initial meaning-support testing
+exposed reversion to an older visit; fixed by freezing current response context.
+An earlier broad synthetic run was interrupted by a websocket connection timeout;
+it is not claimed as a full pass. Focused calls were run independently afterward.
+
+Rebuilt/recreated local AI and workflow services from tracked source, reloaded
+nginx upstreams, and compared deployed policy/prompt files byte-for-byte. Runtime
+workflow grammar feedback and health checked separately from semantic acceptance.
+Rollback images: `:before-current-answer-policy`. Draft PR #75 is updated; phone
+acceptance and human review remain outstanding. No private conversation text or
+account identifiers are stored here, and no production change is claimed.
