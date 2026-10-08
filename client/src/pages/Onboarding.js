@@ -72,8 +72,8 @@ export default function Onboarding() {
       <div className="w-full max-w-lg flex items-center justify-between mb-6">
         <div className="flex items-center gap-2">
           <button type="button" aria-label={t('back')} onClick={() => navigate('/welcome')} className="flex min-h-[44px] min-w-[44px] items-center justify-center rounded-xl text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-700"><ArrowLeft size={20} /></button>
-          <img src="/guaji-logo.svg" alt="GuaJi" className="w-8 h-8" />
-          <span className="font-bold text-slate-800 dark:text-white text-lg">GuaJi</span>
+          <img src="/guaji-logo.svg" alt="Guaji" className="w-8 h-8" />
+          <span className="font-bold text-slate-800 dark:text-white text-lg">Guaji</span>
         </div>
         <LanguageSwitcher />
       </div>

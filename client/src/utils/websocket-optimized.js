@@ -196,7 +196,13 @@ class OptimizedWebSocket {
     } else if (typeof event.data === 'string') {
       this.metrics.bytesReceived += event.data.length;
     } else if (event.data instanceof Blob) {
-      // Handle blob data
+      // Deliver binary blobs at receipt time. Consumers own ordered conversion;
+      // converting here lets a later buffer or done event overtake this packet.
+      if (this.options.binaryType === 'arraybuffer') {
+        this.metrics.bytesReceived += event.data.size;
+        this._emit('message', event);
+        return;
+      }
       this._handleBlobMessage(event.data);
       return;
     }

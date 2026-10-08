@@ -85,7 +85,7 @@ function Login() {
     <div className="relative flex min-h-[100dvh] w-full flex-col items-center bg-background-light dark:bg-background-dark p-4">
       {/* Logo top */}
       <div className="w-full max-w-md flex justify-center pt-4 pb-3 sm:pt-10 sm:pb-6">
-        <img src="/guaji-logo.svg" alt="GuaJi" className="h-16 w-16" />
+        <img src="/guaji-logo.svg" alt="Guaji" className="h-16 w-16" />
       </div>
 
       <motion.div

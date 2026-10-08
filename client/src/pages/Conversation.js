@@ -28,10 +28,10 @@ import { cleanStreamingText, appendDelta, aiBubbleRenderState, stripAllMarkers, 
 import { normalizeConnectionError, shouldShowConnectionError } from './connectionErrorLogic';
 import { calculateTaskProgress, isCompletedWindowEvaluation, isCurrentScoringMessage } from './conversationProgress';
 import TaskProgressGuidance from '../components/TaskProgressGuidance';
-import ExpressionFeedback from '../components/ExpressionFeedback';
-import { isCurrentExpression } from './conversationExpressions';
+import { isCurrentTeachingState } from './conversationExpressions';
 import { subscribeGoalScenariosUpdates } from '../utils/goalScenarios';
 import { createPcmStreamScheduler, unpackPcmAudioPacket } from '../utils/pcmStreamScheduler';
+import { ResponseAudioRouter } from '../utils/responseAudioRouter';
 
 const MAGIC_TIPS = [
   '点击消息气泡右侧的喇叭图标，可重听 AI 的示范发音。',
@@ -461,6 +461,8 @@ function Conversation() {
   // first audio frame from this AI turn starts playing. Drives the mascot
   // `thinking` expression during the request→response gap (test case 6.x).
   const [isWaitingForAIResponse, setIsWaitingForAIResponse] = useState(false);
+  const [teachingState, setTeachingState] = useState(null);
+  useEffect(() => { if (!isConnected) setTeachingState(null); }, [isConnected]);
   const [webSocketError, setWebSocketError] = useState(null);
   // Set true when the backend explicitly rejects this connection (e.g.
   // "Invalid scenario" error frame, or a 1008/4400 close). Guards the close
@@ -593,8 +595,6 @@ function Conversation() {
   const scoringGenerationByTaskRef = useRef(new Map()); // Reject late evaluations from before an explicit reset
   const progressRevisionRef = useRef(0); // New WS progress invalidates older REST snapshots
   const [progressFeedback, setProgressFeedback] = useState(null);
-  const expressionTurnsRef = useRef(new Set());
-  const latestExpressionTurnRef = useRef(null);
   const expressionInterruptedResponsesRef = useRef(new Set());
   const [completionSheetDismissed, setCompletionSheetDismissed] = useState(false);
   const feedbackOrderRef = useRef(new Map());
@@ -907,11 +907,17 @@ function Conversation() {
   const audioQueueRef = useRef([]);
   const pcmSchedulerRef = useRef(null);
   const playAudioChunkRef = useRef(null);
-  const pendingStreamAudioRef = useRef([]);
+  const responseAudioRouterRef = useRef(null);
   const receivedStreamAudioRef = useRef(false);
-  const aiTextReadyForAudioRef = useRef(false);
   const activeAudioResponseIdRef = useRef(null);
   const streamAudioDoneRef = useRef(false);
+  const audioPlaybackByResponseRef = useRef(new Map());
+  const playedAudioResponsesRef = useRef(new Set());
+  const pendingAudioUrlsRef = useRef(new Map());
+  const playbackStartTimerRef = useRef(null);
+  const playbackStartObserverRef = useRef(null);
+  const blockedStreamChunksRef = useRef([]);
+  const [audioNeedsGesture, setAudioNeedsGesture] = useState(false);
   // Tracks whether streaming PCM chunks have actually played for the CURRENT turn,
   // measured from the last stopAudioPlayback() cut point (which is the natural
   // per-turn boundary: user recording start / auto-play start / magic_pass).
@@ -939,25 +945,48 @@ function Conversation() {
 
   // Initialize audio context
   const initAudioContext = () => {
-    if (!audioContextRef.current) {
+    if (!audioContextRef.current || audioContextRef.current.state === 'closed') {
       audioContextRef.current = new (window.AudioContext || window.webkitAudioContext)({
         sampleRate: 24000,
         latencyHint: 'interactive'
       });
+      audioContextRef.current.addEventListener?.('statechange', () => {
+        const state = audioContextRef.current?.state;
+        if (['suspended', 'interrupted'].includes(state)) setAudioNeedsGesture(true);
+        else if (state === 'running') playbackStartObserverRef.current?.();
+      });
       pcmSchedulerRef.current = createPcmStreamScheduler(audioContextRef.current, {
-        primingMs: 160,
-        onPlaybackStart: () => {
+        primingMs: 320,
+        onPlaybackStart: ({ startTime, generation }) => {
           const scheduler = pcmSchedulerRef.current;
           if (!scheduler) return;
-          streamedAudioSinceCutRef.current = true;
+          const responseId = activeAudioResponseIdRef.current;
+          const observeStart = () => {
+            if (generation !== scheduler.generation) return;
+            const ctx = audioContextRef.current;
+            if (ctx?.state !== 'running') { setAudioNeedsGesture(true); return; }
+            if (ctx.currentTime <= startTime) {
+              playbackStartTimerRef.current = setTimeout(observeStart, 30);
+              return;
+            }
+            streamedAudioSinceCutRef.current = true;
+            audioPlaybackByResponseRef.current.set(responseId, 'playing');
+            playedAudioResponsesRef.current.add(responseId);
+            setMessages(prev => prev.map(m => m.type === 'ai' && m.responseId === responseId && m.audioUrl
+              ? { ...m, audioPlayed: true, audioPending: false } : m));
+            setAudioNeedsGesture(false);
+            setIsAISpeaking(scheduler.hasScheduledAudio);
+            setIsWaitingForAIResponse(false);
+          };
+          clearTimeout(playbackStartTimerRef.current);
+          playbackStartObserverRef.current = observeStart;
+          playbackStartTimerRef.current = setTimeout(observeStart, 50);
           speechStartTimeRef.current = audioContextRef.current?.currentTime || 0;
           nextStartTimeRef.current = scheduler.nextStartTime;
           speechTotalDurationRef.current = Math.max(
             0,
             scheduler.nextStartTime - speechStartTimeRef.current
           );
-          setIsAISpeaking(true);
-          setIsWaitingForAIResponse(false);
         },
         onPlaybackIdle: () => {
           setIsAISpeaking(false);
@@ -965,8 +994,13 @@ function Conversation() {
         },
       });
     }
-    if (audioContextRef.current.state === 'suspended') {
-      return audioContextRef.current.resume().catch(error => {
+    if (['suspended', 'interrupted'].includes(audioContextRef.current.state)) {
+      setAudioNeedsGesture(true);
+      return audioContextRef.current.resume().then(() => {
+        if (audioContextRef.current?.state !== 'running') throw new Error('Audio playback needs a user gesture');
+        setAudioNeedsGesture(false);
+      }).catch(error => {
+        setAudioNeedsGesture(true);
         console.warn('AudioContext resume rejected:', error?.message || error);
         throw error;
       });
@@ -976,11 +1010,14 @@ function Conversation() {
 
   // Stop audio playback
   const stopAudioPlayback = () => {
+    clearTimeout(playbackStartTimerRef.current);
+    playbackStartObserverRef.current = null;
+    blockedStreamChunksRef.current = [];
+    if (activeAudioResponseIdRef.current) audioPlaybackByResponseRef.current.set(activeAudioResponseIdRef.current, 'cancelled');
     isInterruptedRef.current = true;
     pcmSchedulerRef.current?.stop();
-    pendingStreamAudioRef.current = [];
+    responseAudioRouterRef.current?.reset();
     receivedStreamAudioRef.current = false;
-    aiTextReadyForAudioRef.current = false;
     activeAudioResponseIdRef.current = null;
     streamAudioDoneRef.current = false;
     audioQueueRef.current.forEach(source => {
@@ -1342,8 +1379,7 @@ function Conversation() {
       setTaskReadyToComplete(null);
       setTaskCompletionPending(false);
       feedbackOrderRef.current.clear();
-      expressionTurnsRef.current.clear();
-      latestExpressionTurnRef.current = null;
+      setTeachingState(null);
       expressionInterruptedResponsesRef.current.clear();
       // 重置魔法重复阶段状态
       setMagicPassedTasks(new Set());
@@ -1544,36 +1580,55 @@ function Conversation() {
 
   const connectionToastShownRef = useRef(false);
 
-  const releasePendingAudioAfterPaint = (responseId) => {
-    activeAudioResponseIdRef.current = responseId || null;
-    aiTextReadyForAudioRef.current = true;
-    const schedule = window.requestAnimationFrame || ((callback) => setTimeout(callback, 0));
-    schedule(() => {
-      const pending = pendingStreamAudioRef.current.splice(0);
-      pending.forEach(packet => {
-        if (packet.packetPromise) {
-          playAudioChunkRef.current?.(packet.packetPromise.then(resolved => (
-            !resolved.responseId || resolved.responseId === activeAudioResponseIdRef.current
-              ? resolved.pcm
-              : new Uint8Array()
-          )));
-        } else if (!packet.responseId || packet.responseId === activeAudioResponseIdRef.current) {
-          playAudioChunkRef.current?.(packet.pcm);
-        }
+  const getResponseAudioRouter = () => {
+    if (!responseAudioRouterRef.current) {
+      responseAudioRouterRef.current = new ResponseAudioRouter({
+        play: pcm => playAudioChunkRef.current?.(pcm),
+        flush: () => {
+          const scheduler = pcmSchedulerRef.current;
+          return scheduler?.flush(scheduler.generation);
+        },
+        onError: () => setAudioNeedsGesture(true),
       });
-      if (
-        streamAudioDoneRef.current === true
-        || streamAudioDoneRef.current === activeAudioResponseIdRef.current
-      ) {
-        const scheduler = pcmSchedulerRef.current;
-        scheduler?.flush(scheduler.generation);
-      }
-    });
+    }
+    return responseAudioRouterRef.current;
+  };
+
+  const releasePendingAudioAfterPaint = (responseId) => {
+    const router = getResponseAudioRouter();
+    if (router.retired.has(responseId)) return;
+    if (responseId && activeAudioResponseIdRef.current && responseId !== activeAudioResponseIdRef.current) {
+      audioPlaybackByResponseRef.current.set(activeAudioResponseIdRef.current, 'cancelled');
+      clearTimeout(playbackStartTimerRef.current);
+      playbackStartObserverRef.current = null;
+      blockedStreamChunksRef.current = [];
+      pcmSchedulerRef.current?.stop();
+      streamedAudioSinceCutRef.current = false;
+    }
+    activeAudioResponseIdRef.current = responseId || null;
+    router.activate(responseId || null);
+    if (responseId) {
+      const attempt = connectionAttemptRef.current;
+      setTimeout(() => {
+        const deferredUrl = pendingAudioUrlsRef.current.get(responseId);
+        if (deferredUrl && attempt === connectionAttemptRef.current && !router.retired.has(responseId)) {
+          pendingAudioUrlsRef.current.delete(responseId);
+          handleJsonMessage(deferredUrl);
+        }
+      }, 0);
+    }
   };
 
   // Handle JSON messages from WebSocket
   const handleJsonMessage = useCallback((data) => {
+      if (data.payload?.protocol_version === 2 && ['user_transcript', 'ai_message', 'expression_feedback', 'teaching_state'].includes(data.type)) {
+        const params = new URLSearchParams(window.location.search);
+        if (!isCurrentTeachingState({ ...data.payload, status: data.type === 'teaching_state' ? data.payload.status : 'ready' },
+          activeScoringTaskRef.current, scoringGenerationByTaskRef.current, params.get('scenario'), currentUserMessageIdRef.current)) return;
+      }
       const responseId = data.payload?.responseId || data.responseId;
+      if (responseId && responseAudioRouterRef.current?.retired.has(responseId)
+        && ['ai_message', 'ai_text_delta', 'ai_turn_started', 'response.audio.done'].includes(data.type)) return;
       if (responseId && expressionInterruptedResponsesRef.current.has(responseId)
         && ['ai_message', 'ai_text_delta', 'ai_turn_started', 'audio_url', 'audio_done'].includes(data.type)) return;
       if (data.type === 'analytics_end_proof') {
@@ -1779,7 +1834,11 @@ function Conversation() {
            // audioPlayed=true to keep the auto-play useEffect from firing.
            // Consume the flag here (read once per audio_url) so a later distinct
            // turn that did NOT stream isn't accidentally suppressed.
-           const streamedThisTurn = streamedAudioSinceCutRef.current;
+           const responsePlayback = audioPlaybackByResponseRef.current.get(targetResponseId);
+           const streamedThisTurn = playedAudioResponsesRef.current.has(targetResponseId)
+             || responsePlayback === 'cancelled';
+           const audioPending = !streamedThisTurn && targetResponseId === activeAudioResponseIdRef.current
+             && (pcmSchedulerRef.current?.hasScheduledAudio || blockedStreamChunksRef.current.length > 0);
 
            if (role === 'assistant') {
                if (suppressNextRestoredAudioRef.current) {
@@ -1797,13 +1856,18 @@ function Conversation() {
                            newMessages[index] = {
                                ...newMessages[index],
                                audioUrl: url,
+                               audioPending,
                                audioPlayed: streamedThisTurn || shouldSuppressAutoPlay(welcomeMuted, newMessages, index)
                            };
                            return newMessages;
                        }
                    }
 
-                   // 2. Fallback: Attach to the LAST AI message that doesn't have a URL
+                   if (targetResponseId) {
+                       pendingAudioUrlsRef.current.set(targetResponseId, data);
+                       return prev;
+                   }
+                   // Legacy frames without an identity may attach to the current message.
                    for (let i = newMessages.length - 1; i >= 0; i--) {
                        if (newMessages[i].type === 'ai' && !newMessages[i].audioUrl) {
                            console.log(`[AudioURL] Fallback attachment to message ${i}, isFinal=${newMessages[i].isFinal}, streamed=${streamedThisTurn}`);
@@ -1882,7 +1946,7 @@ function Conversation() {
            });
            break;
         }
-        case 'ai_message':
+        case 'ai_message': {
            // Handle AI message from comms-service (contains text content in payload)
            console.log('🤖 AI Message:', data);
            const msgPayload = data.payload || data;
@@ -1978,6 +2042,7 @@ function Conversation() {
                });
            }
            break;
+        }
         case 'ai_turn_started': {
            const startedResponseId = data.payload?.responseId || data.responseId;
            setMessages(prev => {
@@ -2051,7 +2116,6 @@ function Conversation() {
         case 'user_transcript':
            // Display user's speech transcription in chat
            if (data.payload && data.payload.text) {
-             latestExpressionTurnRef.current = data.payload.turn_id || null;
              restoredAiContentKeysRef.current.clear();
              setMessages(prev => reconcileUserTranscript(prev, {
                text: data.payload.text,
@@ -2089,17 +2153,15 @@ function Conversation() {
            );
            break;
         }
+        case 'teaching_state': {
+           const status = data.payload.status;
+           setTeachingState(status === 'ready' ? null : data.payload);
+           if (status === 'retry' || status === 'ready') setIsWaitingForAIResponse(false);
+           break;
+        }
         case 'expression_feedback': {
-           const feedback = data.payload;
-           const params = new URLSearchParams(window.location.search);
-           if (['recall', 'daily_qa', 'tour', 'quick_experience', 'magic_repetition'].includes(params.get('mode'))
-             || currentPhaseRef.current !== 'scene_theater'
-             || !isCurrentExpression(feedback, activeScoringTaskRef.current, scoringGenerationByTaskRef.current, params.get('scenario'))
-             || feedback.turn_id !== latestExpressionTurnRef.current) break;
-           const key = `${feedback.task_id}:${feedback.scoring_generation}:${feedback.turn_id}`;
-           if (expressionTurnsRef.current.has(key)) break;
-           expressionTurnsRef.current.add(key);
-           setMessages(prev => [...prev, { type: 'expression_feedback', id: key, feedback }]);
+           // Compatibility metadata only. Teaching examples and clarification
+           // questions are presented in the tutor's normal text/audio reply.
            break;
         }
         case 'user_proficiency_feedback':
@@ -2490,6 +2552,10 @@ function Conversation() {
            }]);
            break;
         case 'response.audio.done':
+           if (responseId && activeAudioResponseIdRef.current && responseId !== activeAudioResponseIdRef.current) {
+             void getResponseAudioRouter().finish(responseId);
+             break;
+           }
            // Backend signals the current AI turn's TTS is fully delivered.
            // The user is no longer waiting on the model — clear the thinking
            // flag now so the mascot can't get stuck on the thinking face after
@@ -2503,18 +2569,7 @@ function Conversation() {
              || activeAudioResponseIdRef.current
              || true
            );
-           if (
-             aiTextReadyForAudioRef.current
-             && (
-               streamAudioDoneRef.current === true
-               || streamAudioDoneRef.current === activeAudioResponseIdRef.current
-             )
-           ) {
-             const scheduler = pcmSchedulerRef.current;
-             scheduler?.flush(scheduler.generation).then(() => {
-               nextStartTimeRef.current = scheduler.nextStartTime;
-             });
-           }
+           void getResponseAudioRouter().finish(responseId || activeAudioResponseIdRef.current);
            // Schedule the speaking flag to flip off shortly after the last
            // queued chunk finishes — this drives CC subtitle auto-clear.
            if (!receivedStreamAudioRef.current) {
@@ -2553,6 +2608,7 @@ function Conversation() {
     const scheduler = pcmSchedulerRef.current;
     if (!scheduler) return;
     const generation = scheduler.generation;
+    const responseId = activeAudioResponseIdRef.current;
     try {
       const accepted = await scheduler.enqueue(
         Promise.resolve(contextReady).then(() => audioDataOrPromise),
@@ -2566,9 +2622,17 @@ function Conversation() {
         );
       }
     } catch (error) {
+      if (generation !== scheduler.generation) return;
+      // Resume denial must retain the PCM, otherwise tapping unlock would play
+      // only chunks that happened to arrive after the gesture.
+      blockedStreamChunksRef.current.push({ data: audioDataOrPromise, responseId, generation });
       // Keep streamedAudioSinceCut=false so the complete COS recording remains
       // eligible as a fallback when PCM conversion/scheduling fails.
       streamedAudioSinceCutRef.current = false;
+      audioPlaybackByResponseRef.current.set(responseId, 'failed');
+      setMessages(prev => prev.map(m => m.responseId === responseId
+        ? { ...m, audioPending: true, audioPlayed: playedAudioResponsesRef.current.has(responseId) } : m));
+      setAudioNeedsGesture(true);
       console.error('Failed to schedule PCM chunk:', error);
     }
   }, []);
@@ -2741,11 +2805,7 @@ function Conversation() {
         const packet = unpackPcmAudioPacket(event.data);
         if (expressionInterruptedResponsesRef.current.has(packet.responseId)) return;
         receivedStreamAudioRef.current = true;
-        if (
-          aiTextReadyForAudioRef.current
-          && (!packet.responseId || packet.responseId === activeAudioResponseIdRef.current)
-        ) playAudioChunk(packet.pcm);
-        else pendingStreamAudioRef.current.push(packet);
+        void getResponseAudioRouter().receive(packet);
       } else if (typeof event.data === 'string') {
         try {
           const data = JSON.parse(event.data);
@@ -2758,18 +2818,7 @@ function Conversation() {
         console.log('[Audio] Received blob data, size:', event.data.size);
         receivedStreamAudioRef.current = true;
         const conversion = event.data.arrayBuffer().then(unpackPcmAudioPacket);
-        if (aiTextReadyForAudioRef.current) {
-          playAudioChunk(conversion.then(packet => (
-            !expressionInterruptedResponsesRef.current.has(packet.responseId)
-              && (!packet.responseId || packet.responseId === activeAudioResponseIdRef.current)
-              ? packet.pcm
-              : new Uint8Array()
-          )));
-        } else {
-          // Queue the conversion promise immediately so the scheduler preserves
-          // WebSocket invocation order even if Blob conversions resolve out of order.
-          pendingStreamAudioRef.current.push({ packetPromise: conversion });
-        }
+        void getResponseAudioRouter().receive(conversion);
       } else {
         console.warn('[WS] Unknown message type:', typeof event.data, event.data);
       }
@@ -3235,7 +3284,7 @@ function Conversation() {
   const pendingAutoPlayKey = React.useMemo(() => {
     const parts = [];
     messages.forEach((m, i) => {
-      if (m.type === 'ai' && m.audioUrl && m.audioPlayed === false) {
+      if (m.type === 'ai' && m.audioUrl && m.audioPlayed === false && !m.audioPending) {
         parts.push(`${i}:${m.responseId || ''}:${m.audioUrl}`);
       }
     });
@@ -3247,7 +3296,7 @@ function Conversation() {
     messages.forEach((message, index) => {
       // Only auto-play if explicitly marked as not played (audioPlayed === false)
       // Don't auto-play if audioPlayed is undefined or true
-      if (message.type === 'ai' && message.audioUrl && message.audioPlayed === false) {
+      if (message.type === 'ai' && message.audioUrl && message.audioPlayed === false && !message.audioPending) {
         // Mark message as played to prevent repeated playback
         setMessages(prev => {
           const newMessages = [...prev];
@@ -3285,6 +3334,7 @@ function Conversation() {
         return;
     }
     setIsUserRecording(true);
+    setTeachingState(null);
     // Starting a new turn cancels any pending `thinking` from the previous one.
     setIsWaitingForAIResponse(false);
     if (!practiceStartTimeRef.current) practiceStartTimeRef.current = Date.now();
@@ -3303,7 +3353,7 @@ function Conversation() {
     console.log('🎤 Recording started, session ID:', newSessionId);
 
     // Always stop audio playback immediately (interrupt AI response)
-    latestExpressionTurnRef.current = null;
+    if (activeAudioResponseIdRef.current) expressionInterruptedResponsesRef.current.add(activeAudioResponseIdRef.current);
     stopAudioPlayback();
     isInterruptedRef.current = true; // Mark as interrupted
 
@@ -3358,7 +3408,7 @@ function Conversation() {
                 const b64 = btoa(binary);
                 socketRef.current.send(JSON.stringify({
                     type: 'audio_stream',
-                    payload: { audio: b64 }
+                    payload: { audio: b64, input_id: currentUserMessageIdRef.current }
                 }));
             } else {
                 console.warn('⚠️ Cannot send buffered audio - WebSocket not connected, state:', wsReadyState);
@@ -3894,31 +3944,16 @@ function Conversation() {
           </div>
         )}
 
+        {teachingState && isConnected && isCurrentTeachingState(teachingState, activeScoringTask,
+          scoringGenerationByTaskRef.current, new URLSearchParams(window.location.search).get('scenario'), currentUserMessageIdRef.current) && (
+          <p role="status" aria-live="polite" className="mx-4 my-3 text-sm text-muted-foreground">
+            {t(`teaching_${teachingState.status}`)}
+          </p>
+        )}
+
         {messages.map((msg, index) => {
           if (msg.type === 'expression_feedback') {
-            const feedback = msg.feedback;
-            const scenario = new URLSearchParams(window.location.search).get('scenario');
-            if (currentPhase !== 'scene_theater' || !isCurrentExpression(feedback, activeScoringTask, scoringGenerationByTaskRef.current, scenario)) return null;
-            return <ExpressionFeedback key={msg.id} feedback={feedback}
-              disabled={!isConnected || isWaitingForAIResponse || isUserRecording || feedback.turn_id !== latestExpressionTurnRef.current}
-              onSend={(text, source) => {
-                if (source.turn_id !== latestExpressionTurnRef.current
-                  || !isCurrentExpression(source, activeScoringTaskRef.current, scoringGenerationByTaskRef.current, scenario)
-                  || socketRef.current?.getReadyState?.() !== WebSocket.OPEN) return false;
-                try {
-                  if (activeAudioResponseIdRef.current) expressionInterruptedResponsesRef.current.add(activeAudioResponseIdRef.current);
-                  stopAudioPlayback();
-                  isInterruptedRef.current = false;
-                  socketRef.current.send(JSON.stringify({ type: 'interrupt' }));
-                  if (socketRef.current.send(JSON.stringify({ type: 'text_message', payload: { text } })) === false) return false;
-                } catch { return false; }
-                latestExpressionTurnRef.current = null;
-                const messageId = `expression-${Date.now()}`;
-                currentUserMessageIdRef.current = messageId;
-                setMessages(prev => [...prev, { id: messageId, type: 'user', content: text, isFinal: true }]);
-                setIsWaitingForAIResponse(true);
-                return true;
-              }} />;
+            return null; // Ignore metadata restored from older clients too.
           }
           
           if (msg.type === 'system') {
@@ -4081,6 +4116,24 @@ function Conversation() {
 
       {/* Footer / Controls */}
       <footer className="pb-4 pt-3 px-4 bg-white dark:bg-slate-900 border-t border-slate-100 dark:border-slate-800 shrink-0 shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.05)]">
+        {audioNeedsGesture && !isTourMode && (
+          <button type="button" className="mb-3 w-full min-h-[44px] rounded-xl border border-primary px-3 text-primary focus-visible:ring-2"
+            onClick={() => {
+              void initAudioContext().then(() => {
+                setAudioNeedsGesture(false);
+                const chunks = blockedStreamChunksRef.current.splice(0);
+                chunks.forEach(chunk => {
+                  if (chunk.responseId === activeAudioResponseIdRef.current && chunk.generation === pcmSchedulerRef.current?.generation) playAudioChunkRef.current?.(chunk.data);
+                });
+                if (chunks.length) void getResponseAudioRouter().finish(activeAudioResponseIdRef.current);
+                else if (pcmSchedulerRef.current?.hasScheduledAudio) playbackStartObserverRef.current?.();
+                else {
+                  const message = [...messages].reverse().find(m => m.type === 'ai' && m.audioUrl);
+                  if (message) playFullAudio(message.audioUrl);
+                }
+              }).catch(() => setAudioNeedsGesture(true));
+            }}>{t('qa_ui.audio_tap_to_play')}</button>
+        )}
         <div className="flex flex-col items-center gap-3">
             {/* Main Controls: Recorder + Restart Button */}
             <div className="flex items-center gap-3 w-full max-w-md" data-testid="conversation-footer-controls">
@@ -4089,6 +4142,7 @@ function Conversation() {
                     <RealTimeRecorder
                       ref={recorderRef}
                       isConnected={isConnected}
+                      onBeforeStart={() => { void initAudioContext().catch(() => {}); }}
                       onStart={handleRecordingStart}
                       onStop={handleRecordingStop}
                       onCancel={handleRecordingCancel}

@@ -8,7 +8,7 @@ test('@critical React preboot state does not expose the no-JavaScript fallback',
   await page.goto('/discovery', { waitUntil: 'domcontentloaded' });
 
   await expect(page.locator('#root')).toBeEmpty();
-  await expect(page.getByText('GuaJi AI · AI 口语练习伙伴')).toHaveCount(0);
+  await expect(page.getByText('Guaji AI · AI 口语练习伙伴')).toHaveCount(0);
   await expect(page.getByRole('heading', { name: '常见问题' })).toHaveCount(0);
   await page.screenshot({ path: testInfo.outputPath('preboot.png'), fullPage: true });
 });

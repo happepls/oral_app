@@ -25,6 +25,7 @@ from dashscope.audio.qwen_omni import (
 )
 from dashscope_config import resolve_dashscope_config
 from prompt_manager import PromptManager
+from current_turn_teaching import render_instructions
 
 MODEL = "qwen3.8-omni-flash-realtime"
 TASK = "自己紹介と職務経歴の説明。これまでの仕事と担当した役割を日本語で説明する。"
@@ -83,6 +84,8 @@ CASES = [
 
 
 def instructions(base, case, strategy="assessment"):
+    if strategy == "script_only":
+        return render_instructions(case.get("spoken_script") or SPOKEN_SCRIPTS[case["branch"]])
     directive = base + "\n\n" + (
         "# AUTHORITATIVE CURRENT-TURN ASSESSMENT — apply BEFORE speaking\n"
         "This assessment is for the CURRENT user input below, NOT a previous attempt. "
@@ -210,13 +213,14 @@ def run_one(config, base, case, repeat, strategy="assessment"):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--live", action="store_true", help="Make nine billable model calls")
-    parser.add_argument("--strategy", choices=["assessment", "locked_script"], default="assessment")
+    parser.add_argument("--strategy", choices=["assessment", "locked_script", "script_only"], default="assessment")
     parser.add_argument("--output", type=Path, default=ROOT / "quality/artifacts/scene-current-turn/probe.json")
+    parser.add_argument("--env-file", type=Path, help="Optional existing local configuration file (never copied to output)")
     args = parser.parse_args()
     if not args.live:
         parser.error("--live is required to make real model calls")
     # Match app/test_conn.py's precedence; never print environment values.
-    env_path = ROOT / "services/ai-omni-service/.env"
+    env_path = args.env_file or ROOT / "services/ai-omni-service/.env"
     load_dotenv(env_path if env_path.exists() else ROOT / ".env")
     logging.getLogger("dashscope").setLevel(logging.CRITICAL)
     try:

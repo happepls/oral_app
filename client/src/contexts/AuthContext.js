@@ -9,6 +9,23 @@ export const AuthProvider = ({ children }) => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
+  // Every surface shares this boundary; a pre-paid membership cannot remain
+  // active indefinitely in a tab whose profile was cached before expiry.
+  useEffect(() => {
+    if (user?.billing_source !== 'prepaid' || !user.prepaid_expires_at) return;
+    let timer;
+    const check = () => {
+      const remaining = new Date(user.prepaid_expires_at).getTime() - Date.now();
+      if (remaining <= 0) {
+        setUser(current => current?.billing_source === 'prepaid'
+          ? { ...current, subscription_status: current.stripe_subscription_status || 'free', billing_source: null }
+          : current);
+      } else timer = setTimeout(check, Math.min(remaining + 10, 2147483647));
+    };
+    check();
+    return () => clearTimeout(timer);
+  }, [user?.billing_source, user?.prepaid_expires_at]);
+
   useEffect(() => {
     const savedToken = localStorage.getItem('authToken') || localStorage.getItem('token');
     const savedUser = localStorage.getItem('user');

@@ -41,8 +41,8 @@ function Welcome() {
       </div>
       <div className="flex w-full max-w-md flex-col items-center justify-center text-center flex-grow">
         <div className="flex w-full grow flex-col items-center justify-center p-4">
-          <img src="/guaji-logo.svg" alt="GuaJi" className="h-24 w-24" />
-          <h1 className="text-slate-900 dark:text-white tracking-light text-[32px] font-bold leading-tight pt-4">GuaJi</h1>
+          <img src="/guaji-logo.svg" alt="Guaji" className="h-24 w-24" />
+          <h1 className="text-slate-900 dark:text-white tracking-light text-[32px] font-bold leading-tight pt-4">Guaji</h1>
           <p className="text-slate-600 dark:text-slate-400 text-base mt-2">{t('welcome_subtitle')}</p>
 
           <div className="mt-8 px-6 py-4 bg-slate-50 dark:bg-slate-800/50 rounded-xl border border-slate-100 dark:border-slate-800">

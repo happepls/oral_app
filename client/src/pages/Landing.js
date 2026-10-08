@@ -106,8 +106,8 @@ function Landing() {
       <nav className="fixed top-0 left-0 right-0 z-50 bg-white/80 dark:bg-slate-900/80 backdrop-blur-md border-b border-slate-200 dark:border-slate-800">
         <div className="max-w-6xl mx-auto px-4 py-4 flex items-center justify-between">
           <div className="flex items-center gap-2">
-            <img src="/guaji-logo.svg" alt="GuaJi" className="w-8 h-8" />
-            <span className="hidden sm:inline text-xl font-bold text-slate-900 dark:text-white">GuaJi</span>
+            <img src="/guaji-logo.svg" alt="Guaji" className="w-8 h-8" />
+            <span className="hidden sm:inline text-xl font-bold text-slate-900 dark:text-white">Guaji</span>
           </div>
           <div className="flex items-center gap-1 sm:gap-3">
             <LanguageSwitcher />
@@ -362,7 +362,7 @@ function Landing() {
         <div className="max-w-6xl mx-auto flex flex-col md:flex-row items-center justify-between gap-4">
           <div className="flex items-center gap-2">
             <img src="/guaji-logo.svg" alt="" className="h-8 w-8" />
-            <span className="font-bold text-slate-900 dark:text-white">GuaJi</span>
+            <span className="font-bold text-slate-900 dark:text-white">Guaji</span>
           </div>
           <div className="flex items-center gap-4">
             <p className="text-slate-500 text-sm">{t('landing_footer')}</p>

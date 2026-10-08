@@ -1,0 +1,304 @@
+{
+  "data_origin": "synthetic text only; no user records",
+  "review": "See companion plan document. Connection/time-out failures preserved; not a nine-of-nine pass or v2 semantic acceptance.",
+  "runs": [
+    {
+      "source_file": "success-variation-2026-09-29.json",
+      "started_at": "2026-09-29T04:21:19.379823+00:00",
+      "model": "qwen3.8-omni-flash-realtime",
+      "input_kind": "synthetic_text",
+      "task": "Politely ask an airport agent whether your flight is on time.",
+      "inputs": [
+        "Excuse me, is my flight on time?",
+        "Excuse me, is my flight on time?",
+        "Excuse me, is my flight on schedule?"
+      ],
+      "gate": "pending_semantic_review",
+      "results": [
+        {
+          "repeat": 1,
+          "turn": 1,
+          "input": "Excuse me, is my flight on time?",
+          "transcript": "Your question is clear and polite. Another way to say it is, \"Excuse me, is my flight on schedule?\" Try saying that version.",
+          "status": "completed",
+          "error_type": null,
+          "audio_chunks": 32,
+          "first_audio_ms": 1278,
+          "response_done_ms": 2574,
+          "semantic_pass": null,
+          "feedback": null
+        },
+        {
+          "repeat": 1,
+          "turn": 2,
+          "input": "Excuse me, is my flight on time?",
+          "transcript": "You used \"on time\" correctly again. Try this alternative: Excuse me, will my flight be on time?",
+          "status": "completed",
+          "error_type": null,
+          "audio_chunks": 24,
+          "first_audio_ms": 1022,
+          "response_done_ms": 2238,
+          "semantic_pass": null,
+          "feedback": null
+        },
+        {
+          "repeat": 1,
+          "turn": 3,
+          "input": "Excuse me, is my flight on schedule?",
+          "transcript": "That sounds natural and polite. Try saying, \"Excuse me, is my flight delayed?\"",
+          "status": "completed",
+          "error_type": null,
+          "audio_chunks": 19,
+          "first_audio_ms": 1051,
+          "response_done_ms": 2121,
+          "semantic_pass": null,
+          "feedback": null
+        },
+        {
+          "repeat": 2,
+          "turn": 1,
+          "input": "Excuse me, is my flight on time?",
+          "transcript": "Your question is clear and polite. Another way to ask is: Excuse me, is my flight on schedule? Try saying that version.",
+          "status": "completed",
+          "error_type": null,
+          "audio_chunks": 32,
+          "first_audio_ms": 2165,
+          "response_done_ms": 3216,
+          "semantic_pass": null,
+          "feedback": null
+        },
+        {
+          "repeat": 2,
+          "turn": 2,
+          "input": "Excuse me, is my flight on time?",
+          "transcript": "You kept the polite opening and clear question. Try another natural version: Excuse me, is my flight on schedule?",
+          "status": "completed",
+          "error_type": null,
+          "audio_chunks": 28,
+          "first_audio_ms": 1008,
+          "response_done_ms": 2221,
+          "semantic_pass": null,
+          "feedback": null
+        },
+        {
+          "repeat": 2,
+          "failure_type": "TimeoutError",
+          "semantic_pass": null
+        },
+        {
+          "repeat": 3,
+          "turn": 1,
+          "input": "Excuse me, is my flight on time?",
+          "transcript": "That was clear and polite. Try this version: Excuse me, is my flight on schedule?",
+          "status": "completed",
+          "error_type": null,
+          "audio_chunks": 21,
+          "first_audio_ms": 2492,
+          "response_done_ms": 7686,
+          "semantic_pass": null,
+          "feedback": {
+            "teaching_mode": "advance",
+            "errors": [],
+            "alternatives": [
+              "Excuse me, will my flight be on schedule?",
+              "Pardon me, is the flight departing as planned?"
+            ],
+            "next_question_locked": "Try another way: 'Excuse me, is my flight on schedule?'",
+            "off_topic": false
+          }
+        },
+        {
+          "repeat": 3,
+          "turn": 2,
+          "input": "Excuse me, is my flight on time?",
+          "transcript": "Your question is clear and polite. Try another way: Excuse me, is my flight on schedule?",
+          "status": "completed",
+          "error_type": null,
+          "audio_chunks": 23,
+          "first_audio_ms": 4500,
+          "response_done_ms": 5102,
+          "semantic_pass": null,
+          "feedback": {
+            "teaching_mode": "advance",
+            "errors": [],
+            "alternatives": [
+              "Excuse me, is my flight on time?",
+              "Is my flight running late?"
+            ],
+            "next_question_locked": "Try another way: 'Excuse me, will my flight be on time?'",
+            "off_topic": false
+          }
+        },
+        {
+          "repeat": 3,
+          "turn": 3,
+          "input": "Excuse me, is my flight on schedule?",
+          "transcript": "You used “on schedule” correctly and politely. Try another way: Excuse me, will my flight be on time?",
+          "status": "completed",
+          "error_type": null,
+          "audio_chunks": 26,
+          "first_audio_ms": 2532,
+          "response_done_ms": 9139,
+          "semantic_pass": null,
+          "feedback": null
+        }
+      ],
+      "finished_at": "2026-09-29T04:22:46.615995+00:00"
+    },
+    {
+      "source_file": "success-variation-2026-09-29-request-fix.json",
+      "started_at": "2026-09-29T04:24:28.522046+00:00",
+      "model": "qwen3.8-omni-flash-realtime",
+      "input_kind": "synthetic_text",
+      "task": "Politely ask an airport agent whether your flight is on time.",
+      "inputs": [
+        "Excuse me, is my flight on time?",
+        "Excuse me, is my flight on time?",
+        "Excuse me, is my flight on schedule?"
+      ],
+      "gate": "pending_semantic_review",
+      "results": [
+        {
+          "repeat": 1,
+          "turn": 1,
+          "input": "Excuse me, is my flight on time?",
+          "transcript": "Your question is clear and polite. Another way to say it is: Excuse me, is my flight on schedule? Try saying that version.",
+          "status": "completed",
+          "error_type": null,
+          "audio_chunks": 30,
+          "first_audio_ms": 1516,
+          "response_done_ms": 2863,
+          "semantic_pass": null,
+          "feedback": {
+            "teaching_mode": "advance",
+            "errors": [],
+            "alternatives": [
+              "Excuse me, is my flight on schedule?",
+              "Could you tell me if my flight is delayed?"
+            ],
+            "next_question_locked": "Try another way: 'Excuse me, is my flight on schedule?'",
+            "off_topic": false
+          }
+        },
+        {
+          "repeat": 1,
+          "turn": 2,
+          "input": "Excuse me, is my flight on time?",
+          "transcript": "You asked clearly and politely. Try this version: Excuse me, is my flight on schedule?",
+          "status": "completed",
+          "error_type": null,
+          "audio_chunks": 22,
+          "first_audio_ms": 1237,
+          "response_done_ms": 2365,
+          "semantic_pass": null,
+          "feedback": {
+            "teaching_mode": "advance",
+            "errors": [],
+            "alternatives": [
+              "Excuse me, is my flight on schedule?",
+              "Hi, will my flight be on time?"
+            ],
+            "next_question_locked": "Try another way: 'Excuse me, is my flight on schedule?'",
+            "off_topic": false
+          }
+        },
+        {
+          "repeat": 1,
+          "turn": 3,
+          "input": "Excuse me, is my flight on schedule?",
+          "transcript": "That was clear and natural. Try saying, “Excuse me, will my flight be on time?”",
+          "status": "completed",
+          "error_type": null,
+          "audio_chunks": 20,
+          "first_audio_ms": 1285,
+          "response_done_ms": 2821,
+          "semantic_pass": null,
+          "feedback": {
+            "teaching_mode": "advance",
+            "errors": [],
+            "alternatives": [
+              "Excuse me, will my flight be on time?",
+              "Pardon me, is the flight departing as planned?"
+            ],
+            "next_question_locked": "Try another way: 'Excuse me, will my flight be on time?'",
+            "off_topic": false
+          }
+        },
+        {
+          "repeat": 2,
+          "failure_type": "TimeoutError",
+          "semantic_pass": null
+        },
+        {
+          "repeat": 3,
+          "turn": 1,
+          "input": "Excuse me, is my flight on time?",
+          "transcript": "That was clear and polite. Another way to ask is, \"Excuse me, is my flight on schedule?\" Try saying that version now.",
+          "status": "completed",
+          "error_type": null,
+          "audio_chunks": 29,
+          "first_audio_ms": 1978,
+          "response_done_ms": 3720,
+          "semantic_pass": null,
+          "feedback": {
+            "teaching_mode": "advance",
+            "errors": [],
+            "alternatives": [
+              "I'd like to know if my flight is on schedule.",
+              "Could you tell me if the flight is departing on time?"
+            ],
+            "next_question_locked": "Try another way: 'Excuse me, is my flight on schedule?'",
+            "off_topic": false
+          }
+        },
+        {
+          "repeat": 3,
+          "turn": 2,
+          "input": "Excuse me, is my flight on time?",
+          "transcript": "You asked clearly and politely. Try this version: \"Excuse me, is my flight on schedule?\"",
+          "status": "completed",
+          "error_type": null,
+          "audio_chunks": 24,
+          "first_audio_ms": 1318,
+          "response_done_ms": 2410,
+          "semantic_pass": null,
+          "feedback": {
+            "teaching_mode": "advance",
+            "errors": [],
+            "alternatives": [
+              "I'm wondering if my flight is on time.",
+              "Is there any delay with my flight?"
+            ],
+            "next_question_locked": "Try another way: 'Excuse me, is my flight on schedule?'",
+            "off_topic": false
+          }
+        },
+        {
+          "repeat": 3,
+          "turn": 3,
+          "input": "Excuse me, is my flight on schedule?",
+          "transcript": "That phrasing works well. Try this version: \"Excuse me, will my flight be on time?\"",
+          "status": "completed",
+          "error_type": null,
+          "audio_chunks": 21,
+          "first_audio_ms": 1334,
+          "response_done_ms": 2829,
+          "semantic_pass": null,
+          "feedback": {
+            "teaching_mode": "advance",
+            "errors": [],
+            "alternatives": [
+              "Excuse me, is my flight on time?",
+              "Could you tell me if my flight is running late?"
+            ],
+            "next_question_locked": "Try another way: 'Excuse me, is my flight on schedule?'",
+            "off_topic": false
+          }
+        }
+      ],
+      "finished_at": "2026-09-29T04:25:12.025810+00:00",
+      "transport_pass": false,
+      "feedback_available": 6
+    }
+  ]
+}

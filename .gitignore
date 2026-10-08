@@ -40,6 +40,7 @@ logs
 !.env.*.example
 !*.env.example
 !*.env.sample
+atlas-credentials.env
 .env.local
 .env.development.local
 .env.test.local

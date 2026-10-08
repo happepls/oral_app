@@ -99,7 +99,14 @@ add_scenario_review_column.sql
 | `CORS_ALLOWED_ORIGINS` | `https://guajiguaji.top,https://www.guajiguaji.top` |
 | `AI_SERVICE_PORT` `HEALTH_CHECK_PORT` | `8082` |
 | `NODE_ENV` | `production` |
-| 余（ASR_MODEL/TTS_MODEL/QWEN3_OMNI_MODEL/ENABLE_*） | 照本地 .env |
+| `QWEN3_OMNI_MODEL` | `qwen3.8-omni-flash-realtime` |
+| 余（ASR_MODEL/TTS_MODEL/ENABLE_*） | 照本地 .env |
+
+Qwen3.8 Realtime 需要 DashScope Python SDK ≥ 1.26.5，发布时必须重新安装
+`requirements.txt`（旧镜像不会因面板变量修改而自动升级 SDK）。`DASHSCOPE_WS_URL`
+使用同地域业务空间专属地址，不附加 `?model=`；凭证取 `DASHSCOPE_API_KEY`。
+现有会话需重新连接才能使用新模型。迁移验证见
+`docs/plans/2026-09-28-qwen38-realtime-migration.md`。
 
 ### comms-service  (`services/comms-service`, 8080)
 `JWT_SECRET`=同基准 · `PORT`=8080 · `REDIS_HOST`=`${REDIS_HOST}` · `REDIS_PORT`=`${REDIS_PORT}`

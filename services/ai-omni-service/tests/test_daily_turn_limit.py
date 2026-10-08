@@ -84,6 +84,20 @@ async def test_incr_and_get_daily_turns(fake_redis):
     key = omni._daily_turn_key("u1")
     assert await fake_redis.ttl(key) == 48 * 3600
 
+
+def test_prepaid_expiry_rechecks_cached_context_and_keeps_independent_subscription():
+    ctx = {"subscription_status": "active", "stripe_subscription_status": "free",
+           "prepaid_expires_at": "2026-10-07T12:00:00Z"}
+    expiry = 1791374400
+    with patch.object(omni.time, "time", return_value=expiry - 1):
+        assert omni._daily_turn_limit(ctx) == omni.PRO_DAILY_TURNS
+        omni._assert_pro(ctx)
+    with patch.object(omni.time, "time", return_value=expiry):
+        assert omni._daily_turn_limit(ctx) == omni.FREE_DAILY_TURNS
+        with pytest.raises(omni.HTTPException):
+            omni._assert_pro(ctx)
+        assert omni._daily_turn_limit({**ctx, "stripe_subscription_status": "active"}) == omni.PRO_DAILY_TURNS
+
 def test_daily_turn_limit_by_tier():
     assert omni._daily_turn_limit({"subscription_status": "active"}) == omni.PRO_DAILY_TURNS
     assert omni._daily_turn_limit({"subscription_status": "free"}) == omni.FREE_DAILY_TURNS
