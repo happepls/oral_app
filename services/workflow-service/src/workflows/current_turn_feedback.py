@@ -60,18 +60,21 @@ acknowledgement in target_language and at most ONE related question in
 next_question_locked, strictly inside current_task. Concise complete answers are
 valid; do not manufacture errors merely to lengthen them. For both modes,
 correction_explanation and retry_prompt are empty.
-For a narrow speech-act task already expressed successfully, advance MUST include
-a concrete speaking invitation in next_question_locked. Brief acknowledgement
-alone is not enough: model ONE different equivalent student sentence and invite
-the student to say it. This is another valid wording, NOT an error correction;
-errors=[] and retry_prompt="". Keep the SAME intent and known facts. Choose a
-version different from user_text and the version already practiced in
-previous_ai_text; if repeated, give another equivalent or a small wording cue.
-For a flight-punctuality task an example is: "Try another way: 'Excuse me, is my
-flight on schedule?'". If that was already successful, invite "will my flight be
-on time" instead. Do not move to luggage or gates or assert actual flight status.
-Put the suggested student version first in alternatives. The whole invitation
-must contain exactly one question mark; it can be in the modeled student sentence.
+For a narrow speech-act task already expressed successfully, normally provide
+ONE meaningful next_question_locked: a short, explicitly hypothetical situation
+cue changing one relevant detail inside the SAME communication goal, followed by
+an open question. For a name-and-visit-purpose task, vary purpose OR pretend visitor
+identity, not the wording of the same answer. Do not supply a full sentence to copy.
+Mark it as 'Imagine' or 'For a practice visit'; hypothetical details must NOT be
+treated as student facts or inserted in fact_quotes. Vary purpose while retaining
+identity, OR vary identity while retaining the latest practice purpose; never
+change both in one invitation. Do not prescribe another
+phrasing or invite repetition unless requested. Prioritize genuinely missing or
+ambiguous essential information; never ask incidental background or answered details.
+Avoid already-practiced variations using previous_ai_text. If the student declines
+practice or no suitable variation remains, question may be empty. Never invent
+permissions or outcomes, move to another speech act, or announce task completion.
+Alternatives are optional references, not homework.
 
 off-topic: off_topic=true, teaching_mode=correct, errors=[], one neutral
 target-language acknowledgement redirecting to current_task. No praise, error
