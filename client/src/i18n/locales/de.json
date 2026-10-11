@@ -1,4 +1,9 @@
 {
+  "message_translate": "Diese KI-Antwort übersetzen",
+  "message_translate_retry": "Übersetzung erneut versuchen",
+  "message_translate_failed": "Übersetzung fehlgeschlagen. Bitte erneut versuchen.",
+  "speech_retry": "Audio erneut versuchen",
+  "speech_failed": "Sprachausgabe fehlgeschlagen. Bitte erneut versuchen.",
   "practiceReport.assessmentPending": "Es liegen noch nicht genug verlässliche Audiodaten für eine Bewertung vor.",
   "expression_feedback_clarify": "Bitte bestätige den erkannten Text",
   "teaching_transcribing": "Deine Antwort wird transkribiert…",

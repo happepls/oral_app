@@ -1,4 +1,9 @@
 {
+  "message_translate": "翻译这条 AI 回复",
+  "message_translate_retry": "重试翻译",
+  "message_translate_failed": "翻译失败，请重试",
+  "speech_retry": "重试语音播放",
+  "speech_failed": "语音合成失败，请重试",
   "practiceReport.assessmentPending": "有效音频证据不足，暂不显示评分。",
   "expression_feedback_clarify": "请先确认识别内容",
   "teaching_transcribing": "正在识别你的回答…",

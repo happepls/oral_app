@@ -245,6 +245,14 @@ describe('API Error Handling', () => {
     localStorage.removeItem.mockClear();
   });
 
+  test('TTS errors retain diagnostics without logging out', async () => {
+    fetch.mockResolvedValueOnce({ ok: false, status: 401,
+      json: async () => ({ error: { code: 'upstream_error', message: 'Upstream request failed' }, meta: { request_id: 'request-tts' } }),
+    });
+    await expect(aiAPI.tts('こんにちは')).rejects.toMatchObject({ status: 401, code: 'upstream_error', requestId: 'request-tts' });
+    expect(localStorage.removeItem).not.toHaveBeenCalledWith('user');
+  });
+
   test('should handle 401 Unauthorized', async () => {
     fetch.mockResolvedValueOnce({
       ok: false,

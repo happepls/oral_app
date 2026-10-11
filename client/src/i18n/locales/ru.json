@@ -1,4 +1,9 @@
 {
+  "message_translate": "Перевести этот ответ ИИ",
+  "message_translate_retry": "Повторить перевод",
+  "message_translate_failed": "Не удалось перевести. Попробуйте ещё раз.",
+  "speech_retry": "Повторить аудио",
+  "speech_failed": "Не удалось синтезировать речь. Попробуйте ещё раз.",
   "practiceReport.assessmentPending": "Пока недостаточно надёжных аудиоданных для выставления оценки.",
   "expression_feedback_clarify": "Подтвердите распознанный текст",
   "teaching_transcribing": "Распознаём ваш ответ…",

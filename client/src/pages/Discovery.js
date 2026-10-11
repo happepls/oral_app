@@ -15,6 +15,7 @@ import { Trophy } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { getScenarioDisplayTitle } from '../utils/scenarioDisplay';
 import { calcScenarioProgress, getScenarioPracticeStatus } from '../utils/scenarioProgress';
+import { validateGoalAccess } from '../utils/validateGoalAccess';
 
 // --- Scenario emoji 映射（按关键词） ---
 const SCENARIO_EMOJIS = [
@@ -331,7 +332,7 @@ function Discovery() {
       try {
         if (!user.native_language) { navigate('/onboarding'); return; }
 
-        const goalRes = await userAPI.getActiveGoal({ signal: abortController.signal });
+        const goalRes = validateGoalAccess(await userAPI.getActiveGoal({ signal: abortController.signal }));
         if (abortController.signal.aborted) return;
         if (!goalRes || !goalRes.goal) { navigate('/goal-setting'); return; }
         setActiveGoal(goalRes.goal);
@@ -473,7 +474,7 @@ function Discovery() {
     const unsubs = [
       subscribe('task_completed', async () => {
         try {
-          const goalRes = await userAPI.getActiveGoal();
+          const goalRes = validateGoalAccess(await userAPI.getActiveGoal());
           if (goalRes?.goal) {
             setActiveGoal(goalRes.goal);
             if (goalRes.goal.scenarios?.length > 0) setScenarios(goalRes.goal.scenarios);
@@ -486,7 +487,7 @@ function Discovery() {
       subscribe('proficiency_update', async (data) => {
         if (data?.payload?.delta > 0) {
           try {
-            const goalRes = await userAPI.getActiveGoal();
+            const goalRes = validateGoalAccess(await userAPI.getActiveGoal());
             if (goalRes?.goal) setActiveGoal(goalRes.goal);
           } catch {
             // Notification refresh is best-effort; keep the last visible progress.

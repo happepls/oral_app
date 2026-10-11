@@ -38,7 +38,8 @@ test.beforeEach(async ({ page }, testInfo) => {
   await page.route('**/api/**', async (route) => {
     const url = route.request().url();
     let data = {};
-    if (url.includes('/v1/profile')) data = seededUser;
+    if (url.includes('/v1/profile') && isPublic) return route.fulfill({ status: 401, contentType: 'application/json', body: JSON.stringify({ message: 'No local session' }) });
+    else if (url.includes('/v1/profile')) data = seededUser;
     else if (url.includes('/v1/goals/active')) data = { goal: activeGoal };
     else if (url.includes('/v1/goals')) data = [activeGoal];
     else if (url.includes('/v1/tasks')) data = [];

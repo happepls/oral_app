@@ -1,4 +1,9 @@
 {
+  "message_translate": "この AI の返信を翻訳",
+  "message_translate_retry": "翻訳を再試行",
+  "message_translate_failed": "翻訳に失敗しました。再試行してください。",
+  "speech_retry": "音声を再試行",
+  "speech_failed": "音声合成に失敗しました。再試行してください。",
   "practiceReport.assessmentPending": "信頼できる音声データが不足しているため、評価点はまだ表示できません。",
   "expression_feedback_clarify": "認識された内容を確認してください",
   "teaching_transcribing": "回答を文字にしています…",
