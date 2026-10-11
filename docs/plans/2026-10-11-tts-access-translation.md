@@ -101,6 +101,31 @@
 浏览器进程收尾验证为 blocked；不继续无依据地重试，不声称完整 UI 命令通过。
 单独权限与翻译命令 exit 0、完整仓库 verifier exit 0 的记录仍有效。
 
+## 2026-10-11 本地容器复测
+
+按用户要求在本地 Compose 环境重建 Developer API、user-service、ai-omni 镜像并重建容器。
+前端重新 production build，重建 client 容器以解除旧验收目录挂载，使用当前 `client/build`。
+Developer API 运行源码摘要与 checkout 相同；AI main.py 哈希与 checkout 相同。
+前端 `main.4d7f7281.js` 的 host、容器、HTTP SHA-256 均为
+`f90be5e9c8747a21fcd69dc25963f2af5900e92f830084e807fcb960deacfae8`。
+
+实际测试账号由用户提供，未修改其语言、会员、目标或任务。登录签发 Cookie 成功；
+当前账号为中文母语、英语目标、免费会员，权威快照为 10 场景/3 解锁，评分字段完整。
+匿名 TTS 返回 401；最终容器复测认证 TTS 返回 200 audio/x-wav，61484 bytes，幂等重放一致。
+这不能替代生产验收，也不代表本地已验证 Pro 真实账号或日语目标的真实会话。
+
+真实翻译最初返回 500：宿主 7890 无代理监听，容器 trust_env=True 为 ConnectError，
+同一 DashScope 域名直连可达。仅本地 Compose 的 AI NO_PROXY 增加公共中国域名，
+重建容器后日语文本→Chinese 翻译返回 200，并包含中文译文。
+8081 首页最初 502，因网关 root proxy 使用内部 Host 被 client host guard 拒绝；
+root location 保留 `$host`，nginx 配置检查及 reload 成功，首页和欢迎页均返回 200。
+
+当前 production bundle 上浏览器测试：`daily-qa-translation.spec.js scene-access.spec.js`
+在 localhost:5001、chromium-390、workers=1 下 4 passed，exit 0；使用请求桩覆盖
+日语目标/中文母语/英语 UI、免费/Pro/缺失权限状态。
+欢迎页在 localhost:8081 上独立审计 1 passed，exit 0。
+数据库容器未重建，未修改真实生产环境；日志/交接未保存密码、Cookie 或译文正文。
+
 ## 发布步骤（待人工批准）
 
 1. 核对 Zeabur 的项目/环境/服务 ID、Git repo、branch、Root Directory 和 Dockerfile，
