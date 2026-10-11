@@ -1,4 +1,9 @@
 {
+  "message_translate": "Traduzir esta resposta da IA",
+  "message_translate_retry": "Tentar traduzir novamente",
+  "message_translate_failed": "Falha na tradução. Tente novamente.",
+  "speech_retry": "Tentar áudio novamente",
+  "speech_failed": "Falha na síntese de voz. Tente novamente.",
   "practiceReport.assessmentPending": "Ainda não há dados de áudio confiáveis suficientes para exibir uma pontuação.",
   "expression_feedback_clarify": "Confirme o texto reconhecido",
   "teaching_transcribing": "Transcrevendo sua resposta…",

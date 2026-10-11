@@ -38,7 +38,8 @@ test.beforeEach(async ({ page }, testInfo) => {
   await page.route('**/api/**', async (route) => {
     const url = route.request().url();
     let data = {};
-    if (url.includes('/v1/profile')) data = seededUser;
+    if (url.includes('/v1/profile') && isPublic) return route.fulfill({ status: 401, contentType: 'application/json', body: JSON.stringify({ message: 'No local session' }) });
+    else if (url.includes('/v1/profile')) data = seededUser;
     else if (url.includes('/v1/goals/active')) data = { goal: activeGoal };
     else if (url.includes('/v1/goals')) data = [activeGoal];
     else if (url.includes('/v1/tasks')) data = [];
@@ -90,7 +91,14 @@ test.beforeEach(async ({ page }, testInfo) => {
 for (const [name, url] of pages) {
   test(`${name} has no overflow, serious a11y violations, or clipped controls`, async ({ page }, testInfo) => {
     const consoleErrors = [];
-    page.on('console', (message) => { if (message.type() === 'error' && !message.text().includes('ERR_BLOCKED_BY_CLIENT')) consoleErrors.push(message.text()); });
+    page.on('console', (message) => {
+      // Cookie restoration probes the profile even on public pages. The
+      // anonymous fixture deliberately returns 401; other failures still fail.
+      const anonymousProfile = /\b(landing|welcome|login|register)\b/.test(name)
+        && /\/api\/v1\/profile(?:\?|$)/.test(message.location().url)
+        && message.text() === 'Failed to load resource: the server responded with a status of 401 (Unauthorized)';
+      if (message.type() === 'error' && !message.text().includes('ERR_BLOCKED_BY_CLIENT') && !anonymousProfile) consoleErrors.push(message.text());
+    });
     await page.goto(url);
     // The dev server can still be compiling a lazy route after navigation.
     // A visible body also matches the Suspense/auth spinner, not the page.

@@ -2,6 +2,7 @@ require('dotenv').config();
 const { Pool } = require('pg');
 const { createApp } = require('./app');
 const { migrate } = require('./migrate');
+const { verifyImage } = require('./buildIdentity');
 
 const required = ['DATABASE_URL', 'DELEGATED_JWT_SECRET', 'JWT_SECRET', 'INTERNAL_AUTH_SECRET'];
 for (const name of required) if (!process.env[name]) throw new Error(`${name} is required`);
@@ -9,6 +10,7 @@ const db = new Pool({ connectionString: process.env.DATABASE_URL, max: 10, conne
 const port = Number(process.env.PORT || 3010);
 
 async function main() {
+  verifyImage();
   await migrate(db);
   const app = createApp({
     db,

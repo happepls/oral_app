@@ -230,7 +230,9 @@ services:
       # service-to-service traffic on the Docker network instead of proxying it.
       - HTTPS_PROXY=http://host.docker.internal:7890
       - HTTP_PROXY=http://host.docker.internal:7890
-      - NO_PROXY=localhost,127.0.0.1,user-service,conversation-service,media-processing-service,workflow-service,redis,postgres,mongo
+      # The public China chat endpoint is directly reachable locally; do not
+      # make translation depend on an optional host proxy being started.
+      - NO_PROXY=localhost,127.0.0.1,user-service,conversation-service,media-processing-service,workflow-service,redis,postgres,mongo,dashscope.aliyuncs.com
     extra_hosts:
       - "host.docker.internal:host-gateway"
     networks:

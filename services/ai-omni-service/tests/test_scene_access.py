@@ -31,6 +31,31 @@ def test_direct_http_requires_identity_before_paid_calls(monkeypatch, path, payl
     paid.assert_not_called()
 
 
+@pytest.mark.parametrize('valid_secret', [True, False])
+def test_tts_internal_identity_reaches_real_middleware_before_synthesis(monkeypatch, valid_secret):
+    monkeypatch.setenv('INTERNAL_AUTH_SECRET', 'tts-internal-test')
+    authority = AsyncMock(return_value=ACCESS)
+    monkeypatch.setattr(scene_access, 'check_access', authority)
+    provider = Mock(return_value=Mock(status_code=200, output={'audio': {'url': 'https://example.com/synthetic.wav'}}))
+    monkeypatch.setattr(main.dashscope.MultiModalConversation, 'call', provider)
+    download = Mock(return_value=(b'RIFF-synthetic', 'audio/wav'))
+    monkeypatch.setattr(main, '_validated_urlopen', download)
+    response = TestClient(main.app).post('/tts', json={'text': 'こんにちは'}, headers={
+        'X-Guaji-Internal-Auth': 'tts-internal-test' if valid_secret else 'wrong-test-secret',
+        'X-Guaji-User-ID': USER,
+    })
+    if valid_secret:
+        assert response.status_code == 200
+        assert response.content == b'RIFF-synthetic'
+        authority.assert_awaited_once_with(USER, None, None, None, 'generate')
+        provider.assert_called_once()
+    else:
+        assert response.status_code == 401
+        authority.assert_not_called()
+        provider.assert_not_called()
+        download.assert_not_called()
+
+
 def test_http_body_survives_authorization_middleware(monkeypatch):
     access = AsyncMock(return_value=ACCESS)
     paid = AsyncMock(return_value='https://example.com/image.png')

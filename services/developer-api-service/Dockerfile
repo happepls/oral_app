@@ -4,6 +4,7 @@ WORKDIR /app
 COPY package*.json ./
 COPY node_modules ./node_modules
 COPY src ./src
+RUN node src/buildIdentity.js --write
 USER app
 EXPOSE 3010
 CMD ["node", "src/index.js"]

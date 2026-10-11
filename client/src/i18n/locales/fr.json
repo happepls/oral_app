@@ -1,4 +1,9 @@
 {
+  "message_translate": "Traduire cette réponse de l’IA",
+  "message_translate_retry": "Réessayer la traduction",
+  "message_translate_failed": "Échec de la traduction. Veuillez réessayer.",
+  "speech_retry": "Réessayer l’audio",
+  "speech_failed": "Échec de la synthèse vocale. Veuillez réessayer.",
   "practiceReport.assessmentPending": "Les données audio fiables sont insuffisantes pour afficher une note.",
   "expression_feedback_clarify": "Confirmez les paroles reconnues",
   "teaching_transcribing": "Transcription de votre réponse…",

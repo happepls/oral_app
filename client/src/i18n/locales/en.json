@@ -1,4 +1,9 @@
 {
+  "message_translate": "Translate this AI reply",
+  "message_translate_retry": "Retry translation",
+  "message_translate_failed": "Translation failed. Please retry.",
+  "speech_retry": "Retry audio",
+  "speech_failed": "Speech synthesis failed. Please retry.",
   "practiceReport.assessmentPending": "Not enough reliable audio evidence to show a score yet.",
   "expression_feedback_clarify": "Please confirm what you said",
   "teaching_transcribing": "Transcribing your answer…",

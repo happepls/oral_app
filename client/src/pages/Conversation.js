@@ -9,7 +9,7 @@ import { GuajiMascot } from '../components/GuajiMascot';
 import { getPersona } from '../config/personaConfig';
 import { PracticeReport } from '../components/PracticeReport';
 import { AccessibleDialog } from '../components/AccessibleDialog';
-import { MessageBubble } from '../components/MessageBubble';
+import TranslatableMessage from '../components/TranslatableMessage';
 import { useAuth } from '../contexts/AuthContext';
 import AudioBar from '../components/AudioBar.jsx';
 import {
@@ -488,6 +488,7 @@ function Conversation() {
   }, [location.search]);
   const [selection, setSelection] = useState({ text: '', x: 0, y: 0, visible: false });
   const [isSynthesizing, setIsSynthesizing] = useState(false);
+  const [selectedSpeechError, setSelectedSpeechError] = useState(false);
   const [playingAudioUrl, setPlayingAudioUrl] = useState(null);
   const [taskBarFaded, setTaskBarFaded] = useState(false);
   const taskBarFadeTimerRef = useRef(null);
@@ -1249,15 +1250,17 @@ function Conversation() {
     if (!selection.text || isSynthesizing) return;
     
     setIsSynthesizing(true);
+    setSelectedSpeechError(false);
     try {
       const blob = await aiAPI.tts(selection.text);
       const audioUrl = URL.createObjectURL(blob);
       playFullAudio(audioUrl);
+      setSelection(prev => ({ ...prev, visible: false }));
     } catch (error) {
       console.error('Speech synthesis error:', error);
+      setSelectedSpeechError(true);
     } finally {
       setIsSynthesizing(false);
-      setSelection(prev => ({ ...prev, visible: false }));
     }
   };
 
@@ -3821,9 +3824,11 @@ function Conversation() {
         />
       )}
       {selection.visible && (
+        <>
         <button
           onClick={playSelectedText}
-          aria-label={isSynthesizing ? '正在生成选中文本的语音' : '播放选中文本'}
+          disabled={isSynthesizing}
+          aria-label={isSynthesizing ? '正在生成选中文本的语音' : selectedSpeechError ? t('speech_retry') : '播放选中文本'}
           className="fixed z-50 p-2 bg-primary text-white rounded-full shadow-lg transform -translate-x-1/2 flex items-center justify-center animate-in fade-in zoom-in duration-200"
           style={{ left: selection.x, top: selection.y }}
         >
@@ -3833,6 +3838,9 @@ function Conversation() {
             <span className="material-symbols-outlined text-xl">volume_up</span>
           )}
         </button>
+        {selectedSpeechError && <p role="alert" className="fixed z-50 bg-white p-2 text-sm text-red-700"
+          style={{ left: Math.max(8, selection.x - 100), top: selection.y + 44 }}>{t('speech_failed')}</p>}
+        </>
       )}
 
       {/* Messages Area */}
@@ -3981,9 +3989,12 @@ function Conversation() {
 
           return (
             <div key={index}>
-              <MessageBubble
+              <TranslatableMessage
+                key={`${location.search}:${msg.responseId || msg.id || msg.turn_id || index}`}
+                message={msg}
+                content={displayContent}
+                nativeLanguage={user?.native_language}
                 type={isAI ? 'ai' : 'user'}
-                message={displayContent}
                 state={isAI && aiBubbleRenderState({
                   isFinal: msg.isFinal,
                   hasContent: !!displayContent,
@@ -4005,30 +4016,7 @@ function Conversation() {
                     isActive={playingAudioUrl === msg.audioUrl}
                   />
                 ) : null}
-                translation={msg.translation}
               />
-              {isAI && (msg.audioUrl || msg.audioPlayed === true) && !msg.translation && (
-                <div className="flex justify-start px-4 py-1">
-                  <button
-                    onClick={async () => {
-                      try {
-                        const result = await aiAPI.translate(displayContent, user?.native_language || 'zh');
-                        setMessages(prev => {
-                          const newMessages = [...prev];
-                          newMessages[index] = { ...newMessages[index], translation: result.translation };
-                          return newMessages;
-                        });
-                      } catch (err) {
-                        console.error('Translation error:', err);
-                      }
-                    }}
-                    aria-label="翻译这条 AI 回复"
-                    className="text-xs text-slate-600 hover:text-slate-800 flex items-center gap-1 transition"
-                  >
-                    <span aria-hidden="true" style={{fontSize:'13px'}}>🌐</span> 翻译
-                  </button>
-                </div>
-              )}
             </div>
           );
         })}

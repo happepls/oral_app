@@ -30,6 +30,16 @@ for (const membership of ['free', 'active', 'missing']) {
       await route.fulfill({ contentType: 'application/json', body: JSON.stringify({ success: true, data }) });
     });
     await page.goto('/discovery');
+    if (membership === 'missing') {
+      const accessError = page.getByRole('alert').filter({ has: page.getByRole('heading', { name: '发现页未完全加载' }) });
+      await expect(accessError).toBeVisible();
+      await expect(page.locator('article').filter({ hasText: '权限场景 1' })).toHaveCount(0);
+      goal.access = { membership: { active: true }, unlocked_count: 4,
+        scenarios: goal.scenarios.map(s => ({ title: s.title, allowed: true })) };
+      await accessError.getByRole('button', { name: '重试', exact: true }).click();
+      await expect(page.locator('article').filter({ hasText: '权限场景 4' })).toHaveAttribute('data-state', 'selected');
+      return;
+    }
     const fourth = page.locator('article').filter({ hasText: '权限场景 4' });
     await expect(fourth).toHaveAttribute('data-state', member ? 'selected' : 'locked');
     const first = page.locator('article').filter({ hasText: '权限场景 1' });
