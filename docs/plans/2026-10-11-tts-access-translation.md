@@ -84,7 +84,15 @@
 欢迎页 `chromium-390/welcome.png` 期望 387×338，实际 390×844，截图检查失败。
 在 `/tmp/oral-app-tts-baseline-check` 的原始 `cb6b353` checkout 使用同一依赖、
 端口 3100 单独运行 `ui-audit.spec.js --grep 'welcome has'`，同样 exit 1、相同尺寸错误。
-本 PR 未修改欢迎页或扩大截图阈值，也未更新基线；该已有视觉问题保留给维护者。
+当时保留基线、未扩大截图阈值；后续按用户明确要求恢复历史原图。
+后续用户明确要求恢复裁剪前基线：定位到 `903af38` 仅将
+`quality/baselines/ui/chromium-390/welcome.png` 从 390×844 意外裁为 387×338。
+已从 `903af38^` 恢复原有 PNG（不是重新生成候选图），不改变欢迎页、其他基线或阈值。
+文件 blob 为 `30f20d56d23f244122dfd6825262334a4b02a140`，与历史原图一致。
+公共页 Cookie 恢复会收到测试桩明确返回的匿名 profile 401；UI 审计仅排除该 URL
+对应的预期浏览器资源错误，继续检查其他控制台错误。
+恢复后独立执行 `PLAYWRIGHT_BASE_URL=http://127.0.0.1:3101 npm --prefix client run test:e2e -- --project=chromium-390 ui-audit.spec.js --grep 'welcome has'`：
+1 passed，exit 0；截图、布局、可访问性及控制台审计通过。
 首次并行浏览器命令在用例结束后 teardown 未退出，人工中断（exit 130），
 不将该命令记为通过；后续独立浏览器命令单独记录。
 使用显式 `PLAYWRIGHT_BASE_URL=http://127.0.0.1:3101` 独立重跑
