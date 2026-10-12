@@ -368,7 +368,7 @@ function Landing() {
             <p className="text-slate-500 text-sm">{t('landing_footer')}</p>
             <a
               href="mailto:admin@guajiguaji.top"
-              className="inline-flex min-h-[44px] max-w-full items-center break-words text-sm text-slate-600 underline hover:text-primary dark:text-slate-300 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-primary"
+              className="inline-flex min-h-[44px] max-w-full items-center break-words text-sm text-slate-600 no-underline hover:no-underline hover:text-primary dark:text-slate-300 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-primary"
             >
               {t('landing_official_contact')} admin@guajiguaji.top
             </a>
