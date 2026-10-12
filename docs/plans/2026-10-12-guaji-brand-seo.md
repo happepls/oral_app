@@ -1,6 +1,6 @@
 # Guaji 官方联系邮箱与品牌搜索优化
 
-日期：2026-10-12（Asia/Shanghai）。状态：用户已批准实施计划，独立分支实施与验证中；尚未发布生产。
+日期：2026-10-12（Asia/Shanghai）。状态：用户已批准实施计划及落地页基线更新，代码已提交草稿 PR #84；尚未发布生产。
 
 ## 用户目标
 
@@ -105,7 +105,8 @@
 - `cd client && npm run test:e2e -- --grep 'landing has' --update-snapshots`：macOS 10 passed；包含 overflow、44px 控件与 serious/critical a11y 检查，按用户批准更新发生预期变化的 6 张手机截图。
 - Gitleaks staged scan、`git diff --check`、`python3 scripts/sdlc.py validate` / precommit 与 CI YAML 解析通过。
 - macOS landing 更新后正常比较：10 passed；未使用更新选项，截图预算保持不变。
-- 已按用户批准，使用首轮 GitHub Linux runner 的实际 `ui-candidates` 产物更新 6 张手机 landing-linux.png；未用 macOS 图片替代 Linux 图片，未更新其他页面或调整预算，待新提交 CI 比较。
+- 已按用户批准，使用首轮 GitHub Linux runner 的实际 `ui-candidates` 产物更新 6 张手机 landing-linux.png；未用 macOS 图片替代 Linux 图片，未更新其他页面或调整预算。
+- 最终实现提交 `54136a3` 的 Linux CI 已通过：运行 https://github.com/happepls/oral_app/actions/runs/38215510466 ，ui-audit=success（10 个 landing 正常基线比较）；test=success（lint、单元测试、构建与产物检查、生产 Nginx 浏览器检查、Python 服务测试及 integration harness 校验）。中间运行 `38215333994` 在最新基线提交后主动取消，不记为通过。后续仅更新此执行文档。
 - Linux 首次运行：https://github.com/happepls/oral_app/actions/runs/38214185731 ：4 个桌面/平板 landing 通过，6 个手机截图出现预期差异，待使用该运行的实际候选图更新批准的基线。生产测试因测试预览 Nginx 无法打开 `/dev/stdout` 而未启动；已将预览日志重定向到隔离产物目录，待 Linux 复测。本地 Playwright Linux 镜像下载取消，不记为通过。
 - `docker build -f client/Dockerfile.prod -t oral-guaji-seo-review:83 client`：退出 0，最终本地镜像 `eaef56cd53ed`；无挂载运行该镜像的正式 Zeabur Nginx，健康检查后执行相同生产浏览器命令：12 passed。日志：`quality/artifacts/seo-docker-final-build.log`。初次测试早于容器就绪，3 项连接失败；健康检查通过后复测全部通过。
 - 尚未执行：独立人工 PR 审核、生产部署、生产版本/HTML 核验、域名所有权验证、Google/Bing sitemap 提交及索引确认。操作清单：`docs/guaji-seo-operations.md`。
