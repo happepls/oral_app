@@ -36,9 +36,10 @@ for (const type of ['WebSite', 'Organization', 'SoftwareApplication', 'FAQPage']
 }
 const faq = graph.find((item) => item['@type'] === 'FAQPage');
 requireMatch(faq.mainEntity.length === 3, 'FAQ schema must contain exactly three fallback questions');
+const publicBody = html.slice(html.indexOf('</head>') + '</head>'.length);
 for (const item of faq.mainEntity) {
-  requireMatch(html.includes(item.name), `FAQ question is missing from public homepage: ${item.name}`);
-  requireMatch(html.includes(item.acceptedAnswer.text), `FAQ answer is missing from public homepage: ${item.name}`);
+  requireMatch(publicBody.includes(item.name), `FAQ question is missing from public homepage: ${item.name}`);
+  requireMatch(publicBody.includes(item.acceptedAnswer.text), `FAQ answer is missing from public homepage: ${item.name}`);
 }
 const website = graph.find((item) => item['@type'] === 'WebSite');
 requireMatch(website.alternateName.includes('guajiguaji') && website.alternateName.includes('Guaji'), 'brand aliases missing');

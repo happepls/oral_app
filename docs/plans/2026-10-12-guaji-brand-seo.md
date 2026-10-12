@@ -83,7 +83,7 @@
 
 ## 验证与回滚
 
-以下是批准后待执行的检查，本轮未执行：
+以下为批准的验收项；实际执行结果见后面的执行记录：
 
 1. 邮箱在中英文/其他语言页脚可见，mailto 正确；320px/桌面、浅深色、键盘焦点与换行检查。
 2. `cd client && npm run build`，然后 `npm run verify:geo`；检查产物和部署配置确实使用独立首页 HTML。
@@ -93,6 +93,21 @@
 6. PR 提交前执行 `gitleaks git --staged --verbose --config .gitleaks.toml`；生产发布由人工批准。
 
 回滚：按 PR revert 邮箱/文案与 SEO 构建配置，回到前一静态首页及 shell；如涉及 Cloudflare 规则，保存原值并单独回退。不会重置用户数据、改认证/计费或删除现有 build 后不重建。
+
+## 执行记录（2026-10-12，未发布）
+
+- 实施分支：`feat/guaji-brand-seo-83`；草稿 PR：https://github.com/happepls/oral_app/pull/84 。当前根 SDLC 工件未修改。
+- 用户在实施中另行明确批准本次落地页截图基线更新；只允许更新 landing 图，不改变其他页面基线或 3% 比较预算。
+- `npm run verify`：退出 0，decision=pass，final_score=100；client 53 suites / 597 tests 全通过。构建保留仓库已有的 Hook/Browserslist 等 warnings，不宣称零 warnings。
+- `npm run verify:geo`：退出 0；验证静态首页、空 noindex shell、品牌别名、官方邮箱、可见 FAQ 与 schema 一致，以及 nginx allowlist 覆盖真实 React 深链。
+- `npm --prefix client run test:seo`：12 passed；验证三类视口的无 JS 首页、9 种语言、价格请求持续 pending、键盘邮箱焦点、单一正文及业务页面启动防闪烁。预览配置中的三个 nginx 配置语法检查通过。
+- 以 `nginx:1.27-alpine` 挂载正式 Zeabur 配置与实际 build，再执行 `SEO_BASE_URL=http://localhost:4174 npm exec --prefix client -- playwright test --config client/playwright.seo.config.js`：12 passed，包括正式 nginx 的跳转、有效深链、404、CSP 与产物资产访问。
+- `cd client && npm run test:e2e -- --grep 'landing has' --update-snapshots`：macOS 10 passed；包含 overflow、44px 控件与 serious/critical a11y 检查，按用户批准更新发生预期变化的 6 张手机截图。
+- Gitleaks staged scan、`git diff --check`、`python3 scripts/sdlc.py validate` / precommit 与 CI YAML 解析通过。
+- macOS landing 更新后正常比较：10 passed；未使用更新选项，截图预算保持不变。
+- Linux 首次运行：https://github.com/happepls/oral_app/actions/runs/38214185731 ：4 个桌面/平板 landing 通过，6 个手机截图出现预期差异，待使用该运行的实际候选图更新批准的基线。生产测试因测试预览 Nginx 无法打开 `/dev/stdout` 而未启动；已将预览日志重定向到隔离产物目录，待 Linux 复测。本地 Playwright Linux 镜像下载取消，不记为通过。
+- `docker build -f client/Dockerfile.prod -t oral-guaji-seo-review:83 client`：退出 0，最终本地镜像 `eaef56cd53ed`；无挂载运行该镜像的正式 Zeabur Nginx，健康检查后执行相同生产浏览器命令：12 passed。日志：`quality/artifacts/seo-docker-final-build.log`。初次测试早于容器就绪，3 项连接失败；健康检查通过后复测全部通过。
+- 尚未执行：独立人工 PR 审核、生产部署、生产版本/HTML 核验、域名所有权验证、Google/Bing sitemap 提交及索引确认。操作清单：`docs/guaji-seo-operations.md`。
 
 ## 官方依据
 

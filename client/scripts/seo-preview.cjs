@@ -20,6 +20,8 @@ for (const name of names) {
     .replace(/pid \/tmp\/nginx.pid;/, `pid "${artifacts}/${name}.pid";`)
     .replace(/listen 500[01];/, 'listen 4173;')
     .replace('/etc/nginx/mime.types', mimeTypes)
+    .replaceAll('/dev/stdout', `${artifacts}/access.log`)
+    .replaceAll('/dev/stderr', `${artifacts}/error.log`)
     .replace('root /usr/share/nginx/html;', `root "${client}/build";`)
     .replaceAll('http://api-gateway:80', 'http://127.0.0.1:9');
   const filename = path.join(artifacts, name);
