@@ -91,7 +91,10 @@ const RouteLoading = () => {
 
 const LandingWithSplash = () => {
   const [showSplash, setShowSplash] = useState(
-    () => sessionStorage.getItem(LANDING_SPLASH_SESSION_KEY) !== 'true'
+    // The production homepage already contains useful visible content. Keep
+    // it visible when React mounts instead of covering it with a splash.
+    () => !document.getElementById('root')?.hasAttribute('data-prerendered-homepage') &&
+      sessionStorage.getItem(LANDING_SPLASH_SESSION_KEY) !== 'true'
   );
   const finishSplash = useCallback(() => setShowSplash(false), []);
 

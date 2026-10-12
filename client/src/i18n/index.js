@@ -1,5 +1,6 @@
 import i18n from 'i18next';
 import { initReactI18next } from 'react-i18next';
+import { SUPPORTED_LANGS } from './languages';
 
 // Import translation files
 import zh from './locales/zh.json';
@@ -27,8 +28,6 @@ const COUNTRY_LANG_MAP = {
   VE: 'es', EC: 'es', GT: 'es', CU: 'es', BO: 'es', DO: 'es',
   HN: 'es', PY: 'es', SV: 'es', NI: 'es', CR: 'es', PA: 'es', UY: 'es', GQ: 'es',
 };
-
-const SUPPORTED_LANGS = ['zh', 'en', 'ja', 'es', 'fr', 'ko', 'de', 'pt', 'ru'];
 
 // Synchronous: pick best language before first render
 function getInitialLanguage() {

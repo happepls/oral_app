@@ -106,8 +106,8 @@ function Landing() {
       <nav className="fixed top-0 left-0 right-0 z-50 bg-white/80 dark:bg-slate-900/80 backdrop-blur-md border-b border-slate-200 dark:border-slate-800">
         <div className="max-w-6xl mx-auto px-4 py-4 flex items-center justify-between">
           <div className="flex items-center gap-2">
-            <img src="/guaji-logo.svg" alt="GuaJi" className="w-8 h-8" />
-            <span className="hidden sm:inline text-xl font-bold text-slate-900 dark:text-white">GuaJi</span>
+            <img src="/guaji-logo.svg" alt="Guaji" className="w-8 h-8" />
+            <span className="hidden sm:inline text-xl font-bold text-slate-900 dark:text-white">Guaji</span>
           </div>
           <div className="flex items-center gap-1 sm:gap-3">
             <LanguageSwitcher />
@@ -126,19 +126,19 @@ function Landing() {
               </>
             ) : (
               <>
-                <button
-                  onClick={() => navigate('/login')}
-                  className="text-slate-600 dark:text-slate-300 hover:text-primary font-medium px-2 sm:px-4 py-2 transition-colors"
+                <a
+                  href="/login"
+                  className="inline-flex min-h-[44px] items-center text-slate-600 dark:text-slate-300 hover:text-primary font-medium px-2 sm:px-4 py-2 transition-colors"
                 >
                   {t('nav_login')}
-                </button>
-                <button
-                  onClick={() => navigate('/register')}
-                  className="text-white font-medium px-3 sm:px-5 py-2 rounded-lg transition hover:opacity-90"
+                </a>
+                <a
+                  href="/register"
+                  className="inline-flex min-h-[44px] items-center text-white font-medium px-3 sm:px-5 py-2 rounded-lg transition hover:opacity-90"
                   style={{ background: 'linear-gradient(135deg, #2d44ca, #7040cf)' }}
                 >
                   {t('nav_free_start')}
-                </button>
+                </a>
               </>
             )}
           </div>
@@ -154,7 +154,7 @@ function Landing() {
         }} />
         <div className="max-w-4xl mx-auto text-center relative z-10 pt-12">
           <motion.div
-            initial={{ opacity: 0, y: 20 }}
+            initial={false}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.5 }}
           >
@@ -177,24 +177,24 @@ function Landing() {
               {t('landing_hero_desc')}
             </p>
             <div className="flex flex-col sm:flex-row gap-4 justify-center">
-              <motion.button
+              <motion.a
                 whileHover={{ scale: 1.03 }}
                 whileTap={{ scale: 0.97 }}
-                onClick={() => navigate('/register')}
+                href="/register"
                 className="flex items-center justify-center gap-2 text-white font-bold px-8 py-4 rounded-xl text-lg transition shadow-brand"
                 style={{ background: 'linear-gradient(135deg, #637FF1, #a47af6)' }}
               >
                 {t('landing_hero_cta')}
                 <ArrowRight className="w-5 h-5" />
-              </motion.button>
-              <motion.button
+              </motion.a>
+              <motion.a
                 whileHover={{ scale: 1.03 }}
                 whileTap={{ scale: 0.97 }}
-                onClick={() => document.getElementById('features').scrollIntoView({ behavior: 'smooth' })}
+                href="#features"
                 className="border-2 border-slate-300 dark:border-slate-600 text-slate-700 dark:text-slate-300 font-bold px-8 py-4 rounded-xl text-lg hover:border-primary hover:text-primary transition"
               >
                 {t('landing_learn_more')}
-              </motion.button>
+              </motion.a>
             </div>
           </motion.div>
         </div>
@@ -334,7 +334,7 @@ function Landing() {
       <section className="py-20 px-4">
         <div className="max-w-4xl mx-auto text-center">
           <motion.div
-            initial={{ opacity: 0, y: 20 }}
+            initial={false}
             whileInView={{ opacity: 1, y: 0 }}
             viewport={{ once: true }}
             transition={{ duration: 0.5 }}
@@ -343,16 +343,16 @@ function Landing() {
               {t('landing_cta_title')}
             </h2>
             <p className="text-xl text-slate-600 dark:text-slate-400 mb-10">{t('landing_cta_desc')}</p>
-            <motion.button
+            <motion.a
               whileHover={{ scale: 1.03 }}
               whileTap={{ scale: 0.97 }}
-              onClick={() => navigate('/register')}
-              className="flex items-center gap-2 mx-auto text-white font-bold px-10 py-4 rounded-xl text-lg transition shadow-brand"
+              href="/register"
+              className="flex w-fit items-center gap-2 mx-auto text-white font-bold px-10 py-4 rounded-xl text-lg transition shadow-brand"
               style={{ background: 'linear-gradient(135deg, #637FF1, #a47af6)' }}
             >
               {t('landing_cta_btn')}
               <ChevronRight className="w-5 h-5" />
-            </motion.button>
+            </motion.a>
           </motion.div>
         </div>
       </section>
@@ -362,10 +362,16 @@ function Landing() {
         <div className="max-w-6xl mx-auto flex flex-col md:flex-row items-center justify-between gap-4">
           <div className="flex items-center gap-2">
             <img src="/guaji-logo.svg" alt="" className="h-8 w-8" />
-            <span className="font-bold text-slate-900 dark:text-white">GuaJi</span>
+            <span className="font-bold text-slate-900 dark:text-white">Guaji</span>
           </div>
-          <div className="flex items-center gap-4">
+          <div className="flex max-w-full flex-wrap items-center justify-center gap-x-4 gap-y-2">
             <p className="text-slate-500 text-sm">{t('landing_footer')}</p>
+            <a
+              href="mailto:admin@guajiguaji.top"
+              className="inline-flex min-h-[44px] max-w-full items-center break-words text-sm text-slate-600 underline hover:text-primary dark:text-slate-300 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-primary"
+            >
+              {t('landing_official_contact')} admin@guajiguaji.top
+            </a>
             <button
               type="button"
               onClick={() => setShowPrivacy(true)}
