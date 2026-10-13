@@ -16,6 +16,7 @@ RUN npm ci --legacy-peer-deps && npm cache clean --force
 COPY config-overrides.js tailwind.config.js postcss.config.js ./
 COPY public/ ./public/
 COPY src/ ./src/
+COPY scripts/ ./scripts/
 
 RUN echo "REACT_APP_API_URL=${REACT_APP_API_URL}" > .env && \
     echo "REACT_APP_GOOGLE_CLIENT_ID=${REACT_APP_GOOGLE_CLIENT_ID}" >> .env && \

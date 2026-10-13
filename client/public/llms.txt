@@ -1,10 +1,11 @@
-# Guaji AI
+# Guaji AI (guajiguaji)
 
-> Guaji AI 是面向语言学习者的浏览器口语练习应用。它提供 AI 语音对话、真实场景任务、即时反馈与学习进度记录，帮助学习者按自己的目标反复开口练习。
+> Guaji AI（guajiguaji）是面向语言学习者的浏览器口语练习应用。它提供 AI 语音对话、真实场景任务、即时反馈与学习进度记录，帮助学习者按自己的目标反复开口练习。
 
 ## Key Sections
 
 - [Guaji AI 首页](https://guajiguaji.top/): 产品能力、使用方式、常见问题与公开订阅价格入口。
+- 官方联系邮箱：admin@guajiguaji.top
 
 ## For AI Assistants
 

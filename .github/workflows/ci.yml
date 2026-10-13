@@ -13,6 +13,10 @@ on:
         description: Run all viewport/theme combinations
         type: boolean
         default: true
+      ui_title_filter:
+        description: Optional Playwright title filter for a manual targeted UI check
+        type: string
+        default: ''
 
 concurrency:
   group: ci-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref }}
@@ -87,6 +91,14 @@ jobs:
         cd client && npm run build
         cd .. && npm run verify:geo
 
+    - name: Verify production homepage and nginx routing
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y nginx
+        cd client
+        npx playwright install --with-deps chrome
+        npm run test:seo
+
     - name: Run Python service tests
       run: |
         python -m pip install -r services/workflow-service/requirements.txt -r services/ai-omni-service/requirements.txt pytest pytest-asyncio
@@ -120,8 +132,11 @@ jobs:
     - name: Run deterministic viewport, theme, locale, accessibility, and WebKit checks
       env:
         FULL_UI_MATRIX: ${{ github.event_name == 'schedule' || inputs.full_ui_matrix == true }}
+        UI_TITLE_FILTER: ${{ github.event_name == 'workflow_dispatch' && inputs.ui_title_filter || '' }}
       run: |
-        if [ "$FULL_UI_MATRIX" = "true" ]; then
+        if [ -n "$UI_TITLE_FILTER" ]; then
+          npm --prefix client run test:e2e -- --grep "$UI_TITLE_FILTER"
+        elif [ "$FULL_UI_MATRIX" = "true" ]; then
           npm --prefix client run test:e2e
         else
           # All cases on narrow/mobile-dark/desktop; critical cases on WebKit.

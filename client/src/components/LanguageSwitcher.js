@@ -1,6 +1,6 @@
 import React from 'react';
 import { useTranslation } from 'react-i18next';
-import { SUPPORTED_LANGS } from '../i18n';
+import { SUPPORTED_LANGS } from '../i18n/languages';
 
 const LANGUAGES = [
   { code: 'zh', label: '中文', flag: '🇨🇳' },
