@@ -70,7 +70,7 @@ const PageMetadata = () => {
     if (schema) schema.setAttribute('type', isPublicHomepage ? 'application/ld+json' : 'application/json');
 
     document.documentElement.lang = i18n.language === 'zh' ? 'zh-CN' : i18n.language;
-    document.title = isPublicHomepage ? t('landing_meta_title') : 'GuaJi AI';
+    document.title = isPublicHomepage ? t('landing_meta_title') : 'Guaji AI';
     const description = document.querySelector('meta[name="description"]');
     if (description && isPublicHomepage) description.setAttribute('content', t('landing_meta_description'));
   }, [i18n.language, location.pathname, t]);

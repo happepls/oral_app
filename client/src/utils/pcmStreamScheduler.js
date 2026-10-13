@@ -1,7 +1,7 @@
 const PCM16_BYTES_PER_SAMPLE = 2;
 const DEFAULT_SAMPLE_RATE = 24000;
-const DEFAULT_PRIMING_MS = 160;
-const DEFAULT_SCHEDULE_AHEAD_MS = 20;
+const DEFAULT_PRIMING_MS = 320;
+const DEFAULT_SCHEDULE_AHEAD_MS = 40;
 
 function asUint8Array(value) {
   if (value instanceof ArrayBuffer) return new Uint8Array(value);
@@ -59,6 +59,8 @@ export class PcmStreamScheduler {
     this._nextStartTime = 0;
     this._sources = new Set();
     this._hasScheduledAudio = false;
+    this._rebufferMs = this.primingMs;
+    this._finished = false;
   }
 
   get generation() {
@@ -95,6 +97,7 @@ export class PcmStreamScheduler {
     const operation = prior.then(() => {
       if (generation !== this._generation) return false;
       this._primed = true;
+      this._finished = true;
       this._schedulePending(generation);
       return true;
     });
@@ -115,6 +118,8 @@ export class PcmStreamScheduler {
       try { source.stop(); } catch { /* already stopped */ }
     });
     this._sources.clear();
+    this._rebufferMs = this.primingMs;
+    this._finished = false;
     return this._generation;
   }
 
@@ -144,7 +149,7 @@ export class PcmStreamScheduler {
 
     this._pending.push(samples);
     this._pendingSamples += samples.length;
-    if (!this._primed && this.bufferedDurationMs >= this.primingMs) {
+    if (!this._primed && (this._finished || this.bufferedDurationMs >= this._rebufferMs)) {
       this._primed = true;
     }
     if (this._primed) this._schedulePending(generation);
@@ -154,8 +159,11 @@ export class PcmStreamScheduler {
     if (generation !== this._generation) return;
 
     while (this._pending.length > 0 && generation === this._generation) {
-      const samples = this._pending.shift();
-      this._pendingSamples -= samples.length;
+      const samples = new Float32Array(this._pendingSamples);
+      let offset = 0;
+      this._pending.forEach(part => { samples.set(part, offset); offset += part.length; });
+      this._pending = [];
+      this._pendingSamples = 0;
 
       const buffer = this.audioContext.createBuffer(1, samples.length, this.sampleRate);
       buffer.getChannelData(0).set(samples);
@@ -178,6 +186,7 @@ export class PcmStreamScheduler {
           this._primed = false;
           this._hasScheduledAudio = false;
           this._nextStartTime = 0;
+          if (!this._finished) this._rebufferMs = Math.min(800, this._rebufferMs + 160);
           this.onPlaybackIdle?.();
         }
       };
@@ -185,7 +194,7 @@ export class PcmStreamScheduler {
 
       if (!this._hasScheduledAudio) {
         this._hasScheduledAudio = true;
-        this.onPlaybackStart?.();
+        this.onPlaybackStart?.({ startTime, generation });
       }
     }
   }

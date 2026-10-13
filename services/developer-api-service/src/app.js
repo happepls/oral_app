@@ -2,10 +2,17 @@ const crypto = require('crypto');
 const express = require('express');
 const fetch = require('node-fetch');
 const { createAuth, hash, error } = require('./auth');
-const { readActiveGoal } = require('./activeGoal');
+const { sourceIdentity } = require('./buildIdentity');
 const OAUTH_SCOPES = new Set(['profile:read', 'profile:write', 'goals:read', 'goals:write', 'conversations:read', 'conversations:write', 'ai:generate', 'realtime:connect']);
 
 const PROFILE_FIELDS = new Set(['nickname', 'avatar_url', 'native_language', 'target_language', 'interests', 'daily_practice_goal', 'gender', 'birth_year', 'points']);
+const PROFILE_PROJECTION = `id, username, email, nickname, avatar_url, native_language, target_language,
+  interests, daily_practice_goal, gender, birth_year, points,
+  COALESCE(stripe_subscription_status,subscription_status) AS stripe_subscription_status, prepaid_expires_at,
+  CASE WHEN COALESCE(stripe_subscription_status,subscription_status) IN ('active','trialing') THEN 'subscription'
+    WHEN prepaid_expires_at > NOW() THEN 'prepaid' ELSE NULL END AS billing_source,
+  CASE WHEN COALESCE(stripe_subscription_status,subscription_status) IN ('active','trialing') OR prepaid_expires_at > NOW()
+    THEN 'active' ELSE COALESCE(stripe_subscription_status,subscription_status) END AS subscription_status`;
 const encodeCursor = (row) => Buffer.from(JSON.stringify([row.created_at, row.id])).toString('base64url');
 const decodeCursor = (value) => {
   if (!value) return null;
@@ -15,13 +22,19 @@ const decodeCursor = (value) => {
 function createApp(options) {
   const { db, delegatedSecret, realtimeSecret, internalAuthSecret, conversationUrl = 'http://conversation-service:8083', historyUrl = 'http://history-analytics-service:3004', aiUrl = 'http://ai-omni-service:8082', rateLimitMax = 120, upstreamTimeoutMs = 10000 } = options;
   const aiTimeoutMs = options.aiTimeoutMs ?? (options.upstreamTimeoutMs === undefined ? 35000 : upstreamTimeoutMs);
+  const userServiceUrl = options.userServiceUrl || process.env.USER_SERVICE_URL || 'http://user-service:3000';
+  function identityHeaders(req) {
+    if (!internalAuthSecret) throw error(503, 'authorization_unavailable', 'Service authorization is not configured');
+    return { 'X-Guaji-Internal-Auth': internalAuthSecret, 'X-Guaji-User-ID': String(req.delegated.user_id) };
+  }
   const app = express();
   const auth = createAuth({ db, delegatedSecret, realtimeSecret });
   app.disable('x-powered-by');
   app.use(express.json({ limit: '1mb' }));
   app.use((req, res, next) => { const supplied = req.get('X-Request-ID'); req.requestId = supplied && /^[0-9a-f]{8}-[0-9a-f-]{27,}$/i.test(supplied) ? supplied : crypto.randomUUID(); res.set('X-Request-ID', req.requestId); next(); });
 
-  app.get('/health', (_req, res) => res.json({ status: 'ok', service: 'developer-api-service' }));
+  const buildIdentity = sourceIdentity();
+  app.get('/health', (_req, res) => res.json({ status: 'ok', service: 'developer-api-service', build: buildIdentity }));
   app.use('/v1', (req, res, next) => {
     const startedAt = Date.now();
     res.on('finish', () => db.query(
@@ -118,7 +131,7 @@ function createApp(options) {
   });
   app.get('/v1/profile', auth.requireScopes('profile:read'), async (req, res, next) => {
     try {
-      const { rows } = await db.query('SELECT id, username, email, nickname, avatar_url, native_language, target_language, interests, daily_practice_goal, gender, birth_year, points, subscription_status, created_at, updated_at FROM users WHERE id = $1', [req.delegated.user_id]);
+      const { rows } = await db.query(`SELECT ${PROFILE_PROJECTION}, created_at, updated_at FROM users WHERE id = $1`, [req.delegated.user_id]);
       if (!rows[0]) throw error(404, 'profile_not_found', 'Profile not found');
       res.json({ data: rows[0], meta: { request_id: req.requestId } });
     } catch (err) { next(err); }
@@ -130,14 +143,27 @@ function createApp(options) {
       if (!entries.length || entries.length !== Object.keys(req.body || {}).length) throw error(400, 'profile_fields_invalid', 'Only documented profile fields may be updated');
       const setters = entries.map(([key], i) => `${key} = $${i + 1}`);
       const values = entries.map(([, value]) => value);
-      const { rows } = await db.query(`UPDATE users SET ${setters.join(', ')}, updated_at = NOW() WHERE id = $${values.length + 1} RETURNING id, username, email, nickname, avatar_url, native_language, target_language, interests, daily_practice_goal, gender, birth_year, points, subscription_status, updated_at`, [...values, req.delegated.user_id]);
+      const { rows } = await db.query(`UPDATE users SET ${setters.join(', ')}, updated_at = NOW() WHERE id = $${values.length + 1} RETURNING ${PROFILE_PROJECTION}, updated_at`, [...values, req.delegated.user_id]);
       res.json({ data: rows[0], meta: { request_id: req.requestId } });
     } catch (err) { next(err); }
   });
 
   app.get('/v1/goals/active', auth.requireScopes('goals:read'), async (req, res, next) => {
     try {
-      const data = await readActiveGoal(db, req.delegated.user_id);
+      let authority;
+      try {
+        authority = await requestJson(`${userServiceUrl}/api/users/internal/users/${encodeURIComponent(req.delegated.user_id)}/access`, { headers: identityHeaders(req) });
+      } catch (_) { throw error(503, 'authorization_unavailable', 'Authorization service is unavailable'); }
+      const data = authority.data;
+      if (!data || !Object.hasOwn(data, 'goal') || typeof data.access?.membership?.active !== 'boolean'
+        || !Array.isArray(data.access?.scenarios) || !Number.isInteger(data.access.unlocked_count)
+        || (data.goal && (typeof data.goal.access?.membership?.active !== 'boolean'
+          || !Array.isArray(data.goal.scenarios) || !Array.isArray(data.goal.access?.scenarios)
+          || data.goal.scenarios.some(scenario => data.goal.access.scenarios.filter(
+            access => access.title === scenario.title && typeof access.allowed === 'boolean'
+          ).length !== 1)))) {
+        throw error(503, 'authorization_unavailable', 'Authorization snapshot is incomplete');
+      }
       res.set('Cache-Control', 'no-store');
       res.json({ data, meta: { request_id: req.requestId } });
     } catch (err) { next(err); }
@@ -372,14 +398,14 @@ function createApp(options) {
       if (!internalAuthSecret) throw error(503, 'scenario_generation_unavailable', 'Scenario generation is not configured');
       const data = await requestJson(`${aiUrl}/generate-scenario`, {
         method: 'POST', body: req.body, timeoutMs: aiTimeoutMs,
-        headers: { 'X-Guaji-Internal-Auth': internalAuthSecret },
+        headers: identityHeaders(req),
       });
       res.json({ data, meta: { request_id: req.requestId } });
     } catch (err) { next(err); }
   });
   app.post('/v1/ai/tts', auth.requireScopes('ai:generate'), requireIdempotency, async (req, res, next) => {
     try {
-      const upstream = await fetchWithTimeout(`${aiUrl}/tts`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(req.body) }, aiTimeoutMs);
+      const upstream = await fetchWithTimeout(`${aiUrl}/tts`, { method: 'POST', headers: { 'content-type': 'application/json', ...identityHeaders(req) }, body: JSON.stringify(req.body) }, aiTimeoutMs);
       if (!upstream.ok) throw await upstreamError(upstream);
       const contentType = upstream.headers.get('content-type') || 'audio/wav';
       const audio = await upstream.buffer();
@@ -442,7 +468,7 @@ function createApp(options) {
   function proxyJson(url, timeoutMs) {
     return async (req, res, next) => {
       try {
-        const upstream = await requestJson(url, { method: 'POST', body: req.body, timeoutMs });
+        const upstream = await requestJson(url, { method: 'POST', body: req.body, timeoutMs, headers: identityHeaders(req) });
         res.json({ data: upstream?.data ?? upstream, meta: { request_id: req.requestId } });
       }
       catch (err) { next(err); }
@@ -466,7 +492,7 @@ function createApp(options) {
   async function upstreamError(response) {
     let details;
     try { details = await response.json(); } catch { details = undefined; }
-    return error(response.status >= 500 ? 502 : response.status, 'upstream_error', 'Upstream request failed', details);
+    return error(response.status === 503 ? 503 : response.status >= 500 ? 502 : response.status, 'upstream_error', 'Upstream request failed', details);
   }
 
   app.use((req, _res, next) => next(error(404, 'not_found', 'Endpoint not found')));

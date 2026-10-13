@@ -847,6 +847,29 @@ class TestRealtimeEventOrdering:
         assert sent_types == ["ai_turn_started", "audio_response", "response.audio.done"]
 
 
+@pytest.mark.asyncio
+async def test_interleaved_response_audio_uploads_keep_samples_and_message_identity():
+    callback = _main_module.WebSocketCallback(
+        AsyncMock(), asyncio.get_running_loop(), {}, "token", "user-1",
+        "session-1", [], "Coffee Shop", None,
+    )
+    callback._safe_send = AsyncMock()
+    callback.upload_audio_to_cos = AsyncMock(side_effect=["https://audio.test/one", "https://audio.test/two"])
+    callback.messages = [
+        {"role": "assistant", "responseId": "one", "content": "First"},
+        {"role": "assistant", "responseId": "two", "content": "Second"},
+    ]
+    with patch.object(_main_module, "save_single_message", AsyncMock()):
+        for rid, delta in [("one", "AAE="), ("two", "AgM="), ("one", "BAU=")]:
+            callback.on_event({"type": "response.audio.delta", "response_id": rid, "delta": delta})
+        await asyncio.sleep(0.02)
+        callback.on_event({"type": "response.audio.done", "response_id": "one"})
+        await asyncio.sleep(0.02)
+        callback.on_event({"type": "response.audio.done", "response_id": "two"})
+        await asyncio.sleep(0.02)
+    assert [call.args[0] for call in callback.upload_audio_to_cos.await_args_list] == [b"\x00\x01\x04\x05", b"\x02\x03"]
+    assert [m["audioUrl"] for m in callback.messages] == ["https://audio.test/one", "https://audio.test/two"]
+
 # =========================================================================
 # helpers
 # =========================================================================

@@ -70,7 +70,7 @@ function Register() {
     <div className="relative flex min-h-[100dvh] w-full flex-col items-center bg-background-light dark:bg-background-dark p-4">
       {/* Logo */}
       <div className="w-full max-w-md flex justify-center pt-10 pb-6">
-        <img src="/guaji-logo.svg" alt="GuaJi" className="h-16 w-16" />
+        <img src="/guaji-logo.svg" alt="Guaji" className="h-16 w-16" />
       </div>
 
       <motion.div

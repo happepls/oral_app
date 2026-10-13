@@ -20,7 +20,11 @@ def test_workflow_text_calls_support_the_configured_workspace_key():
     files = ("batch_evaluation.py", "scenario_review.py", "proficiency_scoring.py")
     for filename in files:
         source = (workflows / filename).read_text()
-        assert "QWEN_TEXT_MODEL" in source
+        if filename == "scenario_review.py":
+            assert "BatchEvaluationWorkflow()" in source
+            assert "client._post_chat_completion" in source
+        else:
+            assert "QWEN_TEXT_MODEL" in source
         assert "QWEN3_OMNI_API_KEY" in source or "DASHSCOPE_API_KEY" in source
 
 

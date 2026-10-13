@@ -24,7 +24,8 @@ test('paused goal edits lock completed scenes and preserve failed edits @critica
       goal = { ...goal, scenarios: saved.at(-1).scenarios.map((scenario, i) => i === 0 ? goal.scenarios[0] : ({ ...scenario, tasks: scenario.tasks.map((text, n) => ({ id: n + 30, text, score: 0, status: 'pending', interaction_count: 0, scoring_generation: 0 })) })) };
       return route.fulfill({ contentType: 'application/json', body: JSON.stringify({ success: true, goal }) });
     }
-    if (path.endsWith('/ai/scenario')) data = { scenario: { title: '酒店入住', tasks: ['说明预订信息', '询问早餐时间', '请求房卡'] } };
+    if (path.endsWith('/profile')) data = { id: 'editor-user', username: 'Demo', native_language: 'zh' };
+    else if (path.endsWith('/ai/scenario')) data = { scenario: { title: '酒店入住', tasks: ['说明预订信息', '询问早餐时间', '请求房卡'] } };
     else if (path.includes('/goals')) data = { goals: [goal] };
     else if (path.includes('/checkin')) data = { streak: 2 };
     await route.fulfill({ contentType: 'application/json', body: JSON.stringify({ success: true, data }) });
@@ -74,7 +75,8 @@ test('another tab editing the same goal closes its old business socket @critical
   await page.route('**/api/**', async route => {
     const path = new URL(route.request().url()).pathname;
     let data = {};
-    if (path.endsWith('/goals/active')) data = { goal };
+    if (path.endsWith('/profile')) data = { id: 'editor-user', username: 'Demo', native_language: 'zh' };
+    else if (path.endsWith('/goals/active')) data = { goal };
     else if (path.endsWith('/conversations')) data = { sessionId: 'editor-session', id: 'editor-session' };
     else if (path.includes('/history/')) data = [];
     else if (path.includes('/tickets')) data = { ticket: 'fake' };
@@ -112,7 +114,8 @@ for (const delayed of ['goal', 'session']) {
       let data = {};
       const isGoal = path.endsWith('/goals/active');
       const isSession = path.endsWith('/conversations');
-      if (isGoal) data = { goal };
+      if (path.endsWith('/profile')) data = { id: 'editor-user', username: 'Demo', native_language: 'zh' };
+      else if (isGoal) data = { goal };
       else if (isSession) data = { id: 'slow-session', sessionId: 'slow-session' };
       else if (path.includes('/tickets')) data = { ticket: 'fake' };
       if ((delayed === 'goal' && isGoal) || (delayed === 'session' && isSession)) {

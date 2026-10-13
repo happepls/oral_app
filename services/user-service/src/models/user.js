@@ -1,4 +1,5 @@
 const db = require('./db');
+const { membership } = require('../stripe/membership');
 const { overlayGoalTasks, replaceGoalScenarios } = require('./goalScenarios');
 const bcrypt = require('bcryptjs');
 const fetch = require('node-fetch');
@@ -86,7 +87,7 @@ User.findById = async (id) => {
     if (user.password === null) {
         delete user.password;
     }
-    return user;
+    return membership(user);
 };
 
 User.update = async (id, updates) => {
@@ -120,7 +121,7 @@ User.update = async (id, updates) => {
   `;
 
   const { rows } = await db.query(query, values);
-  return rows[0];
+  return membership(rows[0]);
 };
 
 User.createGoal = async (userId, goalData) => {
@@ -765,7 +766,7 @@ User.findByEmail = async (email) => {
     if (user.password === null) {
         delete user.password;
     }
-    return user;
+    return membership(user);
 };
 
 // 重置/更新本地密码：bcrypt 哈希后写入 user_identities.provider_uid（provider='local'）。
@@ -923,7 +924,7 @@ User.findOrCreateFromGoogle = async ({ googleId, email, name }) => {
     if (res.rows.length > 0) {
       // User exists, fetch and return user details
       const userResult = await db.query('SELECT * FROM users WHERE id = $1', [res.rows[0].user_id]);
-      return userResult.rows[0];
+      return membership(userResult.rows[0]);
     } else {
       const client = await db.pool.connect();
       try {
@@ -972,7 +973,7 @@ User.findOrCreateFromGoogle = async ({ googleId, email, name }) => {
 User.findOrCreateByPhone = async (phone) => {
   const existing = await db.query('SELECT * FROM users WHERE phone = $1', [phone]);
   if (existing.rows.length > 0) {
-    return existing.rows[0];
+    return membership(existing.rows[0]);
   }
   // 用手机号尾号派生一个默认 username，冲突则加随机后缀
   const base = `用户${String(phone).slice(-4)}`;
@@ -983,10 +984,10 @@ User.findOrCreateByPhone = async (phone) => {
         'INSERT INTO users (username, phone) VALUES ($1, $2) ON CONFLICT (phone) DO NOTHING RETURNING *',
         [usernameToTry, phone]
       );
-      if (ins.rows[0]) return ins.rows[0];
+      if (ins.rows[0]) return membership(ins.rows[0]);
       // Another verified request created this number after our initial SELECT.
       const concurrent = await db.query('SELECT * FROM users WHERE phone = $1', [phone]);
-      if (concurrent.rows[0]) return concurrent.rows[0];
+      if (concurrent.rows[0]) return membership(concurrent.rows[0]);
       throw new Error('phone account unavailable');
     } catch (err) {
       if (err.code === '23505' && err.detail?.includes('username') && attempt < 3) {

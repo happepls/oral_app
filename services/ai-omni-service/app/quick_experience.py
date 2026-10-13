@@ -8,6 +8,7 @@ import uuid
 
 import httpx
 from fastapi import WebSocketDisconnect
+import os
 from dashscope.audio.qwen_omni import OmniRealtimeCallback, OmniRealtimeConversation, MultiModality
 
 QUESTIONS = (
@@ -80,7 +81,7 @@ return 0
 """
 
 
-async def run_quick_experience(ws, user, redis, config, model, realtime_model, quota_key, quota_limit, analytics_emit=None):
+async def run_quick_experience(ws, user, redis, config, model, realtime_model, quota_key, quota_limit, analytics_emit=None, authorization_refresh=None):
     async def send(kind, **payload):
         await ws.send_json({"type": kind, "payload": payload})
 
@@ -193,6 +194,15 @@ async def run_quick_experience(ws, user, redis, config, model, realtime_model, q
                 break  # Reconnect avoids attributing a late ASR result to another answer.
             kind = event.get("type")
             payload = event.get("payload") or {}
+            if source == 'client' and kind not in ('ping', 'closed') and authorization_refresh:
+                try:
+                    access = await authorization_refresh()
+                    # Use the current membership, including prepaid expiry/refund.
+                    quota_limit = int(os.getenv('PRO_DAILY_TURNS', '150') if access['membership']['active'] else os.getenv('FREE_DAILY_TURNS', '15'))
+                except Exception as error:
+                    await send('error', status=getattr(error, 'status_code', 503), code=getattr(error, 'detail', 'authorization_unavailable'))
+                    await ws.close(code=1011 if getattr(error, 'status_code', 503) == 503 else 1008)
+                    break
             if kind == "closed":
                 break
             if source == "ai":

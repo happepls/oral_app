@@ -26,10 +26,17 @@ async function freePort() {
   return port;
 }
 
-async function startComms(aiUrl) {
+async function startComms(aiUrl, decision = { allowed: true, status: 200 }) {
+  const authority = http.createServer((req, res) => {
+    assert.equal(req.headers['x-guaji-internal-auth'], 'comms-access-test-secret');
+    req.resume();
+    res.writeHead(decision.status, { 'content-type': 'application/json' });
+    res.end(JSON.stringify(decision));
+  }).listen(0, '127.0.0.1');
+  await once(authority, 'listening');
   const port = await freePort();
   const child = spawn(process.execPath, [path.resolve(__dirname, '../src/index.js')], {
-    env: { ...process.env, PORT: String(port), JWT_SECRET: secret, AI_SERVICE_WS_URL: aiUrl },
+    env: { ...process.env, PORT: String(port), JWT_SECRET: secret, AI_SERVICE_WS_URL: aiUrl, INTERNAL_AUTH_SECRET: 'comms-access-test-secret', USER_SERVICE_URL: `http://127.0.0.1:${authority.address().port}` },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
   let output = '';
@@ -44,12 +51,43 @@ async function startComms(aiUrl) {
     child.once('exit', (code) => reject(new Error(`Comms exited early (${code}): ${output}`)));
   });
   await ready;
-  return { port, child, stop: () => { child.kill('SIGTERM'); } };
+  return { port, child, stop: () => { child.kill('SIGTERM'); authority.close(); authority.closeAllConnections(); } };
 }
 
 function ticket(type = 'realtime_ticket') {
   return jwt.sign({ id: 'quality-user', type }, secret, { algorithm: 'HS256', expiresIn: '60s' });
 }
+
+test('locked scene, authorization outage, and unknown mode never open upstream AI', async () => {
+  for (const decision of [
+    { allowed: false, status: 403, reason: 'scene_locked' },
+    { allowed: false, status: 503, reason: 'authorization_unavailable' },
+    { allowed: true, status: 200 },
+  ]) {
+    const aiHttp = http.createServer();
+    const aiWss = new WebSocketServer({ server: aiHttp });
+    let upstreams = 0;
+    aiWss.on('connection', () => upstreams++);
+    aiHttp.listen(0, '127.0.0.1');
+    await once(aiHttp, 'listening');
+    const comms = await startComms(`ws://127.0.0.1:${aiHttp.address().port}/stream`, decision);
+    try {
+      const mode = decision.allowed ? '&mode=magic_repetition' : '';
+      const client = new WebSocket(`ws://127.0.0.1:${comms.port}/api/v1/realtime?ticket=${encodeURIComponent(ticket())}&sessionId=denial&scenario=fourth${mode}`);
+      const message = once(client, 'message');
+      const closed = once(client, 'close');
+      const [frame] = await message;
+      const error = JSON.parse(frame).payload;
+      assert.equal(error.status, decision.allowed ? 403 : decision.status);
+      assert.equal(error.code, decision.allowed ? 'mode_invalid' : decision.reason);
+      assert.equal((await closed)[0], decision.status === 503 ? 1011 : 1008);
+      assert.equal(upstreams, 0);
+    } finally {
+      comms.stop();
+      await new Promise(resolve => aiWss.close(() => aiHttp.close(resolve)));
+    }
+  }
+});
 
 test('realtime ticket handshake, event forwarding, binary audio, invalid mode, and reconnect', async () => {
   const aiHttp = http.createServer();
@@ -65,7 +103,7 @@ test('realtime ticket handshake, event forwarding, binary audio, invalid mode, a
   });
   const comms = await startComms(`ws://127.0.0.1:${aiHttp.address().port}/stream`);
   try {
-    const connect = (mode = 'invalid') => new WebSocket(`ws://127.0.0.1:${comms.port}/api/v1/realtime?ticket=${encodeURIComponent(ticket())}&sessionId=session-1&mode=${mode}&voice=Tina`);
+    const connect = (mode = '') => new WebSocket(`ws://127.0.0.1:${comms.port}/api/v1/realtime?ticket=${encodeURIComponent(ticket())}&sessionId=session-1&mode=${mode}&voice=Tina`);
     const client = connect();
     await once(client, 'open');
     const [event] = await once(client, 'message');

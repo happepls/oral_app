@@ -9,9 +9,27 @@ export const AuthProvider = ({ children }) => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
+  // Every surface shares this boundary; a pre-paid membership cannot remain
+  // active indefinitely in a tab whose profile was cached before expiry.
+  useEffect(() => {
+    if (user?.billing_source !== 'prepaid' || !user.prepaid_expires_at) return;
+    let timer;
+    const check = () => {
+      const remaining = new Date(user.prepaid_expires_at).getTime() - Date.now();
+      if (remaining <= 0) {
+        setUser(current => current?.billing_source === 'prepaid'
+          ? { ...current, subscription_status: current.stripe_subscription_status || 'free', billing_source: null }
+          : current);
+      } else timer = setTimeout(check, Math.min(remaining + 10, 2147483647));
+    };
+    check();
+    return () => clearTimeout(timer);
+  }, [user?.billing_source, user?.prepaid_expires_at]);
+
   useEffect(() => {
     const savedToken = localStorage.getItem('authToken') || localStorage.getItem('token');
-    const savedUser = localStorage.getItem('user');
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 15000);
 
     const clearAuth = () => {
       localStorage.removeItem('authToken');
@@ -19,54 +37,41 @@ export const AuthProvider = ({ children }) => {
       localStorage.removeItem('user');
     };
 
-    const migrateToken = async (oldToken) => {
+    const restoreSession = async () => {
       try {
-        const response = await fetch('/api/users/token-migrate', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${oldToken}`
-          },
-          credentials: 'include'
-        });
-
-        if (response.ok) {
-          console.log('Token migrated successfully to httpOnly cookie');
-          // Remove old token from localStorage after successful migration
-          clearAuth();
-          // Try to restore user from API response if provided
-          const data = await response.json();
-          if (data.data?.user) {
-            localStorage.setItem('user', JSON.stringify(data.data.user));
-            setUser(data.data.user);
-          }
-        } else {
-          console.error('Token migration failed');
+        if (savedToken) {
+          const response = await fetch('/api/users/token-migrate', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${savedToken}`
+            },
+            credentials: 'include',
+            signal: controller.signal,
+          });
+          if (!response.ok) throw new Error('Token migration failed');
           clearAuth();
         }
+        // The cookie and server profile are authoritative, even with no cache.
+        const response = await userAPI.getProfile({ signal: controller.signal, redirectOnUnauthorized: false });
+        if (controller.signal.aborted) return;
+        const profile = response.user || response;
+        if (!profile.id) throw new Error('Profile is unavailable');
+        localStorage.setItem('user', JSON.stringify(profile));
+        setUser(profile);
       } catch (err) {
-        console.error('Token migration error:', err);
+        if (cancelled) return;
         clearAuth();
+        setUser(null);
+        if (err.status !== 401) setError('无法恢复登录资料，请重试');
+      } finally {
+        clearTimeout(timeout);
+        if (!cancelled) setLoading(false);
       }
-      setLoading(false);
     };
-
-    if (savedToken) {
-      // Migrate old JWT token to httpOnly cookie
-      migrateToken(savedToken);
-    } else if (savedUser) {
-      // No old token, just restore user from localStorage
-      try {
-        setUser(JSON.parse(savedUser));
-      } catch (err) {
-        console.error('Failed to parse user data:', err);
-        clearAuth();
-      }
-      setLoading(false);
-    } else {
-      // No saved data
-      setLoading(false);
-    }
+    let cancelled = false;
+    restoreSession();
+    return () => { cancelled = true; clearTimeout(timeout); controller.abort(); };
   }, []);
 
   const login = async (credentials) => {

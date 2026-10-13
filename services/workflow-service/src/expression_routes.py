@@ -7,6 +7,7 @@ from fastapi import APIRouter, Header, HTTPException
 from pydantic import BaseModel, Field
 
 from workflows.expression_feedback import evaluate_expression, feedback_enabled
+from workflows.current_turn_feedback import evaluate_current_expression
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -35,4 +36,18 @@ async def expression_feedback(request: ExpressionRequest, x_guaji_internal_auth:
     except Exception as exc:
         # No user text, upstream body or credentials in logs. Feedback is optional.
         logger.warning("Scene expression feedback unavailable (%s)", type(exc).__name__)
+        return {"success": True, "data": None}
+
+
+@router.post("/internal/scene-current-turn-feedback")
+async def current_turn_feedback(request: ExpressionRequest, x_guaji_internal_auth: str = Header(default="")):
+    secret = os.getenv("INTERNAL_AUTH_SECRET", "")
+    if not secret or not secrets.compare_digest(secret, x_guaji_internal_auth):
+        raise HTTPException(status_code=403, detail="Internal authentication required")
+    try:
+        result = await evaluate_current_expression(request.model_dump())
+        return {"success": True, "data": result}
+    except Exception as exc:
+        # Only exception type: never log student input or model response bodies.
+        logger.warning("Scene current-turn feedback unavailable (%s)", type(exc).__name__)
         return {"success": True, "data": None}

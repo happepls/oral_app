@@ -156,9 +156,9 @@ const protect = async (req, res, next) => {
       });
     }
 
-    return res.status(401).json({
-      code: 401,
-      message: 'Not authorized, token verification failed',
+    return res.status(503).json({
+      code: 503,
+      message: 'authorization_unavailable',
       data: null
     });
   }

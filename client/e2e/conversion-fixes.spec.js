@@ -35,6 +35,8 @@ test('pricing fallback stays useful and recovers on retry @critical', async ({ p
 test('quick interview reaches evidence feedback and profile without a goal @critical', async ({ page }, testInfo) => {
   await page.addInitScript(() => localStorage.setItem('user', JSON.stringify({ id: 'quick-test', native_language: null })));
   await page.route('**/api/**', route => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ticket: 'test-ticket', data: {} }) }));
+  await page.route('**/api/v1/profile', route => route.fulfill({ contentType: 'application/json',
+    body: JSON.stringify({ data: { id: 'quick-test', native_language: null } }) }));
   await page.routeWebSocket('**/api/v1/realtime?*', ws => {
     const answers = [];
     const snapshot = () => ws.send(JSON.stringify({ type: 'quick_state', payload: {

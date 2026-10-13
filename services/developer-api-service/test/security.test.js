@@ -28,10 +28,25 @@ function fakeDb({ grantActive = true, scopes = ['profile:read'] } = {}) {
 }
 
 async function withServer(db, callback, options = {}) {
-  const server = createApp({ db, delegatedSecret: secret, realtimeSecret, ...options }).listen(0, '127.0.0.1');
+  const http = require('node:http');
+  const { readActiveGoal } = require('../src/activeGoal');
+  const authority = http.createServer(async (req, res) => {
+    assert.equal(req.headers['x-guaji-internal-auth'], 'access-test-secret');
+    assert.match(req.url, new RegExp(`/internal/users/${userId}/access$`));
+    const data = await readActiveGoal(db, userId);
+    data.access = { membership: { active: false, status: 'free', source: null }, unlocked_count: Math.min(3, data.goal?.scenarios?.length || 0), scenarios: [] };
+    if (data.goal) {
+      data.access.scenarios = data.goal.scenarios.map((s, index) => ({ title: s.title, allowed: index < 3 }));
+      data.goal.access = data.access;
+    }
+    res.setHeader('content-type', 'application/json');
+    res.end(JSON.stringify({ data }));
+  }).listen(0, '127.0.0.1');
+  await new Promise(resolve => authority.once('listening', resolve));
+  const server = createApp({ db, delegatedSecret: secret, realtimeSecret, internalAuthSecret: 'access-test-secret', userServiceUrl: `http://127.0.0.1:${authority.address().port}`, ...options }).listen(0, '127.0.0.1');
   await new Promise((resolve) => server.once('listening', resolve));
   try { await callback(`http://127.0.0.1:${server.address().port}`); }
-  finally { await new Promise((resolve) => server.close(resolve)); }
+  finally { await new Promise((resolve) => server.close(resolve)); await new Promise(resolve => authority.close(resolve)); }
 }
 
 test('all v1 calls require a valid API key and return the standard error envelope', async () => {
@@ -61,8 +76,15 @@ test('profile contract preserves onboarding fields and subscription state', asyn
     async query(sql, params = []) {
       if (sql.includes('FROM developer_api_keys')) return { rows: [{ key_id: 'key-1', client_id: clientId, name: 'Test', client_status: 'active' }] };
       if (sql.includes('FROM developer_user_grants')) return { rows: [{ id: grantId, user_id: userId, scopes: ['profile:read', 'profile:write'] }] };
-      if (sql.startsWith('SELECT id, username')) return { rows: [{ id: userId, gender: 1, birth_year: 1995, points: 42, subscription_status: 'active' }] };
+      if (sql.startsWith('SELECT id, username')) {
+        assert.match(sql, /AS stripe_subscription_status, prepaid_expires_at/);
+        assert.match(sql, /AS billing_source/);
+        return { rows: [{ id: userId, gender: 1, birth_year: 1995, points: 42, subscription_status: 'active', stripe_subscription_status: 'free',
+          billing_source: 'prepaid', prepaid_expires_at: '2099-01-01T00:00:00Z' }] };
+      }
       if (sql.startsWith('UPDATE users SET')) {
+        assert.match(sql, /AS stripe_subscription_status, prepaid_expires_at/);
+        assert.match(sql, /AS billing_source/);
         updateParams = params;
         return { rows: [{ id: userId, gender: 2, birth_year: 1996, points: 43, subscription_status: 'active' }] };
       }
@@ -136,7 +158,7 @@ test('active goal requires read scope and supports first-party cookies without a
   await withServer(db, async base => {
     const response = await fetch(`${base}/v1/goals/active`, { headers: { Cookie: `accessToken=${accessToken}` } });
     assert.equal(response.status, 200);
-    assert.deepEqual((await response.json()).data, { goal: null, has_other_goals: false });
+    assert.deepEqual((await response.json()).data, { goal: null, has_other_goals: false, access: { membership: { active: false, status: 'free', source: null }, unlocked_count: 0, scenarios: [] } });
   });
 });
 
@@ -329,6 +351,38 @@ test('upstream timeouts and unavailable dependencies use stable error codes', as
   }
 });
 
+test('AI authorization denial preserves 403 and 503 and forwards only trusted identity', async () => {
+  const http = require('node:http');
+  let status = 403;
+  let received;
+  const ai = http.createServer((req, res) => {
+    received = req.headers;
+    res.writeHead(status, { 'content-type': 'application/json' });
+    res.end(JSON.stringify({ detail: status === 403 ? 'scene_locked' : 'authorization_unavailable' }));
+  }).listen(0, '127.0.0.1');
+  await new Promise(resolve => ai.once('listening', resolve));
+  const db = fakeDb({ scopes: ['ai:generate'] });
+  const query = db.query.bind(db);
+  db.query = async (sql, params) => sql.includes('INSERT INTO developer_idempotency_keys')
+    ? { rows: [{ idempotency_key: params[3] }] } : query(sql, params);
+  try {
+    await withServer(db, async base => {
+      for (const denied of [403, 503]) {
+        status = denied;
+        const response = await fetch(`${base}/v1/ai/scenario`, {
+          method: 'POST', headers: { 'content-type': 'application/json', 'X-Guaji-API-Key': 'gj_test_key',
+            Authorization: `Bearer ${token(['ai:generate'])}`, 'Idempotency-Key': `denial-${denied}`,
+            'X-Guaji-User-Id': 'attacker', 'X-Guaji-Internal-Auth': 'attacker' },
+          body: JSON.stringify({ scenario_title: 'fourth', user_id: 'attacker', subscription_status: 'active' }),
+        });
+        assert.equal(response.status, denied);
+        assert.equal(received['x-guaji-user-id'], userId);
+        assert.equal(received['x-guaji-internal-auth'], 'access-test-secret');
+      }
+    }, { aiUrl: `http://127.0.0.1:${ai.address().port}` });
+  } finally { await new Promise(resolve => ai.close(resolve)); }
+});
+
 test('idempotency keys are isolated by grant, user, method, and path', async () => {
   const reservations = new Set();
   const inserts = [];
@@ -366,7 +420,9 @@ test('idempotency keys are isolated by grant, user, method, and path', async () 
 test('TTS idempotency caches and replays the binary response', async () => {
   const http = require('node:http');
   let aiCalls = 0;
-  const ai = http.createServer((_req, res) => {
+  const ai = http.createServer((req, res) => {
+    assert.equal(req.headers['x-guaji-internal-auth'], 'access-test-secret');
+    assert.equal(req.headers['x-guaji-user-id'], userId);
     aiCalls += 1;
     res.writeHead(200, { 'content-type': 'audio/wav' });
     res.end(Buffer.from('RIFF-test-audio'));
@@ -405,6 +461,70 @@ test('TTS idempotency caches and replays the binary response', async () => {
   } finally {
     await new Promise((resolve) => ai.close(resolve));
   }
+});
+
+test('TTS first-party cookies and partner scopes cannot spoof internal identity', async () => {
+  const http = require('node:http');
+  let calls = 0;
+  const ai = http.createServer((req, res) => {
+    calls++;
+    assert.equal(req.headers['x-guaji-user-id'], userId);
+    if (req.headers['x-guaji-internal-auth'] !== 'access-test-secret') {
+      res.writeHead(401, { 'content-type': 'application/json' });
+      return res.end(JSON.stringify({ detail: 'authentication_required' }));
+    }
+    res.writeHead(200, { 'content-type': 'audio/wav' });
+    res.end('RIFF-synthetic-audio');
+  }).listen(0, '127.0.0.1');
+  await new Promise(resolve => ai.once('listening', resolve));
+  const db = fakeDb();
+  const query = db.query.bind(db);
+  db.query = async (sql, params) => sql.includes('INSERT INTO developer_user_grants') ? { rows: [{ id: grantId }] }
+    : sql.includes('INSERT INTO developer_idempotency_keys') ? { rows: [{ idempotency_key: params[3] }] } : query(sql, params);
+  const cookie = expiresIn => `accessToken=${jwt.sign({ id: userId, type: 'access' }, realtimeSecret,
+    { issuer: 'oral-app', audience: 'oral-app-users', expiresIn })}`;
+  try {
+    await withServer(db, async base => {
+      const headers = { 'content-type': 'application/json', 'Idempotency-Key': 'cookie-tts',
+        'X-Guaji-User-ID': 'attacker', 'X-Guaji-Internal-Auth': 'attacker' };
+      const request = extra => fetch(`${base}/v1/ai/tts`, { method: 'POST', headers: { ...headers, ...extra }, body: '{"text":"こんにちは"}' });
+      assert.equal((await request({})).status, 401);
+      assert.equal((await request({ Cookie: cookie(-1) })).status, 401);
+      assert.equal((await request({ 'X-Guaji-API-Key': 'gj_test_key', Authorization: `Bearer ${token()}` })).status, 403);
+      const audio = await request({ Cookie: cookie(3600) });
+      assert.equal(audio.status, 200);
+      assert.equal(await audio.text(), 'RIFF-synthetic-audio');
+      assert.equal(calls, 1);
+    }, { aiUrl: `http://127.0.0.1:${ai.address().port}` });
+    await withServer(db, async base => {
+      const response = await fetch(`${base}/v1/ai/tts`, { method: 'POST', headers: {
+        'content-type': 'application/json', 'Idempotency-Key': 'wrong-secret', Cookie: cookie(3600),
+      }, body: '{"text":"hello"}' });
+      assert.equal(response.status, 401);
+      assert.equal((await response.json()).error.code, 'upstream_error');
+    }, { aiUrl: `http://127.0.0.1:${ai.address().port}`, internalAuthSecret: 'incorrect-test-secret' });
+  } finally { await new Promise(resolve => ai.close(resolve)); }
+});
+
+test('active goal fails closed on stale or failed authority instead of returning locked access', async () => {
+  const http = require('node:http');
+  let status = 200;
+  const authority = http.createServer((_req, res) => {
+    res.writeHead(status, { 'content-type': 'application/json' });
+    res.end(JSON.stringify({ data: { goal: { id: 7, scenarios: [] } } }));
+  }).listen(0, '127.0.0.1');
+  await new Promise(resolve => authority.once('listening', resolve));
+  try {
+    await withServer(fakeDb({ scopes: ['goals:read'] }), async base => {
+      for (status of [200, 401, 500]) {
+        const response = await fetch(`${base}/v1/goals/active`, { headers: {
+          'X-Guaji-API-Key': 'gj_test_key', Authorization: `Bearer ${token(['goals:read'])}`,
+        } });
+        assert.equal(response.status, 503);
+        assert.equal((await response.json()).error.code, 'authorization_unavailable');
+      }
+    }, { userServiceUrl: `http://127.0.0.1:${authority.address().port}` });
+  } finally { await new Promise(resolve => authority.close(resolve)); }
 });
 
 test('conversation creation uses a scoped internal token and never forwards userId', async () => {

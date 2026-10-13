@@ -1,5 +1,6 @@
 const { getUncachableStripeClient, getStripeSecretKey } = require('./stripeClient');
 const { Pool } = require('pg');
+const { membership } = require('./membership');
 
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
@@ -19,7 +20,7 @@ class StripeService {
     return await stripe.customers.create({
       email,
       metadata: { userId: String(userId) },
-    });
+    }, { idempotencyKey: `customer:${userId}` });
   }
 
   async createCheckoutSession(customerId, priceId, successUrl, cancelUrl, promotionCode, userId) {
@@ -244,8 +245,11 @@ class StripeService {
       values.push(stripeInfo.stripeSubscriptionId);
     }
     if (stripeInfo.subscriptionStatus !== undefined) {
-      setClauses.push(`subscription_status = $${paramIndex++}`);
+      setClauses.push(`stripe_subscription_status = $${paramIndex + 1}`);
+      setClauses.push(`subscription_status = CASE WHEN $${paramIndex} IN ('active', 'trialing') OR prepaid_expires_at > NOW() THEN 'active' ELSE $${paramIndex} END`);
+      paramIndex += 2;
       values.push(stripeInfo.subscriptionStatus);
+      values.push(stripeInfo.stripeSubscriptionStatus || stripeInfo.subscriptionStatus);
     }
 
     return { setClauses, values };
@@ -256,7 +260,12 @@ class StripeService {
       'SELECT * FROM users WHERE id = $1',
       [userId]
     );
-    return result.rows[0] || null;
+    return membership(result.rows[0]) || null;
+  }
+
+  async getUserByCustomerId(customerId) {
+    const result = await pool.query('SELECT * FROM users WHERE stripe_customer_id=$1', [customerId]);
+    return membership(result.rows[0]) || null;
   }
 
   // Webhook fallback: resolve a user id from the checkout email when the
@@ -267,7 +276,7 @@ class StripeService {
       'SELECT * FROM users WHERE LOWER(email) = LOWER($1) LIMIT 1',
       [email]
     );
-    return result.rows[0] || null;
+    return membership(result.rows[0]) || null;
   }
 }
 

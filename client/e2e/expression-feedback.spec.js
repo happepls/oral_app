@@ -1,17 +1,27 @@
 const { test, expect } = require('@playwright/test');
+const AxeBuilder = require('@axe-core/playwright').default;
 
-test('scene expressions send student text once and preserve task progress @critical', async ({ page }, testInfo) => {
+test('tutor replies show guidance without cards and preserve task progress @critical', async ({ page }, testInfo) => {
+  const language = testInfo.project.use.locale === 'en-US' ? 'en' : 'zh';
+  const labels = require(`../src/i18n/locales/${language}.json`);
+  const animated = testInfo.project.name === 'chromium-desktop';
+  await page.emulateMedia({ reducedMotion: animated ? 'no-preference' : 'reduce' });
   const user = { id: 'expression-test', username: 'Practice', native_language: 'zh', target_language: 'en' };
   const task = { id: 42, text: 'Order steak', status: 'pending', score: 3, interaction_count: 3, scoring_generation: 3 };
   const historySaves = [];
-  await page.addInitScript(({ user }) => {
+  await page.addInitScript(({ user, language }) => {
     localStorage.setItem('user', JSON.stringify(user));
-    localStorage.setItem('ui_language', 'zh');
+    localStorage.setItem('ui_language', language);
     window.testSockets = [];
     window.sentMessages = [];
     window.pcmStarts = 0;
+    Object.defineProperty(navigator, 'mediaDevices', {
+      configurable: true, value: { getUserMedia: async () => ({ getTracks: () => [{ stop() {} }] }) },
+    });
     window.AudioContext = class {
-      constructor() { this.currentTime = 0; this.state = 'running'; this.destination = {}; }
+      constructor() { this.currentTime = 0; this.state = 'running'; this.destination = {}; this.audioWorklet = { addModule: async () => {} }; }
+      createAnalyser() { return { frequencyBinCount: 128, connect() {}, disconnect() {}, getByteFrequencyData(data) { data.fill(0); } }; }
+      createMediaStreamSource() { return { connect() {}, disconnect() {} }; }
       createBuffer(_channels, length, rate) {
         return { duration: length / rate, getChannelData: () => new Float32Array(length) };
       }
@@ -20,6 +30,11 @@ test('scene expressions send student text once and preserve task progress @criti
       }
       close() { return Promise.resolve(); }
       resume() { return Promise.resolve(); }
+    };
+    window.AudioWorkletNode = class {
+      constructor() { this.port = { onmessage: null }; window.testWorklet = this; }
+      connect() {}
+      disconnect() {}
     };
     class Socket {
       static CONNECTING = 0; static OPEN = 1; static CLOSING = 2; static CLOSED = 3;
@@ -32,7 +47,7 @@ test('scene expressions send student text once and preserve task progress @criti
       close() { this.readyState = 3; }
     }
     window.WebSocket = Socket;
-  }, { user });
+  }, { user, language });
   await page.route(/tawk\.to|stripe\.com|dashscope|myqcloud|google/i, route => route.abort());
   await page.route('**/api/**', async route => {
     const url = route.request().url();
@@ -63,6 +78,7 @@ test('scene expressions send student text once and preserve task progress @criti
     await route.fulfill({ contentType: 'application/json', body: JSON.stringify({ success: true, data }) });
   });
   await page.goto('/conversation?scenario=Restaurant');
+  await page.evaluate(dark => document.documentElement.classList.toggle('dark', dark), testInfo.project.use.colorScheme === 'dark');
   await expect(page.getByRole('list', { name: '场景子任务' })).toContainText('Order steak');
   await expect.poll(() => page.evaluate(() => window.testSockets.some(s => s.readyState === 1 && s.url.includes('/realtime')))).toBe(true);
   const emit = (type, payload) => page.evaluate(({ type, payload }) => {
@@ -78,7 +94,7 @@ test('scene expressions send student text once and preserve task progress @criti
     expect.objectContaining({ role: 'user', content: 'I want eat steak.' }),
   ]));
   expect(historySaves.flat().every(message => message.content || message.audioUrl)).toBe(true);
-  await emit('ai_message', { content: 'Use want to eat. Try that again.', responseId: 'a1', turn_id: 'u1' });
+  await emit('ai_message', { content: 'Use want to eat. Say: I want to eat steak. Try that again.', responseId: 'a1', turn_id: 'u1' });
   const feedback = { task_id: 42, goal_id: 7, scoring_generation: 3, turn_id: 'u1', scenario: 'Restaurant',
     teaching_mode: 'correct', off_topic: false,
     errors: [{ original: 'I want eat steak', corrected: 'I want to eat steak', explanation_l1: 'want 后接 to 加动词原形。' }],
@@ -87,22 +103,41 @@ test('scene expressions send student text once and preserve task progress @criti
   await expect(card).toHaveCount(0); // old backend / absent event remains usable
   await emit('expression_feedback', feedback);
   await emit('expression_feedback', feedback);
-  await expect(card).toHaveCount(1);
-  await expect(card).toContainText('want 后接 to');
+  await expect(card).toHaveCount(0);
+  await expect(page.getByRole('textbox')).toHaveCount(0);
+  await expect(page.getByText('Use want to eat. Say: I want to eat steak. Try that again.')).toBeVisible();
   await expect(page.getByRole('progressbar', { name: '当前子任务进度', exact: true })).toHaveAttribute('aria-valuenow', '33');
   await emit('expression_feedback', { ...feedback, turn_id: 'old', scoring_generation: 2 });
-  await expect(card).toHaveCount(1);
-  await card.scrollIntoViewIfNeeded();
-  const chip = card.getByRole('button', { name: feedback.alternatives[0], exact: true });
-  await chip.focus();
-  await expect(chip).toBeFocused();
+  await expect(card).toHaveCount(0);
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(page.viewportSize().width + 1);
   await page.screenshot({ path: testInfo.outputPath('expression-feedback.png') });
-  await chip.press('Enter');
-  await expect(card.getByRole('textbox')).toHaveValue(feedback.alternatives[0]);
-  await expect(chip).toBeDisabled();
-  const sent = await page.evaluate(() => window.sentMessages.filter(m => m.type === 'text_message'));
-  expect(sent).toEqual([{ type: 'text_message', payload: { text: feedback.alternatives[0] } }]);
+  const pendingReply = page.getByRole('status').filter({ hasText: labels.ai_reply_pending });
+  await expect(pendingReply).toHaveCount(0);
+  const record = async () => {
+    await page.getByRole('button', { name: language === 'en' ? 'Tap to speak' : '点击说话', exact: true }).click();
+    await expect(page.getByTestId('recording-controls')).toBeVisible();
+    await expect(pendingReply).toHaveCount(0);
+    await page.evaluate(() => window.testWorklet.port.onmessage({ data: { type: 'audio_data', buffer: new Int16Array(800) } }));
+    await page.getByTitle('发送', { exact: true }).click();
+    return page.evaluate(() => window.sentMessages.filter(m => m.type === 'audio_stream').at(-1).payload.input_id);
+  };
+  const inputId = await record();
+  // Feedback must be visible before ANY transcript, teaching event or reply.
+  await expect(pendingReply).toBeVisible();
+  await expect(pendingReply).toHaveCount(1);
+  const dots = pendingReply.locator('[aria-hidden="true"] > span');
+  await expect.poll(() => dots.evaluateAll(nodes => nodes.some(node => getComputedStyle(node).transform !== 'none'))).toBe(animated);
+  const accessibility = await new AxeBuilder({ page }).include('[role="status"][aria-atomic="true"]').analyze();
+  expect(accessibility.violations.filter(item => ['serious', 'critical'].includes(item.impact))).toEqual([]);
+  await pendingReply.scrollIntoViewIfNeeded();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(page.viewportSize().width + 1);
+  await page.screenshot({ path: testInfo.outputPath('ai-reply-pending.png') });
+  await page.getByRole('button', { name: '进入 CC 沉浸模式', exact: true }).click();
+  await expect(pendingReply).toBeVisible();
+  await expect(pendingReply).toHaveCount(1);
+  await page.screenshot({ path: testInfo.outputPath('ai-reply-pending-cc.png') });
+  await page.getByRole('button', { name: '退出 CC 沉浸模式', exact: true }).first().click();
+  await expect(pendingReply).toBeVisible();
   const pcm = responseId => page.evaluate(responseId => {
     const id = new TextEncoder().encode(responseId);
     const packet = new Uint8Array(4 + id.length + 8192);
@@ -115,12 +150,45 @@ test('scene expressions send student text once and preserve task progress @criti
   await emit('ai_message', { content: 'STALE RESPONSE', responseId: 'a1', turn_id: 'u1' });
   await pcm('a1');
   await expect(page.getByText('STALE RESPONSE')).toHaveCount(0);
+  await expect(pendingReply).toBeVisible();
   expect(await page.evaluate(() => window.pcmStarts)).toBe(0);
-  await emit('user_transcript', { text: feedback.alternatives[0], messageId: 'u2', turn_id: 'u2' });
-  await emit('ai_message', { content: 'You corrected that clearly.', responseId: 'a2', turn_id: 'u2' });
+  const current = { ...feedback, protocol_version: 2, turn_id: 'u2', input_id: inputId };
+  await emit('user_transcript', { ...current, text: 'A steak, medium or medium rare.', messageId: 'u2' });
+  await emit('ai_turn_started', { responseId: 'a2' });
+  await expect(pendingReply).toBeVisible(); // empty AI placeholder is not a reply
+  await emit('teaching_state', { ...current, status: 'analyzing' });
+  await expect(page.getByRole('status').filter({ hasText: labels.teaching_analyzing })).toBeVisible();
+  await emit('teaching_state', { ...current, input_id: 'old-recording', status: 'retry' });
+  await expect(page.getByRole('status').filter({ hasText: labels.teaching_analyzing })).toBeVisible();
+  await emit('expression_feedback', { ...current, teaching_mode: 'clarify', errors: [], alternatives: [],
+    user_text: 'A steak, medium or medium rare.', clarification_question: 'Did you mean medium or medium rare?' });
+  await emit('ai_message', { ...current, content: 'Did you mean medium or medium rare?', responseId: 'a2' });
+  await expect(pendingReply).toHaveCount(0); // text ends waiting before audio
   await pcm('a2');
+  await emit('response.audio.done', { responseId: 'a2' });
   await expect.poll(() => page.evaluate(() => window.pcmStarts)).toBe(1);
+  await emit('teaching_state', { ...current, status: 'ready' });
+  await expect(page.getByText('Did you mean medium or medium rare?')).toBeVisible();
+  await expect(card).toHaveCount(0);
+  await expect(page.getByRole('textbox')).toHaveCount(0);
+  await expect(page.getByRole('button', { name: '发送我的回答' })).toHaveCount(0);
   await expect(page.getByRole('progressbar', { name: '当前子任务进度', exact: true })).toHaveAttribute('aria-valuenow', '33');
+  await page.screenshot({ path: testInfo.outputPath('clarification-in-tutor-reply.png') });
+  const confirmedInputId = await record();
+  await expect(pendingReply).toBeVisible();
+  expect(confirmedInputId).not.toBe(inputId);
+  await emit('user_transcript', { ...current, input_id: confirmedInputId, turn_id: 'u3', messageId: 'u3', text: "I'd like the steak medium rare, please." });
+  await expect(page.getByText("I'd like the steak medium rare, please.")).toBeVisible();
+  expect(await page.evaluate(() => window.sentMessages.filter(m => m.type === 'text_message'))).toEqual([]);
+  await emit('teaching_state', { ...current, status: 'retry' });
+  await expect(page.getByText('本轮暂时无法完成，请重新录音或稍后重试。')).toHaveCount(0);
+  await expect(pendingReply).toBeVisible(); // a stale retry cannot hide it
+  await emit('teaching_state', { ...current, input_id: confirmedInputId, turn_id: 'u3', status: 'retry' });
+  await expect(pendingReply).toHaveCount(0);
+  await record();
+  await expect(pendingReply).toBeVisible();
+  await emit('error', { message: 'Temporary test error', retryable: true });
+  await expect(pendingReply).toHaveCount(0);
   await page.evaluate(() => { window.confirm = () => true; });
   await Promise.all([
     page.waitForEvent('framenavigated', { predicate: frame => frame === page.mainFrame() }),

@@ -1,0 +1,703 @@
+{
+  "initial_audio": {
+    "model": "qwen3.8-omni-flash-realtime",
+    "source": "synthetic macOS Kyoko PCM16 16kHz",
+    "results": [
+      {
+        "branch": "correct",
+        "repeat": 1,
+        "synthetic_input": "私は五人のチームを管理するました。",
+        "result": {
+          "status": "clear",
+          "heard_text": "私は五人のチームを管理するました。",
+          "uncertain_spans": []
+        },
+        "pass": true,
+        "elapsed_seconds": 5.218
+      },
+      {
+        "branch": "correct",
+        "repeat": 2,
+        "synthetic_input": "私は五人のチームを管理するました。",
+        "result": {
+          "status": "clear",
+          "heard_text": "私は五人のチームを管理するました。",
+          "uncertain_spans": []
+        },
+        "pass": true,
+        "elapsed_seconds": 4.201
+      },
+      {
+        "branch": "correct",
+        "repeat": 3,
+        "synthetic_input": "私は五人のチームを管理するました。",
+        "result": {
+          "status": "clear",
+          "heard_text": "私は五人のチームを管理するました。",
+          "uncertain_spans": []
+        },
+        "pass": true,
+        "elapsed_seconds": 4.555
+      },
+      {
+        "branch": "clarify",
+        "repeat": 1,
+        "synthetic_input": "予算は五十、いや五百くらいで、人数は十五か五十でした。",
+        "result": {
+          "status": "uncertain",
+          "heard_text": "予算は五十いや五百くらいで人数は十五か五十でした。",
+          "uncertain_spans": [
+            "十五か五十"
+          ]
+        },
+        "pass": true,
+        "elapsed_seconds": 9.413
+      },
+      {
+        "branch": "clarify",
+        "repeat": 2,
+        "synthetic_input": "予算は五十、いや五百くらいで、人数は十五か五十でした。",
+        "result": {
+          "status": "clear",
+          "heard_text": "予算は五十いや五百くらいで人数は十五か五十でした。",
+          "uncertain_spans": []
+        },
+        "pass": false,
+        "elapsed_seconds": 5.161
+      },
+      {
+        "branch": "clarify",
+        "repeat": 3,
+        "synthetic_input": "予算は五十、いや五百くらいで、人数は十五か五十でした。",
+        "result": {
+          "status": "uncertain",
+          "heard_text": "予算は五十いや五百くらいで人数は十五か五十でした。",
+          "uncertain_spans": [
+            "五十いや五百",
+            "十五か五十"
+          ]
+        },
+        "pass": true,
+        "elapsed_seconds": 7.19
+      },
+      {
+        "branch": "advance",
+        "repeat": 1,
+        "synthetic_input": "私は五人のチームを率いて、予約システムを開発しました。",
+        "result": {
+          "status": "clear",
+          "heard_text": "私は五人のチームを率いて予約システムを開発しました。",
+          "uncertain_spans": []
+        },
+        "pass": true,
+        "elapsed_seconds": 7.792
+      },
+      {
+        "branch": "advance",
+        "repeat": 2,
+        "synthetic_input": "私は五人のチームを率いて、予約システムを開発しました。",
+        "result": {
+          "status": "clear",
+          "heard_text": "私は五人のチームを率いて予約システムを開発しました。",
+          "uncertain_spans": []
+        },
+        "pass": true,
+        "elapsed_seconds": 7.107
+      },
+      {
+        "branch": "advance",
+        "repeat": 3,
+        "synthetic_input": "私は五人のチームを率いて、予約システムを開発しました。",
+        "result": {
+          "status": "clear",
+          "heard_text": "私は五人のチームを率いて予約システムを開発しました。",
+          "uncertain_spans": []
+        },
+        "pass": true,
+        "elapsed_seconds": 4.57
+      }
+    ]
+  },
+  "audio_with_acoustics": {
+    "model": "qwen3.8-omni-flash-realtime",
+    "source": "synthetic macOS Kyoko PCM16 16kHz",
+    "results": [
+      {
+        "branch": "correct",
+        "repeat": 1,
+        "synthetic_input": "私は五人のチームを管理するました。",
+        "result": {
+          "status": "clear",
+          "heard_text": "私は五人のチームを管理するました。",
+          "uncertain_spans": [],
+          "speech_scores": {
+            "pronunciation": 95,
+            "fluency": 85,
+            "intonation": 80
+          }
+        },
+        "pass": true,
+        "elapsed_seconds": 5.86
+      },
+      {
+        "branch": "correct",
+        "repeat": 2,
+        "synthetic_input": "私は五人のチームを管理するました。",
+        "result": {
+          "status": "clear",
+          "heard_text": "私は五人のチームを管理するました。",
+          "uncertain_spans": [],
+          "speech_scores": {
+            "pronunciation": 95,
+            "fluency": 80,
+            "intonation": 75
+          }
+        },
+        "pass": true,
+        "elapsed_seconds": 4.273
+      },
+      {
+        "branch": "correct",
+        "repeat": 3,
+        "synthetic_input": "私は五人のチームを管理するました。",
+        "result": {
+          "status": "clear",
+          "heard_text": "私は五人のチームを管理するました。",
+          "uncertain_spans": [],
+          "speech_scores": {
+            "pronunciation": 95,
+            "fluency": 80,
+            "intonation": 75
+          }
+        },
+        "pass": true,
+        "elapsed_seconds": 6.466
+      },
+      {
+        "branch": "clarify",
+        "repeat": 1,
+        "synthetic_input": "予算は五十、いや五百くらいで、人数は十五か五十でした。",
+        "result": {
+          "status": "uncertain",
+          "heard_text": "予算は五十、いや五百くらいで、人数は十五か五十でした。",
+          "uncertain_spans": [
+            "十五か五十"
+          ],
+          "speech_scores": null
+        },
+        "pass": true,
+        "elapsed_seconds": 5.428
+      },
+      {
+        "branch": "clarify",
+        "repeat": 2,
+        "synthetic_input": "予算は五十、いや五百くらいで、人数は十五か五十でした。",
+        "result": {
+          "status": "uncertain",
+          "heard_text": "予算は五十、いや五百くらいで、人数は十五か五十でした。",
+          "uncertain_spans": [
+            "十五か五十"
+          ],
+          "speech_scores": null
+        },
+        "pass": true,
+        "elapsed_seconds": 8.199
+      },
+      {
+        "branch": "clarify",
+        "repeat": 3,
+        "synthetic_input": "予算は五十、いや五百くらいで、人数は十五か五十でした。",
+        "result": {
+          "status": "uncertain",
+          "heard_text": "予算は五十いや五百くらいで人数は十五か五十でした。",
+          "uncertain_spans": [
+            "十五か五十"
+          ],
+          "speech_scores": null
+        },
+        "pass": true,
+        "elapsed_seconds": 8.184
+      },
+      {
+        "branch": "advance",
+        "repeat": 1,
+        "synthetic_input": "私は五人のチームを率いて、予約システムを開発しました。",
+        "result": {
+          "status": "clear",
+          "heard_text": "私は五人のチームを率いて予約システムを開発しました。",
+          "uncertain_spans": [],
+          "speech_scores": {
+            "pronunciation": 95,
+            "fluency": 95,
+            "intonation": 90
+          }
+        },
+        "pass": true,
+        "elapsed_seconds": 5.446
+      },
+      {
+        "branch": "advance",
+        "repeat": 2,
+        "synthetic_input": "私は五人のチームを率いて、予約システムを開発しました。",
+        "result": {
+          "status": "clear",
+          "heard_text": "私は五人のチームを率いて予約システムを開発しました。",
+          "uncertain_spans": [],
+          "speech_scores": {
+            "pronunciation": 95,
+            "fluency": 90,
+            "intonation": 85
+          }
+        },
+        "pass": true,
+        "elapsed_seconds": 4.535
+      },
+      {
+        "branch": "advance",
+        "repeat": 3,
+        "synthetic_input": "私は五人のチームを率いて、予約システムを開発しました。",
+        "result": {
+          "status": "clear",
+          "heard_text": "私は五人のチームを率いて予約システムを開発しました。",
+          "uncertain_spans": [],
+          "speech_scores": {
+            "pronunciation": 95,
+            "fluency": 90,
+            "intonation": 85
+          }
+        },
+        "pass": true,
+        "elapsed_seconds": 5.31
+      }
+    ]
+  },
+  "initial_scoring": {
+    "source": "synthetic only; real local-container model requests; no database writes",
+    "windows": [
+      {
+        "case": "clear",
+        "repeat": 1,
+        "result": {
+          "quality": "strong",
+          "evidence_sufficient": true,
+          "reason": "学生は職業、プロジェクト規模、具体的な役割を正確に説明しており、タスクを完全に達成しているが、文脈の接続や詳細な補足が不足し、やや断片的な印象を与える。",
+          "practice_tip": "個々の情報を接続詞（例：「その際」「具体的には」）で結び、より自然な流れを作る練習をしましょう。例えば：「私はソフトウェアエンジニアです。その際、五人のチームを率いて予約システムを開発しました。具体的には、要件定義と進捗管理を担当しました。」"
+        },
+        "passed": true,
+        "seconds": 3.821
+      },
+      {
+        "case": "clear",
+        "repeat": 2,
+        "result": {
+          "quality": "strong",
+          "evidence_sufficient": true,
+          "reason": "学生は職業、チーム規模、プロジェクト内容、および具体的な役割を正確に説明しており、タスクの要件を満たしています。",
+          "practice_tip": "より自然な接続詞や詳細な修飾語を追加して、文の流暢性を高める練習をしてください（例：「主に」や「〜を通じて」を使用する）。"
+        },
+        "passed": true,
+        "seconds": 2.214
+      },
+      {
+        "case": "clear",
+        "repeat": 3,
+        "result": {
+          "quality": "mastered",
+          "evidence_sufficient": true,
+          "reason": "学生は職業、チーム規模、開発対象、および具体的な業務内容（要件定義・進捗管理）を正確かつ自然な日本語で完遂した。",
+          "practice_tip": "次に、使用した技術スタックや成果物について具体的に説明する練習をしましょう。例：'ReactとNode.jsを使用して...'。"
+        },
+        "passed": true,
+        "seconds": 2.233
+      },
+      {
+        "case": "grammar_error",
+        "repeat": 1,
+        "result": {
+          "quality": "needs_work",
+          "evidence_sufficient": true,
+          "reason": "学生は「〜するました」という文法を誤用しており、またタスクで要求された「職業」の説明が欠けている。",
+          "practice_tip": "過去形の正しい形（〜しました）を練習し、自分の職業名（例：エンジニアです）から説明を始める。"
+        },
+        "passed": true,
+        "seconds": 2.223
+      },
+      {
+        "case": "grammar_error",
+        "repeat": 2,
+        "result": {
+          "quality": "needs_work",
+          "evidence_sufficient": true,
+          "reason": "学生は「～するました」という文法を誤用しており、過去形や完了形の表現ができていないため、課題遂行に支障がある。",
+          "practice_tip": "過去の事実を述べるには動詞の過去形（～しました）を使用することを確認し、「チームを管理しました」のように修正練習を行う。"
+        },
+        "passed": true,
+        "seconds": 2.772
+      },
+      {
+        "case": "grammar_error",
+        "repeat": 3,
+        "result": {
+          "quality": "needs_work",
+          "evidence_sufficient": true,
+          "reason": "学生は「〜するました」という文法を誤用しており、過去形の表現（〜しました）が定着していない。",
+          "practice_tip": "動詞の語尾変化と過去形「〜しました」の正しい使い方を練習してください。例：開発する → 開発しました"
+        },
+        "passed": true,
+        "seconds": 2.46
+      },
+      {
+        "case": "off_topic",
+        "repeat": 1,
+        "result": {
+          "quality": "off_topic",
+          "evidence_sufficient": true,
+          "reason": "学生的回答与职业和项目角色的任务完全无关，属于离题内容。",
+          "practice_tip": "请练习使用「私は～です」句型介绍自己的职业，例如：「私はエンジニアです。」（我是工程师。）"
+        },
+        "passed": true,
+        "seconds": 2.122
+      },
+      {
+        "case": "off_topic",
+        "repeat": 2,
+        "result": {
+          "quality": "off_topic",
+          "evidence_sufficient": true,
+          "reason": "学生的回答完全偏离了职业和项目角色的主题，属于无关内容。",
+          "practice_tip": "需要练习使用「私は～です」介绍职业，例如：「私はエンジニアです。」"
+        },
+        "passed": true,
+        "seconds": 1.3
+      },
+      {
+        "case": "off_topic",
+        "repeat": 3,
+        "result": {
+          "quality": "off_topic",
+          "evidence_sufficient": true,
+          "reason": "学生的回答完全偏离了关于职业和项目角色的任务要求，属于无关话题。",
+          "practice_tip": "请练习使用「私は～の職業です」和「～を担当しました」句型来描述自己的工作内容，例如：「私はエンジニアで、Webサイトの開発を担当しました。」"
+        },
+        "passed": true,
+        "seconds": 2.016
+      }
+    ],
+    "report": {
+      "total_messages": 3,
+      "user_messages": 3,
+      "ai_messages": 0,
+      "total_characters": 78,
+      "total_words": null,
+      "avg_message_length": 26.0,
+      "message_length_unit": "characters",
+      "vocabulary_diversity": null,
+      "grammar_errors": null,
+      "task_keyword_matches": null,
+      "completion_time_minutes": 0,
+      "strengths": [],
+      "weaknesses": [],
+      "summary": "评估待完成：需要至少三轮清晰音频及有效词汇评估。任务进度不受影响。",
+      "detail_scores": {
+        "pronunciation": 95,
+        "fluency": 92,
+        "intonation": 87,
+        "vocabulary": null
+      },
+      "evaluation_status": "pending",
+      "sufficient": false,
+      "user_turn_count": 3,
+      "audio_turn_count": 3,
+      "overall_score": null,
+      "stars": null,
+      "areas_to_improve": []
+    },
+    "report_passed": false
+  },
+  "scoring_counterexamples": {
+    "source": "synthetic only; real local-container model requests; no database writes",
+    "windows": [
+      {
+        "case": "clear",
+        "repeat": 1,
+        "result": {
+          "quality": "strong",
+          "evidence_sufficient": true,
+          "reason": "学生は職業とプロジェクトでの役割を明確に説明しており、文法的にも正確で課題を完全に満たしている。",
+          "practice_tip": "自然な接続詞や補足情報を加えてより詳細な説明を試してください。例：「私はソフトウェアエンジニアであり、チームリーダーとして要件定義も担当しました。」"
+        },
+        "passed": true,
+        "seconds": 3.035
+      },
+      {
+        "case": "clear",
+        "repeat": 2,
+        "result": {
+          "quality": "satisfactory",
+          "evidence_sufficient": false,
+          "reason": "学生は文法的に正しい回答を提供しているが、3ターンではタスクの完了に必要な詳細さが不足しており、判断に十分な証拠がない。",
+          "practice_tip": "プロジェクトでの具体的な成果や使用した技術スタックを追加して説明を深める練習をしてください。例：「AWSを使用してデータベースを最適化し、処理速度を30%向上させました。」"
+        },
+        "passed": false,
+        "seconds": 2.622
+      },
+      {
+        "case": "clear",
+        "repeat": 3,
+        "result": {
+          "quality": "satisfactory",
+          "evidence_sufficient": true,
+          "reason": "学生は職業とプロジェクトでの役割を正しく説明しておりタスクを完了しているが、各応答が簡潔すぎて詳細に欠けるため完全な習得とはみなせない。",
+          "practice_tip": "各文に具体的な成果や使用した技術を追加して、より詳細で自然な自己紹介を作成してください。（例：「要件定義と進捗管理を担当しました」→「要件定義と進捗管理を担当し、納期通りにシステムをリリースしました。」）"
+        },
+        "passed": false,
+        "seconds": 3.079
+      },
+      {
+        "case": "grammar_error",
+        "repeat": 1,
+        "result": {
+          "quality": "needs_work",
+          "evidence_sufficient": true,
+          "reason": "学生は「〜するました」という文法を誤用しており、過去の事実を説明するタスクに対して適切な動詞活用（〜しました）ができていない。",
+          "practice_tip": "過去形の正しい形「〜しました」を使用し、具体的な職業名やプロジェクト名を含めて完全な自己紹介文を作成してください。例：「私はエンジニアです。昨日システムを開発しました。」"
+        },
+        "passed": true,
+        "seconds": 3.002
+      },
+      {
+        "case": "grammar_error",
+        "repeat": 2,
+        "result": {
+          "quality": "needs_work",
+          "evidence_sufficient": true,
+          "reason": "学生は「〜するました」という文法を誤用しており、過去形や完了形の表現ができていない。",
+          "practice_tip": "動詞の過去形（〜しました）と完了形（〜しました/〜てしまいました）の使い方を練習してください。例：「チームを管理しました」または「プロジェクトを担当しました」。"
+        },
+        "passed": true,
+        "seconds": 2.504
+      },
+      {
+        "case": "grammar_error",
+        "repeat": 3,
+        "result": {
+          "quality": "needs_work",
+          "evidence_sufficient": true,
+          "reason": "学生は「〜するました」という不自然な動詞活用を3回繰り返しており、タスクの要件（職業と役割の説明）を満たす完全な文構成ができていない。",
+          "practice_tip": "過去形の正しい形（〜しました）を使用し、具体的な職業名と役割を組み合わせた完全な文を作成する練習を行う。（例：私はエンジニアで、システム開発を担当しました。）"
+        },
+        "passed": true,
+        "seconds": 2.796
+      },
+      {
+        "case": "off_topic",
+        "repeat": 1,
+        "result": {
+          "quality": "off_topic",
+          "evidence_sufficient": true,
+          "reason": "学生は職業やプロジェクトの役割という課題に対して、天気や趣味、食事など全く無関係な内容を話しており、タスクを完全に無視している。",
+          "practice_tip": "まずは「私は〜です」を使って自分の職業名（例：エンジニア）を言う練習から始めましょう。次に、「担当したのは〜です」でプロジェクト名を追加します。"
+        },
+        "passed": true,
+        "seconds": 2.5
+      },
+      {
+        "case": "off_topic",
+        "repeat": 2,
+        "result": {
+          "quality": "off_topic",
+          "evidence_sufficient": true,
+          "reason": "学生的回答完全偏离了职业和项目角色的任务要求，属于无关话题。",
+          "practice_tip": "请练习使用「私は～です」介绍职业，例如：「私はエンジニアです。」（我是工程师。）"
+        },
+        "passed": true,
+        "seconds": 2.045
+      },
+      {
+        "case": "off_topic",
+        "repeat": 3,
+        "result": {
+          "quality": "off_topic",
+          "evidence_sufficient": true,
+          "reason": "学生はタスクで要求された職業やプロジェクトの役割について一言も話さず、すべて無関係な内容（天気、猫、昼飯）を話している。",
+          "practice_tip": "自分の職業名と具体的な業務内容を日本語で説明する練習をする。例：「私はエンジニアです。Webサイトの開発を担当しています。」"
+        },
+        "passed": true,
+        "seconds": 2.273
+      }
+    ],
+    "report": {
+      "total_messages": 3,
+      "user_messages": 3,
+      "ai_messages": 0,
+      "total_characters": 78,
+      "total_words": null,
+      "avg_message_length": 26.0,
+      "message_length_unit": "characters",
+      "vocabulary_diversity": null,
+      "grammar_errors": null,
+      "task_keyword_matches": null,
+      "completion_time_minutes": 0,
+      "strengths": [],
+      "weaknesses": [],
+      "summary": "对话轮数: 3. 任务完成情况: 1.",
+      "eval_reason": "学生使用了准确的商务日语词汇和语法结构（如“率いて”、“開発しました”），能够清晰表达职业背景和项目角色，词汇选择得体且符合语境。",
+      "detail_scores": {
+        "pronunciation": 95,
+        "fluency": 92,
+        "intonation": 87,
+        "vocabulary": 85
+      },
+      "evaluation_status": "completed",
+      "sufficient": true,
+      "user_turn_count": 3,
+      "audio_turn_count": 3,
+      "overall_score": 90,
+      "stars": 4
+    },
+    "report_passed": true
+  },
+  "final_scoring": {
+    "source": "synthetic only; real local-container model requests; no database writes",
+    "windows": [
+      {
+        "case": "clear",
+        "repeat": 1,
+        "result": {
+          "quality": "mastered",
+          "evidence_sufficient": true,
+          "reason": "学生は職業とプロジェクトでの役割というタスクの全要件を正確かつ自然に完了した。",
+          "practice_tip": "次のステップとして、使用した技術スタックや具体的な成果を追加して説明を深める練習を行ってください（例：「ReactとNode.jsを使用して…」）。"
+        },
+        "passed": true,
+        "seconds": 2.895
+      },
+      {
+        "case": "clear",
+        "repeat": 2,
+        "result": {
+          "quality": "mastered",
+          "evidence_sufficient": true,
+          "reason": "学生は職業とプロジェクトでの役割というタスクの全要件を、3ターンで簡潔かつ正確に完了した。",
+          "practice_tip": "具体的な技術スタックや成果数を追加して表現を深める練習をする（例：「Reactを使用してユーザーインターフェースを実装しました」）。"
+        },
+        "passed": true,
+        "seconds": 2.066
+      },
+      {
+        "case": "clear",
+        "repeat": 3,
+        "result": {
+          "quality": "mastered",
+          "evidence_sufficient": true,
+          "reason": "学生は職業とプロジェクトでの役割というタスクの全要件を正確かつ自然に完了した。",
+          "practice_tip": "さらに詳細な成果や使用技術を追加してみましょう（例：「チームリーダーとして、納期前にシステムを完成させました」）。"
+        },
+        "passed": true,
+        "seconds": 2.087
+      },
+      {
+        "case": "grammar_error",
+        "repeat": 1,
+        "result": {
+          "quality": "needs_work",
+          "evidence_sufficient": false,
+          "reason": "学生は過去形の助動詞「ました」を誤って「する/開発する/説明する」に接続しており、文法的に不自然な表現を繰り返している。",
+          "practice_tip": "過去の行動を述べる際は動詞の辞書形に「ました」をつけず、動詞を変化させる必要があります。例：「システムを開発しました」（正） vs 「システムを開発するました」（誤）。"
+        },
+        "passed": true,
+        "seconds": 3.203
+      },
+      {
+        "case": "grammar_error",
+        "repeat": 2,
+        "result": {
+          "quality": "needs_work",
+          "evidence_sufficient": true,
+          "reason": "学生は「〜するました」という文法を繰り返し使用しており、過去形や完了形の表現が誤っており、タスクの要件である職業と役割の説明として不自然です。",
+          "practice_tip": "過去の行動を表すには動詞の過去形（例：管理しました、開発しました）を使用してください。例：「私はプロジェクトマネージャーで、チームを管理しました。」"
+        },
+        "passed": true,
+        "seconds": 2.845
+      },
+      {
+        "case": "grammar_error",
+        "repeat": 3,
+        "result": {
+          "quality": "needs_work",
+          "evidence_sufficient": true,
+          "reason": "学生は文脈（職業・プロジェクト役割）を説明しようとしているが、動詞の過去形活用が「〜ました」に統一されており（例：管理するました）、文法的に破綻しているため、意味が正確に伝わりにくい。",
+          "practice_tip": "動詞の過去形の正しい変化（ます形→ました）を復習してください。例えば、「管理します」は「管理しました」、「開発します」は「開発しました」と言います。"
+        },
+        "passed": true,
+        "seconds": 3.155
+      },
+      {
+        "case": "off_topic",
+        "repeat": 1,
+        "result": {
+          "quality": "off_topic",
+          "evidence_sufficient": true,
+          "reason": "学生的回答完全偏离了任务要求，未提及职业或项目角色。",
+          "practice_tip": "请尝试用「私は[职业]です」开头介绍自己的职业，例如：「私はエンジニアです。」"
+        },
+        "passed": true,
+        "seconds": 2.001
+      },
+      {
+        "case": "off_topic",
+        "repeat": 2,
+        "result": {
+          "quality": "off_topic",
+          "evidence_sufficient": false,
+          "reason": "学生的所有回答均与任务要求的职业和项目角色无关，属于完全离题。",
+          "practice_tip": "需要练习使用「私は〜です」（我是...）和「担当しました」（负责了...）句型来介绍自己的职业和工作内容。例如：「私はエンジニアで、Webサイトの開発を担当しました。」"
+        },
+        "passed": true,
+        "seconds": 2.332
+      },
+      {
+        "case": "off_topic",
+        "repeat": 3,
+        "result": {
+          "quality": "off_topic",
+          "evidence_sufficient": false,
+          "reason": "学生は職業やプロジェクトの役割について説明するタスクに対して、天気や食事など全く無関係な内容のみを話しており、課題を満たしていない。",
+          "practice_tip": "「私は〜です」で自分の職業（例：エンジニア）と担当したプロジェクト名（例：ECサイト開発）を具体的に述べる練習をしてください。例: 「私はWebエンジニアで、ECサイトの開発プロジェクトを担当しました。」"
+        },
+        "passed": true,
+        "seconds": 3.569
+      }
+    ],
+    "report": {
+      "total_messages": 3,
+      "user_messages": 3,
+      "ai_messages": 0,
+      "total_characters": 78,
+      "total_words": null,
+      "avg_message_length": 26.0,
+      "message_length_unit": "characters",
+      "vocabulary_diversity": null,
+      "grammar_errors": null,
+      "task_keyword_matches": null,
+      "completion_time_minutes": 0,
+      "strengths": [],
+      "weaknesses": [],
+      "summary": "对话轮数: 3. 任务完成情况: 1.",
+      "eval_reason": "学生重复使用同一句话，词汇量极其有限且缺乏多样性，仅展示了基础的动词和名词搭配。",
+      "detail_scores": {
+        "pronunciation": 95,
+        "fluency": 92,
+        "intonation": 87,
+        "vocabulary": 45
+      },
+      "evaluation_status": "completed",
+      "sufficient": true,
+      "user_turn_count": 3,
+      "audio_turn_count": 3,
+      "overall_score": 80,
+      "stars": 4
+    },
+    "report_passed": true
+  }
+}

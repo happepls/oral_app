@@ -1,6 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const userController = require('../controllers/userController');
+const sceneAccessController = require('../controllers/sceneAccessController');
 const User = require('../models/user');
 const { validateGoalScenarios } = require('../middleware/goalScenarioValidation');
 const { protect, internalAuthWithNetworkSkip } = require('../middleware/enhancedAuthMiddleware'); // Updated to enhanced auth
@@ -41,6 +42,9 @@ router.post('/api/users/goals', protect, userController.createGoal);
 router.get('/api/users/goals', protect, userController.getUserGoals);
 router.patch('/api/users/goals/:id/scenarios', protect, generalRateLimiter, validateGoalScenarios, handleValidationErrors, userController.replaceGoalScenarios);
 router.get('/api/users/goals/active', protect, userController.getActiveGoal);
+router.post('/api/users/access/check', protect, sceneAccessController.check);
+router.post('/api/users/internal/users/:id/access/check', internalAuthWithNetworkSkip, sceneAccessController.check);
+router.get('/api/users/internal/users/:id/access', internalAuthWithNetworkSkip, sceneAccessController.snapshot);
 router.get('/api/users/goals/current-task', protect, userController.getCurrentTask);
 router.get('/api/users/goals/next-task', protect, userController.getNextPendingTask);
 router.put('/api/users/goals/:id/complete', protect, userController.completeGoal);

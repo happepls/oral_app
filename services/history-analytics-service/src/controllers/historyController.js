@@ -1,6 +1,34 @@
 const Conversation = require('../models/Conversation');
 const crypto = require('crypto');
 
+function normalizeAudioEvidence(evidence) {
+  if (!evidence || typeof evidence !== 'object' || Array.isArray(evidence)) return undefined;
+  const fields = ['status', 'heard_text', 'uncertain_spans', 'speech_scores'];
+  if (Object.keys(evidence).some(key => !fields.includes(key))) return undefined;
+  const { status, heard_text: heardText, uncertain_spans: uncertainSpans } = evidence;
+  if (!['clear', 'uncertain', 'unavailable'].includes(status)
+    || typeof heardText !== 'string' || heardText.length > 4000
+    || !Array.isArray(uncertainSpans) || uncertainSpans.length > 20
+    || uncertainSpans.some(span => typeof span !== 'string' || span.length > 240)) return undefined;
+  if (status === 'clear' && (!heardText.trim() || uncertainSpans.length !== 0)) return undefined;
+  if (status === 'uncertain' && uncertainSpans.length === 0) return undefined;
+  if (status === 'unavailable' && (heardText !== '' || uncertainSpans.length !== 0)) return undefined;
+  const speechScores = evidence.speech_scores;
+  if (speechScores !== undefined && speechScores !== null) {
+    const scoreFields = ['pronunciation', 'fluency', 'intonation'];
+    if (status !== 'clear' || typeof speechScores !== 'object' || Array.isArray(speechScores)
+      || Object.keys(speechScores).length !== scoreFields.length
+      || Object.keys(speechScores).some(key => !scoreFields.includes(key))
+      || scoreFields.some(key => !Number.isInteger(speechScores[key]) || speechScores[key] < 0 || speechScores[key] > 100)) return undefined;
+  }
+  return {
+    status,
+    heard_text: heardText,
+    uncertain_spans: [...uncertainSpans],
+    ...(speechScores !== undefined ? { speech_scores: speechScores === null ? null : { ...speechScores } } : {}),
+  };
+}
+
 function normalizeMessage(sessionId, msg) {
   if (!msg || !['user', 'assistant', 'system'].includes(msg.role)) return null;
   const content = typeof msg.content === 'string' ? msg.content : '';
@@ -27,6 +55,11 @@ function normalizeMessage(sessionId, msg) {
   const turnId = typeof msg.turn_id === 'string' && msg.turn_id.trim()
     ? msg.turn_id.trim().slice(0, 128)
     : undefined;
+  // Write routes require the internal secret; browser snapshots are stripped at
+  // the conversation-service boundary. Invalid evidence must still mark audio
+  // input so downstream scoring cannot fall back to an unverified transcript.
+  const inputSource = msg.input_source === 'audio' ? 'audio' : undefined;
+  const audioEvidence = inputSource ? normalizeAudioEvidence(msg.audio_evidence) : undefined;
   return {
     id,
     role: msg.role,
@@ -35,6 +68,8 @@ function normalizeMessage(sessionId, msg) {
     ...(scenario ? { scenario } : {}),
     ...(taskId ? { task_id: taskId } : {}),
     ...(turnId ? { turn_id: turnId } : {}),
+    ...(inputSource ? { input_source: inputSource } : {}),
+    ...(audioEvidence ? { audio_evidence: audioEvidence } : {}),
     ...(safeTimestamp ? { timestamp: safeTimestamp } : {}),
   };
 }
@@ -65,6 +100,7 @@ function collapseLegacySnapshotDuplicates(messages) {
     const messageIsLegacy = legacyId.test(String(message.id || ''));
     const canonical = existingIsLegacy && !messageIsLegacy ? message : existing;
     const richer = message.audioUrl ? message : existing;
+    const audioEvidence = canonical.audio_evidence || existing.audio_evidence || message.audio_evidence;
     result[matchIndex] = {
       ...existing,
       ...richer,
@@ -75,6 +111,10 @@ function collapseLegacySnapshotDuplicates(messages) {
       ...(existing.audioUrl || message.audioUrl
         ? { audioUrl: message.audioUrl || existing.audioUrl }
         : {}),
+      ...(existing.input_source === 'audio' || message.input_source === 'audio'
+        ? { input_source: 'audio' }
+        : {}),
+      ...(audioEvidence ? { audio_evidence: audioEvidence } : {}),
     };
     return result;
   }, []);
@@ -99,6 +139,8 @@ function mergeMessages(conversation, messages) {
       if (incoming.scenario) existing.scenario = incoming.scenario;
       if (incoming.task_id) existing.task_id = incoming.task_id;
       if (incoming.turn_id) existing.turn_id = incoming.turn_id;
+      if (incoming.input_source) existing.input_source = incoming.input_source;
+      if (incoming.audio_evidence) existing.audio_evidence = incoming.audio_evidence;
     } else {
       conversation.messages.push(incoming);
     }

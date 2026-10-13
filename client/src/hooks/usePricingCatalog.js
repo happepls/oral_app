@@ -25,15 +25,16 @@ export function validProducts(payload) {
 // Each mounted consumer owns cancellation. Late failures cannot clear a newer result.
 export default function usePricingCatalog() {
   const [attempt, setAttempt] = useState(0);
-  const [state, setState] = useState({ products: [], loading: true });
+  const [state, setState] = useState({ products: [], prepaidOffers: [], loading: true });
   const retry = useCallback(() => setAttempt(n => n + 1), []);
   useEffect(() => {
     let active = true;
     let controller;
     let timeout;
-    setState({ products: [], loading: true });
+    setState({ products: [], prepaidOffers: [], loading: true });
     (async () => {
       let products = [];
+      let prepaidOffers = [];
       for (let n = 0; n < 2 && active; n += 1) {
         controller = new AbortController();
         timeout = setTimeout(() => controller.abort(), 8000);
@@ -42,7 +43,9 @@ export default function usePricingCatalog() {
             signal: controller.signal, credentials: 'include',
           });
           if (!response.ok) throw new Error('Catalog unavailable');
-          products = validProducts(await response.json());
+          const catalog = await response.json();
+          products = validProducts(catalog);
+          prepaidOffers = Array.isArray(catalog.prepaidOffers) ? catalog.prepaidOffers : [];
           if (products.length === 2) break;
         } catch {
           // A bounded second attempt handles transient upstream errors.
@@ -50,11 +53,11 @@ export default function usePricingCatalog() {
           clearTimeout(timeout);
         }
       }
-      if (active) setState({ products, loading: false });
+      if (active) setState({ products, prepaidOffers, loading: false });
     })();
     return () => { active = false; clearTimeout(timeout); controller?.abort(); };
   }, [attempt]);
   const products = REFERENCE_PRODUCTS.map(reference =>
     state.products.find(p => p.metadata.tier === reference.metadata.tier) || reference);
-  return { products, loading: state.loading, unavailable: products.some(p => p.reference), retry };
+  return { products, prepaidOffers: state.prepaidOffers, loading: state.loading, unavailable: products.some(p => p.reference), retry };
 }

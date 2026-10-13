@@ -75,6 +75,34 @@ def test_five_turns_all_alternatives_are_student_voice():
         assert all(feedback._student_voice(text, "English") for text in result["alternatives"])
 
 
+@pytest.mark.parametrize("student_request", [
+    "Could you tell me if my flight is delayed?",
+    "Can you check whether my flight is on time?",
+    "Would you tell me if my flight is on schedule?",
+])
+def test_learner_requests_to_an_agent_remain_valid_student_alternatives(student_request):
+    value = dict(CORRECTION, teaching_mode="advance", errors=[], alternatives=[
+        "Excuse me, is my flight on schedule?", student_request],
+        next_question_locked="Try another way: 'Excuse me, is my flight on schedule?'")
+    result = feedback.validate_feedback(value, "English")
+    assert result["alternatives"][1] == student_request
+    assert result["teaching_mode"] == "advance" and result["errors"] == []
+
+
+@pytest.mark.parametrize("provider", [
+    "Would you like my help with your flight?",
+    "Do you want me to check your flight?",
+    "Can I help you with your flight?",
+    "You should say: Is my flight on time?",
+    "Can you repeat after me?",
+    "Would you repeat after me?",
+    "Could you say my sentence again?",
+    "Can you read this after me?",
+])
+def test_provider_offers_and_teaching_instructions_are_not_student_alternatives(provider):
+    assert not feedback._student_voice(provider, "English")
+
+
 @pytest.mark.asyncio
 async def test_internal_auth_switch_timeout_and_no_raw_failure_leak(monkeypatch):
     monkeypatch.setenv("INTERNAL_AUTH_SECRET", "test-only")

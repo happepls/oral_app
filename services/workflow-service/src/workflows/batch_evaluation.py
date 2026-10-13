@@ -179,6 +179,19 @@ Required concepts/keywords: {current_task.get('keywords') or []}
 
 {turns}
 
+Judge ONLY the Student utterances as evidence of student ability and achievements.
+Tutor utterances are conversational context, including corrections and model
+student sentences. Never credit the student for a tutor's example, invented fact,
+budget, team size or achievement. A tutor's praise is not evidence of mastery.
+These are speech transcripts, not a spelling test. Do not penalize punctuation,
+kanji selection, name/company spelling or transliteration when the spoken meaning
+is preserved. Do not assume an unfamiliar proper noun is wrong because it is
+unfamiliar. Evaluate actual grammar and communicative meaning. Do not infer
+pronunciation quality, accent, pauses or fluency from transcript orthography.
+Short complete answers can be strong; do not demand invented biography or new
+achievements. A genuinely wrong meaning, uncorrected grammar error or unrelated
+answer remains an error even if the tutor praised it.
+
 Choose exactly one quality:
 - mastered: fully correct, natural, detailed, and directly completes the task
 - strong: correct, relevant, and clear with only minor limitations
@@ -187,6 +200,15 @@ Choose exactly one quality:
 - off_topic: unrelated or merely a generic greeting
 - repetitive: repeats wording without meaningful new task content
 - incorrect: wrong meaning or failure of the requested communicative action
+
+Assess the WHOLE window against ONLY what this task actually asks for. When
+correct, natural short turns together supply every requested fact/action, choose
+strong or mastered and evidence_sufficient=true. Brevity alone is not a limitation
+and must not reduce this to satisfactory or needs_work. A task asking for a job
+and project role is complete once those are explained; do not additionally demand
+technology stacks, quantified results, budget, dates, or achievements unless the
+task itself asks for them. Ask for a fourth turn only for a specific unresolved
+requirement or ambiguity, never merely to get a longer answer.
 
 For a 3-turn window, evidence_sufficient is false only when a fourth turn is genuinely
 needed to make a reliable classification. For a 4-turn window, choose a quality even
@@ -200,6 +222,8 @@ Return strict JSON only:
 The practice_tip must address this task and the student's observed difficulty.
 Explain what to say or improve next; do not merely say 'keep practicing'.
 Do not promise a score or completion, and do not invent errors unsupported by the window.
+Do not invent achievements or numbers in practice_tip examples. Suggest a faithful
+paraphrase using established facts, or ask which true detail the student wants to add.
 Do not return a score or delta; the server owns score mapping."""
 
     @staticmethod

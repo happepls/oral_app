@@ -4,6 +4,8 @@ const { stripeService } = require('./stripeService');
 const { getStripePublishableKey } = require('./stripeClient');
 const { protect } = require('../middleware/authMiddleware');
 const { createCatalogCache } = require('./catalogCache');
+const { prepaidService } = require('./prepaidService');
+const { membership } = require('./membership');
 const loadCatalog = createCatalogCache(() => stripeService.listProductsWithPrices());
 
 // Stripe redirect URL whitelist — only these origins are allowed for success/cancel/return URLs
@@ -73,7 +75,11 @@ router.get('/products-with-prices', async (req, res) => {
       }
     }
 
-    res.json({ data: Array.from(productsMap.values()) });
+    const products = Array.from(productsMap.values());
+    let prepaidOffers = [];
+    try { prepaidOffers = await prepaidService.offersForProducts(products); }
+    catch { console.warn('Prepaid payment method eligibility unavailable'); }
+    res.json({ data: products, prepaidOffers });
   } catch (error) {
     console.error('Stripe catalog unavailable', { type: error.type || 'unknown', status: error.statusCode || 500, durationMs: Date.now() - started });
     res.status(500).json({ error: 'Failed to list products' });
@@ -112,15 +118,19 @@ router.post('/promotion-codes/validate', protect, validatePromotionCode);
 
 router.get('/subscription', protect, async (req, res) => {
   try {
-    const user = await stripeService.getUserById(req.user.id);
+    const user = membership(await stripeService.getUserById(req.user.id));
     if (!user?.stripe_subscription_id) {
-      return res.json({ subscription: null, status: user?.subscription_status || 'free' });
+      return res.json({ subscription: null, status: user?.subscription_status || 'free',
+        billingSource: user?.billing_source, prepaidExpiresAt: user?.prepaid_expires_at,
+        canRenewPrepaid: user?.billing_source === 'prepaid' });
     }
 
     const subscription = await stripeService.getSubscription(user.stripe_subscription_id);
     res.json({ 
       subscription, 
       status: user.subscription_status || 'free' 
+      , billingSource: user.billing_source, prepaidExpiresAt: user.prepaid_expires_at,
+      canRenewPrepaid: user.billing_source === 'prepaid'
     });
   } catch (error) {
     console.error('Error getting subscription:', error);
@@ -131,7 +141,7 @@ router.get('/subscription', protect, async (req, res) => {
 router.post('/checkout', protect, async (req, res) => {
   try {
     const user = await stripeService.getUserById(req.user.id);
-    const { priceId, promotionCode } = req.body;
+    const { priceId, promotionCode, billingMode = 'subscription', requestKey, replacePending } = req.body;
 
     if (!priceId) {
       return res.status(400).json({ error: 'Price ID is required' });
@@ -145,6 +155,7 @@ router.post('/checkout', protect, async (req, res) => {
           stripeCustomerId: customer.id
         });
         customerId = customer.id;
+        user.stripe_customer_id = customerId;
       } catch (customerError) {
         console.error('Error creating customer:', customerError);
         return res.status(500).json({ error: 'Failed to create customer' });
@@ -153,28 +164,38 @@ router.post('/checkout', protect, async (req, res) => {
 
     const baseUrl = getValidatedBaseUrl(req);
     try {
-      const session = await stripeService.createCheckoutSession(
-        customerId,
-        priceId,
-        `${baseUrl}/subscription/success?session_id={CHECKOUT_SESSION_ID}`,
-        `${baseUrl}/subscription/cancel`,
-        promotionCode,
-        user.id
-      );
+      let promoId;
+      if (promotionCode) {
+        const promo = await stripeService.validatePromotionCode(promotionCode);
+        if (!promo) return res.status(400).json({ error: 'Promotion code is invalid or expired' });
+        promoId = promo.id;
+      }
+      const session = await prepaidService.createCheckout({ user, priceId, mode: billingMode,
+        requestKey: requestKey || require('crypto').randomUUID(), baseUrl, promoId, replacePending: replacePending === true });
 
-      res.json({ url: session.url });
+      res.json(session);
     } catch (sessionError) {
       console.error('Error creating checkout session:', sessionError);
-      res.status(sessionError.code === 'INVALID_PROMOTION_CODE' ? 400 : 500).json({
+      res.status(sessionError.status || (sessionError.code === 'INVALID_PROMOTION_CODE' ? 400 : 500)).json({
+        ...(sessionError.code === 'CHECKOUT_PROCESSING' ? { code: sessionError.code } : {}),
         error: sessionError.code === 'INVALID_PROMOTION_CODE'
           ? 'Promotion code is invalid or expired'
-          : 'Failed to create checkout session'
+          : sessionError.status ? sessionError.message : 'Failed to create checkout session'
       });
     }
   } catch (error) {
     console.error('Error creating checkout session:', error);
     res.status(500).json({ error: 'Failed to create checkout session' });
   }
+});
+
+router.get('/checkout/:sessionId/status', protect, async (req, res) => {
+  try {
+    const status = await prepaidService.status(req.user.id, req.params.sessionId);
+    const user = membership(await stripeService.getUserById(req.user.id));
+    res.json({ ...status, membership: { status: user.subscription_status,
+      billingSource: user.billing_source, prepaidExpiresAt: user.prepaid_expires_at } });
+  } catch (error) { res.status(error.status || 503).json({ error: 'Checkout status unavailable' }); }
 });
 
 router.post('/portal', protect, async (req, res) => {

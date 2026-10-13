@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import { motion } from 'motion/react';
 import {
   ArrowLeft, RotateCcw, ChevronRight, BookOpen,
@@ -8,11 +9,12 @@ import designTokens from '../imports/design-tokens.json';
 import { AccessibleDialog } from './AccessibleDialog';
 
 const tokens = designTokens.global;
+const isValidScore = (value) => typeof value === 'number' && Number.isFinite(value) && value >= 0 && value <= 100;
 
 /* ── Score Ring ── */
 function ScoreRing({ score, size = 140 }) {
   const [animated, setAnimated] = useState(false);
-  const normalizedScore = Math.max(0, Math.min(100, Number(score) || 0));
+  const normalizedScore = score;
   const radius = 52;
   const circumference = 2 * Math.PI * radius;
   const offset = circumference - (normalizedScore / 100) * circumference;
@@ -269,7 +271,6 @@ function ConversationTimeline({ messages }) {
 /* ── Main PracticeReport ── */
 export function PracticeReport({
   scenarioTitle,
-  scenarioScore = 0,
   reviewData,
   messages = [],
   durationSeconds,
@@ -280,6 +281,7 @@ export function PracticeReport({
   hasNextScenario = false,
   onCheckin,
 }) {
+  const { t } = useTranslation();
   const [checkinDone, setCheckinDone] = useState(false);
   const [checkinLoading, setCheckinLoading] = useState(false);
   const [checkinError, setCheckinError] = useState('');
@@ -298,34 +300,22 @@ export function PracticeReport({
     }
   };
 
-  // Derive skill scores from available data
+  // Task completion progress is not an assessment. Only display scores that
+  // the backend actually supplied; null, numeric strings and pending are unknown.
   const analysis = reviewData?.analysis || {};
-  const vocabDiversity = analysis.vocabulary_diversity || 0;
-
-  // Fallback 4 skill scores when backend detail_scores not available
-  const fallbackPronunciation = Math.min(100, Math.round(scenarioScore * 1.05));
-  const fallbackFluency = Math.min(100, Math.round(vocabDiversity * 100 * 0.7 + scenarioScore * 0.3));
-  const fallbackIntonation = Math.min(100, Math.round(scenarioScore * 0.98));
-  const fallbackVocabulary = Math.min(100, Math.round(
-    vocabDiversity > 0
-      ? vocabDiversity * 80 + 20
-      : scenarioScore * 0.95
-  ));
+  const assessmentPending = analysis.evaluation_status === 'pending' || reviewData?.evaluation_status === 'pending';
+  const hasOverallScore = !assessmentPending && isValidScore(analysis.overall_score);
 
   // Prefer backend detail_scores from the configured deep-evaluation model
   const backendScores = analysis?.detail_scores;
-  const hasDetailedScores = backendScores && ['pronunciation', 'fluency', 'intonation', 'vocabulary']
-    .every(key => Number.isFinite(Number(backendScores[key])));
-  const pronunciationScore = backendScores?.pronunciation ?? fallbackPronunciation;
-  const fluencyScore = backendScores?.fluency ?? fallbackFluency;
-  const intonationScore = backendScores?.intonation ?? fallbackIntonation;
-  const vocabularyScore = backendScores?.vocabulary ?? fallbackVocabulary;
+  const hasDetailedScores = !assessmentPending && backendScores && ['pronunciation', 'fluency', 'intonation', 'vocabulary']
+    .every(key => isValidScore(backendScores[key]));
 
   const skills = [
-    { icon: '🎯', name: '发音准确度', score: pronunciationScore, delay: 0 },
-    { icon: '💬', name: '语速流畅度', score: fluencyScore, delay: 100 },
-    { icon: '🗣️', name: '语调自然度', score: intonationScore, delay: 200 },
-    { icon: '📝', name: '词汇完整度', score: vocabularyScore, delay: 300 },
+    { icon: '🎯', name: '发音准确度', score: backendScores?.pronunciation, delay: 0 },
+    { icon: '💬', name: '语速流畅度', score: backendScores?.fluency, delay: 100 },
+    { icon: '🗣️', name: '语调自然度', score: backendScores?.intonation, delay: 200 },
+    { icon: '📝', name: '词汇完整度', score: backendScores?.vocabulary, delay: 300 },
   ];
 
   const strengths = Array.isArray(analysis.strengths) ? analysis.strengths : [];
@@ -352,9 +342,8 @@ export function PracticeReport({
   // Extract vocab from messages (words in AI corrections)
   const vocabItems = extractVocabFromMessages(messages);
 
-  // 兜底：reviewData 缺失或 analysis 稀疏（strengths/weaknesses/recommendations 全空，
-  // 例如报告在慢 WS 到达前用 fallback-timer 打开）时，从 4 项技能分数派生反馈，
-  // 保证「详细反馈」永不空白。技能分数始终有值（有 fallback 计算）。
+  // Derive specific feedback only from validated backend dimensions. Otherwise
+  // retain general practice guidance without inventing acoustic measurements.
   const SKILL_STRENGTH_LABEL = {
     '发音准确度': '发音清晰准确',
     '语速流畅度': '表达流畅自然',
@@ -386,8 +375,9 @@ export function PracticeReport({
     ? `${Math.floor(durationSeconds / 60)} 分 ${durationSeconds % 60} 秒`
     : null;
 
-  // Stars: prefer backend true value
-  const stars = analysis?.stars ?? Math.max(1, Math.min(5, Math.ceil(scenarioScore / 20)));
+  const stars = hasOverallScore && typeof analysis.stars === 'number'
+    && Number.isFinite(analysis.stars) && analysis.stars >= 0 && analysis.stars <= 5
+    ? analysis.stars : null;
 
   return (
     <AccessibleDialog
@@ -435,10 +425,16 @@ export function PracticeReport({
           transition={{ duration: 0.4 }}
           className="bg-white dark:bg-slate-800 rounded-3xl p-6 shadow-brand border border-slate-100 dark:border-slate-700 mb-5 flex flex-col items-center gap-4"
         >
-          <ScoreRing score={scenarioScore} />
+          {hasOverallScore ? (
+            <ScoreRing score={analysis.overall_score} />
+          ) : (
+            <p role="status" className="text-sm text-slate-600 dark:text-slate-300 text-center">
+              {t('practiceReport.assessmentPending')}
+            </p>
+          )}
 
           {/* Stars */}
-          <div className="flex items-center gap-1">
+          {stars !== null && <div className="flex items-center gap-1">
             {[1,2,3,4,5].map(i => (
               <Star
                 key={i}
@@ -447,7 +443,7 @@ export function PracticeReport({
                 stroke={i <= stars ? '#FBBF24' : '#D1D5DB'}
               />
             ))}
-          </div>
+          </div>}
 
           {/* Meta */}
           <div className="flex flex-col items-center gap-1">
@@ -490,7 +486,7 @@ export function PracticeReport({
           </div>
         ) : (
           <div role="status" className="mb-5 rounded-2xl border border-indigo-100 bg-indigo-50 p-4 text-sm leading-relaxed text-indigo-900 dark:border-indigo-800 dark:bg-indigo-950/40 dark:text-indigo-100">
-            AI 详细维度暂未生成。总分和任务完成情况仍然有效；继续练习后可获得发音、流利度、语调和词汇分析。
+            AI 详细维度暂未生成。继续练习后可获得发音、流利度、语调和词汇分析。
           </div>
         )}
 

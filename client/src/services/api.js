@@ -45,6 +45,7 @@ const handleResponse = async (response, { redirectOnUnauthorized = true } = {}) 
     error.status = response.status;
     error.fields = data.data?.errors || data.errors || [];
     error.code = data.code || data.error?.code;
+    error.requestId = data.meta?.request_id || response.headers?.get('X-Request-ID');
     throw error;
   }
   
@@ -178,12 +179,13 @@ export const developerAPI = {
 };
 
 export const userAPI = {
-  async getProfile() {
+  async getProfile(options = {}) {
     const response = await fetch(`${V1_BASE_URL}/profile`, {
       headers: getAuthHeaders(),
-      credentials: 'include'
+      credentials: 'include',
+      signal: options.signal,
     });
-    return handleResponse(response);
+    return handleResponse(response, { redirectOnUnauthorized: options.redirectOnUnauthorized !== false });
   },
 
   async updateProfile(updates) {
@@ -536,17 +538,27 @@ export const aiAPI = {
     });
 
     if (!response.ok) {
-        throw new Error('语音合成失败');
+      // An upstream 401 must remain diagnosable without discarding the session.
+      try {
+        await handleResponse(response, { redirectOnUnauthorized: false });
+      } catch (error) {
+        error.status = response.status;
+        error.requestId ||= response.headers?.get('X-Request-ID');
+        throw error;
+      }
+      throw Object.assign(new Error('语音合成失败'), { status: response.status });
     }
 
     return response.blob();
   },
 
-  async translate(text, targetLang = 'zh') {
+  async translate(text, targetLang, { signal } = {}) {
+    if (!targetLang) throw new Error('Native language is unavailable');
     const res = await fetch('/api/ai/translate', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       credentials: 'include',
+      signal,
       body: JSON.stringify({ text, target_lang: targetLang }),
     });
     if (!res.ok) throw new Error('Translation failed');

@@ -294,6 +294,9 @@ function Profile() {
               onClick={() => navigate('/subscription')}
             />
             {subscriptionState === 'error' && <p role="status" className="px-2 text-sm text-amber-800 dark:text-amber-300">{t('qa_ui.subscription_status_unavailable')}</p>}
+            {(subscription?.billingSource || user?.billing_source) === 'prepaid' && (
+              <p className="px-2 text-sm text-slate-600 dark:text-slate-300">{t('qa_ui.prepaid_expires', { date: new Date(subscription?.prepaidExpiresAt || user?.prepaid_expires_at).toLocaleString() })}</p>
+            )}
 
             <div className="rounded-2xl border border-slate-100 bg-white p-4 shadow-brand dark:border-slate-700 dark:bg-slate-800">
               <div className="flex items-center justify-between gap-3">

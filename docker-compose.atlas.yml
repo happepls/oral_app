@@ -1,0 +1,16 @@
+# Explicit opt-in overlay; never starts or deletes the old MongoDB instance.
+# Compose 2.24+ supports !reset/!override. Apply after the chosen base file.
+services:
+  history-analytics-service:
+    environment:
+      MONGO_URI: ${MONGO_URI:?Inject the protected Atlas URI}
+      MONGO_WRITES_PAUSED: ${MONGO_WRITES_PAUSED:-false}
+    depends_on: !reset []
+  backup-service:
+    environment:
+      MONGO_URI: ${MONGO_URI:?Inject the protected Atlas URI}
+    depends_on: !override
+      postgres:
+        condition: service_started
+  mongo:
+    profiles: [legacy-mongo]

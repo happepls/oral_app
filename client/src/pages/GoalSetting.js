@@ -314,8 +314,8 @@ export default function GoalSetting() {
       {/* ── Top Bar ── */}
       <div className="px-5 pt-5 pb-0 flex items-center justify-between shrink-0">
         <div className="flex items-center gap-2">
-          <img src="/guaji-logo.svg" alt="GuaJi" className="w-7 h-7" />
-          <span className="font-bold text-slate-900 text-base">GuaJi</span>
+          <img src="/guaji-logo.svg" alt="Guaji" className="w-7 h-7" />
+          <span className="font-bold text-slate-900 text-base">Guaji</span>
         </div>
         {step > 1 && (
           <span className="text-sm text-slate-400">步骤 {displayStep} / {displayTotal}</span>

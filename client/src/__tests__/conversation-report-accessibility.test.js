@@ -1,5 +1,7 @@
 import React from 'react';
 import { fireEvent, render, screen } from '@testing-library/react';
+import { I18nextProvider } from 'react-i18next';
+import i18n from '../i18n';
 
 jest.mock('motion/react', () => {
   const React = require('react');
@@ -30,16 +32,16 @@ describe('Conversation practice report accessibility', () => {
 
   test('exposes a modal report without inventing detailed AI scores', () => {
     render(
-      <PracticeReport
+      <I18nextProvider i18n={i18n}><PracticeReport
         scenarioTitle="问候与自我介绍"
         scenarioScore={72}
-        reviewData={{ analysis: { detail_scores: { pronunciation: 82 } } }}
+        reviewData={{ analysis: { overall_score: 72, detail_scores: { pronunciation: 82 } } }}
         messages={[]}
         onClose={jest.fn()}
         onRestart={jest.fn()}
         onNextScenario={jest.fn()}
         onSelectOther={jest.fn()}
-      />,
+      /></I18nextProvider>,
       { container: appRoot },
     );
 
@@ -57,7 +59,7 @@ describe('Conversation practice report accessibility', () => {
     trigger.focus();
 
     const { unmount } = render(
-      <PracticeReport
+      <I18nextProvider i18n={i18n}><PracticeReport
         scenarioTitle="问候与自我介绍"
         scenarioScore={72}
         reviewData={{ analysis: {} }}
@@ -66,7 +68,7 @@ describe('Conversation practice report accessibility', () => {
         onRestart={jest.fn()}
         onNextScenario={jest.fn()}
         onSelectOther={jest.fn()}
-      />,
+      /></I18nextProvider>,
       { container: appRoot },
     );
 

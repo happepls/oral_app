@@ -2,11 +2,12 @@
 Workflow Service - Main Entry Point
 提供 4 个工作流的统一 API 接口
 """
-from fastapi import FastAPI, HTTPException, Depends
+from fastapi import FastAPI, HTTPException, Depends, Header
 from pydantic import BaseModel, Field
 from typing import Dict, List, Any, Optional
 import asyncpg
 import os
+import secrets
 import json
 import logging
 import time
@@ -361,10 +362,14 @@ async def turn_evaluate_proficiency(
 
 
 @app.post("/api/workflows/scenario-review/generate")
-async def generate_scenario_review(request: ScenarioReviewRequest, conn = Depends(get_db_connection)):
+async def generate_scenario_review(request: ScenarioReviewRequest, conn = Depends(get_db_connection),
+                                   x_guaji_internal_auth: str = Header(default="")):
     """
     Workflow 3: Scenario Review - Generate review report for completed scenario
     """
+    secret = os.getenv("INTERNAL_AUTH_SECRET", "")
+    if not secret or not secrets.compare_digest(secret, x_guaji_internal_auth):
+        raise HTTPException(status_code=403, detail="Internal authentication required")
     try:
         logger.info(f"[SCENARIO_REVIEW] Request: user={request.user_id}, goal={request.goal_id}, scenario={request.scenario_title}, history={len(request.conversation_history)}")
 
@@ -395,7 +400,7 @@ async def generate_scenario_review(request: ScenarioReviewRequest, conn = Depend
             db_connection=conn,
             native_language=native_language
         )
-        logger.info(f"[SCENARIO_REVIEW] Result: {result}")
+        logger.info("[SCENARIO_REVIEW] Result status=%s", result.get("analysis", {}).get("evaluation_status"))
         return {"success": True, "data": result}
     except Exception as e:
         logger.error(f"[SCENARIO_REVIEW] Error: {e}")

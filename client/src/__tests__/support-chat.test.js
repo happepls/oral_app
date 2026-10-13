@@ -35,7 +35,7 @@ describe('SupportChat opt-in loading', () => {
     delete window.__tawkLoadTimer;
     window.__tawkTitleObserver?.disconnect();
     delete window.__tawkTitleObserver;
-    document.title = 'GuaJi';
+    document.title = 'Guaji';
     document.getElementById('tawk-to-script')?.remove();
   });
 
@@ -62,7 +62,7 @@ describe('SupportChat opt-in loading', () => {
     expect(window.__tawkUserActivated).toBe(true);
 
     document.title = '1 new message';
-    await waitFor(() => expect(document.title).toBe('GuaJi'));
+    await waitFor(() => expect(document.title).toBe('Guaji'));
   });
 
   test('is absent and does not load Tawk on an application route', () => {

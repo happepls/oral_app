@@ -117,3 +117,14 @@
 - [Google site names](https://developers.google.com/search/docs/appearance/site-names)：站点名称和 WebSite 的 alternateName 应一致表达品牌。
 - [Google 重新抓取](https://developers.google.com/search/docs/crawling-indexing/ask-google-to-recrawl)：通过 URL 检查或 sitemap 发起发现/重新抓取，不能保证即时收录。
 - [Bing Webmaster Tools](https://www.bing.com/webmasters/about)：站点所有者进行验证、提交与检查；本轮未访问私有控制台。
+
+## 2026-10-13：PR #86 合并后的冲突解决
+
+- 用户确认人工审核并合并 #86，授权解决 #84 冲突。将 `origin/master` 的 `4fe522eb65680aab7cc75480143fcf83ae5b70eb` 合入本 PR 分支；不自动合并 #84 或发布生产。
+- 解决首页元数据、llms.txt、九种语言和构建产物校验共 12 个文件的冲突：保留品牌别名、邮箱及预渲染契约，同时保留 master 的全部翻译键和等待提示文案。
+- 合并后的代码与此前本地联合验收版本 `013c951` 一致（仅不引入该本地分支专用验收文档）。相对 master 的 `services/` diff 为空；后端提示词、等待动画逻辑均未修改，根 SDLC 工件保持不变。
+- `npm run verify`：退出 0，decision=pass，final_score=100；前端 58 suites / 648 tests 通过，构建成功。日志：`quality/artifacts/pr84-conflict-verify.log`。
+- `npm run verify:geo` 通过；`npm --prefix client run test:seo`：12 passed，使用真实 nginx 的静态首页、深链、规范跳转、404、无 JS 与价格持续 pending 回归。日志：`quality/artifacts/pr84-conflict-seo.log`。
+- `PLAYWRIGHT_BASE_URL=http://localhost:5001 npm --prefix client run test:e2e -- --grep 'landing has|tutor replies' --project chromium-320 --project chromium-desktop --project chromium-390-dark-en --project webkit-mobile`：7 passed，含 3 个首页正常截图比较和 4 个等待动画回归；API/AI WebSocket 为测试替身。本轮未更新截图基线。日志：`quality/artifacts/pr84-conflict-ui.log`。
+- 独立浏览器检查实际 localhost 首页：邮箱可见，正常和悬停状态无下划线；宿主、容器、HTTP bundle SHA256 一致。九种语言均保留 master 全部键，`ai_reply_pending` 文案不变。
+- `python3 scripts/sdlc.py validate`：SDLC gate clean；`git diff --cached --check` 通过。本地检查不替代推送后 GitHub required checks 或人工审核。
