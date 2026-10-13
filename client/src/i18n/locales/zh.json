@@ -1,4 +1,5 @@
 {
+  "ai_reply_pending": "AI 导师正在回复…",
   "message_translate": "翻译这条 AI 回复",
   "message_translate_retry": "重试翻译",
   "message_translate_failed": "翻译失败，请重试",
