@@ -2,6 +2,7 @@ const { defineConfig } = require('@playwright/test');
 
 module.exports = defineConfig({
   testDir: './e2e',
+  testIgnore: ['**/seo-production.spec.js'],
   outputDir: '../quality/artifacts/playwright-results',
   timeout: 45_000,
   expect: { timeout: 8_000 },

@@ -12,10 +12,11 @@
   },
   "scripts": {
     "start": "HOST=0.0.0.0 react-app-rewired start",
-    "build": "react-app-rewired build",
+    "build": "react-app-rewired build && node scripts/prerender-homepage.cjs",
     "test": "react-app-rewired test",
     "lint": "../node_modules/.bin/eslint src",
     "test:e2e": "playwright test",
+    "test:seo": "node scripts/seo-preview.cjs --check && playwright test --config playwright.seo.config.js",
     "test:e2e:update-candidates": "UPDATE_UI_CANDIDATES=1 playwright test",
     "eject": "react-scripts eject"
   },
@@ -38,6 +39,9 @@
     ]
   },
   "devDependencies": {
+    "babel-loader": "8.4.1",
+    "babel-preset-react-app": "10.1.0",
+    "webpack": "5.102.1",
     "@axe-core/playwright": "^4.10.2",
     "@playwright/test": "^1.55.1",
     "@react-oauth/google": "^0.12.2",

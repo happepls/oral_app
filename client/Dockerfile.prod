@@ -18,9 +18,10 @@ COPY package*.json ./
 RUN npm ci --legacy-peer-deps
 
 # --- Layer 2: source (invalidated only when source changes) ---
-COPY config-overrides.js ./
+COPY config-overrides.js tailwind.config.js postcss.config.js ./
 COPY public/ ./public/
 COPY src/ ./src/
+COPY scripts/ ./scripts/
 
 # Write env AFTER deps so ARG changes don't bust the dep layer
 RUN echo "REACT_APP_API_URL=${REACT_APP_API_URL}" > .env && \
