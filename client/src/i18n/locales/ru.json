@@ -1,4 +1,5 @@
 {
+  "ai_reply_pending": "ИИ-преподаватель готовит ответ…",
   "message_translate": "Перевести этот ответ ИИ",
   "message_translate_retry": "Повторить перевод",
   "message_translate_failed": "Не удалось перевести. Попробуйте ещё раз.",

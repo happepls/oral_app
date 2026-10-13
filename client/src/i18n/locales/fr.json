@@ -1,4 +1,5 @@
 {
+  "ai_reply_pending": "Votre tuteur IA prépare sa réponse…",
   "message_translate": "Traduire cette réponse de l’IA",
   "message_translate_retry": "Réessayer la traduction",
   "message_translate_failed": "Échec de la traduction. Veuillez réessayer.",

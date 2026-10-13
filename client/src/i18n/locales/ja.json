@@ -1,4 +1,5 @@
 {
+  "ai_reply_pending": "AI チューターが返信しています…",
   "message_translate": "この AI の返信を翻訳",
   "message_translate_retry": "翻訳を再試行",
   "message_translate_failed": "翻訳に失敗しました。再試行してください。",

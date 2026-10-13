@@ -10,6 +10,7 @@ import { getPersona } from '../config/personaConfig';
 import { PracticeReport } from '../components/PracticeReport';
 import { AccessibleDialog } from '../components/AccessibleDialog';
 import TranslatableMessage from '../components/TranslatableMessage';
+import AiReplyPending from '../components/AiReplyPending';
 import { useAuth } from '../contexts/AuthContext';
 import AudioBar from '../components/AudioBar.jsx';
 import {
@@ -3579,6 +3580,18 @@ function Conversation() {
     : isWaitingForAIResponse ? 'thinking'
     : 'idle';
 
+  // Only render feedback for the current request gap. An empty AI placeholder
+  // is not a reply; visible text is, even when its audio has not arrived yet.
+  const latestVisibleTurn = [...messages].reverse().find(message =>
+    message.type === 'user' || (message.type === 'ai'
+      && stripAllMarkers((message.content || '').replace(/```json[\s\S]*?```/g, '')).trim())
+  );
+  const showAiReplyPending = currentPhase === 'scene_theater' && !isTourMode
+    && !isRecallMode && !isDailyQAMode && isConnected && !webSocketError
+    && !isRestoringSession && !goalScenariosChanged && !resetInFlightRef.current
+    && isWaitingForAIResponse && !isUserRecording && !isAISpeaking
+    && latestVisibleTurn?.type !== 'ai';
+
   return (
     <div className="flex h-[100dvh] max-h-[100dvh] flex-col overflow-hidden max-w-lg mx-auto bg-background-light dark:bg-background-dark relative">
       {goalScenariosChanged && <AccessibleDialog title={t('qa_ui.scenario_session_changed_title')} onClose={() => navigate('/goals', { replace: true })} closeLabel={t('qa_ui.scenario_return_goals')} showCloseButton={false} panelClassName="max-w-md rounded-2xl p-6">
@@ -4020,6 +4033,7 @@ function Conversation() {
             </div>
           );
         })}
+        {showAiReplyPending && !ccMode && <AiReplyPending label={t('ai_reply_pending')} />}
         <div ref={messagesEndRef} className="h-4" />
       </main>
 
@@ -4084,6 +4098,7 @@ function Conversation() {
           )}
 
           <GuajiMascot state={avatarStatus} size={200} />
+          {showAiReplyPending && <AiReplyPending label={t('ai_reply_pending')} />}
           <CCRollingCaption
             isAISpeaking={isAISpeaking}
             text={(() => {

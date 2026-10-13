@@ -1,4 +1,5 @@
 {
+  "ai_reply_pending": "Dein KI-Tutor antwortet…",
   "message_translate": "Diese KI-Antwort übersetzen",
   "message_translate_retry": "Übersetzung erneut versuchen",
   "message_translate_failed": "Übersetzung fehlgeschlagen. Bitte erneut versuchen.",

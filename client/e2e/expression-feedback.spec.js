@@ -1,12 +1,17 @@
 const { test, expect } = require('@playwright/test');
+const AxeBuilder = require('@axe-core/playwright').default;
 
 test('tutor replies show guidance without cards and preserve task progress @critical', async ({ page }, testInfo) => {
+  const language = testInfo.project.use.locale === 'en-US' ? 'en' : 'zh';
+  const labels = require(`../src/i18n/locales/${language}.json`);
+  const animated = testInfo.project.name === 'chromium-desktop';
+  await page.emulateMedia({ reducedMotion: animated ? 'no-preference' : 'reduce' });
   const user = { id: 'expression-test', username: 'Practice', native_language: 'zh', target_language: 'en' };
   const task = { id: 42, text: 'Order steak', status: 'pending', score: 3, interaction_count: 3, scoring_generation: 3 };
   const historySaves = [];
-  await page.addInitScript(({ user }) => {
+  await page.addInitScript(({ user, language }) => {
     localStorage.setItem('user', JSON.stringify(user));
-    localStorage.setItem('ui_language', 'zh');
+    localStorage.setItem('ui_language', language);
     window.testSockets = [];
     window.sentMessages = [];
     window.pcmStarts = 0;
@@ -42,7 +47,7 @@ test('tutor replies show guidance without cards and preserve task progress @crit
       close() { this.readyState = 3; }
     }
     window.WebSocket = Socket;
-  }, { user });
+  }, { user, language });
   await page.route(/tawk\.to|stripe\.com|dashscope|myqcloud|google/i, route => route.abort());
   await page.route('**/api/**', async route => {
     const url = route.request().url();
@@ -73,6 +78,7 @@ test('tutor replies show guidance without cards and preserve task progress @crit
     await route.fulfill({ contentType: 'application/json', body: JSON.stringify({ success: true, data }) });
   });
   await page.goto('/conversation?scenario=Restaurant');
+  await page.evaluate(dark => document.documentElement.classList.toggle('dark', dark), testInfo.project.use.colorScheme === 'dark');
   await expect(page.getByRole('list', { name: '场景子任务' })).toContainText('Order steak');
   await expect.poll(() => page.evaluate(() => window.testSockets.some(s => s.readyState === 1 && s.url.includes('/realtime')))).toBe(true);
   const emit = (type, payload) => page.evaluate(({ type, payload }) => {
@@ -105,14 +111,33 @@ test('tutor replies show guidance without cards and preserve task progress @crit
   await expect(card).toHaveCount(0);
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(page.viewportSize().width + 1);
   await page.screenshot({ path: testInfo.outputPath('expression-feedback.png') });
+  const pendingReply = page.getByRole('status').filter({ hasText: labels.ai_reply_pending });
+  await expect(pendingReply).toHaveCount(0);
   const record = async () => {
-    await page.getByRole('button', { name: '点击说话', exact: true }).click();
+    await page.getByRole('button', { name: language === 'en' ? 'Tap to speak' : '点击说话', exact: true }).click();
     await expect(page.getByTestId('recording-controls')).toBeVisible();
+    await expect(pendingReply).toHaveCount(0);
     await page.evaluate(() => window.testWorklet.port.onmessage({ data: { type: 'audio_data', buffer: new Int16Array(800) } }));
     await page.getByTitle('发送', { exact: true }).click();
     return page.evaluate(() => window.sentMessages.filter(m => m.type === 'audio_stream').at(-1).payload.input_id);
   };
   const inputId = await record();
+  // Feedback must be visible before ANY transcript, teaching event or reply.
+  await expect(pendingReply).toBeVisible();
+  await expect(pendingReply).toHaveCount(1);
+  const dots = pendingReply.locator('[aria-hidden="true"] > span');
+  await expect.poll(() => dots.evaluateAll(nodes => nodes.some(node => getComputedStyle(node).transform !== 'none'))).toBe(animated);
+  const accessibility = await new AxeBuilder({ page }).include('[role="status"][aria-atomic="true"]').analyze();
+  expect(accessibility.violations.filter(item => ['serious', 'critical'].includes(item.impact))).toEqual([]);
+  await pendingReply.scrollIntoViewIfNeeded();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(page.viewportSize().width + 1);
+  await page.screenshot({ path: testInfo.outputPath('ai-reply-pending.png') });
+  await page.getByRole('button', { name: '进入 CC 沉浸模式', exact: true }).click();
+  await expect(pendingReply).toBeVisible();
+  await expect(pendingReply).toHaveCount(1);
+  await page.screenshot({ path: testInfo.outputPath('ai-reply-pending-cc.png') });
+  await page.getByRole('button', { name: '退出 CC 沉浸模式', exact: true }).first().click();
+  await expect(pendingReply).toBeVisible();
   const pcm = responseId => page.evaluate(responseId => {
     const id = new TextEncoder().encode(responseId);
     const packet = new Uint8Array(4 + id.length + 8192);
@@ -125,16 +150,20 @@ test('tutor replies show guidance without cards and preserve task progress @crit
   await emit('ai_message', { content: 'STALE RESPONSE', responseId: 'a1', turn_id: 'u1' });
   await pcm('a1');
   await expect(page.getByText('STALE RESPONSE')).toHaveCount(0);
+  await expect(pendingReply).toBeVisible();
   expect(await page.evaluate(() => window.pcmStarts)).toBe(0);
   const current = { ...feedback, protocol_version: 2, turn_id: 'u2', input_id: inputId };
   await emit('user_transcript', { ...current, text: 'A steak, medium or medium rare.', messageId: 'u2' });
+  await emit('ai_turn_started', { responseId: 'a2' });
+  await expect(pendingReply).toBeVisible(); // empty AI placeholder is not a reply
   await emit('teaching_state', { ...current, status: 'analyzing' });
-  await expect(page.getByRole('status').filter({ hasText: '正在分析本轮表达' })).toBeVisible();
+  await expect(page.getByRole('status').filter({ hasText: labels.teaching_analyzing })).toBeVisible();
   await emit('teaching_state', { ...current, input_id: 'old-recording', status: 'retry' });
-  await expect(page.getByRole('status').filter({ hasText: '正在分析本轮表达' })).toBeVisible();
+  await expect(page.getByRole('status').filter({ hasText: labels.teaching_analyzing })).toBeVisible();
   await emit('expression_feedback', { ...current, teaching_mode: 'clarify', errors: [], alternatives: [],
     user_text: 'A steak, medium or medium rare.', clarification_question: 'Did you mean medium or medium rare?' });
   await emit('ai_message', { ...current, content: 'Did you mean medium or medium rare?', responseId: 'a2' });
+  await expect(pendingReply).toHaveCount(0); // text ends waiting before audio
   await pcm('a2');
   await emit('response.audio.done', { responseId: 'a2' });
   await expect.poll(() => page.evaluate(() => window.pcmStarts)).toBe(1);
@@ -146,12 +175,20 @@ test('tutor replies show guidance without cards and preserve task progress @crit
   await expect(page.getByRole('progressbar', { name: '当前子任务进度', exact: true })).toHaveAttribute('aria-valuenow', '33');
   await page.screenshot({ path: testInfo.outputPath('clarification-in-tutor-reply.png') });
   const confirmedInputId = await record();
+  await expect(pendingReply).toBeVisible();
   expect(confirmedInputId).not.toBe(inputId);
   await emit('user_transcript', { ...current, input_id: confirmedInputId, turn_id: 'u3', messageId: 'u3', text: "I'd like the steak medium rare, please." });
   await expect(page.getByText("I'd like the steak medium rare, please.")).toBeVisible();
   expect(await page.evaluate(() => window.sentMessages.filter(m => m.type === 'text_message'))).toEqual([]);
   await emit('teaching_state', { ...current, status: 'retry' });
   await expect(page.getByText('本轮暂时无法完成，请重新录音或稍后重试。')).toHaveCount(0);
+  await expect(pendingReply).toBeVisible(); // a stale retry cannot hide it
+  await emit('teaching_state', { ...current, input_id: confirmedInputId, turn_id: 'u3', status: 'retry' });
+  await expect(pendingReply).toHaveCount(0);
+  await record();
+  await expect(pendingReply).toBeVisible();
+  await emit('error', { message: 'Temporary test error', retryable: true });
+  await expect(pendingReply).toHaveCount(0);
   await page.evaluate(() => { window.confirm = () => true; });
   await Promise.all([
     page.waitForEvent('framenavigated', { predicate: frame => frame === page.mainFrame() }),

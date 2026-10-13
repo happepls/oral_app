@@ -1,4 +1,5 @@
 {
+  "ai_reply_pending": "Your AI tutor is replying…",
   "message_translate": "Translate this AI reply",
   "message_translate_retry": "Retry translation",
   "message_translate_failed": "Translation failed. Please retry.",
