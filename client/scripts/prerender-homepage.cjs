@@ -42,11 +42,17 @@ async function main() {
     if (!markup.includes('mailto:admin@guajiguaji.top') || !markup.includes('guajiguaji')) {
       throw new Error('Public homepage content is incomplete');
     }
+    // This public address must remain readable without JavaScript after the
+    // Cloudflare edge transforms HTML. Exempt only this link, not the page.
+    const contactLinks = markup.match(/<a\b[^>]*\bhref="mailto:admin@guajiguaji\.top"[^>]*>[\s\S]*?<\/a>/g) || [];
+    if (contactLinks.length !== 1) throw new Error('Expected exactly one official contact link');
+    const publicMarkup = markup.replace(contactLinks[0],
+      `<!--email_off-->${contactLinks[0]}<!--/email_off-->`);
     const template = fs.readFileSync(path.join(build, 'index.html'), 'utf8');
     if (!template.includes('<div id="root"></div>')) throw new Error('Unexpected CRA entrypoint');
     const withoutFallback = template.replace(/<noscript>[\s\S]*?<\/noscript>/, '');
     const homepage = withoutFallback.replace('<div id="root"></div>',
-      `<div id="root" data-prerendered-homepage="true">${markup}</div>`);
+      `<div id="root" data-prerendered-homepage="true">${publicMarkup}</div>`);
     // Keep the metadata nodes so PageMetadata can restore them on client-side
     // navigation to /. The shell is never indexable before React starts.
     const shell = withoutFallback
