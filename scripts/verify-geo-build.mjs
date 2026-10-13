@@ -24,6 +24,10 @@ requireMatch(html.includes('data-prerendered-homepage="true"'), 'public homepage
 requireMatch(!html.includes('<noscript>'), 'homepage duplicates its prerendered content in noscript');
 requireMatch(html.includes('Guaji AI（guajiguaji）') && html.includes('练习过程会记录什么？'), 'public brand introduction or FAQ missing');
 requireMatch(html.includes('href="mailto:admin@guajiguaji.top"'), 'official contact link missing');
+const contactExemptions = [...html.matchAll(/<!--email_off-->([\s\S]*?)<!--\/email_off-->/g)];
+requireMatch(contactExemptions.length === 1, 'expected one scoped Cloudflare email exclusion');
+requireMatch(/^<a\b[^>]*\bhref="mailto:admin@guajiguaji\.top"[^>]*>[^<]*admin@guajiguaji\.top<\/a>$/.test(contactExemptions[0][1]), 'Cloudflare exclusion must contain only the official contact link');
+requireMatch(!shell.includes('<!--email_off-->'), 'email exclusion must not leak into the private SPA shell');
 requireMatch(html.includes('href="/register"') && html.includes('href="/login"'), 'public navigation is not crawlable');
 requireMatch(!/opacity:\s*0(?:[;"}])/.test(html), 'prerendered content is hidden by an initial animation');
 

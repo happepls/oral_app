@@ -7,11 +7,17 @@ test('homepage has visible brand, FAQ, contact and navigation without JavaScript
     const page = await context.newPage();
     const response = await page.goto(`${baseURL}/`);
     expect(response.status()).toBe(200);
+    const html = await response.text();
+    expect(html).toMatch(/<!--email_off--><a\b[^>]*href="mailto:admin@guajiguaji\.top"[^>]*>[^<]*admin@guajiguaji\.top<\/a><!--\/email_off-->/);
     await expect(page.getByRole('heading', { name: 'Guaji AI 是什么？', level: 2, exact: true })).toBeVisible();
     await expect(page.getByText('Guaji AI（guajiguaji）是浏览器中的 AI 口语练习应用。', { exact: false })).toBeVisible();
     await expect(page.getByRole('heading', { name: '常见问题', exact: true })).toBeVisible();
     const contact = page.locator('footer a[href="mailto:admin@guajiguaji.top"]');
     await expect(contact).toBeVisible();
+    await expect(contact).toContainText('admin@guajiguaji.top');
+    expect(await contact.evaluate(node => getComputedStyle(node).textDecorationLine)).toBe('none');
+    await contact.hover();
+    expect(await contact.evaluate(node => getComputedStyle(node).textDecorationLine)).toBe('none');
     await expect(page.locator('nav a[href="/register"]')).toBeVisible();
     await expect(page.locator('nav a[href="/login"]')).toBeVisible();
     await expect(page).toHaveTitle('Guaji AI（guajiguaji）｜AI 口语练习应用');
