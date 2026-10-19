@@ -918,8 +918,6 @@ function Conversation() {
   const pendingAudioUrlsRef = useRef(new Map());
   const playbackStartTimerRef = useRef(null);
   const playbackStartObserverRef = useRef(null);
-  const blockedStreamChunksRef = useRef([]);
-  const [audioNeedsGesture, setAudioNeedsGesture] = useState(false);
   // Tracks whether streaming PCM chunks have actually played for the CURRENT turn,
   // measured from the last stopAudioPlayback() cut point (which is the natural
   // per-turn boundary: user recording start / auto-play start / magic_pass).
@@ -954,8 +952,7 @@ function Conversation() {
       });
       audioContextRef.current.addEventListener?.('statechange', () => {
         const state = audioContextRef.current?.state;
-        if (['suspended', 'interrupted'].includes(state)) setAudioNeedsGesture(true);
-        else if (state === 'running') playbackStartObserverRef.current?.();
+        if (state === 'running') playbackStartObserverRef.current?.();
       });
       pcmSchedulerRef.current = createPcmStreamScheduler(audioContextRef.current, {
         primingMs: 320,
@@ -966,7 +963,7 @@ function Conversation() {
           const observeStart = () => {
             if (generation !== scheduler.generation) return;
             const ctx = audioContextRef.current;
-            if (ctx?.state !== 'running') { setAudioNeedsGesture(true); return; }
+            if (ctx?.state !== 'running') return;
             if (ctx.currentTime <= startTime) {
               playbackStartTimerRef.current = setTimeout(observeStart, 30);
               return;
@@ -976,7 +973,6 @@ function Conversation() {
             playedAudioResponsesRef.current.add(responseId);
             setMessages(prev => prev.map(m => m.type === 'ai' && m.responseId === responseId && m.audioUrl
               ? { ...m, audioPlayed: true, audioPending: false } : m));
-            setAudioNeedsGesture(false);
             setIsAISpeaking(scheduler.hasScheduledAudio);
             setIsWaitingForAIResponse(false);
           };
@@ -997,12 +993,9 @@ function Conversation() {
       });
     }
     if (['suspended', 'interrupted'].includes(audioContextRef.current.state)) {
-      setAudioNeedsGesture(true);
       return audioContextRef.current.resume().then(() => {
         if (audioContextRef.current?.state !== 'running') throw new Error('Audio playback needs a user gesture');
-        setAudioNeedsGesture(false);
       }).catch(error => {
-        setAudioNeedsGesture(true);
         console.warn('AudioContext resume rejected:', error?.message || error);
         throw error;
       });
@@ -1014,7 +1007,6 @@ function Conversation() {
   const stopAudioPlayback = () => {
     clearTimeout(playbackStartTimerRef.current);
     playbackStartObserverRef.current = null;
-    blockedStreamChunksRef.current = [];
     if (activeAudioResponseIdRef.current) audioPlaybackByResponseRef.current.set(activeAudioResponseIdRef.current, 'cancelled');
     isInterruptedRef.current = true;
     pcmSchedulerRef.current?.stop();
@@ -1064,8 +1056,8 @@ function Conversation() {
       fetchAudioViaProxy(audioUrl, autoQueue);
     } else {
       // Same-origin, use Web Audio API
-      initAudioContext();
-      fetch(audioUrl)
+      initAudioContext()
+        .then(() => fetch(audioUrl))
         .then(res => res.arrayBuffer())
         .then(buffer => {
           if (!audioContextRef.current) return;
@@ -1144,10 +1136,6 @@ function Conversation() {
           }
           htmlAudioRef.current = audio;
 
-          setIsAISpeaking(true);
-          setIsWaitingForAIResponse(false);
-          setPlayingAudioUrl(audioUrl);
-
           // Feed the CC caption progress ratio from the element itself. Once
           // metadata is known we anchor speechStartTimeRef to the AudioContext
           // clock so getProgressRatio (ctx.currentTime - start)/total still works.
@@ -1183,11 +1171,17 @@ function Conversation() {
             }
           });
 
-          audio.play().catch(() => {
+          audio.play().then(() => {
+            if (htmlAudioRef.current !== audio) return;
+            setIsAISpeaking(true);
+            setIsWaitingForAIResponse(false);
+            setPlayingAudioUrl(audioUrl);
+          }).catch(() => {
             // play() rejection (autoplay/decode) — try the fallback path too.
             if (htmlAudioRef.current !== audio) return;
             const fallback = nextProgressiveAttempt(attempt);
             if (fallback) startProgressive(fallback);
+            else cleanup();
           });
         } catch (err) {
           // Silently ignore playback errors - audio playback is optional
@@ -1204,7 +1198,7 @@ function Conversation() {
 
       const arrayBuffer = await response.arrayBuffer();
 
-      initAudioContext();
+      await initAudioContext();
       if (!audioContextRef.current) return;
 
       const ctx = audioContextRef.current;
@@ -1592,7 +1586,7 @@ function Conversation() {
           const scheduler = pcmSchedulerRef.current;
           return scheduler?.flush(scheduler.generation);
         },
-        onError: () => setAudioNeedsGesture(true),
+        onError: error => console.warn('Failed to route response audio:', error),
       });
     }
     return responseAudioRouterRef.current;
@@ -1605,7 +1599,6 @@ function Conversation() {
       audioPlaybackByResponseRef.current.set(activeAudioResponseIdRef.current, 'cancelled');
       clearTimeout(playbackStartTimerRef.current);
       playbackStartObserverRef.current = null;
-      blockedStreamChunksRef.current = [];
       pcmSchedulerRef.current?.stop();
       streamedAudioSinceCutRef.current = false;
     }
@@ -1842,7 +1835,7 @@ function Conversation() {
            const streamedThisTurn = playedAudioResponsesRef.current.has(targetResponseId)
              || responsePlayback === 'cancelled';
            const audioPending = !streamedThisTurn && targetResponseId === activeAudioResponseIdRef.current
-             && (pcmSchedulerRef.current?.hasScheduledAudio || blockedStreamChunksRef.current.length > 0);
+             && responsePlayback !== 'failed' && pcmSchedulerRef.current?.hasScheduledAudio;
 
            if (role === 'assistant') {
                if (suppressNextRestoredAudioRef.current) {
@@ -2627,16 +2620,12 @@ function Conversation() {
       }
     } catch (error) {
       if (generation !== scheduler.generation) return;
-      // Resume denial must retain the PCM, otherwise tapping unlock would play
-      // only chunks that happened to arrive after the gesture.
-      blockedStreamChunksRef.current.push({ data: audioDataOrPromise, responseId, generation });
       // Keep streamedAudioSinceCut=false so the complete COS recording remains
       // eligible as a fallback when PCM conversion/scheduling fails.
       streamedAudioSinceCutRef.current = false;
       audioPlaybackByResponseRef.current.set(responseId, 'failed');
       setMessages(prev => prev.map(m => m.responseId === responseId
-        ? { ...m, audioPending: true, audioPlayed: playedAudioResponsesRef.current.has(responseId) } : m));
-      setAudioNeedsGesture(true);
+        ? { ...m, audioPending: false, audioPlayed: playedAudioResponsesRef.current.has(responseId) } : m));
       console.error('Failed to schedule PCM chunk:', error);
     }
   }, []);
@@ -4119,24 +4108,6 @@ function Conversation() {
 
       {/* Footer / Controls */}
       <footer className="pb-4 pt-3 px-4 bg-white dark:bg-slate-900 border-t border-slate-100 dark:border-slate-800 shrink-0 shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.05)]">
-        {audioNeedsGesture && !isTourMode && (
-          <button type="button" className="mb-3 w-full min-h-[44px] rounded-xl border border-primary px-3 text-primary focus-visible:ring-2"
-            onClick={() => {
-              void initAudioContext().then(() => {
-                setAudioNeedsGesture(false);
-                const chunks = blockedStreamChunksRef.current.splice(0);
-                chunks.forEach(chunk => {
-                  if (chunk.responseId === activeAudioResponseIdRef.current && chunk.generation === pcmSchedulerRef.current?.generation) playAudioChunkRef.current?.(chunk.data);
-                });
-                if (chunks.length) void getResponseAudioRouter().finish(activeAudioResponseIdRef.current);
-                else if (pcmSchedulerRef.current?.hasScheduledAudio) playbackStartObserverRef.current?.();
-                else {
-                  const message = [...messages].reverse().find(m => m.type === 'ai' && m.audioUrl);
-                  if (message) playFullAudio(message.audioUrl);
-                }
-              }).catch(() => setAudioNeedsGesture(true));
-            }}>{t('qa_ui.audio_tap_to_play')}</button>
-        )}
         <div className="flex flex-col items-center gap-3">
             {/* Main Controls: Recorder + Restart Button */}
             <div className="flex items-center gap-3 w-full max-w-md" data-testid="conversation-footer-controls">

@@ -334,7 +334,6 @@
   "support_chat_retry": "ライブサポートに再接続",
   "support_chat_load_failed": "サポートに接続できませんでした。もう一度お試しください。",
   "qa_ui": {
-    "audio_tap_to_play": "タップして音声を再開",
     "billing_auto_renew": "カード・自動更新",
     "prepaid_buy_week": "Alipayで7日間購入 · $4.99",
     "prepaid_buy_year": "Alipayで1年間購入 · $99",

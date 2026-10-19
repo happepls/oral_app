@@ -334,7 +334,6 @@
   "support_chat_retry": "Réessayer l’assistance en direct",
   "support_chat_load_failed": "Impossible de joindre l’assistance. Réessayez.",
   "qa_ui": {
-    "audio_tap_to_play": "Touchez pour reprendre l’audio",
     "billing_auto_renew": "Carte · renouvellement automatique",
     "prepaid_buy_week": "Acheter 7 jours avec Alipay · $4.99",
     "prepaid_buy_year": "Acheter 1 an avec Alipay · $99",

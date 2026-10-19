@@ -334,7 +334,6 @@
   "support_chat_retry": "Retry live support",
   "support_chat_load_failed": "Support failed to connect. Please try again.",
   "qa_ui": {
-    "audio_tap_to_play": "Tap to resume audio",
     "billing_auto_renew": "Card · automatic renewal",
     "prepaid_renew_membership": "Extend membership",
     "prepaid_cancel_renewal": "Cancel extension",
