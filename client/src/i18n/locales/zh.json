@@ -334,7 +334,6 @@
   "support_chat_retry": "重试在线客服",
   "support_chat_load_failed": "客服连接失败，请重试",
   "qa_ui": {
-    "audio_tap_to_play": "点击恢复语音播放",
     "billing_auto_renew": "信用卡 · 自动续费",
     "prepaid_renew_membership": "续购会员",
     "prepaid_cancel_renewal": "取消续购",

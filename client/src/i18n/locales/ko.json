@@ -334,7 +334,6 @@
   "support_chat_retry": "실시간 고객 지원 다시 시도",
   "support_chat_load_failed": "고객 지원에 연결하지 못했습니다. 다시 시도해 주세요.",
   "qa_ui": {
-    "audio_tap_to_play": "눌러서 음성 재생 재개",
     "billing_auto_renew": "카드 · 자동 갱신",
     "prepaid_buy_week": "Alipay로 7일 구매 · $4.99",
     "prepaid_buy_year": "Alipay로 1년 구매 · $99",

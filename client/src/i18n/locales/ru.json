@@ -334,7 +334,6 @@
   "support_chat_retry": "Повторить подключение к поддержке",
   "support_chat_load_failed": "Не удалось подключиться к поддержке. Повторите попытку.",
   "qa_ui": {
-    "audio_tap_to_play": "Нажмите для возобновления аудио",
     "billing_auto_renew": "Карта · автоматическое продление",
     "prepaid_buy_week": "Купить 7 дней через Alipay · $4.99",
     "prepaid_buy_year": "Купить 1 год через Alipay · $99",

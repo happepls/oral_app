@@ -11,6 +11,18 @@ async function setup(page, blocked = false) {
     localStorage.clear(); localStorage.setItem('user', JSON.stringify(user));
     localStorage.setItem('ui_language', 'zh'); sessionStorage.setItem('hasSeenSplash', 'true');
     window.testSockets = []; window.pcmSamples = []; window.allowAudio = !blocked;
+    window.audioPlayAttempts = []; window.fullAudioPlays = []; window.audioElements = [];
+    // Model autoplay policy at the HTMLAudioElement boundary as well as Web Audio.
+    window.Audio = class extends EventTarget {
+      constructor(src) { super(); this.src = src; this.duration = 1; this.currentTime = 0; window.audioElements.push(this); }
+      play() {
+        window.audioPlayAttempts.push(this.src);
+        if (!window.allowAudio) return Promise.reject(new Error('NotAllowedError'));
+        window.fullAudioPlays.push(this.src);
+        return Promise.resolve();
+      }
+      pause() { this.dispatchEvent(new Event('pause')); }
+    };
     const native = Blob.prototype.arrayBuffer;
     Blob.prototype.arrayBuffer = function () {
       const data = native.call(this);
@@ -97,19 +109,40 @@ test('PCM prefix, reordered Blob conversions and done preserve every sample in t
   expect(await page.evaluate(() => window.testSockets.filter(s => s.readyState === 1 && s.url.includes('/realtime')).length)).toBe(1);
 });
 
-test('Safari autoplay rejection preserves complete short PCM for the explicit unlock gesture @critical', async ({ page }, testInfo) => {
+test('autoplay rejection never adds a resume control while the tutor replies @critical', async ({ page }, testInfo) => {
   await setup(page, true); await openScene(page);
   await emit(page, 'ai_message', { content: 'Welcome to your practice.', responseId: 'a1' });
+  const resume = page.getByRole('button', { name: '点击恢复语音播放' });
+  await expect(resume).toHaveCount(0);
+  const denied = page.waitForEvent('console', message => message.text().includes('Failed to schedule PCM chunk:'));
   await pcm(page, 'a1', 321, 1000);
+  await denied;
+  await expect(resume).toHaveCount(0);
   await emit(page, 'response.audio.done', { responseId: 'a1' });
-  const unlock = page.getByRole('button', { name: '点击恢复语音播放' });
-  await expect(unlock).toBeVisible();
   expect(await page.evaluate(() => window.pcmSamples.length)).toBe(0);
+  // Failed PCM must not leave the complete recording pending behind a deleted control.
+  const recordingUrl = 'https://audio.example.test/complete-reply.wav';
+  await emit(page, 'audio_url', { role: 'assistant', url: recordingUrl, responseId: 'a1' });
+  await expect.poll(() => page.evaluate(() => window.audioPlayAttempts.length)).toBe(2);
+  const replay = page.getByRole('button', { name: '播放', exact: true });
+  await expect(replay).toBeVisible();
+  await expect(page.getByRole('button', { name: '暂停', exact: true })).toHaveCount(0);
+  expect(await page.evaluate(() => window.fullAudioPlays)).toEqual([]);
   await page.evaluate(() => { window.allowAudio = true; });
-  await unlock.click();
+  await replay.click();
+  await expect.poll(() => page.evaluate(() => window.fullAudioPlays)).toEqual([recordingUrl]);
+  await expect(page.getByRole('button', { name: '暂停', exact: true })).toBeVisible();
+  await page.evaluate(() => window.audioElements.at(-1).dispatchEvent(new Event('ended')));
+  await expect(replay).toBeVisible();
+  // A later reply still plays normally once audio is allowed, without a banner.
+  await emit(page, 'ai_message', { content: 'What would you like to order?', responseId: 'a2' });
+  await pcm(page, 'a2', 456, 1000);
+  await emit(page, 'response.audio.done', { responseId: 'a2' });
   await expect.poll(() => page.evaluate(() => window.pcmSamples.length)).toBe(1000);
-  expect(await page.evaluate(() => window.pcmSamples.every(n => n === 321))).toBe(true);
-  await page.screenshot({ path: testInfo.outputPath('audio-unlocked.png') });
+  expect(await page.evaluate(() => window.pcmSamples.every(n => n === 456))).toBe(true);
+  await expect(resume).toHaveCount(0);
+  await expect(page.getByTestId('conversation-footer-controls')).toBeVisible();
+  await page.screenshot({ path: testInfo.outputPath('audio-without-resume-control.png') });
 });
 
 test('active prepaid membership is clear and renewal requires an explicit action @critical', async ({ page }, testInfo) => {
