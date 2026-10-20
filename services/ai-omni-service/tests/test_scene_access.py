@@ -340,6 +340,37 @@ async def test_atomic_concurrent_reservations_and_idempotent_settlement():
 
 
 @pytest.mark.asyncio
+async def test_membership_downgrade_preserves_used_turns_and_blocks_over_free_limit():
+    url = os.getenv('SCENE_ACCESS_TEST_REDIS_URL')
+    if not url:
+        pytest.skip('SCENE_ACCESS_TEST_REDIS_URL required for actual Redis downgrade')
+    import redis.asyncio as redis
+    import hashlib
+    from uuid import uuid4
+    client = redis.from_url(url, decode_responses=True)
+    user = str(uuid4())
+    counter = main._daily_turn_key(user)
+    marker = hashlib.sha256(f'{user}\0paid-turn'.encode()).hexdigest()
+    try:
+        used = main.FREE_DAILY_TURNS + 1
+        assert used < main.PRO_DAILY_TURNS, 'rehearsal requires a larger Pro limit'
+        await client.set(counter, used)
+        member = {'access': {'membership': {'active': True}}}
+        assert (await main._reserve_daily_slot(client, user, member, 'paid-input'))[0] is False
+        assert await main._finish_reserved_turn(client, user, 'paid-turn', 'paid-input') == used + 1
+        # Keep a stale Stripe field to ensure refreshed authority wins.
+        downgraded = {'stripe_subscription_status': 'active', 'access': {'membership': {'active': False}}}
+        blocked, info = await main._reserve_daily_slot(client, user, downgraded, 'after-expiry')
+        assert blocked is True
+        assert info == {'status': 429, 'tier': 'free', 'used': used + 1, 'pending': 0, 'limit': main.FREE_DAILY_TURNS}
+        assert int(await client.get(counter)) == used + 1
+        assert await client.zcard(f'{counter}:pending') == 0
+    finally:
+        await client.delete(counter, f'{counter}:pending', f'daily_turn_seen:v1:{marker}')
+        await client.aclose()
+
+
+@pytest.mark.asyncio
 async def test_quota_dependency_failure_fails_closed():
     with pytest.raises(HTTPException) as error:
         await main._reserve_daily_slot(None, USER, {}, 'reservation')

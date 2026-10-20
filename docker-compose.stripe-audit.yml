@@ -1,0 +1,98 @@
+# Standalone: always select this file explicitly, never overlay the live stack.
+services:
+  postgres:
+    image: postgres:14-alpine
+    environment:
+      POSTGRES_DB: oral_app_stripe_audit
+      POSTGRES_USER: audit
+      POSTGRES_PASSWORD: ${AUDIT_DB_PASSWORD:?Run node scripts/stripe-clock-audit.mjs start}
+    volumes:
+      - stripe_audit_pg:/var/lib/postgresql/data
+      - ./services/user-service/init.sql:/docker-entrypoint-initdb.d/001-init.sql:ro
+    healthcheck:
+      test: [CMD-SHELL, "pg_isready -U audit -d oral_app_stripe_audit"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+  redis:
+    image: redis:7-alpine
+    command: [redis-server, --save, "", --appendonly, "no"]
+  user-service:
+    image: node:20-alpine
+    working_dir: /app
+    command:
+      - node
+      - -e
+      - "if (!/^(sk|rk)_test_/.test(process.env.STRIPE_SECRET_KEY || '') || !/^pk_test_/.test(process.env.STRIPE_PUBLISHABLE_KEY || '')) throw Error('Audit requires test keys'); require('./src/index.js')"
+    environment:
+      NODE_ENV: development
+      PORT: 3000
+      DATABASE_URL: postgresql://audit:${AUDIT_DB_PASSWORD}@postgres:5432/oral_app_stripe_audit
+      REDIS_HOST: redis
+      JWT_SECRET: ${AUDIT_JWT_SECRET:?Audit JWT required}
+      INTERNAL_AUTH_SECRET: ${AUDIT_INTERNAL_SECRET:?Audit internal secret required}
+      STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY:?Test key required}
+      STRIPE_PUBLISHABLE_KEY: ${STRIPE_PUBLISHABLE_KEY:?Test publishable key required}
+      STRIPE_WEBHOOK_SECRET: ${STRIPE_WEBHOOK_SECRET:-}
+      STRIPE_ALLOWED_ORIGINS: http://billing-audit.localhost:5510
+    ports:
+      - 127.0.0.1:5532:3000
+    volumes:
+      - ./services/user-service/src:/app/src:ro
+      - ./services/user-service/migrations:/app/migrations:ro
+      - ./services/user-service/node_modules:/app/node_modules:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+  developer-api-service:
+    image: node:20-alpine
+    working_dir: /app
+    command: [node, src/index.js]
+    environment:
+      DATABASE_URL: postgresql://audit:${AUDIT_DB_PASSWORD}@postgres:5432/oral_app_stripe_audit
+      JWT_SECRET: ${AUDIT_JWT_SECRET}
+      DELEGATED_JWT_SECRET: ${AUDIT_DELEGATED_SECRET:?Audit delegated secret required}
+      INTERNAL_AUTH_SECRET: ${AUDIT_INTERNAL_SECRET}
+      USER_SERVICE_URL: http://user-service:3000
+    volumes:
+      - ./services/developer-api-service/src:/app/src:ro
+      - ./services/developer-api-service/package.json:/app/package.json:ro
+      - ./services/developer-api-service/package-lock.json:/app/package-lock.json:ro
+      - ./services/developer-api-service/node_modules:/app/node_modules:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+  ai-omni-service:
+    profiles: [scenarios]
+    image: ${AUDIT_AI_IMAGE:-oral_app-ai-omni-service:latest}
+    build: ./services/ai-omni-service
+    environment:
+      NODE_ENV: development
+      QWEN3_OMNI_API_KEY: ${AUDIT_QWEN_API_KEY:-}
+      DASHSCOPE_CHAT_BASE: https://dashscope.aliyuncs.com
+      DASHSCOPE_IMAGE_BASE: https://dashscope.aliyuncs.com
+      QWEN_TEXT_MODEL: qwen-flash
+      USER_SERVICE_URL: http://user-service:3000
+      REDIS_HOST: redis
+      JWT_SECRET: ${AUDIT_JWT_SECRET}
+      INTERNAL_AUTH_SECRET: ${AUDIT_INTERNAL_SECRET}
+      PYTHONDONTWRITEBYTECODE: "1"
+    volumes:
+      - ./services/ai-omni-service/app:/app/app:ro
+    depends_on:
+      - user-service
+      - redis
+  web:
+    image: nginx:1.27-alpine
+    ports:
+      - 127.0.0.1:5510:80
+    volumes:
+      - ./client/build:/usr/share/nginx/html:ro
+      - ./deploy/stripe-audit.nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    depends_on:
+      - user-service
+      - developer-api-service
+volumes:
+  stripe_audit_pg:

@@ -29,6 +29,7 @@ logs
 # Docker相关
 .docker/
 .dockerignore
+!services/ai-omni-service/.dockerignore
 *.dockerfile
 
 # 环境变量
