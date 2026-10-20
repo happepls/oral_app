@@ -39,7 +39,7 @@ integration('authoritative scene access with real PostgreSQL and HTTP', () => {
     db.pool.connect.mockImplementation(() => pool.connect());
     process.env.JWT_SECRET = 'isolated-scene-access-integration';
     process.env.INTERNAL_AUTH_SECRET = 'isolated-scene-access-internal';
-    token = jwt.sign({ id: owner, type: 'access' }, process.env.JWT_SECRET, { algorithm: 'HS256', issuer: 'oral-app', audience: 'oral-app-users', expiresIn: '5m' });
+    token = jwt.sign({ id: owner, type: 'access' }, process.env.JWT_SECRET, { algorithm: 'HS256', issuer: 'oral-app', audience: 'oral-app-users', expiresIn: '15m' });
     const app = express(); app.use(express.json()); app.use(cookieParser());
     app.post('/api/users/access/check', protect, scenes.check);
     app.post('/api/users/internal/users/:id/access/check', internalAuthWithNetworkSkip, scenes.check);
@@ -132,6 +132,44 @@ integration('authoritative scene access with real PostgreSQL and HTTP', () => {
     await pool.query("UPDATE users SET stripe_subscription_status='canceled' WHERE id=$1", [owner]);
     expect((await check({ scenario: 'scene-3' })).status).toBe(403);
   });
+  // Opt-in wall-clock rehearsal: never changes machine time or existing accounts.
+  const naturalExpiry = process.env.MEMBERSHIP_NATURAL_EXPIRY_AUDIT === 'true' ? test : test.skip;
+  naturalExpiry('five-minute natural expiry revokes paid access without invalidating login or task data', async () => {
+    const previousToken = token;
+    token = jwt.sign({ id: owner, type: 'access' }, process.env.JWT_SECRET, {
+      algorithm: 'HS256', issuer: 'oral-app', audience: 'oral-app-users', expiresIn: '15m',
+    });
+    try {
+      await pool.query("UPDATE users SET subscription_status='active', stripe_subscription_status='free', prepaid_expires_at=clock_timestamp()+INTERVAL '5 minutes' WHERE id=$1", [owner]);
+      await pool.query('UPDATE user_tasks SET score=3, interaction_count=4 WHERE goal_id=$1', [goalId]);
+      const tasksBefore = (await pool.query('SELECT * FROM user_tasks WHERE goal_id=$1 ORDER BY id', [goalId])).rows;
+      const goalBefore = (await pool.query('SELECT * FROM user_goals WHERE id=$1', [goalId])).rows;
+      expect((await check({ scenario: 'scene-3' })).status).toBe(200);
+      expect((await check({ operation: 'pro' })).status).toBe(200);
+      expect((await check({ mode: 'daily_qa' })).status).toBe(200);
+      const { expires_at: expiresAt, server_now: started } = (await pool.query('SELECT prepaid_expires_at AS expires_at, clock_timestamp() AS server_now FROM users WHERE id=$1', [owner])).rows[0];
+      console.log(JSON.stringify({ audit: 'natural-expiry', account: 'isolated-schema-owner', started_utc: started.toISOString(), expires_utc: expiresAt.toISOString() }));
+      // Poll the database clock; entitlement code continues using the real clock.
+      while ((await pool.query('SELECT clock_timestamp() >= prepaid_expires_at AS expired FROM users WHERE id=$1', [owner])).rows[0].expired !== true) {
+        await new Promise(resolve => setTimeout(resolve, 1000));
+      }
+      expect((await check({ scenario: 'scene-3' })).status).toBe(403);
+      expect((await check({ operation: 'pro' })).status).toBe(403);
+      expect((await check({ mode: 'daily_qa' })).status).toBe(200);
+      expect((await check({ scenario: 'scene-0' })).status).toBe(200);
+      const restored = await request('/api/users/goals/active');
+      expect(restored.status).toBe(200);
+      expect(restored.body.data.access.membership.active).toBe(false);
+      expect((await pool.query('SELECT * FROM user_tasks WHERE goal_id=$1 ORDER BY id', [goalId])).rows).toEqual(tasksBefore);
+      expect((await pool.query('SELECT * FROM user_goals WHERE id=$1', [goalId])).rows).toEqual(goalBefore);
+      // Each source independently retains access when the other is inactive.
+      await pool.query("UPDATE users SET stripe_subscription_status='active' WHERE id=$1", [owner]);
+      expect((await check({ operation: 'pro' })).status).toBe(200);
+      await pool.query("UPDATE users SET stripe_subscription_status='canceled', prepaid_expires_at=clock_timestamp()+INTERVAL '1 hour' WHERE id=$1", [owner]);
+      expect((await check({ operation: 'pro' })).status).toBe(200);
+      console.log(JSON.stringify({ audit: 'natural-expiry', completed_utc: new Date().toISOString(), before: 200, after: 403, ordinary_access: 200, retained_tasks: tasksBefore.length }));
+    } finally { token = previousToken; }
+  }, 330000);
   test('internal endpoint requires the service secret even from loopback', async () => {
     const route = `/api/users/internal/users/${owner}/access/check`;
     expect((await request(route, { scenario: 'scene-0' }, {})).status).toBe(403);
