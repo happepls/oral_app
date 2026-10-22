@@ -1,6 +1,7 @@
 fastapi==0.109.2
 uvicorn[standard]==0.27.1
-dashscope>=1.26.5
+# Pin the last production version; SDK 2.x needs a separate migration.
+dashscope==1.27.8
 python-dotenv==1.0.1
 websockets>=11.0
 pydantic>=2.6.1
