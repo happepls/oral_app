@@ -1,6 +1,6 @@
 # AI service 启动失败诊断与待批准修复方案
 
-状态：根因已确认；2026-10-22 用户明确批准实施并准备 PR；代码修复已完成，统一验证通过，镜像验证进行中；未发布生产服务。
+状态：根因已确认；2026-10-22 用户明确批准实施并准备 PR；代码修复、统一验证和本地镜像验证完成；PR #93 为 draft，独立审查与生产发布尚未完成。
 
 ## 生产证据
 
@@ -40,10 +40,14 @@
 - `gitleaks git --staged --verbose --config .gitleaks.toml`：退出 0，无泄漏。
 - `npm run verify`：退出 0，`decision=pass`，分数 100。AI 服务 401 passed / 11 skipped；workflow 211 passed；场景 mock 25 passed；客户端 648 passed，客户端构建成功，其余统一验证项通过。
 - 上述统一验证使用本地 `.venv` Python 3.9；部分 AI 测试使用 SDK stub，不能作为 Python 3.10 真实 SDK 安装或启动成功的证明。
-- 已从 Git 跟踪文件创建隔离构建上下文并覆盖本次修改的两个文件。`docker build --no-cache -t oral-ai-sdk-startup:1.27.8 <context>` 正在运行；镜像构建、真实 SDK 导入、`pip check` 和启动健康检查均待完成。首次命令使用此主机不支持的 `--progress=plain` 参数，退出 125；去除参数后才正式开始构建。
-- Python 3.10 独立容器的原始 requirements 安装仍在运行，尚无本地复现结论；根因证据来自实际生产构建与启动日志。
+- 已从 Git 跟踪文件创建隔离构建上下文并覆盖本次修改的两个文件。`docker build --no-cache -t oral-ai-sdk-startup:1.27.8 <context>` 退出 0，镜像 ID `526e640b9644`，真实 SDK 导入检查通过。首次命令使用此主机不支持的 `--progress=plain` 参数，退出 125；去除参数后才正式开始构建。
+- 新镜像的隔离容器（无外网、占位 API key）确认 Python 3.10.19、DashScope 1.27.8，`pip check` 退出 0，主程序真实 SDK 导入成功，启动后监听 8082，`GET /health` 返回 200、`{"status":"ok"}`；测试后正常停止主进程。
+- 反例验证：将实际下载的 2.0.1 wheel 放入隔离容器的 `PYTHONPATH`，原构建检查仍成功，新检查因 `dashscope/v2/_config.py` 缺失 `tomli` 失败；断言故障路径与生产一致后，实验退出 0。首次使用 `/tmp` bind mount 时 Docker daemon 无法访问宿主路径，退出 125；随后通过标准输入传入 wheel 完成验证。
+- 原先从空 Python 3.10 容器完整安装 2.x requirements 的实验被上述离线反例取代，已停止，不将其未完成的安装计作成功或失败。没有验证 2.x 补齐 tomli 后的业务兼容性。
 
 PR 在镜像验证和独立审查完成前保持 draft。尚无独立审查或生产恢复成功的声明。
+
+PR：https://github.com/happepls/oral_app/pull/93 。GitHub 托管 CI 在运行，最终结果以 PR 当前检查为准。
 
 ## 发布后验收与回退
 
