@@ -1,5 +1,4 @@
 modules = ["nodejs-20", "python-3.11", "postgresql-16"]
-[userenv]
 
 [userenv.shared]
 JWT_SECRET = "oral-ai-jwt-secret-key-2025"
