@@ -23,7 +23,7 @@ RUN pip install --no-cache-dir --upgrade pip \
         -i https://mirrors.aliyun.com/pypi/simple/ --trusted-host mirrors.aliyun.com && \
     pip install --no-cache-dir --retries 5 --timeout 120 -r requirements.txt \
         -i https://mirrors.aliyun.com/pypi/simple/ --trusted-host mirrors.aliyun.com && \
-    python -c "import redis, fastapi, uvicorn, httpx, websockets; print('deps import OK')"
+    python -c "import redis, fastapi, uvicorn, httpx, websockets, dashscope; from dashscope.audio.qwen_omni import OmniRealtimeCallback, OmniRealtimeConversation, MultiModality, AudioFormat; print('deps import OK')"
 
 # Copy application code (excluding wheels directory to reduce context)
 COPY . .
