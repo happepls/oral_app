@@ -21,6 +21,7 @@ import {
 } from '../utils/conversationHistory';
 import NetworkAdaptiveManager from '../utils/network-adaptive-manager';
 import OptimizedWebSocket from '../utils/websocket-optimized';
+import { AudioInputUpload } from '../utils/audioInputUpload';
 import { motion, AnimatePresence } from 'motion/react';
 import { useTranslation } from 'react-i18next';
 import { resolveDailyLimitModal } from './dailyLimitLogic';
@@ -458,6 +459,7 @@ function Conversation() {
   const [currentRole, setCurrentRole] = useState('OralTutor'); // Default role
   const [isAISpeaking, setIsAISpeaking] = useState(false);
   const [isUserRecording, setIsUserRecording] = useState(false);
+  const [audioInputError, setAudioInputError] = useState('');
   // Flips true when user releases the recorder; flips false the moment the
   // first audio frame from this AI turn starts playing. Drives the mascot
   // `thinking` expression during the request→response gap (test case 6.x).
@@ -930,6 +932,9 @@ function Conversation() {
   const isInterruptedRef = useRef(false);
   const currentUserMessageIdRef = useRef(null);
   const currentRecordingSessionIdRef = useRef(null); // Track current recording session to ignore cancelled audio
+  const audioInputUploadRef = useRef(new AudioInputUpload());
+  const recordingLatencyRef = useRef(null);
+  const recordingScopeRef = useRef(null);
   const messagesEndRef = useRef(null);
   const socketRef = useRef(null);
   const lastProficiencyUpdateRef = useRef(null); // Track last processed proficiency update to prevent duplicates
@@ -969,6 +974,11 @@ function Conversation() {
               return;
             }
             streamedAudioSinceCutRef.current = true;
+            const latency = recordingLatencyRef.current;
+            if (latency && !latency.played) {
+              latency.played = true;
+              console.info('[TurnLatency] stage=playback_started elapsed_ms=%d', Math.round(performance.now() - latency.startedAt));
+            }
             audioPlaybackByResponseRef.current.set(responseId, 'playing');
             playedAudioResponsesRef.current.add(responseId);
             setMessages(prev => prev.map(m => m.type === 'ai' && m.responseId === responseId && m.audioUrl
@@ -1346,6 +1356,7 @@ function Conversation() {
       );
       // The committed reset invalidates the old connection even when phase
       // recovery failed. Stop its audio/events before displaying zero progress.
+      audioInputUploadRef.current.cancel();
       connectionAttemptRef.current += 1;
       clearStableConnectionTimer();
       if (reconnectTimerRef.current) clearTimeout(reconnectTimerRef.current);
@@ -2590,7 +2601,7 @@ function Conversation() {
            const modal = resolveDailyLimitModal(data);
            setDailyLimitModal(modal);
            // 停录，禁止继续发：RealTimeRecorder imperative handle
-           try { recorderRef.current?.stopRecording?.(); } catch (_) {}
+           try { recorderRef.current?.cancelRecording?.(); } catch (_) {}
            break;
         }
         default:
@@ -2766,7 +2777,7 @@ function Conversation() {
         topic: searchParams.get('topic'),
         mode: searchParams.get('mode'),
           isRestoration: true,
-        welcomeMuted: welcomeMuted || suppressWelcome,
+        welcomeMuted: welcomeMuted || suppressWelcome || !!currentRecordingSessionIdRef.current || !!audioInputUploadRef.current.pending,
         clientInfo: {
             optimized: true,
           version: '2.0',
@@ -2774,6 +2785,10 @@ function Conversation() {
     }
     };
     socketRef.current.send(JSON.stringify(payload));
+    if (currentRecordingSessionIdRef.current) {
+      socketRef.current.send(JSON.stringify({ type: 'user_audio_started', payload: { input_id: currentUserMessageIdRef.current, scope: recordingScopeRef.current } }));
+    }
+    audioInputUploadRef.current.send(socketRef.current);
 
     // 刷新重连：如果处于 magic_repetition 且句子为空，请求后端重发
     setTimeout(() => {
@@ -2802,6 +2817,23 @@ function Conversation() {
       } else if (typeof event.data === 'string') {
         try {
           const data = JSON.parse(event.data);
+          if (data.type === 'error' && data.payload?.code === 'input_submission_pending') {
+            setAudioInputError('录音提交状态待确认，请先查看历史；也可放弃本次录音后重新录制。');
+            setIsWaitingForAIResponse(false);
+            return;
+          }
+          if (data.type === 'error' && data.payload?.code === 'stale_input') {
+            audioInputUploadRef.current.cancel();
+            recorderRef.current?.cancelRecording();
+            setIsWaitingForAIResponse(false);
+            setAudioInputError('练习任务已更新，请重新录音。');
+            return;
+          }
+          if (data.type === 'user_audio_received') {
+            if (audioInputUploadRef.current.acknowledge(data.payload?.input_id)) setAudioInputError('');
+            if (recordingLatencyRef.current) console.info('[TurnLatency] stage=submission_ack elapsed_ms=%d', Math.round(performance.now() - recordingLatencyRef.current.startedAt));
+            return;
+          }
           handleJsonMessage(data);
         } catch (e) {
           console.error('Failed to parse message:', e);
@@ -3319,6 +3351,7 @@ function Conversation() {
   // --- Recorder Callbacks ---
 
   const handleRecordingStart = () => {
+    setAudioInputError('');
     // CRITICAL: Check WebSocket connection before allowing recording
     const wsReadyState = socketRef.current?.getReadyState?.() || socketRef.current?.readyState;
     if (!isConnected || wsReadyState !== WebSocket.OPEN) {
@@ -3335,6 +3368,10 @@ function Conversation() {
     isInterruptedRef.current = false; // Reset flag for new turn
     const newId = Date.now().toString();
     currentUserMessageIdRef.current = newId; // New turn ID
+    const task = activeScoringTaskRef.current;
+    recordingScopeRef.current = task?.id && Number.isInteger(task.scoring_generation)
+      ? { goal_id: activeGoalIdRef.current, task_id: task.id, scoring_generation: task.scoring_generation }
+      : null;
 
     // Get session ID from recorder (generated in startRecording)
     const newSessionId = recorderRef.current?.getSessionId();
@@ -3369,10 +3406,12 @@ function Conversation() {
     console.log('🔇 Interruption triggered - stopping AI response and starting new turn');
     if (socketRef.current?.getReadyState?.() === WebSocket.OPEN || socketRef.current?.readyState === WebSocket.OPEN) {
         socketRef.current.send(JSON.stringify({ type: 'interrupt' }));
+        socketRef.current.send(JSON.stringify({ type: 'user_audio_started', payload: { input_id: newId, scope: recordingScopeRef.current } }));
     }
   };
 
   const handleRecordingStop = (audioBuffers) => {
+    recordingLatencyRef.current = { startedAt: performance.now(), played: false };
     setIsUserRecording(false);
     // User finished speaking — show `thinking` until AI audio starts playing.
     setIsWaitingForAIResponse(true);
@@ -3388,79 +3427,17 @@ function Conversation() {
         recorderRef.current.clearSessionId();
     }
 
-    // Send buffered audio data as JSON-wrapped base64
-    if (audioBuffers && audioBuffers.length > 0) {
-        console.log('🎤 Sending buffered audio data, count:', audioBuffers.length);
-        audioBuffers.forEach(buffer => {
-            if (socketRef.current && socketRef.current.readyState === WebSocket.OPEN) {
-                const uint8 = new Uint8Array(buffer.buffer !== undefined ? buffer.buffer : buffer);
-                let binary = '';
-                for (let i = 0; i < uint8.byteLength; i++) {
-                    binary += String.fromCharCode(uint8[i]);
-                }
-                const b64 = btoa(binary);
-                socketRef.current.send(JSON.stringify({
-                    type: 'audio_stream',
-                    payload: { audio: b64, input_id: currentUserMessageIdRef.current }
-                }));
-            } else {
-                console.warn('⚠️ Cannot send buffered audio - WebSocket not connected, state:', wsReadyState);
-            }
-        });
-    } else {
-        console.log('🎤 No buffered audio to send');
+    if (!audioInputUploadRef.current.prepare(currentUserMessageIdRef.current, audioBuffers || [], recordingScopeRef.current)) {
+      setIsWaitingForAIResponse(false);
+      return;
     }
-
-    // Wait for WebSocket to be ready before sending
-    if (wsReadyState !== WebSocket.OPEN) {
-        console.log('⏳ WebSocket not ready (state:', wsReadyState, '), waiting for connection...');
-
-        // Wait for connection with timeout
-        const waitForConnection = () => {
-            const checkReady = () => {
-                const currentState = socketRef.current?.getReadyState?.() || socketRef.current?.readyState;
-                if (currentState === WebSocket.OPEN) {
-                    console.log('✅ WebSocket now ready, sending user_audio_ended');
-                    // Re-enable streaming playback for the AI reply that follows.
-                    // handleRecordingStart set isInterruptedRef=true to interrupt the
-                    // previous turn; without this reset every streaming PCM chunk of
-                    // the new reply is dropped in playAudioChunk and the user only
-                    // hears the (much later) COS audio_url.
-                    isInterruptedRef.current = false;
-                    socketRef.current.send(JSON.stringify({ type: 'user_audio_ended' }));
-                } else if (currentState === WebSocket.CONNECTING) {
-                    // Still connecting, check again in 100ms
-                    setTimeout(checkReady, 100);
-                } else {
-                    console.error('❌ WebSocket failed to connect (state:', currentState, ')');
-                    setWebSocketError('连接失败，请刷新页面重试');
-                }
-            };
-            checkReady();
-        };
-
-        // Set timeout to give up after 10 seconds
-        setTimeout(() => {
-            const finalState = socketRef.current?.getReadyState?.() || socketRef.current?.readyState;
-            if (finalState !== WebSocket.OPEN) {
-                console.error('❌ WebSocket connection timeout after waiting');
-                setWebSocketError('连接超时，请刷新页面重试');
-            }
-        }, 10000);
-
-        waitForConnection();
-        return;
-    }
-
-    console.log('📤 Sending user_audio_ended');
-    // Re-enable streaming playback for the AI reply that follows. See the
-    // matching reset in the waitForConnection path above.
     isInterruptedRef.current = false;
-    socketRef.current.send(JSON.stringify({ type: 'user_audio_ended' }));
-    console.log('✅ user_audio_ended sent, keeping WebSocket open for AI response');
+    audioInputUploadRef.current.send(socketRef.current);
   };
 
   const handleRecordingCancel = () => {
+    setAudioInputError('');
+    audioInputUploadRef.current.cancel();
     setIsUserRecording(false);
     setIsWaitingForAIResponse(false);
     console.log('🚫 Recording cancelled, clearing session ID:', currentRecordingSessionIdRef.current);
@@ -4118,6 +4095,11 @@ function Conversation() {
                       isConnected={isConnected}
                       onBeforeStart={() => { void initAudioContext().catch(() => {}); }}
                       onStart={handleRecordingStart}
+                      canStart={() => {
+                        if (!audioInputUploadRef.current.pending) return true;
+                        setAudioInputError('上一段录音仍在提交，请等待确认，或放弃本次录音后重新录制。');
+                        return false;
+                      }}
                       onStop={handleRecordingStop}
                       onCancel={handleRecordingCancel}
                       enableCompression={true}
@@ -4161,6 +4143,16 @@ function Conversation() {
                 )}
             </div>
 
+            {audioInputError && (
+              <div role="alert" className="w-full max-w-md text-sm text-red-600">
+                <p>{audioInputError}</p>
+                <button className="underline" onClick={() => {
+                  audioInputUploadRef.current.cancel();
+                  setAudioInputError('');
+                  setIsWaitingForAIResponse(false);
+                }}>放弃本次录音</button>
+              </div>
+            )}
             {/* WebSocket Error Display with Retry / Back exit */}
             {shouldShowConnectionError(webSocketError, isConnected, wsRejected) && (
                 <div className="flex items-center gap-3 w-full max-w-md">

@@ -403,6 +403,11 @@ JSON Format (Initial Tips - Optional):
             "Open only on the first turn with a warm in-character greeting and a relevant question. "
             "When history exists, continue the active exchange instead of restarting. "
             "There is no image to describe.\n\n"
+            "This is spoken communication practice. If the task mentions an email, letter, "
+            "draft or report, invite the student to SAY its content. Accept information "
+            "supplied across turns; do not demand typing, a written document or email "
+            "formatting unless that form is an explicit learning objective. Ask only "
+            "for required information that remains missing.\n\n"
             + scene_teaching_policy(target_language, native_language)
         )
 

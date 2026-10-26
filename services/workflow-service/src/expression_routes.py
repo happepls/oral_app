@@ -2,6 +2,9 @@
 import logging
 import os
 import secrets
+import asyncio
+import json
+import time
 
 from fastapi import APIRouter, Header, HTTPException
 from pydantic import BaseModel, Field
@@ -30,12 +33,36 @@ async def expression_feedback(request: ExpressionRequest, x_guaji_internal_auth:
         raise HTTPException(status_code=403, detail="Internal authentication required")
     if not feedback_enabled():
         return {"success": True, "data": None}
+    started = time.monotonic()
     try:
         result = await evaluate_expression(request.model_dump())
         return {"success": True, "data": result}
     except Exception as exc:
         # No user text, upstream body or credentials in logs. Feedback is optional.
-        logger.warning("Scene expression feedback unavailable (%s)", type(exc).__name__)
+        # Validator messages are static strings. Model output and user input
+        # must never enter the diagnostic, including JSON decoder messages.
+        if isinstance(exc, asyncio.TimeoutError):
+            reason = 'upstream_timeout'
+        elif isinstance(exc, json.JSONDecodeError):
+            reason = 'invalid_json'
+        elif isinstance(exc, ValueError):
+            reason = {
+                'invalid teaching mode': 'teaching_mode',
+                'invalid off_topic': 'off_topic_type',
+                'expected two or three alternatives': 'alternatives_count',
+                'alternatives must be distinct student utterances': 'alternatives_voice',
+                'invalid feedback text': 'text_shape',
+                'feedback contains machine content': 'machine_content',
+                'invalid errors': 'errors_shape',
+                'invalid error entry': 'error_entry',
+                'correction requires evidence': 'missing_error_evidence',
+                'expected at most one question': 'question_count',
+                'feedback_transport_shape': 'transport_shape',
+            }.get(str(exc), 'schema_validation')
+        else:
+            reason = 'upstream_error'
+        logger.warning("Scene expression feedback unavailable type=%s reason=%s elapsed_ms=%d",
+                       type(exc).__name__, reason, round((time.monotonic() - started) * 1000))
         return {"success": True, "data": None}
 
 

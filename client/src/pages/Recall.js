@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'motion/react';
 import { userAPI, aiAPI } from '../services/api';
 import { GuajiMascot } from '../components/GuajiMascot';
+import { createRecallRecording } from '../utils/recallRecording';
 import {
   getLocalDateKey,
   pickProgressAwareRecallScenario,
@@ -15,11 +16,8 @@ import {
 //   2. RECITE from memory while cue is hidden → produces a "recite" score
 //   3. Both scores ≥ threshold → 下一句 unlocks
 //
-// The two steps are surfaced as TWO independent buttons, each owning its own
-// recording session and score. There is no shared phase state machine — that
-// design was fragile against StrictMode replays and against Web Speech firing
-// multiple `onresult` events per held press. Two buttons = two recordings =
-// two scores that must both pass. No way for one recording to satisfy both.
+// Each step owns one explicit recording. Browser recognition restarts never
+// advance the step; only the user's stop finalizes its score.
 
 const SIMILARITY_THRESHOLD = 0.6;
 
@@ -98,6 +96,7 @@ function Recall() {
   const [recordingFor, setRecordingFor] = useState(null); // 'read' | 'recite' | null
   const [isPeeking, setIsPeeking] = useState(false);
   const [recognitionUnavailable, setRecognitionUnavailable] = useState(false);
+  const [recordingError, setRecordingError] = useState('');
   const [synthesizing, setSynthesizing] = useState(false); // 试听 TTS 合成中
   const [previewError, setPreviewError] = useState('');
   const previewAudioRef = useRef(null);
@@ -113,21 +112,25 @@ function Recall() {
   // React's render cycle.
   const idxRef = useRef(0);
   const sentencesRef = useRef([]);
-  // `activeStepRef` is set synchronously in startRecord and cleared ONLY when
-  // the recognition session truly ends (onend). It must NOT be cleared on the
-  // user releasing the button — Web Speech delivers `onresult` between the
-  // user releasing and the engine calling `onend`, so a UI-driven clear would
-  // race ahead of onresult and the score wouldn't be written.
+  // Freeze the step until explicit stop has drained the last ASR result.
   const activeStepRef = useRef(null);
   useEffect(() => { idxRef.current = idx; }, [idx]);
   useEffect(() => { sentencesRef.current = sentences; }, [sentences]);
 
   const recognitionRef = useRef(null);
+  const cancelRecording = useCallback(() => {
+    recognitionRef.current?.cancel();
+    recognitionRef.current = null;
+    activeStepRef.current = null;
+    setRecordingFor(null);
+  }, []);
+  useEffect(() => () => recognitionRef.current?.cancel(), []);
   const loadSequenceRef = useRef(0);
   const recallAbortRef = useRef(null);
 
   // Load scenario sentences and translate
   const loadScenario = React.useCallback(async (goalData = null, recallVariant = 0) => {
+    cancelRecording();
     const loadSequence = ++loadSequenceRef.current;
     recallAbortRef.current?.abort();
     const controller = new AbortController();
@@ -236,7 +239,7 @@ function Recall() {
         if (recallAbortRef.current === controller) recallAbortRef.current = null;
       }
     }
-  }, []);
+  }, [cancelRecording]);
 
   // Initial load — fetch backend-authoritative daily state (switch count +
   // completion). localStorage stays as an OFFLINE FALLBACK only: if the backend
@@ -315,84 +318,37 @@ function Recall() {
   const recitePassed = (row.recite ?? 0) >= SIMILARITY_THRESHOLD;
   const canAdvance = readPassed && recitePassed;
 
-  // Web Speech is created lazily per (lang) and reused. Single recognizer for
-  // both steps — we tell them apart by `recordingForRef.current`.
-  const ensureRecognition = useCallback(() => {
-    if (recognitionRef.current && recognitionRef.current.lang === targetLang.bcp47) {
-      return recognitionRef.current;
-    }
+  // Freeze sentence and step for the entire explicit recording, including
+  // browser recognition restarts and the final result delivered after stop.
+  const startRecord = (step) => {
+    if (activeStepRef.current) return;
     const Ctor = window.SpeechRecognition || window.webkitSpeechRecognition;
     if (!Ctor) {
       setRecognitionUnavailable(true);
-      return null;
+      return;
     }
-    const r = new Ctor();
-    r.continuous = false;
-    r.interimResults = false;
-    r.maxAlternatives = 1;
-    r.lang = targetLang.bcp47;
-
-    r.onresult = (event) => {
-      const transcript = Array.from(event.results)
-        .map(res => res[0]?.transcript || '')
-        .join(' ')
-        .trim();
-      const step = activeStepRef.current;
-      const i = idxRef.current;
-      const target = sentencesRef.current[i] || '';
-      const ratio = similarity(transcript, target);
-
-      setRows(prev => {
-        const cur = prev[i] || emptyRow();
-        if (step !== 'read' && step !== 'recite') {
-          return { ...prev, [i]: { ...cur, lastText: transcript } };
-        }
-        return { ...prev, [i]: { ...cur, [step]: ratio, lastText: transcript } };
-      });
-    };
-    r.onerror = (e) => {
-      console.warn('[Recall] speech recognition error:', e.error);
-      activeStepRef.current = null;
-      setRecordingFor(null);
-    };
-    r.onend = () => {
-      activeStepRef.current = null;
-      setRecordingFor(null);
-    };
-
-    recognitionRef.current = r;
-    return r;
-  }, [targetLang]);
-
-  const startRecord = (step /* 'read' | 'recite' */) => {
-    const r = ensureRecognition();
-    if (!r) return;
-    // Set the ref BEFORE calling start() so onresult always sees the right
-    // step, even if the engine fires onresult before React commits state.
+    const i = idxRef.current;
+    const target = sentencesRef.current[i] || '';
+    setRecordingError('');
     activeStepRef.current = step;
     setRecordingFor(step);
-    try {
-      r.start();
-    } catch (e) {
-      console.warn('[Recall] start() failed, will reset:', e);
-      activeStepRef.current = null;
-      setRecordingFor(null);
-    }
+    recognitionRef.current = createRecallRecording({
+      Recognition: Ctor, lang: targetLang.bcp47,
+      onComplete: transcript => setRows(prev => ({
+        ...prev, [i]: { ...(prev[i] || emptyRow()), [step]: similarity(transcript, target), lastText: transcript },
+      })),
+      onError: () => setRecordingError('语音识别已中断，请检查麦克风权限后点击重试。'),
+      onEnd: () => { activeStepRef.current = null; setRecordingFor(null); },
+    });
   };
 
   const stopRecord = () => {
-    const r = recognitionRef.current;
-    if (r) {
-      try { r.stop(); } catch {}
-    }
-    // Do NOT clear activeStepRef here — onresult races against this. The ref
-    // is cleared in onend (after onresult has run). Only flip the UI flag so
-    // the button visual updates immediately.
-    setRecordingFor(null);
+    recognitionRef.current?.stop();
   };
 
   const goPrev = () => {
     if (idx <= 0) return;
+    cancelRecording();
     setIdx(idx - 1);
     setIsPeeking(false);
     setRecordingFor(null);
@@ -400,6 +356,7 @@ function Recall() {
 
   const goNext = () => {
     if (!canAdvance) return;
+    cancelRecording();
     if (isLast) {
       setAlreadyCompleted(true);
       // Persist completion to backend; localStorage stays as offline fallback.
@@ -692,12 +649,8 @@ function Recall() {
               </div>
 
               <button
-                onMouseDown={() => startRecord(activeStep)}
-                onMouseUp={stopRecord}
-                onMouseLeave={isRecording ? stopRecord : undefined}
-                onTouchStart={() => startRecord(activeStep)}
-                onTouchEnd={stopRecord}
-                onTouchCancel={stopRecord}
+                onClick={() => isRecording ? stopRecord() : startRecord(activeStep)}
+                aria-pressed={isRecording}
                 disabled={canAdvance}
                 className="w-full px-4 py-3 rounded-full text-base font-bold text-white shadow active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed select-none"
                 style={{
@@ -706,8 +659,9 @@ function Recall() {
                     : 'linear-gradient(135deg, #637FF1, #a47af6)',
                 }}
               >
-                🎙️ {isRecording ? '正在听...' : canAdvance ? '本句已完成' : `按住说话（${stepLabel}）`}
+                🎙️ {isRecording ? '点击结束' : canAdvance ? '本句已完成' : `点击说话（${stepLabel}）`}
               </button>
+              {recordingError && <p role="alert" className="text-center text-sm text-red-600">{recordingError}</p>}
 
               {recognitionUnavailable && !canAdvance && (
                 <button

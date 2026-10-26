@@ -20,6 +20,31 @@ TASK = {
 }
 
 
+def test_oral_email_rubric_accepts_multi_turn_content_without_written_artifact():
+    prompt = BatchEvaluationWorkflow._build_prompt([
+        {'user_content': 'The meeting is on Monday.', 'ai_response': 'Where?'},
+        {'user_content': 'In room two.', 'ai_response': 'What is the agenda?'},
+        {'user_content': 'We will review the launch plan.', 'ai_response': 'Thank you.'},
+    ], dict(TASK, task_description='Write an invitation email with time, place and agenda'), 'Chinese', 'English')
+    assert 'ORAL communication exercise' in prompt
+    assert 'multiple spoken turns' in prompt
+    assert 'Do not require a written artifact' in prompt
+    assert 'incorrect answers must never be rewarded' in prompt
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('quality,delta', [('strong', 3), ('satisfactory', 2), ('needs_work', 1), ('off_topic', 0)])
+async def test_nonzero_generation_maps_real_window_and_persisted_score(quality, delta):
+    workflow, db = BatchEvaluationWorkflow(), FakeDB(generation=3)
+    with patch.object(workflow, '_call_llm', AsyncMock(return_value=dict(quality=quality, evidence_sufficient=True, reason='Synthetic assessment'))):
+        result = await workflow.evaluate_window(user_id='u1', goal_id=7, task_id=42,
+            scoring_generation=3, turn_window=window(), current_task=TASK,
+            native_language='Chinese', db_connection=db)
+    assert result['delta'] == delta
+    assert db.task['score'] == delta
+    assert db.task['scoring_generation'] == 3
+
+
 def window(size=3, prefix="window"):
     return [
         {"turn_id": f"{prefix}-turn-{i}", "turn_order": i,

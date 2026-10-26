@@ -6,17 +6,19 @@ import httpx
 from fastapi import HTTPException
 
 
-async def check_access(user_id, scenario=None, mode=None, goal_id=None, operation="practice"):
+async def check_access(user_id, scenario=None, mode=None, goal_id=None, operation="practice", *, client=None):
+    if client is None:
+        async with httpx.AsyncClient(timeout=5) as owned_client:
+            return await check_access(user_id, scenario, mode, goal_id, operation, client=owned_client)
     secret = os.getenv("INTERNAL_AUTH_SECRET")
     if not secret:
         raise HTTPException(503, "authorization_unavailable")
     try:
-        async with httpx.AsyncClient(timeout=5) as client:
-            response = await client.post(
-                f"{os.getenv('USER_SERVICE_URL', 'http://user-service:3000').rstrip('/')}/api/users/internal/users/{user_id}/access/check",
-                headers={"X-Guaji-Internal-Auth": secret},
-                json={"scenario": scenario, "mode": mode, "goal_id": goal_id, "operation": operation},
-            )
+        response = await client.post(
+            f"{os.getenv('USER_SERVICE_URL', 'http://user-service:3000').rstrip('/')}/api/users/internal/users/{user_id}/access/check",
+            headers={"X-Guaji-Internal-Auth": secret},
+            json={"scenario": scenario, "mode": mode, "goal_id": goal_id, "operation": operation},
+        )
         result = response.json()
         if not isinstance(result, dict):
             raise ValueError('invalid authority response')

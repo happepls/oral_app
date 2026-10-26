@@ -149,4 +149,12 @@ async def evaluate_expression(context):
         {"role": "system", "content": SYSTEM_PROMPT},
         {"role": "user", "content": json.dumps(context, ensure_ascii=False)},
     ]), timeout=6.0)
+    # Some compatible-mode models wrap otherwise valid JSON in a code fence.
+    # Normalize only this transport wrapper; all semantic validation stays strict.
+    if isinstance(content, list):
+        content = ''.join(part.get('text', '') for part in content if isinstance(part, dict))
+    if not isinstance(content, str):
+        raise ValueError('feedback_transport_shape')
+    content = re.sub(r'^```(?:json)?\s*', '', content.strip())
+    content = re.sub(r'\s*```$', '', content)
     return validate_feedback(json.loads(content), context["target_language"])

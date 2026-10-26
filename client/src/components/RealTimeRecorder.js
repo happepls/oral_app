@@ -33,6 +33,7 @@ const RealTimeRecorder = forwardRef(({
   onBeforeStart,
   onStop,
   onCancel,
+  canStart,
   enableCompression = true,
   enableMetrics = false
 }, ref) => {
@@ -48,6 +49,9 @@ const RealTimeRecorder = forwardRef(({
   const audioStreamRef        = useRef(null);
   const isCancelledRef        = useRef(false);
   const isStartingRef         = useRef(false);
+  const isStoppingRef         = useRef(false);
+  const recordingActiveRef    = useRef(false);
+  const flushResolveRef       = useRef(null);
   const recordingStartTimeRef = useRef(null);
   const timerIntervalRef      = useRef(null);
   const waveformRafRef        = useRef(null);   // dedicated RAF for waveform+level loop
@@ -57,6 +61,9 @@ const RealTimeRecorder = forwardRef(({
 
   useEffect(() => {
     return () => {
+      isCancelledRef.current = true;
+      recordingActiveRef.current = false;
+      flushResolveRef.current?.();
       cleanupAudioResources();
       if (timerIntervalRef.current) clearInterval(timerIntervalRef.current);
       if (waveformRafRef.current) cancelAnimationFrame(waveformRafRef.current);
@@ -65,7 +72,7 @@ const RealTimeRecorder = forwardRef(({
 
   useImperativeHandle(ref, () => ({
     startRecording:  () => { if (!isRecording && !isStartingRef.current) startRecording(); },
-    stopRecording:   () => { if (isRecording) return getAndClearAudioBuffer(); },
+    stopRecording:   () => { if (isRecording) return stopRecording(); },
     cancelRecording: () => { internalCancelRecording(); },
     getSessionId:    () => recordingSessionIdRef.current,
     setSessionId:    (id) => { recordingSessionIdRef.current = id; },
@@ -135,7 +142,8 @@ const RealTimeRecorder = forwardRef(({
   };
 
   const startRecording = async () => {
-    if (isStartingRef.current) return;
+    if (isStartingRef.current || isStoppingRef.current || recordingActiveRef.current) return;
+    if (canStart && !canStart()) return;
     if (!isConnected) { alert('AI 导师尚未连接，请稍后再试'); return; }
 
     // Unlock playback in Safari's original gesture, before permission awaits.
@@ -155,6 +163,7 @@ const RealTimeRecorder = forwardRef(({
         }
       });
       audioStreamRef.current = stream;
+      if (isCancelledRef.current) { cleanupAudioResources(); isStartingRef.current = false; return; }
 
       const audioContext = new (window.AudioContext || window.webkitAudioContext)({
         sampleRate: 16000, latencyHint: 'interactive'
@@ -170,6 +179,7 @@ const RealTimeRecorder = forwardRef(({
       source.connect(analyser);
 
       await audioContext.audioWorklet.addModule('/recorder-processor-optimized.js');
+      if (isCancelledRef.current) { cleanupAudioResources(); isStartingRef.current = false; return; }
       const workletNode = new AudioWorkletNode(audioContext, 'recorder-processor-optimized', {
         processorOptions: { bufferSize: 800, energyThreshold: 0.02, enableVAD: true }
       });
@@ -182,18 +192,23 @@ const RealTimeRecorder = forwardRef(({
         if (type === 'audio_data') {
           audioBufferRef.current.push(buffer);
         }
+        if (type === 'flushed') flushResolveRef.current?.();
       };
 
       // Start single unified waveform + level loop
       startWaveformLoop();
 
       setIsRecording(true);
+      recordingActiveRef.current = true;
       setShowControls(true);
       isStartingRef.current = false;
       startTimer();
       if (onStart) onStart();
 
     } catch (error) {
+      recordingActiveRef.current = false;
+      setIsRecording(false);
+      cleanupAudioResources();
       isStartingRef.current = false;
       setShowControls(false);
       let msg = '无法启动录音';
@@ -204,7 +219,19 @@ const RealTimeRecorder = forwardRef(({
     }
   };
 
-  const stopRecording = () => {
+  const stopRecording = async () => {
+    if (isStoppingRef.current || !recordingActiveRef.current) return;
+    recordingActiveRef.current = false;
+    isStoppingRef.current = true;
+    // Drain the last partial worklet frame before closing the microphone.
+    await new Promise(resolve => {
+      const timer = setTimeout(resolve, 250);
+      flushResolveRef.current = () => { clearTimeout(timer); resolve(); };
+      audioWorkletNodeRef.current?.port.postMessage?.({ type: 'flush' });
+    });
+    flushResolveRef.current = null;
+    isStoppingRef.current = false;
+    if (isCancelledRef.current) return;
     stopWaveformLoop();
     cleanupAudioResources();
     stopTimer();
@@ -218,6 +245,8 @@ const RealTimeRecorder = forwardRef(({
 
   const internalCancelRecording = () => {
     isCancelledRef.current = true;
+    recordingActiveRef.current = false;
+    flushResolveRef.current?.();
     recordingSessionIdRef.current = null;
     audioBufferRef.current = [];
     stopWaveformLoop();

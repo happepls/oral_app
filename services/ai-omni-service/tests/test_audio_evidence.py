@@ -77,6 +77,36 @@ def owner():
     return cb
 
 
+@pytest.mark.asyncio
+async def test_long_recording_uses_bounded_segments_without_truncation(monkeypatch):
+    chunks = []
+    async def hear_segment(pcm, config):
+        chunks.append(pcm)
+        return dict(status='clear', heard_text='spoken segment', uncertain_spans=[],
+                    speech_scores=dict(pronunciation=80, fluency=90, intonation=85))
+    monkeypatch.setattr(evidence, '_hear_segment', hear_segment)
+    pcm = b'\x00\x01' * 16000 * 120
+    result = await evidence.hear(pcm, None)
+    assert b''.join(chunks) == pcm
+    assert max(map(len, chunks)) <= evidence.MAX_PCM_BYTES
+    assert result['heard_text'] == 'spoken segment spoken segment'
+    assert result['status'] == 'clear'
+    assert result['speech_scores']['fluency'] == 90
+
+
+@pytest.mark.asyncio
+async def test_one_uncertain_segment_withholds_long_recording_score(monkeypatch):
+    segment = AsyncMock(side_effect=[
+        dict(status='clear', heard_text='clear', uncertain_spans=[]),
+        dict(status='uncertain', heard_text='uncertain', uncertain_spans=['number']),
+    ])
+    monkeypatch.setattr(evidence, '_hear_segment', segment)
+    result = await evidence.hear(b'\x00\x01' * 16000 * 120, None)
+    assert result['status'] == 'uncertain'
+    assert result['speech_scores'] is None
+    assert evidence.assessment_text(dict(input_source='audio', audio_evidence=result)) is None
+
+
 def test_acoustic_scores_and_history_use_only_verified_student_evidence():
     clear = {'status': 'clear', 'heard_text': '予約システムです。', 'uncertain_spans': [],
              'speech_scores': {'pronunciation': 85, 'fluency': 80, 'intonation': 75}}

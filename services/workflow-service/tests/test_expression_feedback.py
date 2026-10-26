@@ -126,3 +126,14 @@ def test_wrong_schema_and_unknown_language_fail_closed():
             feedback.validate_feedback(bad, "English")
     with pytest.raises(ValueError):
         feedback.validate_feedback(CORRECTION, "Unsupported language")
+
+
+@pytest.mark.asyncio
+async def test_fenced_json_normalization_preserves_semantic_validation(monkeypatch):
+    monkeypatch.setattr(feedback.batch_evaluation_workflow, '_api_key', 'test-only')
+    post = AsyncMock(return_value='```json\n' + json.dumps(CORRECTION) + '\n```')
+    monkeypatch.setattr(feedback.batch_evaluation_workflow, '_post_chat_completion', post)
+    assert (await feedback.evaluate_expression(CONTEXT))['teaching_mode'] == 'correct'
+    post.return_value = '```json\n' + json.dumps(dict(CORRECTION, alternatives=['Would you like steak?', 'I want steak.'])) + '\n```'
+    with pytest.raises(ValueError):
+        await feedback.evaluate_expression(CONTEXT)

@@ -108,6 +108,8 @@ async function setup(page, options = {}) {
 }
 
 async function emit(page, type, payload) {
+  await expect.poll(() => page.evaluate(() => window.testSockets.filter(s =>
+    s.readyState === 1 && String(s.url).includes('/api/v1/realtime?')).length)).toBe(1);
   await page.evaluate(({ type, payload }) => {
     const socket = window.testSockets.filter(s => s.readyState === 1 && s.url.includes('/realtime')).at(-1);
     if (!socket) throw new Error('No active realtime socket');
