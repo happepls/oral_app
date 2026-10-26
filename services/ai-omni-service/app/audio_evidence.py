@@ -89,6 +89,42 @@ def validate(value):
 
 
 async def hear(pcm, config):
+    """Keep long explicit recordings intact; assess bounded segments in order."""
+    if not isinstance(pcm, bytes) or len(pcm) % 2 or len(pcm) < 3200:
+        raise ValueError('audio_evidence_format')
+    if len(pcm) <= MAX_PCM_BYTES:
+        return await _hear_segment(pcm, config)
+    # Balance segments so the last is never too short to assess. At most two
+    # provider requests run concurrently; no segment ends the user's recording.
+    count = (len(pcm) + MAX_PCM_BYTES - 1) // MAX_PCM_BYTES
+    size = ((len(pcm) // 2 + count - 1) // count) * 2
+    semaphore = asyncio.Semaphore(2)
+    async def collect(part):
+        async with semaphore:
+            return await _hear_segment(part, config)
+    parts = [pcm[offset:offset + size] for offset in range(0, len(pcm), size)]
+    jobs = [asyncio.create_task(collect(part)) for part in parts]
+    try:
+        results = await asyncio.gather(*jobs)
+    finally:
+        for job in jobs:
+            if not job.done():
+                job.cancel()
+        await asyncio.gather(*jobs, return_exceptions=True)
+    clear = all(result['status'] == 'clear' for result in results)
+    result = dict(status='clear' if clear else 'uncertain',
+                  heard_text=' '.join(r['heard_text'] for r in results),
+                  uncertain_spans=[span for r in results for span in r['uncertain_spans']])
+    if clear and all(r.get('speech_scores') for r in results):
+        result['speech_scores'] = {key: round(sum(r['speech_scores'][key] * len(part)
+            for part, r in zip(parts, results)) / len(pcm))
+            for key in ('pronunciation', 'fluency', 'intonation')}
+    else:
+        result['speech_scores'] = None
+    return result
+
+
+async def _hear_segment(pcm, config):
     """Bound the whole request, close its socket on timeout/cancellation."""
     if not isinstance(pcm, bytes) or not 3200 <= len(pcm) <= MAX_PCM_BYTES or len(pcm) % 2:
         raise ValueError("audio_evidence_format")
@@ -242,6 +278,8 @@ class SceneAudioEvidence:
         if not self.valid(record):
             return None
         self.commits.append(record)
+        segment_count = (len(pcm) + MAX_PCM_BYTES - 1) // MAX_PCM_BYTES
+        record['timeout'] = TIMEOUT * max(1, (segment_count + 1) // 2) + 1
 
         async def collect():
             started = time.monotonic()
@@ -327,7 +365,7 @@ class SceneAudioEvidence:
         record["reply_claimed"] = True
         try:
             await asyncio.wait_for(asyncio.gather(
-                asyncio.shield(record["job"]), record["asr_ready"].wait()), TIMEOUT + 1)
+                asyncio.shield(record["job"]), record["asr_ready"].wait()), record.get('timeout', TIMEOUT + 1))
         except asyncio.CancelledError:
             return
         except asyncio.TimeoutError:
@@ -356,6 +394,8 @@ class SceneAudioEvidence:
             )
         self.pending_responses.append(record)
         try:
+            self.cb._mark_turn_latency('audio_evidence_ready')
             self.cb.conversation.create_response(instructions=instructions)
+            self.cb._mark_turn_latency('response_requested')
         except Exception:
             await self.abort()

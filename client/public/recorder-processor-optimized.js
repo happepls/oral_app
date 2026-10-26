@@ -24,6 +24,14 @@ class RecorderProcessorOptimized extends AudioWorkletProcessor {
     // Performance monitoring
     this._frameCount = 0;
     this._startTime = currentTime;
+    this.port.onmessage = event => {
+      if (event.data?.type !== 'flush') return;
+      if (this._bufferIndex) {
+        this.port.postMessage({ type: 'audio_data', buffer: this._buffer.slice(0, this._bufferIndex) });
+        this._bufferIndex = 0;
+      }
+      this.port.postMessage({ type: 'flushed' });
+    };
   }
 
   process(inputs, outputs, parameters) {

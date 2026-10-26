@@ -154,7 +154,12 @@ def test_exit_settles_committed_input_with_real_redis(monkeypatch, input_kind, e
             assert sync_client.zcard(f'{counter}:pending') == 1
             if exit_kind == 'authority_denial':
                 authority.side_effect = HTTPException(403, 'scene_locked')
-                ws.send_json({'type': 'audio_stream', 'payload': {'audio': 'AAAA'}})
+                # A recording is one protected operation. Revocation is checked
+                # at its commit boundary, not on each fragment of its PCM.
+                if input_kind == 'uncommitted_audio':
+                    ws.send_json({'type': 'user_audio_ended', 'payload': {}})
+                else:
+                    ws.send_json({'type': 'audio_stream', 'payload': {'audio': 'AAAA'}})
                 assert ws.receive_json()['payload']['status'] == 403
                 assert ws.receive()['code'] == 1008
             elif exit_kind == 'provider_error':

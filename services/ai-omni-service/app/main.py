@@ -36,6 +36,7 @@ try:
     from . import expression_feedback
     from .current_turn_teaching import CurrentTurnTeaching
     from .audio_evidence import SceneAudioEvidence, assessment_text, assessment_history
+    from .audio_input import AudioInput, needs_access_check
     from . import scenario_generation
 except ImportError:  # tests and direct `python app/main.py` load it as a module
     from dashscope_config import classify_connection_error, connect_with_retry, resolve_dashscope_config
@@ -43,6 +44,7 @@ except ImportError:  # tests and direct `python app/main.py` load it as a module
     import expression_feedback
     from current_turn_teaching import CurrentTurnTeaching
     from audio_evidence import SceneAudioEvidence, assessment_text, assessment_history
+    from audio_input import AudioInput, needs_access_check
     import scenario_generation
 
 # --- Configuration & Logging ---
@@ -3192,6 +3194,9 @@ class WebSocketCallback(OmniRealtimeCallback):
         self.turn_evaluations_inflight = set()
         self.restored_state = None
         self.user_audio_buffer = bytearray()
+        self.audio_input = AudioInput()
+        self._turn_latency_started_at = None
+        self._turn_latency_stages = set()
         self.ai_audio_buffer = bytearray()
         self.ai_audio_buffers_by_response = {}
         self.last_user_audio_url = None
@@ -3306,6 +3311,13 @@ class WebSocketCallback(OmniRealtimeCallback):
             stage,
             elapsed_ms,
         )
+
+    def _mark_turn_latency(self, stage):
+        if self._turn_latency_started_at is None or stage in self._turn_latency_stages:
+            return
+        self._turn_latency_stages.add(stage)
+        logger.info('[TurnLatency] session=%s stage=%s elapsed_ms=%d', self.session_id,
+                    stage, round((time.monotonic() - self._turn_latency_started_at) * 1000))
 
     async def _safe_send(self, message: dict):
         """Safely send a WebSocket message, ignoring errors if client is disconnected."""
@@ -3833,6 +3845,7 @@ class WebSocketCallback(OmniRealtimeCallback):
                     audio_data = response.get('delta')
                     if audio_data:
                         self._mark_latency_stage("first_audio")
+                        self._mark_turn_latency('first_audio')
                         try:
                             buffer = self.ai_audio_buffers_by_response.setdefault(self.current_response_id, bytearray())
                             buffer.extend(base64.b64decode(audio_data, validate=True))
@@ -3852,6 +3865,7 @@ class WebSocketCallback(OmniRealtimeCallback):
                     text = response.get('delta')
                     if text:
                         self._mark_latency_stage("first_text")
+                        self._mark_turn_latency('first_text')
                         # Accumulate text internally, don't send chunks to frontend
                         self.ai_responding = True  # Mark AI as actively responding
                         self.full_response_text += text
@@ -5032,6 +5046,7 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query(None), ses
     heartbeat_task = None
     welcome_readiness_task = None
     conversation = None
+    access_client = httpx.AsyncClient(timeout=5)
     try:
         try:
             conversation = await connect_dashscope_with_retry()
@@ -5077,9 +5092,30 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query(None), ses
                 data = json.loads(message)
                 msg_type, payload = data.get('type'), data.get('payload', {})
                 text_turn_id = str(uuid.uuid4()) if msg_type in ('text_message', 'input_text') else None
-                if msg_type not in ('ping', 'interrupt', 'user_audio_cancelled'):
+                if msg_type == 'user_audio_started':
+                    if callback.awaiting_audio_turn or callback.quota_reservations:
+                        await websocket.send_json({'type': 'error', 'payload': {'code': 'turn_in_progress'}})
+                        continue
                     try:
-                        access = await check_access(callback.user_id, callback.scenario, mode, scene_goal_id)
+                        if callback.user_audio_buffer and conversation and callback.is_connected:
+                            conversation.clear_appended_audio()
+                        callback.audio_input.start(payload.get('input_id'), payload.get('scope'))
+                    except ValueError:
+                        await websocket.send_json({'type': 'error', 'payload': {'code': 'invalid_input_id'}})
+                        continue
+                    callback.user_audio_buffer = bytearray()
+                    callback.welcome_muted = True
+                if msg_type in ('user_audio_started', 'audio_stream', 'user_audio_ended') and not callback.audio_input.current_scope(callback):
+                    await deny_websocket(websocket, HTTPException(400, 'stale_input'))
+                    break
+                if msg_type == 'audio_stream' and callback.audio_input.suppress:
+                    continue
+                if needs_access_check(msg_type, callback.audio_input, bool(callback.user_audio_buffer)):
+                    try:
+                        access_started = time.monotonic()
+                        access = await check_access(callback.user_id, callback.scenario, mode, scene_goal_id, client=access_client)
+                        logger.info('[TurnLatency] stage=access kind=%s elapsed_ms=%d', msg_type,
+                                    round((time.monotonic() - access_started) * 1000))
                         callback.user_context['access'] = access
                         callback.user_context['subscription_status'] = access['membership']['status']
                         if mode == 'recall' and session_phases.get(callback.phase_key, {}).get('phase') != 'magic_repetition':
@@ -5093,7 +5129,10 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query(None), ses
                         await websocket.send_json({'type': 'error', 'payload': {'status': 429, 'code': 'turn_in_progress', 'message': 'turn_in_progress'}})
                         continue
                     reservation = (callback.pending_audio_reservation or str(uuid.uuid4())) if msg_type == 'audio_stream' else text_turn_id
-                    _blocked, _info = await _reserve_daily_slot(_get_redis_client(), callback.user_id, callback.user_context, reservation)
+                    if msg_type == 'audio_stream' and callback.pending_audio_reservation:
+                        _blocked, _info = False, {}
+                    else:
+                        _blocked, _info = await _reserve_daily_slot(_get_redis_client(), callback.user_id, callback.user_context, reservation)
                     if _blocked:
                         await websocket.send_json({'type': 'daily_limit_reached', **_info})
                         continue
@@ -5110,10 +5149,23 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query(None), ses
                             payload.get('task_id'),
                         )
                     else:
-                        logger.info(f"Received message: {message[:200]}..." if len(message) > 200 else f"Received message: {message}")
+                        logger.debug("Received message type=%s bytes=%d", msg_type, len(message))
 
                 if msg_type == 'session_start':
                     callback.start_client_session(data)
+                    continue
+                if msg_type == 'user_audio_started':
+                    rc = _get_redis_client()
+                    if rc is None:
+                        await deny_websocket(websocket, HTTPException(503, 'quota_unavailable'))
+                        break
+                    prior = await rc.get(callback.audio_input.key(callback))
+                    if prior in ('accepted', b'accepted'):
+                        callback.audio_input.suppress = True
+                        await websocket.send_json({'type': 'user_audio_received', 'payload': {'input_id': callback.audio_input.input_id}})
+                    elif prior:
+                        callback.audio_input.suppress = True
+                        await websocket.send_json({'type': 'error', 'payload': {'code': 'input_submission_pending', 'message': '上一段录音提交状态待确认，请查看历史后重试。'}})
                     continue
 
                 # SECURITY: removed client-sent 'user_transcript' passcode handler.
@@ -5147,12 +5199,28 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query(None), ses
                     try:
                         conversation = await connect_dashscope_with_retry(attempts=1)
                         await asyncio.sleep(0.5)
+                        if callback.user_audio_buffer:
+                            # A new provider connection has an empty buffer. Restore
+                            # the uncommitted prefix before accepting the next chunk.
+                            callback.expression_input_sequence += 1
+                            callback.audio_evidence.begin(callback.audio_input.input_id or '')
+                            if callback.current_turn_teaching.applies():
+                                await callback.current_turn_teaching.begin(callback.audio_input.input_id or '')
+                            for offset in range(0, len(callback.user_audio_buffer), 32000):
+                                conversation.append_audio(base64.b64encode(callback.user_audio_buffer[offset:offset + 32000]).decode())
                     except Exception as e:
                         logger.error(f"Reconnection failed: {e}")
                         continue
                         
                 if msg_type == 'audio_stream':
+                    try:
+                        if not callback.audio_input.chunk(payload):
+                            continue
+                    except ValueError as error:
+                        await deny_websocket(websocket, HTTPException(400, str(error)))
+                        break
                     if not callback.user_audio_buffer:
+                        callback.audio_input.upload_started_at = time.monotonic()
                         callback.expression_input_sequence += 1
                         callback.audio_evidence.begin(payload.get('input_id', ''))
                         if callback.current_turn_teaching.applies():
@@ -5169,7 +5237,9 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query(None), ses
 
                         # Decode audio data for buffering
                         try:
-                            audio_data = base64.b64decode(audio_b64)
+                            audio_data = base64.b64decode(audio_b64, validate=True)
+                            if callback.audio_input.input_id and len(audio_data) % 2:
+                                raise ValueError('invalid_pcm')
                             if callback.is_connected:
                                 try:
                                     # Append audio to DashScope conversation
@@ -5178,21 +5248,64 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query(None), ses
                                 except Exception as e:
                                     logger.error(f"Error appending audio to DashScope: {e}")
                                     logger.error(traceback.format_exc())
+                                    if callback.audio_input.input_id:
+                                        await deny_websocket(websocket, HTTPException(503, 'audio_upload_interrupted'))
+                                        break
                             callback.user_audio_buffer.extend(audio_data)
                         except Exception as e:
                             logger.error(f"Error decoding audio data: {e}")
+                            if callback.audio_input.input_id:
+                                await deny_websocket(websocket, HTTPException(400, 'invalid_audio'))
+                                break
                 elif msg_type == 'user_audio_ended':
+                    try:
+                        if not callback.audio_input.end(payload):
+                            continue
+                    except ValueError as error:
+                        await deny_websocket(websocket, HTTPException(400, str(error)))
+                        break
                     if callback.awaiting_audio_turn:
                         await websocket.send_json({'type': 'error', 'payload': {'status': 429, 'code': 'turn_in_progress', 'message': 'turn_in_progress'}})
                         continue
                     if not callback.user_audio_buffer:
                         continue
+                    if not callback.is_connected:
+                        await deny_websocket(websocket, HTTPException(503, 'audio_connection_unavailable'))
+                        break
+                    callback._turn_latency_started_at = time.monotonic()
+                    callback._turn_latency_stages = set()
+                    callback._mark_turn_latency('upload_complete')
+                    if callback.audio_input.upload_started_at is not None:
+                        logger.info('[TurnLatency] stage=upload elapsed_ms=%d', round((time.monotonic() - callback.audio_input.upload_started_at) * 1000))
+                    submission_key = None
+                    if callback.audio_input.input_id:
+                        rc = _get_redis_client()
+                        if rc is None:
+                            await deny_websocket(websocket, HTTPException(503, 'quota_unavailable'))
+                            break
+                        submission_key = callback.audio_input.key(callback)
+                        if not await rc.set(submission_key, 'submitting', nx=True, ex=72 * 3600):
+                            # An uncertain provider commit must never be replayed.
+                            prior = await rc.get(submission_key)
+                            if prior in ('accepted', b'accepted'):
+                                await websocket.send_json({'type': 'user_audio_received', 'payload': {'input_id': callback.audio_input.input_id}})
+                            else:
+                                await websocket.send_json({'type': 'error', 'payload': {'code': 'input_submission_pending'}})
+                            callback.user_audio_buffer = bytearray()
+                            continue
                     quota_exempt = _is_quota_exempt_mode(callback)
                     if not quota_exempt:
                         _rc = _get_redis_client()
                         reservation = callback.pending_audio_reservation or str(uuid.uuid4())
-                        _blocked, _info = await _reserve_daily_slot(_rc, callback.user_id, callback.user_context, reservation)
+                        try:
+                            _blocked, _info = await _reserve_daily_slot(_rc, callback.user_id, callback.user_context, reservation)
+                        except HTTPException:
+                            if submission_key:
+                                await rc.delete(submission_key)
+                            raise
                         if _blocked:
+                            if submission_key:
+                                await rc.delete(submission_key)
                             callback.user_audio_buffer = bytearray()  # 丢弃未提交的本地音频
                             await websocket.send_json({"type": "daily_limit_reached", **_info})
                             logger.info(f"[DailyLimit] blocked(audio) user={callback.user_id} {_info}")
@@ -5212,12 +5325,20 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query(None), ses
                                 if callback.current_turn_teaching.applies():
                                     await callback.current_turn_teaching.commit_audio()
                                 conversation.commit()
+                                callback._mark_turn_latency('provider_commit')
+                                if submission_key:
+                                    await rc.set(submission_key, 'accepted', ex=72 * 3600)
+                                    await websocket.send_json({'type': 'user_audio_received', 'payload': {'input_id': callback.audio_input.input_id}})
                             except Exception as e:
                                 logger.error(f"Error committing audio: {e}")
                                 if audio_record is not None:
                                     await callback.audio_evidence.abort()
                                 if callback.current_turn_teaching.applies():
                                     await callback.current_turn_teaching.fail(callback.current_turn_teaching.turn, "audio_commit_failed", reconnect=True)
+                                await websocket.send_json({'type': 'error', 'payload': {
+                                    'code': 'input_submission_pending', 'message': '录音提交状态待确认，请查看历史后重试。'}})
+                                await websocket.close(code=1011, reason='input_submission_pending')
+                                break
                         callback.user_audio_buffer = bytearray()
                         async def upload_user_task(d, record):
                             url = await callback.upload_audio_to_cos(d, 'user_audio')
@@ -5261,6 +5382,9 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query(None), ses
                         await websocket.send_json({'type': 'error', 'payload': {'status': 409, 'code': 'turn_in_progress', 'message': 'Submitted input cannot be cancelled; interrupt the response instead'}})
                         continue
                     callback.user_audio_buffer = bytearray()
+                    if conversation and callback.is_connected:
+                        conversation.clear_appended_audio()
+                    callback.audio_input = AudioInput()
                     await _release_input_reservations(callback)
                     callback.audio_evidence.invalidate()
                     callback.current_turn_teaching.invalidate()
@@ -5473,6 +5597,7 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query(None), ses
                 logger.error(traceback.format_exc())
                 break
     finally:
+        await access_client.aclose()
         if heartbeat_task: heartbeat_task.cancel()
         if welcome_readiness_task: welcome_readiness_task.cancel()
         callback.is_connected = False

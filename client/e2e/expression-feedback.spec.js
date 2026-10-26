@@ -32,7 +32,15 @@ test('tutor replies show guidance without cards and preserve task progress @crit
       resume() { return Promise.resolve(); }
     };
     window.AudioWorkletNode = class {
-      constructor() { this.port = { onmessage: null }; window.testWorklet = this; }
+      constructor() {
+        this.port = {
+          onmessage: null,
+          postMessage: ({ type }) => {
+            if (type === 'flush') queueMicrotask(() => this.port.onmessage?.({ data: { type: 'flushed' } }));
+          },
+        };
+        window.testWorklet = this;
+      }
       connect() {}
       disconnect() {}
     };
@@ -43,7 +51,16 @@ test('tutor replies show guidance without cards and preserve task progress @crit
         window.testSockets.push(this);
         setTimeout(() => { this.readyState = 1; this.onopen?.({}); }, 20);
       }
-      send(data) { if (typeof data === 'string') window.sentMessages.push(JSON.parse(data)); }
+      send(data) {
+        if (typeof data !== 'string') return;
+        const message = JSON.parse(data);
+        window.sentMessages.push(message);
+        if (message.type === 'user_audio_ended') {
+          queueMicrotask(() => this.onmessage?.({ data: JSON.stringify({
+            type: 'user_audio_received', payload: { input_id: message.payload.input_id },
+          }) }));
+        }
+      }
       close() { this.readyState = 3; }
     }
     window.WebSocket = Socket;
@@ -114,11 +131,15 @@ test('tutor replies show guidance without cards and preserve task progress @crit
   const pendingReply = page.getByRole('status').filter({ hasText: labels.ai_reply_pending });
   await expect(pendingReply).toHaveCount(0);
   const record = async () => {
+    const previousSubmissions = await page.evaluate(() => window.sentMessages.filter(m => m.type === 'user_audio_ended').length);
     await page.getByRole('button', { name: language === 'en' ? 'Tap to speak' : '点击说话', exact: true }).click();
     await expect(page.getByTestId('recording-controls')).toBeVisible();
     await expect(pendingReply).toHaveCount(0);
     await page.evaluate(() => window.testWorklet.port.onmessage({ data: { type: 'audio_data', buffer: new Int16Array(800) } }));
     await page.getByTitle('发送', { exact: true }).click();
+    // Stop drains the worklet asynchronously. Wait for this recording's commit,
+    // including on later turns, before reading its audio or injecting a reply.
+    await expect.poll(() => page.evaluate(() => window.sentMessages.filter(m => m.type === 'user_audio_ended').length)).toBe(previousSubmissions + 1);
     return page.evaluate(() => window.sentMessages.filter(m => m.type === 'audio_stream').at(-1).payload.input_id);
   };
   const inputId = await record();

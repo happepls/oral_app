@@ -6,6 +6,7 @@ import logging
 import os
 import re
 import secrets
+import time
 from typing import Any, Dict, List, Optional
 from urllib.parse import urlparse
 
@@ -25,6 +26,7 @@ class BatchEvaluationWorkflow:
     """Evaluate one immutable window and apply its score exactly once."""
 
     def __init__(self) -> None:
+        self._http_client = None
         self._model = os.getenv("BATCH_EVAL_MODEL", os.getenv("QWEN_TEXT_MODEL", "qwen3.7-flash"))
         self._base_url = os.getenv(
             "QWEN_TEXT_BASE_URL", "https://dashscope.aliyuncs.com/compatible-mode/v1"
@@ -79,6 +81,7 @@ class BatchEvaluationWorkflow:
         if cached is not None:
             return self._reconcile_readiness(cached, redis_client)
 
+        started_at = time.monotonic()
         try:
             assessment = await self._call_llm(
                 turn_window=turn_window, current_task=current_task,
@@ -86,7 +89,9 @@ class BatchEvaluationWorkflow:
                 target_language=current_task.get("target_language") or "English",
             )
         except Exception as exc:
-            logger.warning("[BATCH_EVAL] model=%s evaluation pending (%s)", self._model, type(exc).__name__)
+            logger.warning("[BATCH_EVAL] model=%s evaluation pending type=%s http_status=%s elapsed_ms=%s",
+                           self._model, type(exc).__name__, getattr(getattr(exc, 'response', None), 'status_code', None),
+                           round((time.monotonic() - started_at) * 1000))
             snapshot = await self._read_task_snapshot(db_connection, user_id, resolved_task_id)
             return self._pending_result(
                 evaluation_id=evaluation_id, scoring_generation=scoring_generation,
@@ -106,6 +111,9 @@ class BatchEvaluationWorkflow:
 
         quality = assessment["quality"]
         delta = max(0, min(3, int(QUALITY_DELTAS.get(quality, 0))))
+        logger.info('[BATCH_EVAL] model=%s task=%s generation=%s turns=%s quality=%s delta=%s elapsed_ms=%s',
+                    self._model, resolved_task_id, scoring_generation, window_size, quality,
+                    delta, round((time.monotonic() - started_at) * 1000))
         result = await self._apply_evaluation(
             db_connection=db_connection, user_id=user_id, goal_id=goal_id,
             task_id=resolved_task_id, evaluation_id=evaluation_id,
@@ -135,15 +143,20 @@ class BatchEvaluationWorkflow:
         return self._validate_llm_result(json.loads(content))
 
     async def _post_chat_completion(self, *, messages: List[Dict[str, str]]) -> str:
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            response = await client.post(
-                self._chat_completions_url,
-                headers={"Authorization": f"Bearer {self._api_key}", "Content-Type": "application/json"},
-                json={"model": self._model, "messages": messages, "stream": False,
-                      "enable_thinking": False, "response_format": {"type": "json_object"}},
-            )
-            response.raise_for_status()
-            payload = response.json()
+        if self._http_client is None:
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                return await self._request_chat_completion(client, messages)
+        return await self._request_chat_completion(self._http_client, messages)
+
+    async def _request_chat_completion(self, client, messages):
+        response = await client.post(
+            self._chat_completions_url,
+            headers={"Authorization": f"Bearer {self._api_key}", "Content-Type": "application/json"},
+            json={"model": self._model, "messages": messages, "stream": False,
+                  "enable_thinking": False, "response_format": {"type": "json_object"}},
+        )
+        response.raise_for_status()
+        payload = response.json()
         try:
             return payload["choices"][0]["message"]["content"]
         except (KeyError, IndexError, TypeError) as exc:
@@ -191,6 +204,17 @@ pronunciation quality, accent, pauses or fluency from transcript orthography.
 Short complete answers can be strong; do not demand invented biography or new
 achievements. A genuinely wrong meaning, uncorrected grammar error or unrelated
 answer remains an error even if the tutor praised it.
+
+This is an ORAL communication exercise, even when the task says write, email,
+letter, draft, report or message. The student can dictate the message or supply
+its required content over multiple spoken turns. Judge the combined student
+utterances in this window. Do not require a written artifact, email headers,
+salutation, sign-off, or a single uninterrupted monologue unless that specific
+form is itself an explicit learning objective. A written medium mentioned in
+the task is not by itself such an objective. Do not mark a complete spoken
+invitation needs_work merely because the student did not produce an email body.
+Task-specific greetings, self-introductions and confirmations count when the
+task explicitly asks for them; unrelated generic greetings do not.
 
 Choose exactly one quality:
 - mastered: fully correct, natural, detailed, and directly completes the task

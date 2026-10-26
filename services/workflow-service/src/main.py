@@ -14,6 +14,7 @@ import time
 from datetime import datetime
 from typing import List, Dict, Any, Optional
 import asyncio
+import httpx
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -44,6 +45,7 @@ db_pool = None
 async def startup_db_pool():
     """Initialize database connection pool with retry logic"""
     global db_pool
+    batch_evaluation_workflow._http_client = httpx.AsyncClient(timeout=30.0)
     max_retries = 30
     retry_delay = 2
     
@@ -101,6 +103,9 @@ async def shutdown_db_pool():
     """Close database connection pool"""
     if db_pool:
         await db_pool.close()
+    if batch_evaluation_workflow._http_client:
+        await batch_evaluation_workflow._http_client.aclose()
+        batch_evaluation_workflow._http_client = None
 
 
 # ============== Health Check ==============
