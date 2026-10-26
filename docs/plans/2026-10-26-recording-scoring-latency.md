@@ -103,6 +103,37 @@ Container AI/workflow source hashes matched the current checkout. Frontend
 host/container/HTTP bundle hashes matched, and both Python service health checks
 passed. These are local checks, not evidence of production release.
 
+## PR #94 CI follow-up
+
+The first GitHub `ui-audit` run (40269875884) failed 12 cases: three tests
+across four browser projects. Running the affected specs locally with `CI=true`
+and Playwright's default CRA development server reproduced all three failures.
+Earlier local checks against the production bundle did not include CRA's `/ws`
+hot-reload connection.
+
+- The recorder mock counted the hot-reload socket as a second business socket
+  and injected `input_submission_pending` into that socket. It now leaves only
+  the exact `/ws` development endpoint native; all application sockets remain
+  tracked. The one-business-socket assertion stays at one, and the pending-input
+  test verifies that its socket path is `/api/v1/realtime` before injecting errors.
+- The expression-feedback fixture assumed synchronous stop/upload and omitted
+  both worklet flush and matching `user_audio_received` acknowledgements. It now
+  implements those protocol events and waits for each new `user_audio_ended`
+  before reading the input ID. Without acknowledgement, later recording is
+  correctly blocked by the application's pending-upload guard.
+- The recorder task fixture now includes interaction count and generation 3.
+  No production logic, required check, retry limit, or timeout was weakened.
+
+Validation after the fix:
+
+- From `client/`: `CI=true npm exec -- playwright test e2e/recorder-responsive.spec.js e2e/expression-feedback.spec.js --project=chromium-320 --project=chromium-desktop --project=chromium-390-dark-en --project=webkit-mobile`
+  passed 13 cases without retries; two existing responsive-matrix duplicates
+  were intentionally skipped.
+- `QUALITY_PYTHON=/tmp/oral-recording-venv/bin/python SCENE_ACCESS_TEST_REDIS_URL=redis://127.0.0.1:6379/15 npm run verify`
+  passed with score 100. `python3 scripts/sdlc.py validate` passed.
+- GitHub required checks must pass on the follow-up commit before merge; these
+  local results do not replace that gate.
+
 ## Release, review and limits
 
 Backend-first rollout is required. After human PR/release approval, deploy

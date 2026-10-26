@@ -18,7 +18,7 @@ const activeGoal = {
   status: 'active',
   scenarios: [{
     title: 'Ordering Coffee',
-    tasks: [{ id: 1, text: 'Order a latte', status: 'pending', score: 0 }],
+    tasks: [{ id: 1, text: 'Order a latte', status: 'pending', score: 0, interaction_count: 0, scoring_generation: 3 }],
   }],
 };
 
@@ -30,6 +30,7 @@ test.beforeEach(async ({ page }) => {
     window.recorderEvents = [];
     window.recordingWorklets = [];
     window.recorderSockets = [];
+    const NativeWebSocket = window.WebSocket;
 
     class FakeWebSocket {
       static CONNECTING = 0;
@@ -37,7 +38,12 @@ test.beforeEach(async ({ page }) => {
       static CLOSING = 2;
       static CLOSED = 3;
 
-      constructor(url) {
+      constructor(url, protocols) {
+        // CRA opens /ws for hot reload in CI. Keep it real and separate from
+        // business sockets, so counts and injected server events target the app.
+        if (new URL(url, location.href).pathname === '/ws') {
+          return new NativeWebSocket(url, protocols);
+        }
         window.recorderSockets.push(this);
         this.url = url;
         this.readyState = FakeWebSocket.CONNECTING;
@@ -152,6 +158,7 @@ test('uncertain submission remains visible while socket is online @critical', as
   await page.goto('/conversation?scenario=Ordering%20Coffee');
   await expect(page.getByText(/在线|online/i).first()).toBeVisible();
   await page.evaluate(() => { window.deferSubmissionAck = true; });
+  expect(await page.evaluate(() => window.recorderSockets.map(socket => new URL(socket.url).pathname))).toEqual(['/api/v1/realtime']);
   await page.getByRole('button', { name: /点击说话|tap to speak/i }).click();
   await expect(page.getByTestId('recording-controls')).toBeVisible();
   await page.evaluate(() => window.recordingWorklets[0].port.onmessage({ data: { type: 'audio_data', buffer: new Int16Array(800) } }));
