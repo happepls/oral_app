@@ -140,6 +140,12 @@ jobs:
 
   ui-audit:
     runs-on: ubuntu-latest
+    # Match client/package-lock.json; the policy test blocks version drift.
+    container:
+      image: mcr.microsoft.com/playwright:v1.61.1-noble
+      options: --ipc=host
+    env:
+      PLAYWRIGHT_BUNDLED_BROWSERS: 'true'
     steps:
     - uses: actions/checkout@v4
     - name: Use Node.js 20
@@ -150,12 +156,6 @@ jobs:
         cache-dependency-path: client/package-lock.json
     - name: Install client dependencies
       run: npm ci --legacy-peer-deps --prefix client
-    - name: Install browser engines
-      run: |
-        if ! command -v google-chrome >/dev/null; then
-          npm exec --prefix client -- playwright install --with-deps chrome
-        fi
-        npm exec --prefix client -- playwright install --with-deps webkit
     - name: Run deterministic viewport, theme, locale, accessibility, and WebKit checks
       env:
         FULL_UI_MATRIX: ${{ github.event_name == 'schedule' || inputs.full_ui_matrix == true }}

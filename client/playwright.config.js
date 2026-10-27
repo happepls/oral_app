@@ -26,5 +26,7 @@ module.exports = defineConfig({
     { name: 'chromium-tablet-dark-en', use: { browserName: 'chromium', channel: 'chrome', viewport: { width: 768, height: 1024 }, colorScheme: 'dark', locale: 'en-US' } },
     { name: 'chromium-desktop-dark-en', use: { browserName: 'chromium', channel: 'chrome', viewport: { width: 1440, height: 900 }, colorScheme: 'dark', locale: 'en-US' } },
     { name: 'webkit-mobile', use: { browserName: 'webkit', viewport: { width: 390, height: 844 } }, grep: /@critical/ },
-  ],
+  ].map(project => process.env.PLAYWRIGHT_BUNDLED_BROWSERS === 'true' && project.use.browserName === 'chromium'
+    ? { ...project, use: { ...project.use, channel: 'chromium' } }
+    : project),
 });

@@ -19,9 +19,13 @@ GitHub run `40293198229` on PR #94 provides the baseline:
 
 1. Keep required job names `test` and `ui-audit`. All PRs retain root/client/Node
    and Python unit suites, lint, production build and static GEO verification.
-2. Reuse the hosted runner's Chrome. Only install Chrome and its dependencies
-   when it is absent. WebKit installation remains mandatory for the UI job.
+2. The SEO job reuses the hosted runner's Chrome, installing it only if absent.
+   The UI job uses the official Playwright `v1.61.1-noble` image, which contains
+   Chromium, WebKit and OS dependencies; no apt/browser install runs in that job.
+   A policy test enforces image/lockfile version equality. UI CI uses bundled
+   Chromium; local runs and production SEO keep the Chrome channel by default.
    Install nginx only when absent; use pip's download cache keyed by requirements.
+   Image guidance: https://playwright.dev/docs/docker
 3. Run production SEO on PRs touching client, gateway, Compose, root dependency
    manifests, GEO validation or CI policy. Run the integration harness startup
    validation when the harness, its launcher or CI policy changes. These were
@@ -35,9 +39,10 @@ GitHub run `40293198229` on PR #94 provides the baseline:
 
 ## Verification
 
-- `node --test quality/tests/ci-scope.test.mjs`: 7 passed. Includes a real Git
+- `node --test quality/tests/ci-scope.test.mjs`: 8 tests, including a real Git
   rename/deletion fixture, unavailable commit rejection, scope mapping and
-  preservation of unconditional core checks and required job names.
+  preservation of unconditional core checks and required job names, plus browser
+  image/lockfile alignment and local/CI channel selection.
 - `npx eslint scripts/ci/pr-scope.mjs quality/tests/ci-scope.test.mjs`: passed
   (existing React-version configuration warning).
 - `GITHUB_EVENT_NAME=pull_request BASE_SHA=af780f4 HEAD_SHA=8882d75 node scripts/ci/pr-scope.mjs`:
@@ -45,16 +50,21 @@ GitHub run `40293198229` on PR #94 provides the baseline:
 - `QUALITY_PYTHON=/tmp/oral-recording-venv/bin/python SCENE_ACCESS_TEST_REDIS_URL=redis://127.0.0.1:6379/15 npm run verify`:
   pass, score 100.
 - `python3 scripts/sdlc.py validate`: passed.
-- Local full PR UI matrix and GitHub required checks are running; their final
-  results must be reviewed on the PR. No projected timing is represented as an
-  observed speedup.
+- First GitHub follow-up run `40462995387`: `test` passed in 2m57s; SEO ran in
+  24s. This is about 74% less than the PR #94 `test` baseline. The UI job remained
+  in OS dependency installation for several minutes, motivating the preinstalled
+  image follow-up. Final required checks must be reviewed on the PR.
+- Local combined UI run stalled after desktop cases during project transition
+  and was stopped; it is not counted as a complete pass. A separate WebKit run
+  passed all 37 cases in 43.3s. Final container CI validates both projects together.
 
 ## Review and rollback
 
 The tradeoff is reduced per-PR viewport/theme duplication, not reduced desktop
 test coverage. Theme/locale combinations remain on push and the full scheduled
-matrix. Hosted Chrome version follows the existing runner image; a missing or
-broken browser still fails the real browser tests. No `continue-on-error`, retry
+matrix. The UI job changes from system Chrome to version-matched bundled Chromium;
+production SEO retains system Chrome. A missing or broken browser still fails the
+real browser tests. No `continue-on-error`, retry
 increase, timeout increase, required-check removal or protection bypass is added.
 Revert this CI-only change to restore the previous execution policy. Human PR
 approval remains required.

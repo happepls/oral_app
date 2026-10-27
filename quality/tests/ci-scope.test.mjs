@@ -81,3 +81,18 @@ test('required job names and unconditional core coverage remain intact', () => {
   assert.match(ui.run, /--project=chromium-desktop --project=webkit-mobile/);
   assert.match(ui.run, /FULL_UI_MATRIX/);
 });
+
+test('preinstalled UI browser image matches the locked Playwright version', () => {
+  const workflow = parse(readFileSync('.github/workflows/ci.yml', 'utf8'));
+  const lock = JSON.parse(readFileSync('client/package-lock.json', 'utf8'));
+  const version = lock.packages['node_modules/@playwright/test'].version;
+  assert.equal(workflow.jobs['ui-audit'].container.image, `mcr.microsoft.com/playwright:v${version}-noble`);
+  const readProjects = env => JSON.parse(execFileSync(process.execPath, ['-e',
+    "console.log(JSON.stringify(require('./client/playwright.config').projects))"], { env, encoding: 'utf8' }));
+  const regular = readProjects({ ...process.env, PLAYWRIGHT_BUNDLED_BROWSERS: '' });
+  const bundled = readProjects({ ...process.env, PLAYWRIGHT_BUNDLED_BROWSERS: 'true' });
+  assert.deepEqual(bundled.map(p => p.name), regular.map(p => p.name));
+  assert.ok(regular.filter(p => p.use.browserName === 'chromium').every(p => p.use.channel === 'chrome'));
+  assert.ok(bundled.filter(p => p.use.browserName === 'chromium').every(p => p.use.channel === 'chromium'));
+  assert.deepEqual(bundled.find(p => p.name === 'webkit-mobile'), regular.find(p => p.name === 'webkit-mobile'));
+});
