@@ -53,6 +53,19 @@ def end(ws, chunks=120):
     ws.send_json({'type': 'user_audio_ended', 'payload': {'input_id': 'recording-1', 'chunks': chunks}})
 
 
+@pytest.mark.asyncio
+async def test_realtime_keepalive_never_appends_audio_or_commits():
+    provider = Mock()
+    provider.ws.sock.connected = True
+    await main._ping_realtime_transport(provider)
+    provider.ws.sock.ping.assert_called_once_with()
+    provider.append_audio.assert_not_called()
+    provider.commit.assert_not_called()
+    provider.ws.sock.connected = False
+    await main._ping_realtime_transport(provider)
+    provider.ws.sock.ping.assert_called_once_with()
+
+
 def test_real_loop_checks_authority_twice_per_recording_and_deduplicates_reconnect(transfer):
     authority, reserve, provider = transfer
     for replay in (False, True):

@@ -156,6 +156,7 @@ services:
       - REDIS_HOST=redis
       - REDIS_PORT=6379
       - JWT_SECRET=${JWT_SECRET}
+      - INTERNAL_AUTH_SECRET=${INTERNAL_AUTH_SECRET:?INTERNAL_AUTH_SECRET is required}
       - AI_SERVICE_WS_URL=ws://ai-omni-service:8082/stream
       - NODE_ENV=production
     depends_on:

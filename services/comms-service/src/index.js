@@ -31,6 +31,20 @@ console.log('AI service bridge configured.');
 wss.on('connection', async function connection(clientWs, req) {
   const connectionTime = new Date().toISOString();
   console.log(`[CONN] New attempt at ${connectionTime} from ${req.socket.remoteAddress}`);
+  // The browser may send session_start immediately after WebSocket open, while
+  // the authority request below is still pending. Buffer only a bounded amount
+  // until authorization succeeds; never forward it before that decision.
+  const earlyMessages = [];
+  let earlyBytes = 0;
+  const queueEarly = (message, isBinary) => {
+    earlyBytes += message.length;
+    if (earlyMessages.length >= 100 || earlyBytes > 2 * 1024 * 1024) {
+      clientWs.close(1009, 'Initial message buffer exceeded');
+      return;
+    }
+    earlyMessages.push({ message, isBinary });
+  };
+  clientWs.on('message', queueEarly);
 
   try {
     const queryObject = url.parse(req.url, true).query;
@@ -110,6 +124,7 @@ wss.on('connection', async function connection(clientWs, req) {
     }
 
     const authorization = await checkAccess(userId, scenario, mode);
+    if (clientWs.readyState !== WebSocket.OPEN) return;
     if (!authorization.allowed) {
       clientWs.send(JSON.stringify({ type: 'error', payload: { status: authorization.status, code: authorization.reason, message: authorization.reason } }));
       clientWs.close(authorization.status === 503 ? 1011 : 1008, authorization.reason);
@@ -217,7 +232,7 @@ wss.on('connection', async function connection(clientWs, req) {
       }
     };
 
-    clientWs.on('message', (message, isBinary) => {
+    const handleClientMessage = (message, isBinary) => {
       if (!isBinary) {
         try {
           const heartbeat = JSON.parse(message.toString());
@@ -240,7 +255,10 @@ wss.on('connection', async function connection(clientWs, req) {
       } else {
         messageQueue.push({ message, isBinary });
       }
-    });
+    };
+    clientWs.off('message', queueEarly);
+    clientWs.on('message', handleClientMessage);
+    for (const { message, isBinary } of earlyMessages) handleClientMessage(message, isBinary);
 
     try {
       // Build connection URL — token is passed via Authorization header (not URL) to avoid log exposure
