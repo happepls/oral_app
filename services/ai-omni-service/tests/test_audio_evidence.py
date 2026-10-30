@@ -1,7 +1,7 @@
 import asyncio
 import json
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 
@@ -244,6 +244,7 @@ async def test_heard_audio_replaces_only_evaluation_text_and_binds_reply(monkeyp
     clear = {'status': 'clear', 'heard_text': '即戦力があります。', 'uncertain_spans': []}
     pending, message = await record(cb, monkeypatch, clear)
     await cb.audio_evidence.reply(pending)
+    assert 'Never reply only by repeating' in cb.conversation.create_response.call_args.kwargs['instructions']
     cb.audio_evidence.response_started('reply-1')
     snapshot = cb.audio_evidence.snapshot('reply-1')
     assert message['content'] == '独占力があります。'  # displayed ASR is not rewritten
@@ -258,18 +259,158 @@ async def test_heard_audio_replaces_only_evaluation_text_and_binds_reply(monkeyp
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize('status', ['uncertain', 'unavailable'])
-async def test_uncertain_or_failed_audio_requests_repeat_and_never_scores(monkeypatch, status):
+async def test_unintelligible_or_failed_audio_requests_repeat_and_never_scores(monkeypatch, status):
     from .test_expression_feedback import omni
     cb = owner()
     pending, message = await record(cb, monkeypatch, {
-        'status': status, 'heard_text': '十五か五十', 'uncertain_spans': ['十五か五十']})
+        'status': status, 'heard_text': '', 'uncertain_spans': ['unintelligible']}, text='')
     accumulator = AsyncMock()
     monkeypatch.setattr(omni, '_handle_turn_with_accumulator', accumulator)
     await cb.audio_evidence.reply(pending)
     assert 'Do not praise' in cb.conversation.create_response.call_args.kwargs['instructions']
+    assert 'not a request' in cb.conversation.create_response.call_args.kwargs['instructions']
     assert evidence.assessment_text(message) is None
     assert await omni._evaluate_scene_turn_progress(cb, 7, 42, 'That was perfect.') is None
     accumulator.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_timed_out_independent_audio_uses_transcript_as_unverified_clue(monkeypatch):
+    from .test_expression_feedback import omni
+    cb = owner()
+    pending, message = await record(cb, monkeypatch, {
+        'status': 'unavailable', 'heard_text': '', 'uncertain_spans': []},
+        text='候補日を二つ提案したいです。')
+    accumulator = AsyncMock()
+    monkeypatch.setattr(omni, '_handle_turn_with_accumulator', accumulator)
+    await cb.audio_evidence.reply(pending)
+    instructions = cb.conversation.create_response.call_args.kwargs['instructions']
+    assert 'unverified clue' in instructions
+    assert 'Do not claim the student was inaudible' in instructions
+    assert '候補日を二つ' in instructions
+    assert evidence.assessment_text(message) is None
+    assert await omni._evaluate_scene_turn_progress(cb, 7, 42, 'An example.') is None
+    accumulator.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_partially_uncertain_audio_can_teach_without_scoring_or_guessing(monkeypatch):
+    from .test_expression_feedback import omni
+    cb = owner()
+    pending, message = await record(cb, monkeypatch, {
+        'status': 'uncertain', 'heard_text': '会議の予定、どう言いますか？',
+        'uncertain_spans': ['会議']})
+    accumulator = AsyncMock()
+    monkeypatch.setattr(omni, '_handle_turn_with_accumulator', accumulator)
+    await cb.audio_evidence.reply(pending)
+    instructions = cb.conversation.create_response.call_args.kwargs['instructions']
+    assert 'help with the student' in instructions
+    assert 'uncertain_spans' in instructions
+    assert 'do not present it as an exact quotation' in instructions
+    assert evidence.assessment_text(message) is None
+    assert await omni._evaluate_scene_turn_progress(cb, 7, 42, 'An example.') is None
+    accumulator.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_timed_out_audio_reply_cannot_score_previous_text_turn(monkeypatch):
+    cb = owner()
+    cb.messages = [dict(id='old-text', role='user', content='A previous answer', turn_id='old-text')]
+    cb.current_turn_id = 'old-text'
+    cb.expression_input_sequence += 1
+    cb.audio_evidence.begin('new-audio')
+    monkeypatch.setattr(evidence, 'hear', AsyncMock(return_value={
+        'status': 'clear', 'heard_text': 'new audio', 'uncertain_spans': []}))
+    score = AsyncMock()
+    monkeypatch.setattr(omni, '_evaluate_scene_turn_progress', score)
+    feedback = Mock()
+    monkeypatch.setattr(omni.expression_feedback, 'schedule', feedback)
+    settle = AsyncMock()
+    monkeypatch.setattr(omni, '_release_input_reservations', settle)
+    monkeypatch.setattr(omni, 'save_single_message', AsyncMock())
+    cb._schedule_real_turn_count = lambda *args: None
+    pending = cb.audio_evidence.commit(b'\x00\x01' * 1600)
+    pending['timeout'] = 0.01
+    await cb.audio_evidence.reply(pending)
+    cb.on_event({'type': 'response.created', 'response': {'id': 'audio-retry'}})
+    cb.on_event({'type': 'response.audio_transcript.done', 'response_id': 'audio-retry',
+                 'transcript': 'Could you repeat that?'})
+    await asyncio.sleep(0.05)
+    score.assert_not_awaited()
+    feedback.assert_not_called()
+    settle.assert_awaited_once_with(cb, settle_committed=True)
+    assert pending['result']['status'] == 'unavailable'
+    cb.audio_evidence.committed('late-audio-item')
+    assert not cb.audio_evidence.attach({'id': 'late', 'role': 'user'}, 'late-audio-item')
+    assert cb.audio_evidence.snapshot('audio-retry') is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('input_kind', ['text', 'audio'])
+async def test_current_valid_reply_still_reaches_scoring_and_feedback(monkeypatch, input_kind):
+    cb = owner()
+    score = AsyncMock()
+    feedback = Mock()
+    monkeypatch.setattr(omni, '_evaluate_scene_turn_progress', score)
+    monkeypatch.setattr(omni.expression_feedback, 'schedule', feedback)
+    monkeypatch.setattr(omni, 'save_single_message', AsyncMock())
+    cb._schedule_real_turn_count = lambda *args: None
+    if input_kind == 'audio':
+        pending, message = await record(cb, monkeypatch, {
+            'status': 'clear', 'heard_text': 'I want eat steak.', 'uncertain_spans': []})
+        cb.current_turn_id = message['turn_id']
+        await cb.audio_evidence.reply(pending)
+    else:
+        cb.messages = [dict(id='text-1', role='user', content='I want eat steak.', turn_id='text-1')]
+        cb.current_turn_id = 'text-1'
+    cb.on_event({'type': 'response.created', 'response': {'id': 'valid-reply'}})
+    cb.on_event({'type': 'response.audio_transcript.done', 'response_id': 'valid-reply',
+                 'transcript': 'Use want to eat.'})
+    await asyncio.sleep(0.05)
+    score.assert_awaited_once()
+    feedback.assert_called_once()
+    if input_kind == 'audio':
+        snapshot = score.await_args.kwargs['turn_snapshot']
+        assert snapshot['identity'][3] == 3
+        assert snapshot['user']['turn_id'] == message['turn_id']
+        assert evidence.assessment_text(snapshot['user']) == 'I want eat steak.'
+    else:
+        assert 'turn_snapshot' not in score.await_args.kwargs
+
+
+@pytest.mark.asyncio
+async def test_late_audio_evidence_cannot_restore_expired_turn(monkeypatch):
+    cb = owner()
+    gate = asyncio.Event()
+    async def delayed(*args):
+        await gate.wait()
+        return {'status': 'clear', 'heard_text': 'late answer', 'uncertain_spans': []}
+    monkeypatch.setattr(evidence, 'hear', delayed)
+    cb.audio_evidence.begin('slow-audio')
+    pending = cb.audio_evidence.commit(b'\x00\x01' * 1600)
+    pending['timeout'] = 0.01
+    await cb.audio_evidence.reply(pending)
+    gate.set()
+    await pending['job']
+    assert pending['result']['status'] == 'unavailable'
+    cb.audio_evidence.committed('slow-item')
+    assert not cb.audio_evidence.attach({'id': 'slow', 'role': 'user'}, 'slow-item')
+
+
+@pytest.mark.asyncio
+async def test_expired_audio_settles_committed_reservation_and_releases_gate(monkeypatch):
+    cb = owner()
+    cb.pending_audio_reservation = 'reservation-1'
+    cb.awaiting_audio_turn = True
+    cb.counts_against_quota = True
+    rc = Mock(zrem=AsyncMock())
+    settle = AsyncMock(return_value=1)
+    monkeypatch.setattr(omni, '_get_redis_client', lambda: rc)
+    monkeypatch.setattr(omni, '_finish_reserved_turn', settle)
+    await omni._release_input_reservations(cb, settle_committed=True)
+    settle.assert_awaited_once_with(rc, cb.user_id, 'reservation-1', 'reservation-1')
+    assert cb.pending_audio_reservation is None
+    assert not cb.awaiting_audio_turn
 
 
 @pytest.mark.asyncio

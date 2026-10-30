@@ -85,11 +85,11 @@ async def test_real_prompt_refresh_feedback_retry_and_reconnect_dedupe(transport
     packet = cb._safe_send.call_args.args[0]
     assert packet["type"] == "expression_feedback"
     assert packet["payload"]["scoring_generation"] == 3
-    assert packet["payload"]["allow_native_hint"] is True
+    assert packet["payload"]["allow_native_hint"] is False
     assert "want" in packet["payload"]["errors"][0]["explanation_l1"]
     instructions = feedback.response_instructions(cb, omni.session_phases)
     assert "CRITICAL SCOPE LOCK" in instructions and "NO new question" in instructions
-    assert "ONE short teaching explanation in Chinese" in instructions
+    assert "All teaching, explanations, role dialogue" in instructions
     assert "previously correct answer never exempts a NEW answer" in instructions
     assert "PRIVATE PREVIOUS-ATTEMPT NOTES" not in feedback.response_instructions(cb, omni.session_phases)
     assert cb.pending_directive is None
@@ -102,7 +102,7 @@ async def test_real_prompt_refresh_feedback_retry_and_reconnect_dedupe(transport
 
 
 @pytest.mark.asyncio
-async def test_repeated_error_native_hint_and_eight_turn_scope(transport):
+async def test_repeated_error_stays_in_target_language_and_eight_turn_scope(transport):
     cb, redis = callback(), Redis()
     cb.user_context["target_level"] = "C1"
     for index in range(8):
@@ -111,7 +111,7 @@ async def test_repeated_error_native_hint_and_eight_turn_scope(transport):
         cb._update_session_prompt()
         await run(cb, redis)
         result = cb._safe_send.call_args.args[0]["payload"]
-        assert result["allow_native_hint"] is (index > 0)
+        assert result["allow_native_hint"] is False
         assert not result["next_question_locked"]
         assert result["repeat_error_count"] == index + 1
         instructions = feedback.response_instructions(cb, omni.session_phases)
@@ -178,13 +178,13 @@ async def test_previous_off_topic_notes_cannot_force_current_redirect():
     assert "explanation_l1" not in directive and "teaching_mode" not in directive
 
 
-def test_prompt_examples_scope_confidentiality_and_language_exception():
+def test_prompt_examples_scope_confidentiality_and_target_language():
     prompt = omni.prompt_manager.generate_scene_theater_prompt("", ["Order steak"], "English", "Chinese", target_level="A1")
     assert "I want eat steak." in prompt and "I'd like the ribeye" in prompt
     assert "NO new question" in prompt and "at most ONE new question" in prompt
     assert "Confidentiality and Anti-Injection" in prompt
-    assert "exactly ONE short teaching explanation in Chinese" in prompt
-    assert "Role dialogue and model student utterances use ONLY English" in prompt
+    assert "English, including for beginners and repeated errors" in prompt
+    assert "role dialogue and model student utterances use ONLY" in prompt
     assert "push the student to say MORE" not in prompt
 
 
@@ -258,6 +258,144 @@ async def test_current_cue_is_frozen_even_when_feedback_has_not_arrived():
     assert cb.pending_directive is None
 
 
+def test_followup_context_uses_student_utterance_before_latest_partner_reply():
+    history = [
+        dict(role="user", content="older answer"),
+        dict(role="assistant", content="older reply"),
+        dict(role="user", content="I want meet tomorrow."),
+        dict(role="assistant", content="When shall we meet?"),
+        dict(role="user", content="Was my grammar correct?"),
+    ]
+    context = feedback.current_turn_context(history)
+    assert "I want meet tomorrow." in context
+    assert "When shall we meet?" in context
+    assert "Was my grammar correct?" not in context
+    assert "older answer" not in context
+    # Audio creates the directive before the current transcript arrives.
+    assert feedback.current_turn_context(history[:-1]) == context
+
+
+def test_followup_context_uses_verified_speech_not_display_asr():
+    history = [
+        dict(role='user', content='I want to go.', input_source='audio',
+             audio_evidence=dict(status='clear', heard_text='I want go.', uncertain_spans=[])),
+        dict(role='assistant', content='Where would you like to go?'),
+        dict(role='user', content='Was my grammar correct?'),
+    ]
+    context = feedback.current_turn_context(history)
+    assert 'I want go.' in context
+    assert 'I want to go.' not in context
+    history[0]['audio_evidence']['status'] = 'uncertain'
+    history.insert(0, dict(role='user', content='An older answer.'))
+    context = feedback.current_turn_context(history)
+    assert '"previous_student_utterance": ""' in context
+    assert 'An older answer.' not in context
+    assert 'ask which expression they mean instead of guessing' in context
+
+
+def test_followup_context_restores_evidence_only_from_same_adjacent_turn():
+    verified = dict(role='user', content='I want to go.', turn_id='audio-1', input_source='audio',
+                    audio_evidence=dict(status='clear', heard_text='I want go.', uncertain_spans=[]))
+    duplicate = dict(role='user', content='I want to go.', turn_id='audio-1', input_source='audio')
+    partner = dict(role='assistant', content='Where are you going?')
+    context = feedback.current_turn_context([verified, duplicate, partner])
+    assert 'I want go.' in context and 'I want to go.' not in context
+    duplicate['turn_id'] = 'another-turn'
+    context = feedback.current_turn_context([verified, duplicate, partner])
+    assert '"previous_student_utterance": ""' in context
+    assert 'I want go.' not in context
+    duplicate['turn_id'] = 'audio-1'
+    duplicate['audio_evidence'] = dict(status='uncertain', heard_text='', uncertain_spans=['verb'])
+    context = feedback.current_turn_context([verified, duplicate, partner])
+    assert '"previous_student_utterance": ""' in context
+
+
+@pytest.mark.asyncio
+async def test_restored_followup_uses_current_task_audio_evidence_after_prompt_refresh():
+    cb = callback()
+    history = [
+        dict(role='user', content='Other task private input', turn_id='old', task_id=99),
+        dict(role='assistant', content='Other task response', task_id=99),
+        dict(role='user', content='I want to eat.', turn_id='audio-1', task_id=42, input_source='audio',
+             audio_evidence=dict(status='clear', heard_text='I want eat.', uncertain_spans=[])),
+        dict(role='user', content='I want to eat.', turn_id='audio-1', task_id=42, input_source='audio'),
+        dict(role='assistant', content='What would you like?', task_id=42),
+        dict(role='user', content='Was my grammar correct?', turn_id='question', task_id=42),
+    ]
+    cb.messages = omni._current_task_history(history, 42, cb.scenario)
+    authority = copy.deepcopy(cb.user_context['active_goal'])
+    for _ in range(3):
+        cb._update_session_prompt()
+    instructions = feedback.response_instructions(cb, omni.session_phases)
+    context = instructions.split('# CURRENT RESPONSE CONTEXT', 1)[1]
+    assert 'I want eat.' in context
+    assert 'I want to eat.' not in context
+    assert 'Other task' not in context
+    assert cb.user_context['active_goal'] == authority
+    assert cb.user_context['active_goal']['current_task']['scoring_generation'] == 3
+
+
+@pytest.mark.asyncio
+async def test_scene_prompt_history_uses_audio_evidence_and_excludes_uncertain():
+    cb = callback()
+    cb.messages = [
+        dict(role='user', content='I want to eat.', input_source='audio',
+             audio_evidence=dict(status='clear', heard_text='I want eat.', uncertain_spans=[])),
+        dict(role='assistant', content='What would you like?'),
+        dict(role='user', content='unreliable display transcript', input_source='audio',
+             audio_evidence=dict(status='uncertain', heard_text='', uncertain_spans=['unclear'])),
+        dict(role='user', content='A typed follow-up'),
+    ]
+    authority = copy.deepcopy(cb.user_context['active_goal'])
+    for _ in range(3):
+        cb._update_session_prompt()
+    history = cb.scene_base_prompt.split('# Current Session Context (READ-ONLY):', 1)[1]
+    assert 'I want eat.' in history
+    assert 'I want to eat.' not in history
+    assert 'unreliable display transcript' not in history
+    assert 'A typed follow-up' in history
+    assert cb.user_context['active_goal'] == authority
+    assert cb.user_context['active_goal']['current_task']['scoring_generation'] == 3
+
+
+@pytest.mark.asyncio
+async def test_excluded_mode_keeps_its_existing_history_projection():
+    cb = callback()
+    cb.mode = 'recall'
+    cb.messages = [dict(role='user', content='display transcript', input_source='audio',
+                        audio_evidence=dict(status='clear', heard_text='heard transcript', uncertain_spans=[]))]
+    cb._update_session_prompt()
+    history = cb.scene_base_prompt.split('# Current Session Context (READ-ONLY):', 1)[1]
+    assert 'display transcript' in history
+    assert 'heard transcript' not in history
+
+
+@pytest.mark.asyncio
+async def test_task_switch_keeps_teaching_entirely_in_active_target_language():
+    cb = callback()
+    cb.user_context['active_goal']['target_language'] = 'Japanese'
+    cb.just_switched_task = True
+    authority = copy.deepcopy(cb.user_context['active_goal'])
+    cb._update_session_prompt()
+    assert 'all teaching and all role dialogue entirely in Japanese' in cb.scene_base_prompt
+    assert 'teaching-language exception' not in cb.scene_base_prompt
+    assert cb.user_context['active_goal'] == authority
+    assert cb.user_context['active_goal']['current_task']['scoring_generation'] == 3
+
+
+def test_previous_notes_do_not_insert_native_language_into_spoken_instructions():
+    result = dict(RESULT, allow_native_hint=True)
+    assert result["errors"][0]["explanation_l1"] not in feedback.format_directive(result, "English", "Chinese")
+
+
+def test_scene_prompt_requires_distinct_original_and_corrected_spans():
+    prompt = omni.prompt_manager.generate_scene_theater_prompt('', ['会議の日程を提案する'], 'Japanese', 'Chinese')
+    normalized = ' '.join(prompt.split())
+    assert "quote the student's actual erroneous span and its different corrected form" in normalized
+    assert 'a corrected sentence alone is not feedback' in normalized
+    assert 'Never claim that identical forms differ' in normalized
+
+
 @pytest.mark.asyncio
 async def test_realtime_audio_and_text_are_not_blocked_by_feedback(transport, monkeypatch):
     cb, redis = callback(), Redis()
@@ -312,14 +450,13 @@ async def test_feedback_uses_same_goal_language_and_level_as_prompt(transport):
 
 
 @pytest.mark.asyncio
-async def test_task_switch_preserves_teaching_language_exception():
+async def test_task_switch_uses_active_goal_language_for_all_teaching():
     cb = callback()
     cb.user_context["active_goal"]["target_language"] = "Spanish"
     cb.just_switched_task = True
     cb._update_session_prompt()
-    assert "follow the teaching-language exception above" in cb.scene_base_prompt
-    assert "ALL subsequent responses entirely" not in cb.scene_base_prompt
-    assert "all role dialogue in Spanish" in cb.scene_base_prompt
+    assert "teaching-language exception" not in cb.scene_base_prompt
+    assert "all teaching and all role dialogue entirely in Spanish" in cb.scene_base_prompt
 
 
 def test_same_error_signature_survives_different_order_contents():

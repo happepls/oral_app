@@ -51,6 +51,17 @@ except ImportError:  # tests and direct `python app/main.py` load it as a module
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("app.main")
 
+
+async def _ping_realtime_transport(conversation):
+    """Keep the provider socket alive without adding audio to the user's input."""
+    socket = getattr(getattr(conversation, "ws", None), "sock", None)
+    if socket is None or not getattr(socket, "connected", False):
+        return
+    try:
+        await asyncio.to_thread(socket.ping)
+    except Exception as exc:
+        logger.warning("Realtime transport ping failed: %s", type(exc).__name__)
+
 # Workflow Service URL
 WORKFLOW_SERVICE_URL = os.getenv("WORKFLOW_SERVICE_URL", "http://workflow-service:3006")
 
@@ -3674,7 +3685,7 @@ class WebSocketCallback(OmniRealtimeCallback):
                 )
                 target_lang_for_switch = self.user_context.get('target_language') or full_ctx.get('target_language', 'the target language')
                 switch_language_rule = (
-                    f"REMINDER: Conduct this transition and all role dialogue in {target_lang}; follow the teaching-language exception above.\n"
+                    f"REMINDER: Conduct this transition, all teaching and all role dialogue entirely in {target_lang}.\n"
                     if expression_feedback.enabled() and self.mode not in expression_feedback.EXCLUDED_MODES
                     and phase_info.get("phase") == "scene_theater"
                     else f"REMINDER: Conduct this transition and ALL subsequent responses entirely in {target_lang_for_switch}.\n"
@@ -3694,6 +3705,15 @@ class WebSocketCallback(OmniRealtimeCallback):
                 # including restored history after a reconnect.
                 cutoff = getattr(self, 'task_history_cutoff', 0)
                 current_task_msgs = self.messages[cutoff:][-10:]  # max 10 from current task
+                if (expression_feedback.enabled()
+                        and self.mode not in expression_feedback.EXCLUDED_MODES
+                        and not self.is_daily_qa_mode
+                        and phase_info.get('phase') == 'scene_theater'):
+                    # The history supplied to the tutor must use the same
+                    # independent audio evidence as its current-turn context.
+                    # Exclude uncertain speech rather than reintroducing the
+                    # display ASR, which can silently repair learner errors.
+                    current_task_msgs = assessment_history(current_task_msgs)
                 if current_task_msgs:
                     import re as _re
                     _URL_RE = _re.compile(r'https?://\S+|www\.\S+', _re.IGNORECASE)
@@ -4668,7 +4688,14 @@ class WebSocketCallback(OmniRealtimeCallback):
                         await self._flush_audio_gate(self._audio_gate_response_id)
                         logger.info(f"Sent complete AI message: {self.full_response_text[:50]}...")
 
-                        self._schedule_real_turn_count()
+                        audio_record = self.audio_evidence.responses.get(rid)
+                        if audio_record and audio_record.get('expired'):
+                            # The admitted recording has no usable transcript.
+                            # Settle its reserved quota and release the turn gate,
+                            # without charging an unrelated previous turn ID.
+                            await _release_input_reservations(self, settle_committed=True)
+                        else:
+                            self._schedule_real_turn_count()
                         if self.analytics_real_mode() and rid not in self.ignored_response_ids:
                             await self.analytics.finish(rid)
                         await _maybe_finalize_daily_qa_answer(self, self.full_response_text)
@@ -4676,10 +4703,14 @@ class WebSocketCallback(OmniRealtimeCallback):
                         active_goal = self.user_context.get("active_goal") or {}
                         current_task = active_goal.get("current_task") or {}
                         if not self.current_turn_teaching.applies():
-                            expression_feedback.schedule(self, session_phases, _get_redis_client(), WORKFLOW_SERVICE_URL)
                             snapshot = self.audio_evidence.snapshot(rid)
+                            is_audio_response = rid in self.audio_evidence.responses
+                            if snapshot is not None or not is_audio_response:
+                                expression_feedback.schedule(self, session_phases, _get_redis_client(), WORKFLOW_SERVICE_URL)
                             latest_user = next((m for m in reversed(self.messages) if m.get('role') == 'user'), {})
-                            if snapshot is not None or latest_user.get('input_source') != 'audio':
+                            # A failed/expired audio turn may have no user message;
+                            # never pair its retry reply with a preceding text turn.
+                            if snapshot is not None or (not is_audio_response and latest_user.get('input_source') != 'audio'):
                                 asyncio.create_task(_evaluate_scene_turn_progress(
                                     self,
                                     active_goal.get("id"),
@@ -5037,10 +5068,7 @@ async def websocket_endpoint(websocket: WebSocket, token: str = Query(None), ses
                 await asyncio.sleep(15)
                 await websocket.send_json({"type": "ping", "payload": {"timestamp": int(time.time())}})
                 if conversation and callback and callback.is_connected:
-                    try:
-                        conversation.append_audio(base64.b64encode(b'\x00'*320).decode('utf-8'))
-                    except Exception as e:
-                        logger.error(f"Heartbeat audio append failed: {e}")
+                    await _ping_realtime_transport(conversation)
             except: break
 
     heartbeat_task = None

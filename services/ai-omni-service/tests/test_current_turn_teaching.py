@@ -9,6 +9,11 @@ import pytest
 from .test_expression_feedback import callback, Redis, omni
 from .test_scoring_windows import FakeRedis
 import current_turn_teaching as teaching
+
+
+def test_spoken_correction_never_includes_native_hint():
+    result = dict(RESULT, protocol_version=2)
+    assert result["errors"][0]["explanation_l1"] not in teaching.compose_speech(result, True)
 import audio_evidence
 
 RESULT = dict(protocol_version=2, teaching_mode="correct", off_topic=False,

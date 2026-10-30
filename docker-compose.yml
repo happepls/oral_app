@@ -188,6 +188,7 @@ services:
       - REDIS_HOST=redis
       - REDIS_PORT=6379
       - JWT_SECRET=${JWT_SECRET:?Set JWT_SECRET in the root .env}
+      - INTERNAL_AUTH_SECRET=${INTERNAL_AUTH_SECRET:?Set INTERNAL_AUTH_SECRET in the root .env}
       - AI_SERVICE_WS_URL=ws://ai-omni-service:8082/stream
     env_file:
       - ./services/comms-service/.env

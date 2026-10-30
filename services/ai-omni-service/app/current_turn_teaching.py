@@ -64,8 +64,6 @@ def compose_speech(result, allow_native_hint):
         parts = [result["acknowledgement"]]
     elif mode == "correct":
         parts = [result["correction_explanation"]]
-        if allow_native_hint:
-            parts.append(result["errors"][0]["explanation_l1"])
         parts += [result["alternatives"][0], result["retry_prompt"]]
     elif mode in {"polish", "advance"}:
         parts = [result["acknowledgement"]]
@@ -350,8 +348,7 @@ class CurrentTurnTeaching:
             count = count + 1 if prior_scope == turn.identity and prior_signature == signature else 1
             if not result.get("errors"):
                 count = 0
-            level = json.loads(turn.request_json)["level"].upper()
-            native_hint = bool(result.get("errors")) and (level in {"A0", "A1", "A2", "BEGINNER"} or count >= 2)
+            native_hint = False  # Spoken teaching always uses the target language.
             speech = compose_speech(result, native_hint)
             self.cb.expression_error_streak = (turn.identity, signature, count)
             result.update(allow_native_hint=native_hint, repeat_error_count=count, user_text=turn.user_text)
