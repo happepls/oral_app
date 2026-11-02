@@ -1,0 +1,59 @@
+<Rive version="1" kind="fragment">
+    <Artboard defaultStateMachineId="0:7" styleId="0:5" width="500" height="500" name="Guaji transition" id="0:2">
+        <LayoutComponentStyle name="Artboard Style" id="0:5"/>
+        <Fill name="Background"><SolidColor colorValue="FFF5F7FF" name="Background color"/></Fill>
+
+        <!-- A script-free badge: the entire assembly fades via one group. -->
+        <Node x="250" y="250" opacity="0" name="Guaji badge" id="0:20">
+            <Shape y="32" name="Smile">
+                <Rectangle width="44" height="9" cornerRadiusTL="4.5"/>
+                <Fill><SolidColor colorValue="FF24304A"/></Fill>
+            </Shape>
+            <Shape x="48" y="-44" name="Right pupil">
+                <Ellipse width="15" height="22"/>
+                <Fill><SolidColor colorValue="FF24304A"/></Fill>
+            </Shape>
+            <Shape x="-48" y="-44" name="Left pupil">
+                <Ellipse width="15" height="22"/>
+                <Fill><SolidColor colorValue="FF24304A"/></Fill>
+            </Shape>
+            <Shape x="48" y="-44" name="Right eye">
+                <Ellipse width="60" height="60"/>
+                <Fill><SolidColor colorValue="FFE5F4E9"/></Fill>
+            </Shape>
+            <Shape x="-48" y="-44" name="Left eye">
+                <Ellipse width="60" height="60"/>
+                <Fill><SolidColor colorValue="FFE5F4E9"/></Fill>
+            </Shape>
+            <Shape y="10" name="Face">
+                <Ellipse width="164" height="132"/>
+                <Fill><SolidColor colorValue="FFE5F4E9"/></Fill>
+            </Shape>
+            <Shape name="Badge">
+                <Rectangle width="240" height="240" cornerRadiusTL="64"/>
+                <Fill><SolidColor colorValue="FF637FF1"/></Fill>
+            </Shape>
+        </Node>
+
+        <StateMachine name="Transition preview" id="0:7">
+            <StateMachineLayer name="Fade" id="0:8">
+                <AnyState x="200" y="-120"/>
+                <ExitState x="400" y="-120"/>
+                <EntryState x="0" y="0"><StateTransition stateToId="0:12"/></EntryState>
+                <AnimationState x="200" y="0" animationId="0:6" id="0:12"/>
+            </StateMachineLayer>
+        </StateMachine>
+        <!-- 4 seconds: fade in 0-1s, hold 1-2s, fade out 2-3s, hold 3-4s. -->
+        <LinearAnimation fps="60" duration="240" loopValue="loop" name="Fade in and out" id="0:6">
+            <KeyedObject objectId="0:20">
+                <KeyedProperty property="opacity">
+                    <KeyFrameDouble value="0" frame="0" interpolationType="linear"/>
+                    <KeyFrameDouble value="1" frame="60" interpolationType="linear"/>
+                    <KeyFrameDouble value="1" frame="120" interpolationType="linear"/>
+                    <KeyFrameDouble value="0" frame="180" interpolationType="linear"/>
+                    <KeyFrameDouble value="0" frame="240" interpolationType="linear"/>
+                </KeyedProperty>
+            </KeyedObject>
+        </LinearAnimation>
+    </Artboard>
+</Rive>
