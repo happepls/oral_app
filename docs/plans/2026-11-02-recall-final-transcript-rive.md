@@ -159,3 +159,18 @@ Rollback: revert the browser repair and rebuild client; remove only the local
 AI DNS override and recreate that service if needed. Reverting cache v3 handling
 would re-expose old failed-cache behavior. No DB migration, production setting
 mutation, root agent-rule edit, or user-data mutation.
+
+## Desktop Chrome follow-up
+
+User reports recognition failure about one second after Stop on localhost:5001,
+plus TTS 503. That timing does not establish the four-second timeout as cause.
+Added distinct network, permission, microphone, empty-final, incomplete-final
+and timeout messages, plus console-only [Recall ASR] metadata: engine/result
+index, event, counts, final length and elapsed time. No text/audio is logged.
+Actual Chrome event evidence is still needed; no recognition success claimed.
+
+Repeated synthetic TTS probe: environment proxy SSLError/TLS EOF; direct
+ConnectionError. The precise external connectivity cause remains unresolved.
+Scoped tests: 30 passed in 2 suites, including diagnostic content exclusion.
+Frontend build passed; rebuilt Recall chunk matches localhost:5001 HTTP bytes.
+This follow-up supersedes the earlier frontend bundle identities above.

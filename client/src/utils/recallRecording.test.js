@@ -143,3 +143,14 @@ test('constructor failure is reported as a terminal error', () => {
   expect(onError).toHaveBeenCalledWith('Error');
   expect(onEnd).toHaveBeenCalledTimes(1);
 });
+
+test('diagnostics expose state and lengths without speech content', () => {
+  const onDiagnostic = jest.fn();
+  const { session } = setup({ onDiagnostic });
+  engines[0].result('private synthetic speech', false);
+  session.stop();
+  engines[0].onend();
+  expect(onDiagnostic).toHaveBeenCalledWith(expect.objectContaining({ event: 'result', interimCount: 1, finalCount: 0 }));
+  expect(onDiagnostic).toHaveBeenLastCalledWith(expect.objectContaining({ event: 'settled', error: 'incomplete-result' }));
+  expect(JSON.stringify(onDiagnostic.mock.calls)).not.toContain('private synthetic speech');
+});

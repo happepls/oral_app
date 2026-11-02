@@ -4,6 +4,7 @@
 export function createRecallRecording({
   Recognition, lang, onComplete, onError, onEnd,
   onPreview = () => {}, onStopping = () => {}, stopTimeoutMs = 4000,
+  onDiagnostic = () => {},
 }) {
   let recognizer;
   let listening = true;
@@ -11,6 +12,7 @@ export function createRecallRecording({
   const segments = [];
   let restarts = 0;
   let stopTimer;
+  let engineIndex = 0;
 
   const release = () => {
     clearTimeout(stopTimer);
@@ -27,6 +29,7 @@ export function createRecallRecording({
     listening = false;
     release();
     const text = segments.join(' ').trim();
+    onDiagnostic({ event: 'settled', engineIndex, error: error || (!text ? 'no-speech' : null), finalLength: text.length });
     if (error || !text) onError(error || 'no-speech');
     else onComplete(text);
     onEnd();
@@ -37,6 +40,7 @@ export function createRecallRecording({
     catch (error) { settle(error.name || 'recognition-start'); return; }
     const startedAt = Date.now();
     recognizer = current;
+    const index = ++engineIndex;
     const finals = new Map();
     let interim = [];
     const confirmed = () => [...finals.entries()]
@@ -56,6 +60,8 @@ export function createRecallRecording({
       interim = Array.from(event.results)
         .filter((result, i) => !result.isFinal && !finals.has(i))
         .map(result => result[0]?.transcript || '').filter(text => text.trim());
+      onDiagnostic({ event: 'result', engineIndex: index, resultIndex: event.resultIndex ?? 0,
+        finalCount: finals.size, interimCount: interim.length, finalLength: confirmed().length });
       onPreview([...segments, confirmed(), ...interim].filter(Boolean).join(' '));
     };
     current.onerror = event => {
@@ -64,6 +70,8 @@ export function createRecallRecording({
     };
     current.onend = () => {
       if (!isCurrent()) return;
+      onDiagnostic({ event: 'end', engineIndex: index, stopping: !listening,
+        finalCount: finals.size, interimCount: interim.length, elapsedMs: Date.now() - startedAt });
       const text = confirmed();
       if (text) segments.push(text);
       // Invalidate before restarting, including callbacks already queued.

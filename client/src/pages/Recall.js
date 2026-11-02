@@ -375,9 +375,17 @@ function Recall() {
         ...prev, [i]: { ...(prev[i] || emptyRow()), [step]: similarity(transcript, target), lastText: transcript },
       })),
       onStopping: () => setRecognizing(true),
-      onError: error => setRecordingError(['not-allowed', 'service-not-allowed'].includes(error)
-        ? '无法使用麦克风，请允许麦克风权限后重试。'
-        : '未获得完整的最终识别结果，请点击说话重试。'),
+      // Only event metadata, never transcripts or recorded audio.
+      onDiagnostic: metadata => console.info('[Recall ASR]', metadata),
+      onError: error => setRecordingError(({
+        'not-allowed': '无法使用麦克风，请允许麦克风权限后重试。',
+        'service-not-allowed': '浏览器不允许使用语音识别服务，请检查浏览器设置。',
+        'audio-capture': '无法读取麦克风，请检查设备是否可用或被其他应用占用。',
+        network: '浏览器语音识别服务连接失败，请检查网络后重试。（network）',
+        'no-speech': '没有收到最终识别文本，请确认麦克风有输入后重试。（no-speech）',
+        'incomplete-result': '识别服务已结束，但只返回了未确认文本，请重试。（incomplete-result）',
+        'final-result-timeout': '等待最终识别结果超时，请重试。（final-result-timeout）',
+      })[error] || '未获得完整的最终识别结果，请点击说话重试。'),
       onEnd: () => { activeStepRef.current = null; setRecordingFor(null); setRecognizing(false); },
     });
   };
