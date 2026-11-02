@@ -1,73 +1,98 @@
 // One explicit recording owns a frozen sentence/step across browser ASR restarts.
-export function createRecallRecording({ Recognition, lang, onComplete, onError, onEnd }) {
+// Result indexes belong to one engine instance. Only confirmed slots survive
+// a restart; interim hypotheses replace the preview and never enter scoring.
+export function createRecallRecording({
+  Recognition, lang, onComplete, onError, onEnd,
+  onPreview = () => {}, onStopping = () => {}, stopTimeoutMs = 4000,
+}) {
   let recognizer;
   let listening = true;
-  let cancelled = false;
-  let finished = false;
-  let segments = [];
-  let results = [];
+  let settled = false;
+  const segments = [];
   let restarts = 0;
+  let stopTimer;
 
-  const finish = () => {
-    if (finished || cancelled) return;
-    finished = true;
+  const release = () => {
+    clearTimeout(stopTimer);
+    const current = recognizer;
+    recognizer = null;
+    if (current) {
+      current.onresult = current.onerror = current.onend = null;
+      try { current.abort(); } catch {}
+    }
+  };
+  const settle = error => {
+    if (settled) return;
+    settled = true;
+    listening = false;
+    release();
     const text = segments.join(' ').trim();
-    if (text) onComplete(text);
+    if (error || !text) onError(error || 'no-speech');
+    else onComplete(text);
     onEnd();
   };
   const start = () => {
-    const current = new Recognition();
+    let current;
+    try { current = new Recognition(); }
+    catch (error) { settle(error.name || 'recognition-start'); return; }
     const startedAt = Date.now();
     recognizer = current;
-    results = [];
+    const finals = new Map();
+    let interim = [];
+    const confirmed = () => [...finals.entries()]
+      .sort(([a], [b]) => a - b).map(([, text]) => text).join(' ').trim();
+    const isCurrent = () => !settled && recognizer === current;
     current.lang = lang;
     current.continuous = true;
     current.interimResults = true;
     current.maxAlternatives = 1;
     current.onresult = event => {
-      if (cancelled || finished || recognizer !== current) return;
-      results = Array.from(event.results, result => result[0]?.transcript || '');
-      restarts = 0;
+      if (!isCurrent()) return;
+      for (let i = event.resultIndex ?? 0; i < event.results.length; i++) {
+        const result = event.results[i];
+        if (result.isFinal) finals.set(i, result[0]?.transcript || '');
+      }
+      // Interim slots can shrink or disappear in subsequent snapshots.
+      interim = Array.from(event.results)
+        .filter((result, i) => !result.isFinal && !finals.has(i))
+        .map(result => result[0]?.transcript || '').filter(text => text.trim());
+      onPreview([...segments, confirmed(), ...interim].filter(Boolean).join(' '));
     };
     current.onerror = event => {
-      if (cancelled || finished || recognizer !== current) return;
-      if (event.error === 'no-speech') return;
-      listening = false;
-      cancelled = true;
-      onError(event.error);
-      onEnd();
+      if (!isCurrent() || event.error === 'no-speech') return;
+      settle(event.error);
     };
     current.onend = () => {
-      if (cancelled || finished || recognizer !== current) return;
-      segments.push(results.join(' '));
-      results = [];
-      // Bound rapid broken-engine loops, not ordinary silence timeouts.
-      if (Date.now() - startedAt >= 1000) restarts = 0;
-      if (listening && restarts++ < 3) start();
-      else if (listening) {
-        cancelled = true;
-        onError('recognition-ended');
-        onEnd();
-      } else finish();
+      if (!isCurrent()) return;
+      const text = confirmed();
+      if (text) segments.push(text);
+      // Invalidate before restarting, including callbacks already queued.
+      release();
+      if (!listening) {
+        settle(interim.length ? 'incomplete-result' : undefined);
+        return;
+      }
+      if (Date.now() - startedAt >= 1000 || text) restarts = 0;
+      if (restarts++ < 3) start();
+      else settle('recognition-ended');
     };
     try { current.start(); }
-    catch (error) {
-      cancelled = true;
-      onError(error.name || 'recognition-start');
-      onEnd();
-    }
+    catch (error) { settle(error.name || 'recognition-start'); }
   };
   start();
   return {
     stop() {
-      if (!listening || cancelled || finished) return;
+      if (!listening || settled) return;
       listening = false;
-      try { recognizer.stop(); } catch { finish(); }
+      onStopping();
+      stopTimer = setTimeout(() => settle('final-result-timeout'), stopTimeoutMs);
+      try { recognizer.stop(); }
+      catch { settle('recognition-stop'); }
     },
     cancel() {
-      cancelled = true;
+      settled = true;
       listening = false;
-      try { recognizer.abort(); } catch {}
+      release();
     },
   };
 }

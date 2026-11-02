@@ -35,9 +35,10 @@ const LANG_TABLE = {
   arabic:     { bcp47: 'ar-SA', code: 'ar' },
 };
 
-function resolveLang(raw) {
+export function resolveLang(raw) {
   if (!raw) return { bcp47: 'en-US', code: 'en' };
   const k = String(raw).trim().toLowerCase();
+  if (['ja', 'ja-jp', 'jp'].includes(k)) return LANG_TABLE.japanese;
   return LANG_TABLE[k] || { bcp47: 'en-US', code: 'en' };
 }
 
@@ -97,10 +98,27 @@ function Recall() {
   const [isPeeking, setIsPeeking] = useState(false);
   const [recognitionUnavailable, setRecognitionUnavailable] = useState(false);
   const [recordingError, setRecordingError] = useState('');
+  const [recognizing, setRecognizing] = useState(false);
+  const [materialError, setMaterialError] = useState('');
   const [synthesizing, setSynthesizing] = useState(false); // 试听 TTS 合成中
   const [previewError, setPreviewError] = useState('');
   const previewAudioRef = useRef(null);
   const previewUrlRef = useRef(null);
+  const previewSequenceRef = useRef(0);
+  const previewAbortRef = useRef(null);
+  const stopPreview = useCallback(() => {
+    ++previewSequenceRef.current;
+    previewAbortRef.current?.abort();
+    previewAbortRef.current = null;
+    const audio = previewAudioRef.current;
+    if (audio) {
+      audio.onended = audio.onerror = null;
+      try { audio.pause(); } catch {}
+    }
+    previewAudioRef.current = null;
+    if (previewUrlRef.current) URL.revokeObjectURL(previewUrlRef.current);
+    previewUrlRef.current = null;
+  }, []);
   const [alreadyCompleted, setAlreadyCompleted] = useState(false);
   const [switchCount, setSwitchCount] = useState(0);
   const [switching, setSwitching] = useState(false);
@@ -123,6 +141,8 @@ function Recall() {
     recognitionRef.current = null;
     activeStepRef.current = null;
     setRecordingFor(null);
+    setRecognizing(false);
+    setRecordingError('');
   }, []);
   useEffect(() => () => recognitionRef.current?.cancel(), []);
   const loadSequenceRef = useRef(0);
@@ -131,6 +151,10 @@ function Recall() {
   // Load scenario sentences and translate
   const loadScenario = React.useCallback(async (goalData = null, recallVariant = 0) => {
     cancelRecording();
+    stopPreview();
+    setSynthesizing(false);
+    setPreviewError('');
+    setMaterialError('');
     const loadSequence = ++loadSequenceRef.current;
     recallAbortRef.current?.abort();
     const controller = new AbortController();
@@ -174,19 +198,20 @@ function Recall() {
         }
       } catch (e) {
         if (e?.name === 'AbortError') return false;
-        console.warn('[Recall] daily material unavailable, using scenario fallback:', e);
+        console.warn('[Recall] daily material unavailable, using scenario fallback');
       }
 
       // Offline/model-failure fallback: translate the existing scenario tasks.
       const raw = extractSentences(picked?.tasks || []);
       const titleSlug = (picked?.title || '').replace(/[^a-zA-Z0-9一-鿿-]/g, '_').slice(0, 40);
-      const cacheKey = `recall_translated_v2_${goal?.id || 'x'}_${titleSlug}_${lang.code}`;
+      // v2 cached untranslated fallback text on failure; never reuse it.
+      const cacheKey = `recall_translated_v3_${goal?.id || 'x'}_${titleSlug}_${lang.code}_${JSON.stringify(raw)}`;
       let translated = null;
       try {
         const cached = localStorage.getItem(cacheKey);
         if (cached) {
           const parsed = JSON.parse(cached);
-          if (Array.isArray(parsed) && parsed.length === raw.length) translated = parsed;
+          if (Array.isArray(parsed) && parsed.length === raw.length && parsed.every(s => typeof s === 'string' && s.trim())) translated = parsed;
         }
       } catch {}
 
@@ -195,19 +220,22 @@ function Recall() {
         // sentences fires 50 concurrent translate requests at once, hammering
         // the AI gateway. Run at most TRANSLATE_CONCURRENCY workers, each
         // pulling the next index off a shared cursor, writing results back in
-        // place to preserve order. Per-item try/catch falls back to original.
+        // place to preserve order. Any failure remains retryable and uncached.
         const TRANSLATE_CONCURRENCY = 5;
         const results = new Array(raw.length);
+        let translationFailed = false;
         let cursor = 0;
         const worker = async () => {
           while (cursor < raw.length) {
+            if (controller.signal.aborted) return;
             const i = cursor++;
             const s = raw[i];
             try {
-              const r = await aiAPI.translate(s, lang.code);
-              results[i] = (r?.translation || s).trim();
+              const r = await aiAPI.translate(s, lang.code, { signal: controller.signal });
+              if (typeof r?.translation !== 'string' || !r.translation.trim()) throw new Error('Empty translation');
+              results[i] = r.translation.trim();
             } catch {
-              results[i] = s;
+              translationFailed = true;
             }
           }
         };
@@ -216,6 +244,11 @@ function Recall() {
           () => worker()
         );
         await Promise.all(pool);
+        if (loadSequence !== loadSequenceRef.current || controller.signal.aborted) return false;
+        if (translationFailed) {
+          setMaterialError('台词翻译暂时不可用，请重试。');
+          return false;
+        }
         translated = results;
         try { localStorage.setItem(cacheKey, JSON.stringify(translated)); } catch {}
       }
@@ -231,7 +264,7 @@ function Recall() {
       return true;
     } catch (e) {
       if (e?.name === 'AbortError') return false;
-      console.error('[Recall] failed to load:', e);
+      if (loadSequence === loadSequenceRef.current) setMaterialError('台词加载失败，请重试。');
       return false;
     } finally {
       if (loadSequence === loadSequenceRef.current) {
@@ -239,7 +272,7 @@ function Recall() {
         if (recallAbortRef.current === controller) recallAbortRef.current = null;
       }
     }
-  }, [cancelRecording]);
+  }, [cancelRecording, stopPreview]);
 
   // Initial load — fetch backend-authoritative daily state (switch count +
   // completion). localStorage stays as an OFFLINE FALLBACK only: if the backend
@@ -258,7 +291,7 @@ function Recall() {
         const serverSwitchCount = Number(data.switch_count) || 0;
         setSwitchCount(serverSwitchCount);
         setAlreadyCompleted(done);
-        if (ignore) return;
+        if (done) { setLoading(false); return; }
         loadScenario(null, serverSwitchCount);
         return;
       } catch (e) {
@@ -269,7 +302,7 @@ function Recall() {
         const todaySwitches = parseInt(localStorage.getItem(`recall_switches_${today}`) || '0', 10);
         setSwitchCount(todaySwitches);
         setAlreadyCompleted(done);
-        if (ignore) return;
+        if (done) { setLoading(false); return; }
         loadScenario(null, todaySwitches);
         return;
       }
@@ -322,6 +355,9 @@ function Recall() {
   // browser recognition restarts and the final result delivered after stop.
   const startRecord = (step) => {
     if (activeStepRef.current) return;
+    stopPreview();
+    setSynthesizing(false);
+    setPreviewError('');
     const Ctor = window.SpeechRecognition || window.webkitSpeechRecognition;
     if (!Ctor) {
       setRecognitionUnavailable(true);
@@ -330,6 +366,7 @@ function Recall() {
     const i = idxRef.current;
     const target = sentencesRef.current[i] || '';
     setRecordingError('');
+    setRecognizing(false);
     activeStepRef.current = step;
     setRecordingFor(step);
     recognitionRef.current = createRecallRecording({
@@ -337,8 +374,11 @@ function Recall() {
       onComplete: transcript => setRows(prev => ({
         ...prev, [i]: { ...(prev[i] || emptyRow()), [step]: similarity(transcript, target), lastText: transcript },
       })),
-      onError: () => setRecordingError('语音识别已中断，请检查麦克风权限后点击重试。'),
-      onEnd: () => { activeStepRef.current = null; setRecordingFor(null); },
+      onStopping: () => setRecognizing(true),
+      onError: error => setRecordingError(['not-allowed', 'service-not-allowed'].includes(error)
+        ? '无法使用麦克风，请允许麦克风权限后重试。'
+        : '未获得完整的最终识别结果，请点击说话重试。'),
+      onEnd: () => { activeStepRef.current = null; setRecordingFor(null); setRecognizing(false); },
     });
   };
 
@@ -349,6 +389,9 @@ function Recall() {
   const goPrev = () => {
     if (idx <= 0) return;
     cancelRecording();
+    stopPreview();
+    setSynthesizing(false);
+    setPreviewError('');
     setIdx(idx - 1);
     setIsPeeking(false);
     setRecordingFor(null);
@@ -357,6 +400,9 @@ function Recall() {
   const goNext = () => {
     if (!canAdvance) return;
     cancelRecording();
+    stopPreview();
+    setSynthesizing(false);
+    setPreviewError('');
     if (isLast) {
       setAlreadyCompleted(true);
       // Persist completion to backend; localStorage stays as offline fallback.
@@ -392,17 +438,16 @@ function Recall() {
   // 试听：合成并播放当前句的目标语言发音（复用 /tts 端点）。
   // 仅在跟读阶段（台词可见）提供，避免背诵遮挡阶段变相泄露答案。
   const playPreview = async () => {
-    if (synthesizing || !currentSentence) return;
-    try { previewAudioRef.current?.pause(); } catch {}
-    previewAudioRef.current = null;
-    if (previewUrlRef.current) {
-      URL.revokeObjectURL(previewUrlRef.current);
-      previewUrlRef.current = null;
-    }
+    if (synthesizing || !currentSentence || activeStepRef.current) return;
+    stopPreview();
+    const sequence = previewSequenceRef.current;
+    const controller = new AbortController();
+    previewAbortRef.current = controller;
     setPreviewError('');
     setSynthesizing(true);
     try {
-      const blob = await aiAPI.tts(currentSentence);
+      const blob = await aiAPI.tts(currentSentence, 'Serena', { signal: controller.signal });
+      if (sequence !== previewSequenceRef.current) return;
       const url = URL.createObjectURL(blob);
       previewUrlRef.current = url;
       const audio = new Audio(url);
@@ -417,24 +462,22 @@ function Recall() {
       audio.onended = release;
       audio.onerror = () => {
         release();
-        setPreviewError('播放失败，请重试');
+        if (sequence === previewSequenceRef.current) setPreviewError('播放失败，请重试');
       };
       await audio.play();
     } catch (e) {
-      console.warn('[Recall] 试听合成失败:', e);
-      setPreviewError('语音合成失败，请重试');
+      if (sequence === previewSequenceRef.current) {
+        stopPreview();
+        setSynthesizing(false);
+        setPreviewError('语音合成或播放失败，请重试');
+      }
     } finally {
-      setSynthesizing(false);
+      if (sequence === previewSequenceRef.current) setSynthesizing(false);
     }
   };
 
   // 切换句子或卸载时停掉试听并释放 Blob URL。
-  useEffect(() => () => {
-    try { previewAudioRef.current?.pause(); } catch {}
-    previewAudioRef.current = null;
-    if (previewUrlRef.current) URL.revokeObjectURL(previewUrlRef.current);
-    previewUrlRef.current = null;
-  }, [idx]);
+  useEffect(() => () => stopPreview(), [idx, stopPreview]);
 
   // Manual fallback when Web Speech is unavailable. Still requires two
   // independent "manual pass" presses — one per step — so the user cannot
@@ -447,9 +490,9 @@ function Recall() {
   };
 
   useEffect(() => () => {
+    ++loadSequenceRef.current;
     recallAbortRef.current?.abort();
-    const r = recognitionRef.current;
-    if (r) { try { r.abort(); } catch {} }
+    recognitionRef.current?.cancel();
   }, []);
 
   const progressLabel = useMemo(() => {
@@ -462,6 +505,18 @@ function Recall() {
       <div className="flex flex-col items-center justify-center h-screen bg-background-light">
         <GuajiMascot state="idle" size={140} />
         <p className="mt-4 text-sm text-slate-500">加载今日复述...</p>
+      </div>
+    );
+  }
+
+  if (materialError) {
+    return (
+      <div className="flex flex-col items-center justify-center h-screen px-6 bg-background-light">
+        <p role="alert" className="text-sm text-red-600">{materialError}</p>
+        <button onClick={async () => {
+          if (await loadScenario(null, switchCount)) setAlreadyCompleted(false);
+        }} className="mt-4 px-5 py-2 rounded-xl bg-primary text-white">重试加载台词</button>
+        <button onClick={() => navigate('/discovery')} className="mt-4">返回首页</button>
       </div>
     );
   }
@@ -561,7 +616,7 @@ function Recall() {
                 <button
                   type="button"
                   onClick={playPreview}
-                  disabled={synthesizing}
+                  disabled={synthesizing || !!recordingFor}
                   title="试听"
                   className="shrink-0 inline-flex items-center gap-1 px-2.5 py-1.5 rounded-full text-xs font-semibold border transition disabled:opacity-50 select-none"
                   style={{ borderColor: '#637FF1', color: '#637FF1', background: '#637FF108' }}
@@ -651,7 +706,7 @@ function Recall() {
               <button
                 onClick={() => isRecording ? stopRecord() : startRecord(activeStep)}
                 aria-pressed={isRecording}
-                disabled={canAdvance}
+                disabled={canAdvance || recognizing}
                 className="w-full px-4 py-3 rounded-full text-base font-bold text-white shadow active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed select-none"
                 style={{
                   background: isRecording
@@ -659,7 +714,7 @@ function Recall() {
                     : 'linear-gradient(135deg, #637FF1, #a47af6)',
                 }}
               >
-                🎙️ {isRecording ? '点击结束' : canAdvance ? '本句已完成' : `点击说话（${stepLabel}）`}
+                🎙️ {recognizing ? '识别中…' : isRecording ? '点击结束' : canAdvance ? '本句已完成' : `点击说话（${stepLabel}）`}
               </button>
               {recordingError && <p role="alert" className="text-center text-sm text-red-600">{recordingError}</p>}
 
