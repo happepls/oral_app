@@ -31,9 +31,9 @@ test('recall click recording survives release and ASR silence @critical', async 
   await page.mouse.move(0, 0);
   await expect(page.getByRole('button', { name: /点击结束/ })).toHaveAttribute('aria-pressed', 'true');
   await page.evaluate(() => {
-    window.recognizers[0].onresult({ results: [[{ transcript: 'I would like' }]] });
+    window.recognizers[0].onresult({ resultIndex: 0, results: [Object.assign([{ transcript: 'I would like' }], { isFinal: true })] });
     window.recognizers[0].onend(); // Browser ASR timeout, not a user stop.
-    window.recognizers[1].onresult({ results: [[{ transcript: 'a coffee please.' }]] });
+    window.recognizers[1].onresult({ resultIndex: 0, results: [Object.assign([{ transcript: 'a coffee please.' }], { isFinal: true })] });
   });
   await expect(page.getByRole('button', { name: /点击结束/ })).toBeVisible();
   await expect.poll(() => page.evaluate(() => window.recognizers.length)).toBe(2);

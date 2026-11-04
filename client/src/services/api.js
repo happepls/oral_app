@@ -527,11 +527,12 @@ export const aiAPI = {
     }
   },
 
-  async tts(text, voice = 'Serena') {
+  async tts(text, voice = 'Serena', { signal } = {}) {
     const body = { text, voice };
 
     const response = await fetch(`${V1_BASE_URL}/ai/tts`, {
       method: 'POST',
+      signal,
       headers: { ...getAuthHeaders(), 'Idempotency-Key': idempotencyKey() },
       credentials: 'include',
       body: JSON.stringify(body)
