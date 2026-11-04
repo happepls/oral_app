@@ -1,4 +1,8 @@
 {
+  "score_feedback_title": "연습 피드백",
+  "score_feedback_gain": "숙련도 +{{delta}}",
+  "score_feedback_total": "총점 {{total}}",
+  "score_feedback_hide": "이 피드백 숨기기",
   "ai_reply_pending": "AI 튜터가 답변 중입니다…",
   "message_translate": "이 AI 답변 번역",
   "message_translate_retry": "번역 재시도",

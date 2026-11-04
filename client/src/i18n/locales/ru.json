@@ -1,4 +1,8 @@
 {
+  "score_feedback_title": "Результат практики",
+  "score_feedback_gain": "+{{delta}} к навыку",
+  "score_feedback_total": "Всего {{total}}",
+  "score_feedback_hide": "Скрыть этот отзыв",
   "ai_reply_pending": "ИИ-преподаватель готовит ответ…",
   "message_translate": "Перевести этот ответ ИИ",
   "message_translate_retry": "Повторить перевод",

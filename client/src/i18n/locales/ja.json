@@ -1,4 +1,8 @@
 {
+  "score_feedback_title": "練習フィードバック",
+  "score_feedback_gain": "習熟度 +{{delta}}",
+  "score_feedback_total": "合計 {{total}}",
+  "score_feedback_hide": "このフィードバックを非表示",
   "ai_reply_pending": "AI チューターが返信しています…",
   "message_translate": "この AI の返信を翻訳",
   "message_translate_retry": "翻訳を再試行",

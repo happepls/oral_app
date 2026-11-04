@@ -1,4 +1,8 @@
 {
+  "score_feedback_title": "Retour sur la pratique",
+  "score_feedback_gain": "+{{delta}} de maîtrise",
+  "score_feedback_total": "Total {{total}}",
+  "score_feedback_hide": "Masquer ce retour",
   "ai_reply_pending": "Votre tuteur IA prépare sa réponse…",
   "message_translate": "Traduire cette réponse de l’IA",
   "message_translate_retry": "Réessayer la traduction",

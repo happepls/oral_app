@@ -11,6 +11,7 @@ import { PracticeReport } from '../components/PracticeReport';
 import { AccessibleDialog } from '../components/AccessibleDialog';
 import TranslatableMessage from '../components/TranslatableMessage';
 import AiReplyPending from '../components/AiReplyPending';
+import ScoreFeedback from '../components/ScoreFeedback';
 import { useAuth } from '../contexts/AuthContext';
 import AudioBar from '../components/AudioBar.jsx';
 import {
@@ -2268,8 +2269,13 @@ function Conversation() {
                    content += ` - ${message}`;
                }
 
-               setMessages(prev => [...prev, {
-                   type: 'system',
+               const feedbackId = `score:${profPayload.task_id}:${profPayload.scoring_generation}:${updateKey}`;
+               setMessages(prev => prev.some(m => m.id === feedbackId) ? prev : [...prev, {
+                   type: 'score_feedback',
+                   id: feedbackId,
+                   delta,
+                   total,
+                   reason: message,
                    content: content,
                    isFinal: true
                }]);
@@ -2290,10 +2296,7 @@ function Conversation() {
                    localStorage.setItem(_lsScenarioKey('task_progress_', scenario), newProgress.toString());
                }
                
-               // Auto-dismiss after 3 seconds
-               setTimeout(() => {
-                   setMessages(prev => prev.filter(m => m.type !== 'system' || !m.content.includes('熟练度')));
-               }, 3000);
+               // Feedback stays in the conversation until explicitly dismissed.
            }
 
            // Show ScorePopup when a sub-task is completed with scores
@@ -3939,6 +3942,9 @@ function Conversation() {
         )}
 
         {messages.map((msg, index) => {
+          if (msg.type === 'score_feedback') {
+            return <ScoreFeedback key={msg.id} delta={msg.delta} total={msg.total} reason={msg.reason} />;
+          }
           if (msg.type === 'expression_feedback') {
             return null; // Ignore metadata restored from older clients too.
           }

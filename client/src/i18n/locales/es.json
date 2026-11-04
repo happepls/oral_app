@@ -1,4 +1,8 @@
 {
+  "score_feedback_title": "Comentarios de práctica",
+  "score_feedback_gain": "+{{delta}} de dominio",
+  "score_feedback_total": "Total {{total}}",
+  "score_feedback_hide": "Ocultar este comentario",
   "ai_reply_pending": "Tu tutor de IA está respondiendo…",
   "message_translate": "Traducir esta respuesta de IA",
   "message_translate_retry": "Reintentar traducción",

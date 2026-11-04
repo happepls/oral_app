@@ -1,4 +1,8 @@
 {
+  "score_feedback_title": "Practice feedback",
+  "score_feedback_gain": "+{{delta}} proficiency",
+  "score_feedback_total": "Total {{total}}",
+  "score_feedback_hide": "Hide this feedback",
   "ai_reply_pending": "Your AI tutor is replying…",
   "message_translate": "Translate this AI reply",
   "message_translate_retry": "Retry translation",

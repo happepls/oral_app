@@ -1,4 +1,8 @@
 {
+  "score_feedback_title": "Feedback da prática",
+  "score_feedback_gain": "+{{delta}} de proficiência",
+  "score_feedback_total": "Total {{total}}",
+  "score_feedback_hide": "Ocultar este feedback",
   "ai_reply_pending": "Seu tutor de IA está respondendo…",
   "message_translate": "Traduzir esta resposta da IA",
   "message_translate_retry": "Tentar traduzir novamente",
