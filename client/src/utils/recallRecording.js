@@ -1,10 +1,15 @@
 // One explicit recording owns a frozen sentence/step across browser ASR restarts.
 // Result indexes belong to one engine instance. Only confirmed slots survive
 // a restart; interim hypotheses replace the preview and never enter scoring.
+export function shouldUseSingleUtteranceRecognition(nav = typeof navigator === 'undefined' ? undefined : navigator) {
+  return nav?.userAgentData?.platform === 'Android' || /Android/i.test(nav?.userAgent || '');
+}
+
 export function createRecallRecording({
   Recognition, lang, onComplete, onError, onEnd,
   onPreview = () => {}, onStopping = () => {}, stopTimeoutMs = 4000,
   onDiagnostic = () => {},
+  singleUtterance = false,
 }) {
   let recognizer;
   let listening = true;
@@ -47,7 +52,9 @@ export function createRecallRecording({
       .sort(([a], [b]) => a - b).map(([, text]) => text).join(' ').trim();
     const isCurrent = () => !settled && recognizer === current;
     current.lang = lang;
-    current.continuous = true;
+    // Android's continuous adapter can report incremental hypotheses as new
+    // final slots. Request one utterance instead of guessing/deduplicating text.
+    current.continuous = !singleUtterance;
     current.interimResults = true;
     current.maxAlternatives = 1;
     current.onresult = event => {
@@ -63,6 +70,16 @@ export function createRecallRecording({
       onDiagnostic({ event: 'result', engineIndex: index, resultIndex: event.resultIndex ?? 0,
         finalCount: finals.size, interimCount: interim.length, finalLength: confirmed().length });
       onPreview([...segments, confirmed(), ...interim].filter(Boolean).join(' '));
+      if (singleUtterance && finals.size) {
+        // continuous=false promises at most one final result. Fail closed if
+        // the provider violates that contract; never choose a target-like slot.
+        if (finals.size !== 1 || interim.length) {
+          settle('incompatible-results');
+          return;
+        }
+        segments.push(confirmed());
+        settle();
+      }
     };
     current.onerror = event => {
       if (!isCurrent() || event.error === 'no-speech') return;
@@ -76,7 +93,7 @@ export function createRecallRecording({
       if (text) segments.push(text);
       // Invalidate before restarting, including callbacks already queued.
       release();
-      if (!listening) {
+      if (!listening || singleUtterance) {
         settle(interim.length ? 'incomplete-result' : undefined);
         return;
       }

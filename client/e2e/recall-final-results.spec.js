@@ -73,6 +73,26 @@ test('Japanese revisions wait for final result, then enable memory step @critica
   await expect(page.getByText('次の文です。', { exact: true })).toBeVisible();
 });
 
+test('Android single utterance completes both steps without end or an automatic restart @critical', async ({ page }) => {
+  await page.addInitScript(() => Object.defineProperty(navigator, 'userAgent', {
+    configurable: true, get: () => 'Mozilla/5.0 (Linux; Android 17; Pixel 10a)',
+  }));
+  await setup(page);
+  await expect(page.getByText(/停顿后自动结束/)).toBeVisible();
+  for (const step of ['跟读', '背诵']) {
+    await page.getByRole('button', { name: `🎙️ 点击说话（${step}）` }).click();
+    expect(await page.evaluate(() => window.recognizers.at(-1).continuous)).toBe(false);
+    await page.evaluate(target => {
+      window.emitResult(target.slice(0, 4), false);
+      window.emitResult(target, false);
+      window.emitResult(target, true);
+    }, target);
+  }
+  await expect(page.getByRole('button', { name: /本句已完成/ })).toBeDisabled();
+  await expect(page.getByText('识别 100%')).toHaveCount(2);
+  expect(await page.evaluate(() => window.recognizers.length)).toBe(2);
+});
+
 test('translation failure is uncached and retryable; TTS 503 remains retryable @critical', async ({ page }) => {
   const counts = await setup(page, true);
   await expect(page.getByRole('alert')).toContainText('翻译');

@@ -16,6 +16,7 @@ jest.mock('motion/react', () => ({
 const target = 'この結果は、主にスケジュール調整の遅れによるものです。';
 let engines;
 let audio;
+let userAgentSpy;
 const result = (text, isFinal) => Object.assign([{ transcript: text }], { isFinal });
 const send = (text, isFinal = false) => act(() => engines.at(-1).onresult({ resultIndex: 0, results: [result(text, isFinal)] }));
 const start = () => fireEvent.click(screen.getByRole('button', { name: /クリック|点击说话/ }));
@@ -38,7 +39,40 @@ beforeEach(() => {
   aiAPI.getDailyRecall.mockResolvedValue({ sentences: [target, '次の文です。'] });
   aiAPI.tts.mockResolvedValue(new Blob(['audio']));
 });
-afterEach(() => { delete window.SpeechRecognition; jest.useRealTimers(); });
+afterEach(() => { delete window.SpeechRecognition; jest.useRealTimers(); userAgentSpy?.mockRestore(); });
+
+test('Android auto-final advances reading to memory without restarting recognition', async () => {
+  userAgentSpy = jest.spyOn(navigator, 'userAgent', 'get').mockReturnValue('Mozilla/5.0 (Linux; Android 17; Pixel 10a)');
+  render(<Recall />);
+  await screen.findByText(target);
+  expect(screen.getByText(/停顿后自动结束/)).toBeVisible();
+  start();
+  expect(engines[0].continuous).toBe(false);
+  const lateEnd = engines[0].onend;
+  send(target, true);
+  act(() => lateEnd());
+  expect(screen.getByRole('button', { name: /点击说话（背诵）/ })).toBeEnabled();
+  expect(engines).toHaveLength(1);
+  start();
+  send(target, true);
+  expect(screen.getByRole('button', { name: /本句已完成/ })).toBeDisabled();
+  expect(screen.getAllByText('识别 100%')).toHaveLength(2);
+});
+
+test('failed retry clears previous score and transcript without passing the step', async () => {
+  render(<Recall />);
+  await screen.findByText(target);
+  start();
+  send('unrelated synthetic response', true);
+  fireEvent.click(screen.getByRole('button', { name: /点击结束/ }));
+  act(() => engines[0].onend());
+  expect(screen.getByText(/unrelated synthetic response/)).toBeVisible();
+  start();
+  act(() => engines[1].onerror({ error: 'network' }));
+  expect(screen.queryByText(/unrelated synthetic response/)).not.toBeInTheDocument();
+  expect(screen.queryByText(/识别 \d+%/)).not.toBeInTheDocument();
+  expect(screen.getByRole('button', { name: /点击说话（跟读）/ })).toBeEnabled();
+});
 
 test.each(['japanese', 'ja', 'ja-JP', 'jp'])('%s resolves recognition and translation consistently', language => {
   expect(resolveLang(language)).toEqual({ bcp47: 'ja-JP', code: 'ja' });
