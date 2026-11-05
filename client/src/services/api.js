@@ -553,6 +553,15 @@ export const aiAPI = {
     return response.blob();
   },
 
+  async transcribeRecall(audio, language, { signal } = {}) {
+    const response = await fetch(`/api/ai/recall-transcribe?language=${encodeURIComponent(language)}`, {
+      method: 'POST', credentials: 'include', signal,
+      headers: { 'Content-Type': 'audio/wav' }, body: audio,
+    });
+    if (!response.ok) throw Object.assign(new Error('transcription-unavailable'), { status: response.status });
+    return response.json();
+  },
+
   async translate(text, targetLang, { signal } = {}) {
     if (!targetLang) throw new Error('Native language is unavailable');
     const res = await fetch('/api/ai/translate', {

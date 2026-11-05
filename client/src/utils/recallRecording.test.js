@@ -1,4 +1,4 @@
-import { createRecallRecording } from './recallRecording';
+import { createRecallRecording, shouldUseSingleUtteranceRecognition } from './recallRecording';
 
 let engines;
 const result = (text, isFinal = true) => Object.assign([{ transcript: text }], { isFinal });
@@ -153,4 +153,59 @@ test('diagnostics expose state and lengths without speech content', () => {
   expect(onDiagnostic).toHaveBeenCalledWith(expect.objectContaining({ event: 'result', interimCount: 1, finalCount: 0 }));
   expect(onDiagnostic).toHaveBeenLastCalledWith(expect.objectContaining({ event: 'settled', error: 'incomplete-result' }));
   expect(JSON.stringify(onDiagnostic.mock.calls)).not.toContain('private synthetic speech');
+});
+
+test.each([
+  [{ userAgent: 'Mozilla/5.0 (Linux; Android 17; Pixel 10a)' }, true],
+  [{ userAgentData: { platform: 'Android' }, userAgent: '' }, true],
+  [{ userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 26_0)' }, false],
+  [{ userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X)' }, false],
+])('single utterance is restricted to Android (%j)', (nav, expected) => {
+  expect(shouldUseSingleUtteranceRecognition(nav)).toBe(expected);
+});
+
+test.each([false, true])('Android final settles once without waiting for end (manual stop=%s)', stop => {
+  const { session, onComplete, onEnd, onError } = setup({ singleUtterance: true });
+  const engine = engines[0];
+  const lateEnd = engine.onend;
+  const lateResult = engine.onresult;
+  expect(engine.continuous).toBe(false);
+  // Repetition spoken inside the utterance must be retained verbatim.
+  engine.result('はい', false);
+  engine.result('はい、はい', false);
+  if (stop) session.stop();
+  engine.result('はい、はい');
+  lateEnd();
+  lateResult({ resultIndex: 0, results: [result('late')] });
+  jest.runAllTimers();
+  expect(onComplete).toHaveBeenCalledTimes(1);
+  expect(onComplete).toHaveBeenCalledWith('はい、はい');
+  expect(onError).not.toHaveBeenCalled();
+  expect(onEnd).toHaveBeenCalledTimes(1);
+  expect(engines).toHaveLength(1);
+  expect(engine.abort).toHaveBeenCalledTimes(1);
+});
+
+test.each(['empty', 'interim', 'timeout', 'permission', 'multiple-finals'])('Android %s fails without automatic restart or scoring', mode => {
+  const { session, onComplete, onError } = setup({ singleUtterance: true });
+  if (mode === 'multiple-finals') engines[0].onresult({ resultIndex: 0, results: [result('first'), result('second')] });
+  else if (mode === 'permission') engines[0].onerror({ error: 'not-allowed' });
+  else {
+    if (mode !== 'empty') engines[0].result('unfinished', false);
+    if (mode === 'timeout') { session.stop(); jest.advanceTimersByTime(4000); }
+    else engines[0].onend();
+  }
+  expect(onComplete).not.toHaveBeenCalled();
+  expect(onError).toHaveBeenCalledTimes(1);
+  expect(engines).toHaveLength(1);
+  expect(jest.getTimerCount()).toBe(0);
+});
+
+test('Android cancellation rejects a queued final result', () => {
+  const { session, onComplete, onError } = setup({ singleUtterance: true });
+  const lateResult = engines[0].onresult;
+  session.cancel();
+  lateResult({ resultIndex: 0, results: [result('cancelled')] });
+  expect(onComplete).not.toHaveBeenCalled();
+  expect(onError).not.toHaveBeenCalled();
 });
