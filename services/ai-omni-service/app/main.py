@@ -184,6 +184,11 @@ class _TTLDict:
 session_phases: _TTLDict = _TTLDict(ttl=_SESSION_PHASES_TTL, maxsize=_SESSION_PHASES_MAX)
 
 app = FastAPI()
+try:
+    from .recall_asr import router as recall_asr_router
+except ImportError:
+    from recall_asr import router as recall_asr_router
+app.include_router(recall_asr_router(DASHSCOPE_CONFIG, check_request_access))
 
 
 @app.middleware('http')
