@@ -1,0 +1,36 @@
+.score-feedback {
+  position: relative;
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  margin: 20px 16px;
+  padding: 18px 48px 18px 14px;
+  border: 1px solid #d5e2db;
+  border-radius: 22px;
+  background: linear-gradient(115deg, #f1fbf4, #f5f6ff);
+  box-shadow: 0 8px 24px #364c6910;
+  color: #243447;
+}
+.score-feedback__accent { flex: 0 0 64px; height: 64px; pointer-events: none; }
+.score-feedback__animation { display: block; position: relative; width: 100%; height: 100%; }
+.score-feedback__static { display: flex; width: 100%; height: 100%; align-items: center; justify-content: center; color: #637ff1; }
+.score-feedback__canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
+.score-feedback__canvas--loading { visibility: hidden; }
+.score-feedback__body { flex: 1; min-width: 0; }
+.score-feedback__label { margin: 0 0 5px; font-size: 12px; font-weight: 600; color: #526477; }
+.score-feedback__numbers { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; }
+.score-feedback__numbers strong { font-size: 20px; line-height: 1.4; font-weight: 750; color: #23704b; }
+.score-feedback__numbers span { font-size: 13px; color: #526477; }
+.score-feedback__reason { margin: 9px 0 0; font-size: 14px; line-height: 1.65; overflow-wrap: anywhere; }
+.score-feedback__dismiss { position: absolute; top: 6px; right: 6px; width: 40px; height: 40px; display: flex; align-items: center; justify-content: center; border: 0; border-radius: 50%; color: #526477; background: transparent; cursor: pointer; }
+.score-feedback__dismiss:hover { background: #dfe8f1; }
+.score-feedback__dismiss:focus-visible { outline: 2px solid #637ff1; outline-offset: 2px; }
+@media (max-width: 400px) {
+  .score-feedback { gap: 8px; margin-inline: 8px; padding-left: 10px; }
+  .score-feedback__accent { flex-basis: 40px; height: 48px; }
+  .score-feedback__numbers strong { font-size: 18px; }
+}
+.dark .score-feedback { background: linear-gradient(115deg, #19362c, #252e49); border-color: #3e5c52; color: #e7edf4; }
+.dark .score-feedback__numbers strong { color: #a0e8bd; }
+.dark .score-feedback__label, .dark .score-feedback__numbers span, .dark .score-feedback__dismiss { color: #c3cedc; }
+.dark .score-feedback__dismiss:hover { background: #3d4c60; }

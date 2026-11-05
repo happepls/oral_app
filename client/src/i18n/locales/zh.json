@@ -1,4 +1,8 @@
 {
+  "score_feedback_title": "练习反馈",
+  "score_feedback_gain": "+{{delta}} 熟练度",
+  "score_feedback_total": "总分 {{total}}",
+  "score_feedback_hide": "隐藏本条反馈",
   "ai_reply_pending": "AI 导师正在回复…",
   "message_translate": "翻译这条 AI 回复",
   "message_translate_retry": "重试翻译",
