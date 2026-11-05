@@ -70,8 +70,16 @@ Human PR merge and production release gates remain applicable.
 - Initial independent review issues are fixed. Final independent re-review was
   unavailable because the review agent hit its usage limit; do not claim that
   unavailable re-review passed.
-- Real-device manual pause test and production page acceptance remain pending.
+- Pixel localhost acceptance: user reported “localhost页面测试通过！仅手动结束录制有效”.
+  Pixel was connected with adb reverse tcp:5001; its loaded page showed the
+  manual-only hint and main.72ca4afe.js. Local AI service logs contain seven
+  successful `/recall-transcribe?language=en` responses during this acceptance
+  window (no audio or transcript inspected). Do not claim this was a Japanese
+  physical-device test. Japanese synthetic provider tests are recorded above.
+- Production page acceptance remains pending.
 - Queue: https://github.com/happepls/oral_app/issues/103.
+- Backend/gateway PR: https://github.com/happepls/oral_app/pull/104.
+- Frontend PR: https://github.com/happepls/oral_app/pull/105 (stacked on #104).
 
 ## Rollback
 
