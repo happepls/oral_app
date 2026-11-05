@@ -2,10 +2,13 @@ import React from 'react';
 import { act, fireEvent, render, screen } from '@testing-library/react';
 import Recall, { resolveLang } from '../pages/Recall';
 import { aiAPI, userAPI } from '../services/api';
+import { createRecallManualRecording } from '../utils/recallManualRecording';
+
+jest.mock('../utils/recallManualRecording', () => ({ createRecallManualRecording: jest.fn() }));
 
 jest.mock('react-router-dom', () => ({ useNavigate: () => jest.fn() }), { virtual: true });
 jest.mock('../services/api', () => ({
-  aiAPI: { getDailyRecall: jest.fn(), translate: jest.fn(), tts: jest.fn() },
+  aiAPI: { getDailyRecall: jest.fn(), translate: jest.fn(), tts: jest.fn(), transcribeRecall: jest.fn() },
   userAPI: { getActiveGoal: jest.fn(), getRecallDailyState: jest.fn(), markRecallComplete: jest.fn(), incrementRecallSwitch: jest.fn() },
 }));
 jest.mock('../components/GuajiMascot', () => ({ GuajiMascot: () => null }));
@@ -16,20 +19,19 @@ jest.mock('motion/react', () => ({
 const target = 'この結果は、主にスケジュール調整の遅れによるものです。';
 let engines;
 let audio;
-let userAgentSpy;
-const result = (text, isFinal) => Object.assign([{ transcript: text }], { isFinal });
-const send = (text, isFinal = false) => act(() => engines.at(-1).onresult({ resultIndex: 0, results: [result(text, isFinal)] }));
+const send = text => act(() => { engines.at(-1).onComplete(text); engines.at(-1).onEnd(); });
 const start = () => fireEvent.click(screen.getByRole('button', { name: /クリック|点击说话/ }));
 beforeEach(() => {
   jest.clearAllMocks();
   localStorage.clear();
   engines = [];
-  window.SpeechRecognition = class {
-    constructor() { engines.push(this); }
-    start() {}
-    stop = jest.fn();
-    abort = jest.fn();
-  };
+  Object.defineProperty(navigator, 'mediaDevices', { configurable: true, value: { getUserMedia: jest.fn() } });
+  window.MediaRecorder = jest.fn();
+  createRecallManualRecording.mockImplementation(callbacks => {
+    const engine = { ...callbacks, stop: jest.fn(callbacks.onStopping), cancel: jest.fn() };
+    engines.push(engine);
+    return engine;
+  });
   audio = { play: jest.fn().mockResolvedValue(), pause: jest.fn() };
   window.Audio = jest.fn(() => audio);
   URL.createObjectURL = jest.fn(() => 'blob:preview');
@@ -39,22 +41,25 @@ beforeEach(() => {
   aiAPI.getDailyRecall.mockResolvedValue({ sentences: [target, '次の文です。'] });
   aiAPI.tts.mockResolvedValue(new Blob(['audio']));
 });
-afterEach(() => { delete window.SpeechRecognition; jest.useRealTimers(); userAgentSpy?.mockRestore(); });
+afterEach(() => { delete window.MediaRecorder; jest.useRealTimers(); });
 
-test('Android auto-final advances reading to memory without restarting recognition', async () => {
-  userAgentSpy = jest.spyOn(navigator, 'userAgent', 'get').mockReturnValue('Mozilla/5.0 (Linux; Android 17; Pixel 10a)');
+test('manual recording waits through pauses and both steps require stop', async () => {
   render(<Recall />);
   await screen.findByText(target);
-  expect(screen.getByText(/停顿后自动结束/)).toBeVisible();
+  expect(screen.getByText(/停顿不会结束录音/)).toBeVisible();
   start();
-  expect(engines[0].continuous).toBe(false);
-  const lateEnd = engines[0].onend;
-  send(target, true);
-  act(() => lateEnd());
+  expect(engines[0].language).toBe('ja');
+  expect(engines[0].transcribe).toBe(aiAPI.transcribeRecall);
+  jest.useFakeTimers();
+  act(() => jest.advanceTimersByTime(10000));
+  expect(screen.getByRole('button', { name: /点击结束/ })).toBeEnabled();
+  fireEvent.click(screen.getByRole('button', { name: /点击结束/ }));
+  send(target);
   expect(screen.getByRole('button', { name: /点击说话（背诵）/ })).toBeEnabled();
   expect(engines).toHaveLength(1);
   start();
-  send(target, true);
+  fireEvent.click(screen.getByRole('button', { name: /点击结束/ }));
+  send(target);
   expect(screen.getByRole('button', { name: /本句已完成/ })).toBeDisabled();
   expect(screen.getAllByText('识别 100%')).toHaveLength(2);
 });
@@ -63,12 +68,11 @@ test('failed retry clears previous score and transcript without passing the step
   render(<Recall />);
   await screen.findByText(target);
   start();
-  send('unrelated synthetic response', true);
   fireEvent.click(screen.getByRole('button', { name: /点击结束/ }));
-  act(() => engines[0].onend());
+  send('unrelated synthetic response');
   expect(screen.getByText(/unrelated synthetic response/)).toBeVisible();
   start();
-  act(() => engines[1].onerror({ error: 'network' }));
+  act(() => { engines[1].onError('transcription-unavailable'); engines[1].onEnd(); });
   expect(screen.queryByText(/unrelated synthetic response/)).not.toBeInTheDocument();
   expect(screen.queryByText(/识别 \d+%/)).not.toBeInTheDocument();
   expect(screen.getByRole('button', { name: /点击说话（跟读）/ })).toBeEnabled();
@@ -78,24 +82,21 @@ test.each(['japanese', 'ja', 'ja-JP', 'jp'])('%s resolves recognition and transl
   expect(resolveLang(language)).toEqual({ bcp47: 'ja-JP', code: 'ja' });
 });
 
-test('screenshot target revisions score once after stop, then move from reading to memory', async () => {
+test('final server transcript scores after stop then moves reading to memory', async () => {
   render(<Recall />);
   await screen.findByText(target);
   start();
-  expect(engines[0].lang).toBe('ja-JP');
-  for (let i = 1; i <= target.length; i++) send(target.slice(0, i));
+  expect(engines[0].language).toBe('ja');
   fireEvent.click(screen.getByRole('button', { name: /点击结束/ }));
   expect(screen.getByRole('button', { name: /识别中/ })).toBeDisabled();
   expect(screen.queryByText(/识别 100%/)).not.toBeInTheDocument();
-  send(target, true);
-  act(() => engines[0].onend());
+  send(target);
   expect(screen.getByRole('button', { name: /点击说话（背诵）/ })).toBeVisible();
   expect(screen.getByText('识别 100%')).toBeVisible();
   expect(screen.queryByText(target)).not.toBeInTheDocument();
   start();
   fireEvent.click(screen.getByRole('button', { name: /点击结束/ }));
-  send(target, true);
-  act(() => engines[1].onend());
+  send(target);
   expect(screen.getByRole('button', { name: /本句已完成/ })).toBeDisabled();
   expect(screen.getAllByText('识别 100%')).toHaveLength(2);
 });
@@ -104,9 +105,8 @@ test('genuine repeated final speech lowers score instead of being deduplicated',
   render(<Recall />);
   await screen.findByText(target);
   start();
-  act(() => engines[0].onresult({ resultIndex: 0, results: [result(target, true), result(target, true)] }));
   fireEvent.click(screen.getByRole('button', { name: /点击结束/ }));
-  act(() => engines[0].onend());
+  send(`${target} ${target}`);
   expect(screen.getByRole('button', { name: /点击说话（跟读）/ })).toBeVisible();
   expect(screen.getByText(/识别 4[89]%|识别 50%/)).toBeVisible();
 });
@@ -114,12 +114,10 @@ test('genuine repeated final speech lowers score instead of being deduplicated',
 test('missing final event exits recognizing with retry and no score', async () => {
   render(<Recall />);
   await screen.findByText(target);
-  jest.useFakeTimers();
   start();
-  send(target);
   fireEvent.click(screen.getByRole('button', { name: /点击结束/ }));
-  act(() => jest.advanceTimersByTime(4000));
-  expect(screen.getByRole('alert')).toHaveTextContent('最终识别结果');
+  act(() => { engines[0].onError('transcription-timeout'); engines[0].onEnd(); });
+  expect(screen.getByRole('alert')).toHaveTextContent('转写等待超时');
   expect(screen.queryByText(/识别 \d+%/)).not.toBeInTheDocument();
   expect(screen.getByRole('button', { name: /点击说话（跟读）/ })).toBeEnabled();
 });
@@ -194,17 +192,11 @@ test.each(['record', 'unmount'])('late TTS cannot play after %s', async action =
   expect(URL.createObjectURL).not.toHaveBeenCalled();
 });
 
-test('unmount cancels recognizer and rejects queued final callbacks', async () => {
+test('unmount cancels pending recording', async () => {
   const view = render(<Recall />);
   await screen.findByText(target);
   start();
-  const lateResult = engines[0].onresult;
-  const lateEnd = engines[0].onend;
   view.unmount();
-  expect(engines[0].abort).toHaveBeenCalledTimes(1);
-  act(() => {
-    lateResult({ resultIndex: 0, results: [result(target, true)] });
-    lateEnd();
-  });
+  expect(engines[0].cancel).toHaveBeenCalled();
   expect(engines).toHaveLength(1);
 });

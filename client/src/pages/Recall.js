@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'motion/react';
 import { userAPI, aiAPI } from '../services/api';
 import { GuajiMascot } from '../components/GuajiMascot';
-import { createRecallRecording, shouldUseSingleUtteranceRecognition } from '../utils/recallRecording';
+import { createRecallManualRecording } from '../utils/recallManualRecording';
 import {
   getLocalDateKey,
   pickProgressAwareRecallScenario,
@@ -16,8 +16,7 @@ import {
 //   2. RECITE from memory while cue is hidden → produces a "recite" score
 //   3. Both scores ≥ threshold → 下一句 unlocks
 //
-// Each step owns one explicit recording. Browser recognition restarts never
-// advance the step; Android single-utterance recognition also ends on a final.
+// Each step owns one explicit recording; only a manual stop submits it for ASR.
 
 const SIMILARITY_THRESHOLD = 0.6;
 
@@ -358,8 +357,7 @@ function Recall() {
     stopPreview();
     setSynthesizing(false);
     setPreviewError('');
-    const Ctor = window.SpeechRecognition || window.webkitSpeechRecognition;
-    if (!Ctor) {
+    if (!navigator.mediaDevices?.getUserMedia || !window.MediaRecorder) {
       setRecognitionUnavailable(true);
       return;
     }
@@ -373,9 +371,8 @@ function Recall() {
     setRecognizing(false);
     activeStepRef.current = step;
     setRecordingFor(step);
-    recognitionRef.current = createRecallRecording({
-      singleUtterance: shouldUseSingleUtteranceRecognition(),
-      Recognition: Ctor, lang: targetLang.bcp47,
+    recognitionRef.current = createRecallManualRecording({
+      language: targetLang.code, transcribe: aiAPI.transcribeRecall,
       onComplete: transcript => setRows(prev => ({
         ...prev, [i]: { ...(prev[i] || emptyRow()), [step]: similarity(transcript, target), lastText: transcript },
       })),
@@ -391,6 +388,10 @@ function Recall() {
         'incomplete-result': '识别服务已结束，但只返回了未确认文本，请重试。（incomplete-result）',
         'final-result-timeout': '等待最终识别结果超时，请重试。（final-result-timeout）',
         'incompatible-results': '浏览器返回了异常识别结果，请重试。（incompatible-results）',
+        'recording-interrupted': '录音意外中断，请保持页面在前台并重试。',
+        'recording-too-long': '录音超过两分钟或大小限制，本次未提交，请重新录音。',
+        'transcription-timeout': '转写等待超时，请重新录音重试。',
+        'transcription-unavailable': '转写服务暂时不可用，请重新录音重试。',
       })[error] || '未获得完整的最终识别结果，请点击说话重试。'),
       onEnd: () => { activeStepRef.current = null; setRecordingFor(null); setRecognizing(false); },
     });
@@ -730,8 +731,8 @@ function Recall() {
               >
                 🎙️ {recognizing ? '识别中…' : isRecording ? '点击结束' : canAdvance ? '本句已完成' : `点击说话（${stepLabel}）`}
               </button>
-              {shouldUseSingleUtteranceRecognition() && !canAdvance && (
-                <p className="text-center text-xs text-slate-500">请连贯读完整句，停顿后自动结束；也可点击结束。</p>
+              {!canAdvance && (
+                <p className="text-center text-xs text-slate-500">停顿不会结束录音，读完后请点击结束。每次最长两分钟。</p>
               )}
               {recordingError && <p role="alert" className="text-center text-sm text-red-600">{recordingError}</p>}
 
