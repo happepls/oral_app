@@ -17,6 +17,11 @@ for (const mode of ['normal', 'reduced', 'missing-asset']) {
         : path.endsWith('/goals/active') ? { goal } : {};
       return route.fulfill({ json: { success: true, data } });
     });
+    // Register after the JSON fallback so EventSource receives its real wire
+    // type. WebKit reports a JSON SSE response as a page error.
+    await page.route('**/api/users/sse', route => route.fulfill({
+      contentType: 'text/event-stream', body: 'event: connected\ndata: {}\n\n',
+    }));
     await page.routeWebSocket(/\/ws\//, socket => socket.onMessage(() => {}));
     await page.goto('/discovery');
     const button = page.locator('section[aria-labelledby="continue-heading"] button');

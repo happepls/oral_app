@@ -111,3 +111,36 @@ restore rehearsal; the next scheduled run still needs observation.
 Screenshots and command reports are local ignored artifacts under
 `quality/artifacts/`. They are not production evidence. Self-review traced the
 auth and websocket call chains; no independent reviewer approval is claimed.
+
+## UI audit follow-up
+
+The initial PR run failed seven UI cases. The existing Discovery screenshot
+baseline still showed the old order and 720px shell; the partial-failure test
+also required that old maximum. The optional-request test matched both the new
+continue heading and the scene card by the same text. Three WebKit transition
+cases reported page errors because their catch-all JSON API fixture also
+answered the EventSource endpoint.
+
+The follow-up keeps the approved 1120px layout and changes the width assertion
+to require the expected responsive shell size, with an explicit document
+overflow check. The pending-request test scopes the title to the scene list
+and also checks that the primary continue action is enabled. The transition
+fixture now returns `text/event-stream` for SSE, registered after its JSON
+fallback. The empty page-error assertion, accessibility checks and screenshot
+thresholds remain unchanged; no test is skipped.
+
+Only Discovery baselines change, across all ten Chromium viewport/theme
+combinations on both platforms. macOS snapshots were regenerated through the
+existing audit, including accessibility and clipping assertions. Linux images
+come from the same application head `808be3e` in the version-pinned CI container:
+https://github.com/happepls/oral_app/actions/runs/42581401370 . That capture run
+was expected to fail against the old screenshots; it is baseline provenance,
+not a passing verification run. Before accepting the candidates, old/new
+desktop views, narrow mobile and dark/English views were visually inspected.
+The final PR checks remain the authority for merge readiness.
+
+Local targeted regression: all ten transition/partial-failure/pending-request
+executions passed on Chromium desktop and mobile WebKit. All ten macOS
+Discovery viewport/theme audits passed during snapshot generation. Full local
+and hosted PR checks are recorded on the follow-up commit and PR checks;
+this note does not grant merge or production deployment approval.
