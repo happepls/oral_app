@@ -1,5 +1,35 @@
 const { test, expect } = require('@playwright/test');
 
+test('continue practice is first while auxiliary requests stay pending @critical', async ({ page }, testInfo) => {
+  const user = { id: 'pending-auxiliary-user', nickname: 'Demo', native_language: 'Chinese', onboarding_tour_completed: true };
+  const goal = { id: 7, status: 'active', target_language: 'English', target_level: 'Intermediate',
+    scenarios: [{ title: 'Airport Check-in', tasks: [{ id: 13, text: 'Ask for help', status: 'pending', score: 3, interaction_count: 4, scoring_generation: 3 }] }],
+    access: { membership: { active: true }, unlocked_count: 1, scenarios: [{ title: 'Airport Check-in', allowed: true }] } };
+  await page.addInitScript(() => { localStorage.setItem('ui_language', 'zh'); localStorage.setItem('onboardingTourCompleted', 'true'); });
+  await page.route(/tawk\.to|google/i, route => route.abort());
+  await page.route('**/api/**', async route => {
+    const path = new URL(route.request().url()).pathname;
+    if (/history|stats|daily-progress|daily-qa/.test(path)) return;
+    const data = path.includes('/profile') ? user : path.endsWith('/goals/active') ? { goal } : {};
+    return route.fulfill({ json: { success: true, data } });
+  });
+  await page.goto('/discovery');
+  const button = page.locator('section[aria-labelledby="continue-heading"]').getByRole('button', { name: '继续练习', exact: true });
+  await expect(button).toBeVisible();
+  const order = await page.locator('main').evaluate(main => {
+    const focus = main.querySelector('#continue-heading');
+    const scenes = main.querySelector('[data-tour="scenario-card"]');
+    const tasks = main.querySelector('[data-tour="today-tasks"]');
+    return Boolean(focus.compareDocumentPosition(scenes) & Node.DOCUMENT_POSITION_FOLLOWING)
+      && Boolean(scenes.compareDocumentPosition(tasks) & Node.DOCUMENT_POSITION_FOLLOWING);
+  });
+  expect(order).toBe(true);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(page.viewportSize().width);
+  await page.screenshot({ path: testInfo.outputPath('continue-first.png'), fullPage: true });
+  await button.click();
+  await expect(page).toHaveURL(/\/conversation\?scenario=Airport/);
+});
+
 for (const membership of ['free', 'active', 'missing']) {
   test(`Discovery trusts ${membership} authority rather than local membership @critical`, async ({ page }, testInfo) => {
     const member = membership === 'active';

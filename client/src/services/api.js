@@ -36,7 +36,7 @@ const handleResponse = async (response, { redirectOnUnauthorized = true } = {}) 
     localStorage.removeItem('authToken');
     localStorage.removeItem('token');
     localStorage.removeItem('user');
-    window.location.href = '/login';
+    window.location.href = (data.code || data.error?.code) === 'SESSION_REVOKED' ? '/login?reason=session_revoked' : '/login';
     throw new Error('登录已过期，请重新登录');
   }
 

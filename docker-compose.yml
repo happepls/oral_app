@@ -35,6 +35,7 @@ services:
     volumes:
       - ./services/history-analytics-service/src:/app/src
     environment:
+      - DEVICE_SESSION_LIMIT_ENABLED=${DEVICE_SESSION_LIMIT_ENABLED:-false}
       - PORT=3004
       - MONGO_URI=mongodb://root:password@mongo:27017/oral_app_history?authSource=admin
       - JWT_SECRET=${JWT_SECRET:?Set JWT_SECRET in the root .env}
@@ -121,6 +122,7 @@ services:
       - ./services/user-service/src:/usr/src/app/src
       - ./services/user-service/node_modules:/usr/src/app/node_modules
     environment:
+      - DEVICE_SESSION_LIMIT_ENABLED=${DEVICE_SESSION_LIMIT_ENABLED:-false}
       - PORT=3000
       - DB_HOST=postgres
       - DB_USER=user
@@ -161,6 +163,7 @@ services:
     ports:
       - "3010:3010"
     environment:
+      - DEVICE_SESSION_LIMIT_ENABLED=${DEVICE_SESSION_LIMIT_ENABLED:-false}
       - PORT=3010
       - DATABASE_URL=postgresql://user:password@postgres:5432/oral_app
       - DELEGATED_JWT_SECRET=${DELEGATED_JWT_SECRET:?Set DELEGATED_JWT_SECRET in the root .env}
@@ -184,6 +187,7 @@ services:
     volumes:
       - ./services/comms-service/src:/usr/src/app/src
     environment:
+      - DEVICE_SESSION_LIMIT_ENABLED=${DEVICE_SESSION_LIMIT_ENABLED:-false}
       - PORT=8080
       - REDIS_HOST=redis
       - REDIS_PORT=6379
@@ -246,6 +250,7 @@ services:
     ports:
       - "8083:8083"
     environment:
+      - DEVICE_SESSION_LIMIT_ENABLED=${DEVICE_SESSION_LIMIT_ENABLED:-false}
       - PORT=8083
       - REDIS_HOST=redis
       - REDIS_PORT=6379
@@ -340,6 +345,7 @@ services:
       - mongo
     healthcheck:
       test: ["CMD", "/opt/oral-backup/health.sh"]
+      start_interval: 5s
       interval: 1h
       timeout: 30s
       retries: 1

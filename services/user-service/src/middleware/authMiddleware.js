@@ -16,6 +16,7 @@ const protect = async (req, res, next) => {
 
   try {
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    await require('../models/loginSessions').validate(decoded);
     req.user = await User.findById(decoded.id);
 
     if (!req.user) {
@@ -24,6 +25,8 @@ const protect = async (req, res, next) => {
 
     next();
   } catch (error) {
+    if (error.code === 'SESSION_REVOKED') return res.status(401).json({ code: error.code, message: error.code });
+    if (!['JsonWebTokenError', 'TokenExpiredError'].includes(error.name)) return res.status(503).json({ message: 'authorization_unavailable' });
     console.error(error);
     return res.status(401).json({ message: 'Not authorized, token failed' });
   }

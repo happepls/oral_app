@@ -1,5 +1,16 @@
 # Guaji transition — local Rive example
 
+The Discovery continue-practice flow now reuses the existing local `.riv`
+export. Its React wrapper scrubs the authored timeline through in 400ms without
+waiting before navigation. It bundles the matching WASM locally and provides
+reduced-motion and failed-asset fallbacks. See `docs/pro-device-discovery.md`
+at the repository root for verification and deployment notes.
+
+CLI 1.9.2 source verification passed on 2026-11-09. That version removed
+`--once`; new exports require `--publish=local` and account login. The historical
+commands below describe the original CLI 1.8.0 export; no new signed export or
+cloud upload was performed for the browser integration.
+
 A script-free 500 × 500 badge fades in for 1 second, holds for 1 second,
 fades out for 1 second, then remains hidden for 1 second. The 240-frame
 timeline repeats at 60 fps. Edit `scene.rml` to change shapes, colours or timing.

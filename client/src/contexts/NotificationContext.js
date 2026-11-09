@@ -68,6 +68,11 @@ export const NotificationProvider = ({ children }) => {
       eventSourceRef.current = es;
       es.onopen = markConnected;
       es.addEventListener('connected', markConnected);
+      es.addEventListener('session_revoked', () => {
+        disposed = true;
+        es.close();
+        window.location.replace('/login?reason=session_revoked');
+      });
 
       SSE_EVENT_TYPES.forEach(eventType => {
         es.addEventListener(eventType, (e) => {

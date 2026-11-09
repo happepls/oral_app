@@ -1,4 +1,11 @@
 {
+  "discovery_focus_label": "Weiterlernen",
+  "discovery_continue": "Weiter üben",
+  "discovery_choose_scene": "Szenario auswählen",
+  "discovery_create_goal": "Lernziel erstellen",
+  "discovery_goal_hint": "Lege ein Ziel für deine erste Übung fest.",
+  "session_revoked_notice": "Du hast dich auf einem anderen Gerät angemeldet. Diese Sitzung wurde beendet. Pro unterstützt zwei angemeldete Geräte.",
+
   "score_feedback_title": "Übungsfeedback",
   "score_feedback_gain": "+{{delta}} Sprachkompetenz",
   "score_feedback_total": "Gesamt {{total}}",

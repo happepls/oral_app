@@ -11,6 +11,8 @@ ARG COSCLI_VERSION=v1.0.8
 RUN apt-get update \
     && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
        ca-certificates cron curl gzip ripgrep tar tzdata \
+    && ln -snf /usr/share/zoneinfo/Asia/Shanghai /etc/localtime \
+    && echo Asia/Shanghai > /etc/timezone \
     && rm -rf /var/lib/apt/lists/*
 RUN COSCLI_ARCH="$(dpkg --print-architecture)" \
     && case "${COSCLI_ARCH}" in \

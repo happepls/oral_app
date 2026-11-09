@@ -1,4 +1,11 @@
 {
+  "discovery_focus_label": "Keep learning",
+  "discovery_continue": "Continue practice",
+  "discovery_choose_scene": "Choose a scenario",
+  "discovery_create_goal": "Create a learning goal",
+  "discovery_goal_hint": "Set a goal to start your first practice.",
+  "session_revoked_notice": "You signed in on another device. This session has ended. Pro supports two signed-in devices.",
+
   "score_feedback_title": "Practice feedback",
   "score_feedback_gain": "+{{delta}} proficiency",
   "score_feedback_total": "Total {{total}}",

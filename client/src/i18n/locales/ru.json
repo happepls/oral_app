@@ -1,4 +1,11 @@
 {
+  "discovery_focus_label": "Продолжайте учиться",
+  "discovery_continue": "Продолжить практику",
+  "discovery_choose_scene": "Выбрать сценарий",
+  "discovery_create_goal": "Создать учебную цель",
+  "discovery_goal_hint": "Задайте цель, чтобы начать первую тренировку.",
+  "session_revoked_notice": "Вы вошли на другом устройстве. Этот сеанс завершён. Pro поддерживает одновременный вход на двух устройствах.",
+
   "score_feedback_title": "Результат практики",
   "score_feedback_gain": "+{{delta}} к навыку",
   "score_feedback_total": "Всего {{total}}",

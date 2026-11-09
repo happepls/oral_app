@@ -1,5 +1,6 @@
 import React, { Suspense, lazy, useCallback, useEffect, useState } from 'react';
 import { BrowserRouter as Router, Route, Routes, Navigate, useLocation } from 'react-router-dom';
+import PracticeTransition from './components/PracticeTransition';
 import { useTranslation } from 'react-i18next';
 import { GoogleOAuthProvider } from '@react-oauth/google';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
@@ -115,6 +116,7 @@ const AppRoutes = () => {
     return (
         <div className="App">
           <PageMetadata />
+          <PracticeTransition />
           <Suspense fallback={<RouteLoading />}>
             <Routes>
               <Route path="/" element={<LandingWithSplash />} />

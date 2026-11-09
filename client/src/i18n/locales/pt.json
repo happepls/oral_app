@@ -1,4 +1,11 @@
 {
+  "discovery_focus_label": "Continue aprendendo",
+  "discovery_continue": "Continuar prática",
+  "discovery_choose_scene": "Escolher um cenário",
+  "discovery_create_goal": "Criar uma meta",
+  "discovery_goal_hint": "Defina uma meta para começar sua primeira prática.",
+  "session_revoked_notice": "Você entrou em outro dispositivo. Esta sessão terminou. O Pro permite dois dispositivos conectados.",
+
   "score_feedback_title": "Feedback da prática",
   "score_feedback_gain": "+{{delta}} de proficiência",
   "score_feedback_total": "Total {{total}}",
