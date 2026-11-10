@@ -30,7 +30,7 @@ async function startComms(aiUrl, decision = { allowed: true, status: 200 }, dela
   const authority = http.createServer((req, res) => {
     if (req.url === '/api/users/verify') {
       assert.match(req.headers.authorization, /^Bearer /);
-      const result = sessionDecision();
+      const result = sessionDecision(req);
       req.resume();
       res.writeHead(result.status, { 'content-type': 'application/json' });
       res.end(JSON.stringify(result));
@@ -93,6 +93,83 @@ test('immediate session handshake survives slow authorization', async () => {
 function ticket(type = 'realtime_ticket') {
   return jwt.sign({ id: 'quality-user', type }, secret, { algorithm: 'HS256', expiresIn: '60s' });
 }
+
+test('browser session survives admission-ticket expiry and still enforces revocation', async () => {
+  const aiHttp = http.createServer();
+  const aiWss = new WebSocketServer({ server: aiHttp });
+  const received = [];
+  const checkedTokens = [];
+  let revoked = false;
+  let upstreams = 0;
+  let upstreamAuthorization;
+  aiWss.on('connection', (socket, request) => {
+    upstreams += 1;
+    upstreamAuthorization = request.headers.authorization;
+    socket.on('message', message => received.push(message.toString()));
+  });
+  aiHttp.listen(0, '127.0.0.1');
+  await once(aiHttp, 'listening');
+  const browserToken = jwt.sign({ id: 'quality-user', sid: 'browser-session', type: 'access' }, secret,
+    { issuer: 'oral-app', audience: 'oral-app-users', expiresIn: '1h' });
+  const comms = await startComms(`ws://127.0.0.1:${aiHttp.address().port}/stream`, undefined, 0, req => {
+    assert.equal(req.headers['content-type'], 'application/json');
+    const raw = req.headers.authorization.slice(7);
+    checkedTokens.push(raw);
+    try { jwt.verify(raw, secret); }
+    catch { return { status: 401, code: 'authorization_unavailable' }; }
+    return revoked ? { status: 401, code: 'SESSION_REVOKED' } : { status: 200 };
+  });
+  let client, expiredAttempt;
+  try {
+    // Issue after server readiness so cold CI startup cannot consume its TTL.
+    const shortTicket = jwt.sign({ id: 'quality-user', sid: 'browser-session', type: 'realtime_ticket' }, secret,
+      { expiresIn: '3s' });
+    const connected = once(aiWss, 'connection');
+    const address = `ws://127.0.0.1:${comms.port}/api/v1/realtime?ticket=${encodeURIComponent(shortTicket)}&sessionId=durable-browser&mode=daily_qa`;
+    client = new WebSocket(address, { headers: { Cookie: `accessToken=${browserToken}` } });
+    const errors = [];
+    client.on('message', message => { const frame = JSON.parse(message.toString()); if (frame.type === 'error') errors.push(frame); });
+    await once(client, 'open');
+    await connected;
+    // Cross the real ticket expiry and a real 10-second session heartbeat.
+    await new Promise(resolve => setTimeout(resolve, 11000));
+    assert.equal(client.readyState, WebSocket.OPEN);
+    assert.deepEqual(errors, []);
+    client.send(JSON.stringify({ type: 'user_text', text: 'synthetic post-expiry message' }));
+    const deadline = Date.now() + 2000;
+    while (!received.length && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 10));
+    assert.equal(received.length, 1);
+    assert.equal(upstreams, 1);
+    assert.equal(upstreamAuthorization, `Bearer ${browserToken}`);
+    assert.equal(jwt.verify(upstreamAuthorization.slice(7), secret, {
+      algorithms: ['HS256'], issuer: 'oral-app', audience: 'oral-app-users',
+      clockTimestamp: Math.floor(Date.now() / 1000) + 180,
+    }).sid, 'browser-session');
+    assert.ok(checkedTokens.length >= 3);
+    assert.ok(checkedTokens.every(value => value === browserToken));
+
+    // A live browser cookie does not make an expired admission ticket reusable.
+    expiredAttempt = new WebSocket(address, { headers: { Cookie: `accessToken=${browserToken}` } });
+    const denied = once(expiredAttempt, 'message');
+    const rejectedClose = once(expiredAttempt, 'close');
+    assert.equal(JSON.parse((await denied)[0]).payload.code, 'authentication_required');
+    assert.equal((await rejectedClose)[0], 1008);
+    assert.equal(upstreams, 1);
+
+    revoked = true;
+    const denial = once(client, 'message');
+    const closed = once(client, 'close');
+    client.send(JSON.stringify({ type: 'user_text', text: 'must never reach AI after revocation' }));
+    assert.equal(JSON.parse((await denial)[0]).payload.code, 'SESSION_REVOKED');
+    assert.equal((await closed)[0], 4003);
+    assert.equal(received.length, 1);
+  } finally {
+    client?.terminate(); expiredAttempt?.terminate();
+    for (const socket of aiWss.clients) socket.terminate();
+    comms.stop();
+    await new Promise(resolve => aiWss.close(() => aiHttp.close(resolve)));
+  }
+});
 
 test('revoked browser cannot forward another message or reconnect', async () => {
   let revoked = false;
