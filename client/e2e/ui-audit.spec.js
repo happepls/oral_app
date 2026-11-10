@@ -210,7 +210,8 @@ test('@critical discovery keeps primary tasks visible and exposes semantic state
   await expect(page.getByRole('button', { name: /recall|复述/i })).toHaveAttribute('data-completed', 'false');
   await expect(page.getByRole('progressbar', { name: /overall|总进度/i })).toHaveAttribute('aria-valuenow');
 
-  const completedFilter = page.getByRole('button', { name: /completed|已完成/i }).last();
+  const completedFilter = page.getByRole('group', { name: /filter scenarios|筛选场景/i })
+    .getByRole('button', { name: /^(completed|已完成)$/i });
   await completedFilter.click();
   await expect(completedFilter).toHaveAttribute('aria-pressed', 'true');
 
