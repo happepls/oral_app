@@ -5,7 +5,7 @@ async function checkLoginSession(token, claims) {
   const timer = setTimeout(() => controller.abort(), 5000);
   try {
     const response = await fetch(new URL('/api/users/verify', process.env.USER_SERVICE_URL || 'http://user-service:3000'), {
-      method: 'POST', headers: { Authorization: 'Bearer ' + token }, signal: controller.signal,
+      method: 'POST', headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' }, signal: controller.signal,
     });
     if (response.ok) return;
     const body = await response.json().catch(() => ({}));
