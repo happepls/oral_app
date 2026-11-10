@@ -19,7 +19,10 @@ export const AuthProvider = ({ children }) => {
       controller = new AbortController();
       const timeout = setTimeout(() => controller?.abort(), 5000);
       try {
-        const response = await fetch('/api/users/verify', { method: 'POST', credentials: 'include', signal: controller.signal });
+        const response = await fetch('/api/users/verify', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          credentials: 'include', signal: controller.signal,
+        });
         if (response.status !== 401) return;
         const body = await response.json();
         if (!disposed && body.code === 'SESSION_REVOKED') {
