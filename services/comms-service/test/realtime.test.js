@@ -111,8 +111,6 @@ test('browser session survives admission-ticket expiry and still enforces revoca
   await once(aiHttp, 'listening');
   const browserToken = jwt.sign({ id: 'quality-user', sid: 'browser-session', type: 'access' }, secret,
     { issuer: 'oral-app', audience: 'oral-app-users', expiresIn: '1h' });
-  const shortTicket = jwt.sign({ id: 'quality-user', sid: 'browser-session', type: 'realtime_ticket' }, secret,
-    { expiresIn: '2s' });
   const comms = await startComms(`ws://127.0.0.1:${aiHttp.address().port}/stream`, undefined, 0, req => {
     assert.equal(req.headers['content-type'], 'application/json');
     const raw = req.headers.authorization.slice(7);
@@ -123,6 +121,9 @@ test('browser session survives admission-ticket expiry and still enforces revoca
   });
   let client, expiredAttempt;
   try {
+    // Issue after server readiness so cold CI startup cannot consume its TTL.
+    const shortTicket = jwt.sign({ id: 'quality-user', sid: 'browser-session', type: 'realtime_ticket' }, secret,
+      { expiresIn: '3s' });
     const connected = once(aiWss, 'connection');
     const address = `ws://127.0.0.1:${comms.port}/api/v1/realtime?ticket=${encodeURIComponent(shortTicket)}&sessionId=durable-browser&mode=daily_qa`;
     client = new WebSocket(address, { headers: { Cookie: `accessToken=${browserToken}` } });
