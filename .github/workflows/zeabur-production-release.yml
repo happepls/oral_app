@@ -1,0 +1,127 @@
+name: Zeabur Production Release
+
+on:
+  workflow_run:
+    workflows: [CI Pipeline, Docker Build and Push, Security Scan, SDLC Governance]
+    types: [completed]
+    branches: [master]
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: Resolve and validate images without production changes
+        type: boolean
+        default: true
+  pull_request:
+    branches: [master]
+    paths:
+      - .github/workflows/zeabur-production-release.yml
+      - scripts/release/**
+      - docs/zeabur-automatic-release.md
+
+permissions:
+  contents: read
+  actions: read
+  packages: read
+
+# Never interrupt a running rollout or its rollback. Stale candidates are
+# rejected again after approval and before each service mutation.
+concurrency:
+  group: zeabur-production-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || (github.event_name == 'workflow_dispatch' && inputs.dry_run && format('dry-run-{0}', github.run_id)) || 'release' }}
+  cancel-in-progress: false
+
+jobs:
+  release-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - run: python3 -m unittest discover -s scripts/release -p 'test_*.py' -v
+
+  candidate:
+    needs: release-tests
+    if: >-
+      github.repository == 'happepls/oral_app' &&
+      ((github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/master') ||
+       (github.event_name == 'workflow_run' && github.event.workflow_run.event == 'push' &&
+        github.event.workflow_run.conclusion == 'success' &&
+        github.event.workflow_run.head_repository.full_name == github.repository))
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      commit: ${{ steps.candidate.outputs.commit }}
+    steps:
+      - id: candidate
+        env:
+          CANDIDATE_SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
+        run: |
+          [[ "$CANDIDATE_SHA" =~ ^[0-9a-f]{40}$ ]]
+          echo "commit=$CANDIDATE_SHA" >> "$GITHUB_OUTPUT"
+
+  plan:
+    needs: candidate
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      ready: ${{ steps.plan.outputs.ready }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.candidate.outputs.commit }}
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Resolve exact images after all four gates succeed
+        id: plan
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CANDIDATE_SHA: ${{ needs.candidate.outputs.commit }}
+        run: python3 scripts/release/zeabur_release.py plan --commit "$CANDIDATE_SHA"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-plan
+          path: release-plan.json
+          if-no-files-found: error
+          retention-days: 30
+
+  deploy:
+    needs: [candidate, plan]
+    if: >-
+      needs.plan.outputs.ready == 'true' &&
+      (github.event_name == 'workflow_run' || !inputs.dry_run)
+    environment: production
+    runs-on: ubuntu-latest
+    # Five sequential 4-minute rollouts plus five rollback windows and API calls.
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.candidate.outputs.commit }}
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/download-artifact@v4
+        with:
+          name: release-plan
+      - name: Roll out and verify five backends; restore on failure
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ZEABUR_DEPLOY_TOKEN: ${{ secrets.ZEABUR_DEPLOY_TOKEN }}
+        run: python3 scripts/release/zeabur_release.py apply
+      - name: Preserve sanitized release and rollback evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-report
+          path: release-report.json
+          if-no-files-found: warn
+          retention-days: 90
