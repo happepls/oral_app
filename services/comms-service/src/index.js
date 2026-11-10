@@ -4,6 +4,7 @@ const url = require('url');
 const http = require('http');
 const { checkAccess } = require('./sceneAccess');
 const { checkLoginSession } = require('./loginSession');
+const { accessCookie, sessionCredential } = require('./sessionCredential');
 
 const sessions = new Map();
 const activeConnections = new Map();
@@ -64,10 +65,7 @@ wss.on('connection', async function connection(clientWs, req) {
 
     // Fallback: read from httpOnly cookie
     if (!token && req.headers.cookie) {
-      const cookies = Object.fromEntries(
-        req.headers.cookie.split(';').map(c => c.trim().split('=').map(decodeURIComponent))
-      );
-      token = cookies['accessToken'];
+      token = accessCookie(req.headers.cookie);
     }
 
     if (!token) {
@@ -94,18 +92,21 @@ wss.on('connection', async function connection(clientWs, req) {
       return;
     }
 
-    // The browser-facing ticket is deliberately accepted only by comms. AI
-    // still calls user/conversation services, which accept access tokens, so
-    // mint a short-lived internal token instead of forwarding the ticket.
-    if (!usesRealtimeTicket || decoded.sid) await checkLoginSession(token, decoded);
-    const aiToken = usesRealtimeTicket
+    const credential = sessionCredential(token, decoded, req.headers.cookie, JWT_SECRET);
+    console.log(`[SESSION_AUTH] ${credential.browserCookie ? 'bound_browser_cookie' : usesRealtimeTicket ? 'ticket' : 'access'}`);
+    // Tickets govern admission, not a browser conversation's lifetime. Reuse
+    // the identity-bound browser credential, with its original expiry, for
+    // ongoing checks and AI callbacks. Ticket-only partners retain their
+    // existing short-lived internal bridge token.
+    if (!usesRealtimeTicket || decoded.sid) await checkLoginSession(credential.token, credential.claims);
+    const aiToken = usesRealtimeTicket && !credential.browserCookie
       ? jwt.sign({ id: decoded.id, type: 'access', ...(decoded.sid ? { sid: decoded.sid } : { delegated_grant_id: decoded.grant_id, delegated_client_id: decoded.client_id }) }, JWT_SECRET, {
           algorithm: 'HS256',
           issuer: 'oral-app',
           audience: 'oral-app-users',
           expiresIn: '2m',
         })
-      : token;
+      : credential.token;
 
     const userId = decoded.id;
     if ((decoded.sid || (!usesRealtimeTicket && process.env.DEVICE_SESSION_LIMIT_ENABLED === 'true'))) {
@@ -113,9 +114,10 @@ wss.on('connection', async function connection(clientWs, req) {
       const verifySession = async () => {
         if (checking || clientWs.readyState !== WebSocket.OPEN) return;
         checking = true;
-        try { await checkLoginSession(token, decoded); }
+        try { await checkLoginSession(credential.token, credential.claims); }
         catch (error) {
           if (clientWs.readyState === WebSocket.OPEN) {
+            console.warn(`[SESSION_AUTH_FAILED] stage=heartbeat status=${error.status || 503} code=${error.code || 'authorization_unavailable'}`);
             clientWs.send(JSON.stringify({ type: 'error', payload: { status: error.status || 503, code: error.message, message: error.message } }));
             clientWs.close(error.status === 401 ? 4003 : 1011, error.message);
           }
@@ -212,10 +214,11 @@ wss.on('connection', async function connection(clientWs, req) {
         pendingSessionBytes += message.length;
         if (pendingSessionBytes > 2 * 1024 * 1024) { clientWs.close(1009, 'Session validation buffer exceeded'); return; }
         try {
-          if (!sessionCheck) sessionCheck = checkLoginSession(token, decoded).finally(() => { sessionCheck = null; });
+          if (!sessionCheck) sessionCheck = checkLoginSession(credential.token, credential.claims).finally(() => { sessionCheck = null; });
           await sessionCheck;
         } catch (error) {
           if (clientWs.readyState === WebSocket.OPEN) {
+            console.warn(`[SESSION_AUTH_FAILED] stage=message status=${error.status || 503} code=${error.code || 'authorization_unavailable'}`);
             clientWs.send(JSON.stringify({ type: 'error', payload: { status: error.status || 503, code: error.message, retryable: error.status !== 401 } }));
             clientWs.close(error.status === 401 ? 4003 : 1011, error.message);
           }
