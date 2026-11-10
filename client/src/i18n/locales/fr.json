@@ -1,4 +1,11 @@
 {
+  "discovery_focus_label": "Continuez à apprendre",
+  "discovery_continue": "Continuer la pratique",
+  "discovery_choose_scene": "Choisir un scénario",
+  "discovery_create_goal": "Créer un objectif",
+  "discovery_goal_hint": "Définissez un objectif pour commencer votre première séance.",
+  "session_revoked_notice": "Vous vous êtes connecté sur un autre appareil. Cette session est terminée. Pro autorise deux appareils connectés.",
+
   "score_feedback_title": "Retour sur la pratique",
   "score_feedback_gain": "+{{delta}} de maîtrise",
   "score_feedback_total": "Total {{total}}",

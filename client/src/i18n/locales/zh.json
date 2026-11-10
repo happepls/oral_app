@@ -1,4 +1,11 @@
 {
+  "discovery_focus_label": "继续你的学习",
+  "discovery_continue": "继续练习",
+  "discovery_choose_scene": "选择练习场景",
+  "discovery_create_goal": "创建学习目标",
+  "discovery_goal_hint": "先设定目标，再开始你的第一次练习。",
+  "session_revoked_notice": "已在其他设备登录，当前登录已退出。Pro 最多同时登录两台设备。",
+
   "score_feedback_title": "练习反馈",
   "score_feedback_gain": "+{{delta}} 熟练度",
   "score_feedback_total": "总分 {{total}}",

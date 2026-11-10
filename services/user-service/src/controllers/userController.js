@@ -57,10 +57,13 @@ const COOKIE_OPTIONS = {
 };
 
 // Helper to generate JWT with proper configuration
-const generateToken = (id) => {
+const loginSessions = require('../models/loginSessions');
+const generateToken = async (id, req, res) => {
+  const sid = await loginSessions.issue(req, res, id);
   return jwt.sign(
     { 
       id: id,
+      ...(sid ? { sid } : {}),
       type: 'access',
       iat: Math.floor(Date.now() / 1000)
     },
@@ -94,7 +97,7 @@ exports.register = async (req, res) => {
     const newUser = await User.create(userUsername, email, password);
 
     // 3. Generate a token for the new user
-    const token = generateToken(newUser.id);
+    const token = await generateToken(newUser.id, req, res);
 
     // 4. Set httpOnly cookie and respond
     res.cookie('accessToken', token, COOKIE_OPTIONS);
@@ -171,7 +174,7 @@ exports.login = async (req, res) => {
     delete userWithoutPassword.password;
     userWithoutPassword.access = loginAccessSummary(user);
 
-    const token = generateToken(user.id);
+    const token = await generateToken(user.id, req, res);
     res.cookie('accessToken', token, COOKIE_OPTIONS);
     res.json({
       success: true,
@@ -211,7 +214,7 @@ exports.googleSignIn = async (req, res) => {
       delete userWithoutPassword.password;
       userWithoutPassword.access = loginAccessSummary(user);
 
-      const jwtToken = generateToken(user.id);
+      const jwtToken = await generateToken(user.id, req, res);
       res.cookie('accessToken', jwtToken, COOKIE_OPTIONS);
       res.json({
         success: true,
@@ -237,7 +240,7 @@ exports.googleSignIn = async (req, res) => {
 };
 
 
-exports.verifyToken = (req, res) => {
+exports.verifyToken = async (req, res) => {
     // Cookie-first, then Bearer header fallback
     const token = req.cookies?.accessToken ||
       (req.headers.authorization?.startsWith('Bearer ') ? req.headers.authorization.split(' ')[1] : null);
@@ -251,6 +254,8 @@ exports.verifyToken = (req, res) => {
 
     try {
         const decoded = jwt.verify(token, process.env.JWT_SECRET);
+        if (decoded.type !== 'access' && !(decoded.sid && ['realtime_ticket', 'internal_history', 'internal_conversation'].includes(decoded.type))) throw Object.assign(new Error('Invalid token type'), { name: 'JsonWebTokenError' });
+        await loginSessions.validate(decoded);
         res.json({
             success: true,
             message: '令牌有效',
@@ -259,10 +264,11 @@ exports.verifyToken = (req, res) => {
             }
         });
     } catch (error) {
-        res.status(401).json({ 
+        res.status(error.code === 'SESSION_REVOKED' || error.name === 'JsonWebTokenError' || error.name === 'TokenExpiredError' ? 401 : 503).json({
+          code: error.code === 'SESSION_REVOKED' ? error.code : 'authorization_unavailable',
           success: false,
           message: '无效令牌',
-          error: error.message 
+          error: error.code === 'SESSION_REVOKED' ? error.code : 'Authentication verification failed'
         });
     }
 };
@@ -1197,7 +1203,16 @@ exports.generateTaskKeywords = async (req, res) => {
 };
 
 // Logout — clear httpOnly cookie
-exports.logout = (req, res) => {
+exports.logout = async (req, res) => {
+  const token = req.cookies?.accessToken || req.headers.authorization?.replace(/^Bearer /, '');
+  if (token) {
+    let claims;
+    try { claims = jwt.verify(token, process.env.JWT_SECRET); } catch (_) { /* Expired cookies can still be cleared. */ }
+    if (claims) {
+      try { await loginSessions.revoke(claims); }
+      catch (_) { return res.status(503).json({ message: 'authorization_unavailable' }); }
+    }
+  }
   // Clear the current Path=/api cookie plus any legacy cookies set under
   // Path=/ by older builds — duplicate accessToken cookies (different paths)
   // otherwise shadow the fresh one on /api/ai routes, causing stale-token 401s.
@@ -1207,7 +1222,7 @@ exports.logout = (req, res) => {
 };
 
 // Token migration — read old Bearer token, verify, set as httpOnly cookie
-exports.tokenMigrate = (req, res) => {
+exports.tokenMigrate = async (req, res) => {
   const authHeader = req.headers.authorization;
   if (!authHeader || !authHeader.startsWith('Bearer ')) {
     return res.status(400).json({ success: false, message: '未提供有效的Bearer令牌' });
@@ -1215,11 +1230,13 @@ exports.tokenMigrate = (req, res) => {
 
   const token = authHeader.split(' ')[1];
   try {
-    jwt.verify(token, process.env.JWT_SECRET);
+    const claims = jwt.verify(token, process.env.JWT_SECRET);
+    if (claims.type !== 'access') throw Object.assign(new Error('Invalid token type'), { name: 'JsonWebTokenError' });
+    await loginSessions.validate(claims);
     res.cookie('accessToken', token, COOKIE_OPTIONS);
     res.json({ success: true, message: '令牌迁移成功' });
   } catch (error) {
-    res.status(401).json({ success: false, message: '无效令牌，无法迁移' });
+    res.status(error.code === 'SESSION_REVOKED' || error.name === 'JsonWebTokenError' || error.name === 'TokenExpiredError' ? 401 : 503).json({ success: false, code: error.code === 'SESSION_REVOKED' ? error.code : 'authorization_unavailable', message: '无效令牌，无法迁移' });
   }
 };
 
@@ -1531,7 +1548,7 @@ exports.phoneLogin = async (req, res) => {
         delete userWithoutPassword.password;
         userWithoutPassword.access = loginAccessSummary(user);
 
-        const token = generateToken(user.id);
+        const token = await generateToken(user.id, req, res);
         res.cookie('accessToken', token, COOKIE_OPTIONS);
         return res.json({
             success: true,

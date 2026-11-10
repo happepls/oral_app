@@ -3,6 +3,7 @@ const bcrypt = require('bcryptjs');
 const crypto = require('crypto');
 const User = require('../models/user');
 const { promisify } = require('util');
+const loginSessions = require('../models/loginSessions');
 
 // Enhanced JWT configuration
 const JWT_CONFIG = {
@@ -22,10 +23,11 @@ const generateSecureToken = (length = 32) => {
 };
 
 // Generate access token
-const generateAccessToken = (userId) => {
+const generateAccessToken = (userId, sid) => {
   return jwt.sign(
     { 
       id: userId,
+      ...(sid ? { sid } : {}),
       type: 'access',
       iat: Math.floor(Date.now() / 1000)
     },
@@ -40,11 +42,12 @@ const generateAccessToken = (userId) => {
 };
 
 // Generate refresh token
-const generateRefreshToken = (userId) => {
+const generateRefreshToken = (userId, sid) => {
   return jwt.sign(
     { 
       id: userId,
       type: 'refresh',
+      ...(sid ? { sid } : {}),
       tokenId: generateSecureToken(16), // Unique token ID for revocation
       iat: Math.floor(Date.now() / 1000)
     },
@@ -131,12 +134,15 @@ const protect = async (req, res, next) => {
       });
     }
 
+    await loginSessions.validate(decoded);
     // Add user to request object
     req.user = user;
     req.token = token;
+    req.authClaims = decoded;
     
     next();
   } catch (error) {
+    if (error.code === 'SESSION_REVOKED') return res.status(401).json({ code: error.code, message: error.code });
     console.error('Authentication error:', error);
     
     // Handle specific JWT errors
@@ -204,8 +210,9 @@ const refresh = async (req, res) => {
     }
 
     // Generate new tokens
-    const newAccessToken = generateAccessToken(user.id);
-    const newRefreshToken = generateRefreshToken(user.id);
+    await loginSessions.validate(decoded);
+    const newAccessToken = generateAccessToken(user.id, decoded.sid);
+    const newRefreshToken = generateRefreshToken(user.id, decoded.sid);
 
     // Blacklist old refresh token (optional, for enhanced security)
     // tokenBlacklist.add(refreshToken);
@@ -220,6 +227,8 @@ const refresh = async (req, res) => {
     });
   } catch (error) {
     console.error('Refresh token error:', error);
+    if (error.code === 'SESSION_REVOKED') return res.status(401).json({ code: error.code, message: error.code });
+    if (!['JsonWebTokenError', 'TokenExpiredError'].includes(error.name)) return res.status(503).json({ message: 'authorization_unavailable' });
     
     return res.status(400).json({
       code: 400,

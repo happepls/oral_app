@@ -9,6 +9,32 @@ export const AuthProvider = ({ children }) => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
+  // Covers pages without an SSE subscription and browsers that missed a wakeup.
+  useEffect(() => {
+    if (!user?.id) return;
+    let disposed = false;
+    let controller;
+    const check = async () => {
+      if (controller) return;
+      controller = new AbortController();
+      const timeout = setTimeout(() => controller?.abort(), 5000);
+      try {
+        const response = await fetch('/api/users/verify', { method: 'POST', credentials: 'include', signal: controller.signal });
+        if (response.status !== 401) return;
+        const body = await response.json();
+        if (!disposed && body.code === 'SESSION_REVOKED') {
+          localStorage.removeItem('user');
+          window.location.replace('/login?reason=session_revoked');
+        }
+      } catch (_) { /* An outage does not log the user out. */ }
+      finally { clearTimeout(timeout); controller = null; }
+    };
+    const timer = setInterval(check, 10000);
+    const onVisible = () => { if (document.visibilityState === 'visible') check(); };
+    document.addEventListener('visibilitychange', onVisible);
+    return () => { disposed = true; clearInterval(timer); controller?.abort(); document.removeEventListener('visibilitychange', onVisible); };
+  }, [user?.id]);
+
   // Every surface shares this boundary; a pre-paid membership cannot remain
   // active indefinitely in a tab whose profile was cached before expiry.
   useEffect(() => {

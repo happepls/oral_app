@@ -3,6 +3,7 @@ const jwt = require('jsonwebtoken');
 const url = require('url');
 const http = require('http');
 const { checkAccess } = require('./sceneAccess');
+const { checkLoginSession } = require('./loginSession');
 
 const sessions = new Map();
 const activeConnections = new Map();
@@ -96,8 +97,9 @@ wss.on('connection', async function connection(clientWs, req) {
     // The browser-facing ticket is deliberately accepted only by comms. AI
     // still calls user/conversation services, which accept access tokens, so
     // mint a short-lived internal token instead of forwarding the ticket.
+    if (!usesRealtimeTicket || decoded.sid) await checkLoginSession(token, decoded);
     const aiToken = usesRealtimeTicket
-      ? jwt.sign({ id: decoded.id, type: 'access' }, JWT_SECRET, {
+      ? jwt.sign({ id: decoded.id, type: 'access', ...(decoded.sid ? { sid: decoded.sid } : { delegated_grant_id: decoded.grant_id, delegated_client_id: decoded.client_id }) }, JWT_SECRET, {
           algorithm: 'HS256',
           issuer: 'oral-app',
           audience: 'oral-app-users',
@@ -106,6 +108,22 @@ wss.on('connection', async function connection(clientWs, req) {
       : token;
 
     const userId = decoded.id;
+    if ((decoded.sid || (!usesRealtimeTicket && process.env.DEVICE_SESSION_LIMIT_ENABLED === 'true'))) {
+      let checking = false;
+      const verifySession = async () => {
+        if (checking || clientWs.readyState !== WebSocket.OPEN) return;
+        checking = true;
+        try { await checkLoginSession(token, decoded); }
+        catch (error) {
+          if (clientWs.readyState === WebSocket.OPEN) {
+            clientWs.send(JSON.stringify({ type: 'error', payload: { status: error.status || 503, code: error.message, message: error.message } }));
+            clientWs.close(error.status === 401 ? 4003 : 1011, error.message);
+          }
+        } finally { checking = false; }
+      };
+      const timer = setInterval(verifySession, 10000);
+      clientWs.once('close', () => clearInterval(timer));
+    }
     if (!userId) {
       clientWs.send(JSON.stringify({ type: 'error', payload: { status: 401, code: 'authentication_required', message: 'authentication_required' } }));
       clientWs.close(1008, 'authentication_required');
@@ -187,7 +205,24 @@ wss.on('connection', async function connection(clientWs, req) {
         : 'AI service rejected connection');
     };
 
-    const forwardToAI = (message, isBinary) => {
+    let sessionCheck;
+    let pendingSessionBytes = 0;
+    const forwardToAI = async (message, isBinary) => {
+      if ((decoded.sid || (!usesRealtimeTicket && process.env.DEVICE_SESSION_LIMIT_ENABLED === 'true'))) {
+        pendingSessionBytes += message.length;
+        if (pendingSessionBytes > 2 * 1024 * 1024) { clientWs.close(1009, 'Session validation buffer exceeded'); return; }
+        try {
+          if (!sessionCheck) sessionCheck = checkLoginSession(token, decoded).finally(() => { sessionCheck = null; });
+          await sessionCheck;
+        } catch (error) {
+          if (clientWs.readyState === WebSocket.OPEN) {
+            clientWs.send(JSON.stringify({ type: 'error', payload: { status: error.status || 503, code: error.message, retryable: error.status !== 401 } }));
+            clientWs.close(error.status === 401 ? 4003 : 1011, error.message);
+          }
+          return;
+        } finally { pendingSessionBytes -= message.length; }
+        if (clientWs.readyState !== WebSocket.OPEN) return;
+      }
       if (!aiServiceWs || aiServiceWs.readyState !== WebSocket.OPEN) return;
       
       if (isBinary) {
@@ -433,7 +468,8 @@ wss.on('connection', async function connection(clientWs, req) {
 
   } catch (error) {
     console.error('An unexpected error occurred during connection setup:', error);
-    clientWs.close(1011, 'Internal server error');
+    if (clientWs.readyState === WebSocket.OPEN) clientWs.send(JSON.stringify({ type: 'error', payload: { status: error.status || 503, code: error.message, retryable: error.status !== 401 } }));
+    clientWs.close(error.status === 401 ? 4003 : 1011, error.status === 401 ? 'SESSION_REVOKED' : 'Internal server error');
   }
 });
 

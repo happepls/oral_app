@@ -582,11 +582,11 @@ function Discovery() {
     );
     if (existing) {
       navigate(`/conversation?sessionId=${existing.sessionId}&scenario=${encodeURIComponent(scenario.title)}`, {
-        state: { tasks: scenario.tasks, emoji: scenario.emoji },
+        state: { tasks: scenario.tasks, emoji: scenario.emoji, practiceTransition: true },
       });
     } else {
       navigate(`/conversation?scenario=${encodeURIComponent(scenario.title)}`, {
-        state: { tasks: scenario.tasks, emoji: scenario.emoji },
+        state: { tasks: scenario.tasks, emoji: scenario.emoji, practiceTransition: true },
       });
     }
   };
@@ -621,6 +621,8 @@ function Discovery() {
     const displayTitle = getScenarioDisplayTitle(s.title, i, i18n.resolvedLanguage || i18n.language);
     return { ...s, displayTitle, pct, practiceStatus, unlocked, cardState, difficulty: getDifficulty(i), emoji: getEmoji(s.title), imageUrl, index: i };
   }), [scenarios, activeGoal, scenarioImages, i18n.resolvedLanguage, i18n.language]);
+
+  const continueScenario = enrichedScenarios.find(s => s.unlocked && s.pct < 100);
 
   // 懒加载已解锁场景的 AI 配图：一次只取一张（节流），sessionStorage 跨页缓存，
   // 失败/超时静默回退 emoji。锁定卡不生成，省文生图成本。
@@ -698,7 +700,7 @@ function Discovery() {
   }
 
   return (
-    <div className="relative mx-auto flex min-h-screen w-full max-w-[720px] flex-col" style={{ background: 'var(--background)' }}>
+    <div className="relative mx-auto flex min-h-screen w-full max-w-[1120px] flex-col" style={{ background: 'var(--background)' }}>
 
       {/* ── 成就 Modal ── */}
       {showAchievement && (
@@ -923,6 +925,83 @@ function Discovery() {
             </button>
           </section>
         )}
+
+        {!dashboardError && (
+          <section aria-labelledby="continue-heading" className="rounded-2xl border border-slate-200 bg-white p-5 sm:p-6 dark:border-slate-700 dark:bg-slate-800">
+            <p className="mb-2 text-xs font-semibold tracking-wide text-primary">{t('discovery_focus_label')}</p>
+            <h1 id="continue-heading" className="text-xl font-bold text-slate-900 sm:text-2xl dark:text-white">
+              {continueScenario?.displayTitle || t(overallProgress === 100 ? 'qa_ui.all_scenarios_done' : activeGoal ? 'discovery_choose_scene' : 'discovery_create_goal')}
+            </h1>
+            <p className="mt-2 text-sm text-slate-600 dark:text-slate-300">
+              {activeGoal ? `${activeGoal.target_language} · ${activeGoal.target_level}` : t('discovery_goal_hint')}
+            </p>
+            <button type="button" onFocus={() => { import('../components/PracticeTransitionAccent').catch(() => {}); }} onMouseEnter={() => { import('../components/PracticeTransitionAccent').catch(() => {}); }} className="mt-5 min-h-12 w-full rounded-xl bg-primary px-6 py-3 font-semibold text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50 focus-visible:ring-offset-2 sm:w-auto"
+              onClick={() => continueScenario ? handleScenarioClick(continueScenario) : overallProgress === 100 || !activeGoal ? navigate('/goal-setting') : document.querySelector('[data-tour="scenario-card"]')?.scrollIntoView({ behavior: 'instant' })}>
+              {t(continueScenario ? 'discovery_continue' : overallProgress === 100 || !activeGoal ? 'discovery_create_goal' : 'discovery_choose_scene')}
+            </button>
+          </section>
+        )}
+
+        {/* ── 场景轮播 ── */}
+        <section>
+          <div className="flex items-center justify-between mb-3">
+            <div>
+              <h2 className="text-lg font-bold text-slate-900 dark:text-white">{t('qa_ui.scenario_practice')}</h2>
+              {activeGoal && (
+                <p className="text-xs text-slate-400">{activeGoal.target_language} · {activeGoal.target_level}</p>
+              )}
+            </div>
+            <span className="text-xs text-slate-400 bg-slate-100 dark:bg-slate-800 px-2 py-1 rounded-lg">
+              {t('qa_ui.scenario_count', { count: scenarios.length })}
+            </span>
+          </div>
+
+          {/* Filter chips */}
+          <div role="group" aria-label={t('qa_ui.filter_label')} className="flex flex-wrap gap-2 pb-1 mb-3">
+            {FILTER_TABS.map(tab => (
+              <button key={tab.id} onClick={() => setFilterTab(tab.id)}
+                aria-pressed={filterTab === tab.id}
+                className="flex-shrink-0 px-3 py-1 rounded-full text-xs font-medium transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50"
+                style={{
+                  background: filterTab === tab.id ? '#2d44ca' : '#F3F4F6',
+                  color: filterTab === tab.id ? '#fff' : '#374151',
+                }}>
+                {t(tab.labelKey)}
+              </button>
+            ))}
+          </div>
+
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3" data-tour="scenario-card">
+            {filteredScenarios.map((s) => (
+              <ScenarioCard
+                key={s.index}
+                title={s.displayTitle}
+                emoji={s.emoji}
+                imageUrl={s.imageUrl}
+                description={
+                  s.tasks?.[0]
+                    ? (typeof s.tasks[0] === 'object'
+                        ? (s.tasks[0].text || s.tasks[0].description || '')
+                        : String(s.tasks[0]))
+                    : ''
+                }
+                difficulty={s.difficulty}
+                progress={s.pct}
+                state={s.cardState === 'locked' ? 'locked' : s.cardState === 'active' ? 'selected' : 'default'}
+                unlockReason={s.cardState === 'locked' ? t('qa_ui.scenario_unlock_reason') : ''}
+                onUnlock={s.cardState === 'locked' ? () => setShowUpgradeModal(true) : undefined}
+                onStart={() => handleScenarioClick(s)}
+              />
+            ))}
+          </div>
+
+          {filteredScenarios.length === 0 && (
+            <p className="text-center text-sm text-slate-400 py-6">
+              {filterTab === 'in-progress' ? t('qa_ui.no_active_scenarios') :
+               filterTab === 'completed' ? t('qa_ui.no_completed_scenarios') : t('qa_ui.no_matching_scenarios')}
+            </p>
+          )}
+        </section>
 
         {/* ── 今日任务（合并卡片） ── */}
           <section data-tour="today-tasks">
@@ -1175,66 +1254,6 @@ function Discovery() {
           </button>
         )}
 
-        {/* ── 场景轮播 ── */}
-        <section>
-          <div className="flex items-center justify-between mb-3">
-            <div>
-              <h2 className="text-lg font-bold text-slate-900 dark:text-white">{t('qa_ui.scenario_practice')}</h2>
-              {activeGoal && (
-                <p className="text-xs text-slate-400">{activeGoal.target_language} · {activeGoal.target_level}</p>
-              )}
-            </div>
-            <span className="text-xs text-slate-400 bg-slate-100 dark:bg-slate-800 px-2 py-1 rounded-lg">
-              {t('qa_ui.scenario_count', { count: scenarios.length })}
-            </span>
-          </div>
-
-          {/* Filter chips */}
-          <div role="group" aria-label={t('qa_ui.filter_label')} className="flex flex-wrap gap-2 pb-1 mb-3">
-            {FILTER_TABS.map(tab => (
-              <button key={tab.id} onClick={() => setFilterTab(tab.id)}
-                aria-pressed={filterTab === tab.id}
-                className="flex-shrink-0 px-3 py-1 rounded-full text-xs font-medium transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50"
-                style={{
-                  background: filterTab === tab.id ? '#2d44ca' : '#F3F4F6',
-                  color: filterTab === tab.id ? '#fff' : '#374151',
-                }}>
-                {t(tab.labelKey)}
-              </button>
-            ))}
-          </div>
-
-          <div className="grid grid-cols-1 gap-3 min-[360px]:grid-cols-2 md:grid-cols-3" data-tour="scenario-card">
-            {filteredScenarios.map((s) => (
-              <ScenarioCard
-                key={s.index}
-                title={s.displayTitle}
-                emoji={s.emoji}
-                imageUrl={s.imageUrl}
-                description={
-                  s.tasks?.[0]
-                    ? (typeof s.tasks[0] === 'object'
-                        ? (s.tasks[0].text || s.tasks[0].description || '')
-                        : String(s.tasks[0]))
-                    : ''
-                }
-                difficulty={s.difficulty}
-                progress={s.pct}
-                state={s.cardState === 'locked' ? 'locked' : s.cardState === 'active' ? 'selected' : 'default'}
-                unlockReason={s.cardState === 'locked' ? t('qa_ui.scenario_unlock_reason') : ''}
-                onUnlock={s.cardState === 'locked' ? () => setShowUpgradeModal(true) : undefined}
-                onStart={() => handleScenarioClick(s)}
-              />
-            ))}
-          </div>
-
-          {filteredScenarios.length === 0 && (
-            <p className="text-center text-sm text-slate-400 py-6">
-              {filterTab === 'in-progress' ? t('qa_ui.no_active_scenarios') :
-               filterTab === 'completed' ? t('qa_ui.no_completed_scenarios') : t('qa_ui.no_matching_scenarios')}
-            </p>
-          )}
-        </section>
       </main>
 
       <BottomNav currentPage="home" />

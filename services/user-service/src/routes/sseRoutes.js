@@ -60,6 +60,13 @@ router.get('/api/users/sse', protect, (req, res) => {
     if (ch !== channel) return;
     try {
       const event = JSON.parse(message);
+      if (event.type === 'session_revoked') {
+        if (!event.payload?.sessionIds?.includes(req.authClaims?.sid)) return;
+        res.write(`event: session_revoked\ndata: {}\n\n`);
+        cleanup();
+        res.end();
+        return;
+      }
       res.write(`event: ${event.type}\ndata: ${message}\n\n`);
     } catch (err) {
       console.error('[SSE] Failed to forward message:', err.message);

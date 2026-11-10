@@ -1,4 +1,11 @@
 {
+  "discovery_focus_label": "学習を続けましょう",
+  "discovery_continue": "練習を続ける",
+  "discovery_choose_scene": "シナリオを選ぶ",
+  "discovery_create_goal": "学習目標を作成",
+  "discovery_goal_hint": "目標を設定して、最初の練習を始めましょう。",
+  "session_revoked_notice": "別の端末でログインしたため、このセッションは終了しました。Proでは同時に2台までログインできます。",
+
   "score_feedback_title": "練習フィードバック",
   "score_feedback_gain": "習熟度 +{{delta}}",
   "score_feedback_total": "合計 {{total}}",

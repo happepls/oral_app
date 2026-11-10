@@ -215,7 +215,9 @@ test('@critical discovery keeps primary tasks visible and exposes semantic state
   await expect(completedFilter).toHaveAttribute('aria-pressed', 'true');
 
   const shellWidth = await page.locator('main').evaluate((element) => element.parentElement.getBoundingClientRect().width);
-  expect(shellWidth).toBeLessThanOrEqual(Math.min(720, await page.evaluate(() => innerWidth)) + 1);
+  const viewportWidth = await page.evaluate(() => innerWidth);
+  expect(shellWidth).toBeCloseTo(Math.min(1120, viewportWidth), 0);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(viewportWidth + 1);
 });
 
 test('@critical discovery is usable while optional requests are still pending', async ({ page }) => {
@@ -230,7 +232,8 @@ test('@critical discovery is usable while optional requests are still pending', 
   try {
     await page.goto('/discovery');
     await expect(page.getByRole('heading', { name: /today's tasks|今日任务/i })).toBeVisible();
-    await expect(page.getByText(/^(Airport Check-in|机场值机)$/)).toBeVisible();
+    await expect(page.locator('[data-tour="scenario-card"]').getByText(/^(Airport Check-in|机场值机)$/)).toBeVisible();
+    await expect(page.locator('section[aria-labelledby="continue-heading"] button')).toBeEnabled();
     await expect(page.getByRole('button', { name: /recall|复述/i })).toBeEnabled();
   } finally { release(); }
 });

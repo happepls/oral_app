@@ -70,6 +70,7 @@ function createAuth({ db, delegatedSecret, realtimeSecret }) {
       if (!raw) throw error(401, 'api_key_missing', 'X-Guaji-API-Key is required for partner calls');
       const claims = jwt.verify(raw, realtimeSecret, { algorithms: ['HS256'], issuer: 'oral-app', audience: 'oral-app-users' });
       if (claims.type !== 'access' || !claims.id) throw error(401, 'first_party_token_invalid', 'First-party session is invalid');
+      await require('./loginSession').checkLoginSession(raw, claims);
       const { rows } = await db.query(
         `INSERT INTO developer_user_grants (client_id,user_id,scopes,status)
          VALUES ($1,$2,$3,'active') ON CONFLICT (client_id,user_id)
@@ -78,7 +79,7 @@ function createAuth({ db, delegatedSecret, realtimeSecret }) {
         [FIRST_PARTY_CLIENT_ID, claims.id, ALL_FIRST_PARTY_SCOPES]
       );
       req.developerClient = { client_id: FIRST_PARTY_CLIENT_ID, name: 'Guaji First Party', first_party: true };
-      req.delegated = { type: 'first_party', user_id: claims.id, client_id: FIRST_PARTY_CLIENT_ID, grant_id: rows[0].id, scopes: ALL_FIRST_PARTY_SCOPES };
+      req.delegated = { type: 'first_party', sid: claims.sid, user_id: claims.id, client_id: FIRST_PARTY_CLIENT_ID, grant_id: rows[0].id, scopes: ALL_FIRST_PARTY_SCOPES };
       next();
     } catch (err) {
       if (err.name === 'TokenExpiredError') return next(error(401, 'first_party_token_expired', 'First-party session has expired'));
@@ -104,15 +105,15 @@ function createAuth({ db, delegatedSecret, realtimeSecret }) {
   }
 
   function issueRealtimeTicket(delegatedClaims) {
-    return jwt.sign({ id: delegatedClaims.user_id, type: 'realtime_ticket', client_id: delegatedClaims.client_id, grant_id: delegatedClaims.grant_id }, realtimeSecret, { algorithm: 'HS256', expiresIn: '60s' });
+    return jwt.sign({ id: delegatedClaims.user_id, sid: delegatedClaims.sid, type: 'realtime_ticket', client_id: delegatedClaims.client_id, grant_id: delegatedClaims.grant_id }, realtimeSecret, { algorithm: 'HS256', expiresIn: '60s' });
   }
 
   function issueHistoryToken(delegatedClaims) {
-    return jwt.sign({ id: delegatedClaims.user_id, type: 'internal_history' }, realtimeSecret, { algorithm: 'HS256', expiresIn: '30s' });
+    return jwt.sign({ id: delegatedClaims.user_id, sid: delegatedClaims.sid, type: 'internal_history' }, realtimeSecret, { algorithm: 'HS256', expiresIn: '30s' });
   }
 
   function issueConversationToken(delegatedClaims) {
-    return jwt.sign({ id: delegatedClaims.user_id, type: 'internal_conversation' }, realtimeSecret, { algorithm: 'HS256', expiresIn: '30s' });
+    return jwt.sign({ id: delegatedClaims.user_id, sid: delegatedClaims.sid, type: 'internal_conversation' }, realtimeSecret, { algorithm: 'HS256', expiresIn: '30s' });
   }
 
   return { apiKey, delegated, client, user, requireScopes, issueDelegated, issueRealtimeTicket, issueHistoryToken, issueConversationToken };

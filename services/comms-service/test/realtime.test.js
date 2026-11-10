@@ -26,8 +26,16 @@ async function freePort() {
   return port;
 }
 
-async function startComms(aiUrl, decision = { allowed: true, status: 200 }, delayMs = 0) {
+async function startComms(aiUrl, decision = { allowed: true, status: 200 }, delayMs = 0, sessionDecision = () => ({ status: 200 })) {
   const authority = http.createServer((req, res) => {
+    if (req.url === '/api/users/verify') {
+      assert.match(req.headers.authorization, /^Bearer /);
+      const result = sessionDecision();
+      req.resume();
+      res.writeHead(result.status, { 'content-type': 'application/json' });
+      res.end(JSON.stringify(result));
+      return;
+    }
     assert.equal(req.headers['x-guaji-internal-auth'], 'comms-access-test-secret');
     req.resume();
     setTimeout(() => {
@@ -85,6 +93,42 @@ test('immediate session handshake survives slow authorization', async () => {
 function ticket(type = 'realtime_ticket') {
   return jwt.sign({ id: 'quality-user', type }, secret, { algorithm: 'HS256', expiresIn: '60s' });
 }
+
+test('revoked browser cannot forward another message or reconnect', async () => {
+  let revoked = false;
+  const aiHttp = http.createServer();
+  const aiWss = new WebSocketServer({ server: aiHttp });
+  aiHttp.listen(0, '127.0.0.1');
+  await once(aiHttp, 'listening');
+  const received = [];
+  aiWss.on('connection', socket => socket.on('message', msg => received.push(msg.toString())));
+  const comms = await startComms(`ws://127.0.0.1:${aiHttp.address().port}/stream`, undefined, 0,
+    () => revoked ? { status: 401, code: 'SESSION_REVOKED' } : { status: 200 });
+  const token = jwt.sign({ id: 'quality-user', sid: 'browser-session', type: 'access' }, secret, { expiresIn: '60s' });
+  const address = `ws://127.0.0.1:${comms.port}/ws/comms?token=${token}&sessionId=browser&scenario=test`;
+  let client, again;
+  try {
+    client = new WebSocket(address);
+    const connected = once(aiWss, 'connection');
+    await once(client, 'open');
+    await connected;
+    revoked = true;
+    const closed = once(client, 'close');
+    const error = once(client, 'message');
+    client.send(JSON.stringify({ type: 'user_text', text: 'must never reach AI' }));
+    assert.equal(JSON.parse((await error)[0]).payload.code, 'SESSION_REVOKED');
+    assert.equal((await closed)[0], 4003);
+    assert.deepEqual(received, []);
+    again = new WebSocket(address);
+    const denied = once(again, 'message');
+    assert.equal(JSON.parse((await denied)[0]).payload.code, 'SESSION_REVOKED');
+  } finally {
+    client?.terminate(); again?.terminate();
+    for (const socket of aiWss.clients) socket.terminate();
+    comms.stop();
+    await new Promise(resolve => aiWss.close(() => aiHttp.close(resolve)));
+  }
+});
 
 test('locked scene, authorization outage, and unknown mode never open upstream AI', async () => {
   for (const decision of [

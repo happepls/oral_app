@@ -2,6 +2,13 @@
 
 > 本文件是 `AGENTS.md`、`CLAUDE.md`、`.codex/instructions.md` 的 SSOT。只改本文件，随后运行 `python3 sync-core-rules.py`；生成文件勿手改。详细设计、测试与历史决策见 `docs/`。
 
+## 会话启动（含 /clear 后的新会话）
+
+- 本项目每次新会话默认执行“启动 ADHD 模式”和“Load my context from my project”，无需用户重复输入；在首个任务开始前完成以下初始化。
+- 优先读取并应用可用的 `i-have-adhd` 技能；技能不可用时采用同等规则：先给具体行动、步骤不超过 5 项、说明完成数与当前步骤、耗时以分钟估计、结尾只给一个下一步。持续到用户明确要求停止 ADHD 模式或恢复正常模式。
+- 从项目文件恢复上下文：读取 `core-rules.md`、`README.md` 和已存在的根目录 `intent.md`、`spec.md`、`plan.md`、`verification.md`、`release.md`、`maintenance.md`；检查 `git status --short`、当前分支和最近 5 条提交，再按当前任务读取相关 `docs/`，避免全库扫描。
+- 首次回复简短说明 ADHD 模式状态、已加载的上下文与当前工作状态；区分历史工件记录和当前 Git 事实，缺失或过期信息明确标注。恢复只读取持久化内容，不声称找回已清空聊天，不因恢复而自动执行历史计划、覆盖活跃工件或推定审批。
+
 ## 工作原则
 
 - 保护用户未提交改动；不擅自 reset、覆盖或删除。搜索优先 `rg`/`rg --files`，编辑用 `apply_patch`。

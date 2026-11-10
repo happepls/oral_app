@@ -2134,6 +2134,13 @@ function Conversation() {
            }
            break;
         case 'error': {
+           if (data.payload?.code === 'SESSION_REVOKED') {
+             stopAudioPlayback();
+             isManualDisconnectRef.current = true;
+             if (reconnectTimerRef.current) clearTimeout(reconnectTimerRef.current);
+             window.location.replace('/login?reason=session_revoked');
+             return;
+           }
            // Backend sends rejection errors at the TOP level ({type:'error', message:...}),
            // older frames used data.payload. Accept both shapes.
            const errMsg = data.message || data.payload?.message || data.payload?.error || data.payload || '';

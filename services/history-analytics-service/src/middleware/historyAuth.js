@@ -10,7 +10,7 @@ function readCookie(header, name) {
   return null;
 }
 
-function requireHistoryUser(req, res, next) {
+async function requireHistoryUser(req, res, next) {
   const authorization = req.get('Authorization');
   const token = authorization?.startsWith('Bearer ')
     ? authorization.slice(7)
@@ -19,10 +19,11 @@ function requireHistoryUser(req, res, next) {
   try {
     const claims = jwt.verify(token, process.env.JWT_SECRET, { algorithms: ['HS256'] });
     if (!claims.id || !['access', 'internal_history'].includes(claims.type)) throw new Error('invalid token type');
+    if (claims.sid || (claims.type === 'access' && process.env.DEVICE_SESSION_LIMIT_ENABLED === 'true')) await require('../loginSession').checkLoginSession(token, claims);
     req.authUserId = String(claims.id);
     next();
-  } catch {
-    res.status(401).json({ success: false, message: 'Invalid or expired authentication token' });
+  } catch (error) {
+    res.status(error.status || 401).json({ success: false, code: error.message, message: 'Invalid or expired authentication token' });
   }
 }
 

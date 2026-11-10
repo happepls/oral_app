@@ -21,7 +21,8 @@ function Login() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
-  const [error, setError] = useState('');
+  const [error, setError] = useState(searchParams.get('reason') === 'session_revoked'
+    ? t('session_revoked_notice', '已在其他设备登录，当前登录已退出。Pro 最多同时登录两台设备。') : '');
 
   const googleContainerRef = useRef(null);
   const emailSubmitRef = useRef(null);
