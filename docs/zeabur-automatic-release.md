@@ -13,7 +13,7 @@
    读取目标项目、更新 Dockerfile、重新部署和执行验证命令的 Zeabur token。
    不要把 token 写进代码或日志；不复用监控用途的 `ZEABUR_TOKEN`。
 3. 人工审核并合并此 PR。先在 Actions 的 **Zeabur Production Release → Run
-   workflow** 选择 `master`、保留 `dry_run=true`。检查 `release-plan` 工件中
+   workflow** 选择 `master`、保留 `dry_run=true`。检查 `release-plan-<attempt>` 工件中
    `ready=true`，提交为当前 master，包含五个 digest 和源码哈希。
 4. 完成上述核对后，审核自动准备的 production deployment；没有待审批任务时
    再手动运行 `dry_run=false`。dry-run 使用独立并发组，可在待审批期间执行。
@@ -39,6 +39,9 @@
   conversation。每项最多等候 240 秒，确认新 deployment ID、RUNNING、
   容器内部健康接口 200，以及 `src/` 下全部 JS/JSON 的路径与字节哈希匹配。
   每项前和最终完成时再次验证候选没有过期。
+- 新部署显示 RUNNING 后，执行进程暂时不可用、输出暂缺或健康请求失败时，在原
+  240 秒轮询窗口内仅重试只读探针。源码读取错误、配置漂移和失败部署仍立即拒绝；
+  健康状态、源码哈希及开关必须全部匹配，才算成功。重试不重复更新或部署服务。
 - 校验设备限制开关与发布前相同。**不会执行数据库迁移、设置环境变量或
   开启 DEVICE_SESSION_LIMIT_ENABLED**。客户端及备份服务继续由其已有的
   Git 来源部署，此工作流不操作它们，也不代表它们已通过发布验收。
@@ -50,16 +53,27 @@
 如果配置已被其他操作者改动，停止覆盖并标记 `rollback_requires_operator`。
 流水线串行执行；审批后过期的候选会停止，后续候选需重新审核。
 
-Actions 工件 `release-report` 包含提交、镜像引用、Dockerfile 哈希和各服务
+Actions 工件 `release-report-<attempt>` 包含提交、镜像引用、Dockerfile 哈希和各服务
 `verified` / `already_verified` / `rolled_back` / `rollback_requires_operator`
 结果；不保存 Dockerfile 正文、token、接口输出或私有地址。预检查失败的
 report 状态为 failed，且没有生产写入。下载报告核对全部服务后才能确认发布。
+探针持续失败时，报告保存服务、部署状态、最后的探针阶段/进程退出码或匹配结果；
+不保留探针的原始 stdout/stderr、错误 URL 或秘密值。CLI 同时显示安全的 failure_code。
+
+每个尝试独立保存计划和报告。只重跑 deploy 时，使用原 plan job 输出的工件名，
+不会误找 `release-plan-2`，也不会覆盖 `release-report-1`。完整重跑则生成新计划。
+[upload-artifact 官方说明](https://github.com/actions/upload-artifact#not-uploading-to-the-same-artifact)
+指出同名上传会冲突，因此不使用覆盖或删除旧报告的方式处理重跑。
 
 回滚属于尽力恢复，五个服务不构成原子事务；发布期间可能短暂混合版本。
 Runner 丢失、强制取消、平台不可用或超时中断都可能阻止自动回滚。出现此类
 情况，先阻止新的审批，查 Zeabur 实际 FROM 和部署状态，依据报告的 old_image
 逐项人工恢复并验证。不要仅重跑旧 workflow：它会因 master 已前进而被拒绝。
 镜像必须保留，不能在回滚窗口内清理旧 digest。
+
+工作流代码修复合并后，应使用新 master 自动准备的发布，或从 master 新建一次
+workflow_dispatch。对修复前的旧运行点 Re-run，仍会执行那一轮旧代码，不能获得
+新探针逻辑；旧运行中的无后缀 `release-plan` / `release-report` 也保持原样。
 
 ## 本地验证
 
