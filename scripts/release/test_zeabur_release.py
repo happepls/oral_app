@@ -1,11 +1,13 @@
 import copy
 import json
+import os
 from pathlib import Path
 import subprocess
+import sys
 import tempfile
 import unittest
 import urllib.error
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import zeabur_release as release
 
@@ -194,6 +196,100 @@ class ImageAndSourceTests(unittest.TestCase):
         with self.assertRaises(release.ReleaseError):
             release.source_hash(Path('/does-not-exist-release-test'))
 
+    def test_real_node_probe_reports_health_or_source_failure_without_raw_error(self):
+        for has_source in (True, False):
+            with tempfile.TemporaryDirectory() as tmp:
+                if has_source:
+                    (Path(tmp) / 'src').mkdir()
+                zb = release.Zeabur('not-used')
+
+                def gql(query, variables):
+                    script = "global.fetch=async()=>{throw Error('PRIVATE_URL_AND_SECRET');};" + variables['command'][-1]
+                    process = subprocess.run(['node', '-e', script], cwd=tmp, capture_output=True, text=True, check=True)
+                    self.assertNotIn('PRIVATE_URL_AND_SECRET', process.stdout + process.stderr)
+                    return {'executeCommand': {'exitCode': 0, 'output': process.stdout}}
+                zb.gql = gql
+                error = release.RuntimeProbeUnavailable if has_source else release.ReleaseError
+                with self.assertRaises(error) as failure:
+                    zb.probe('user-service')
+                self.assertEqual(failure.exception.details['phase'], 'health_request' if has_source else 'source_read')
+
+
+class ReadinessTests(unittest.TestCase):
+    def setUp(self):
+        self.zb = release.Zeabur('not-used')
+        self.state = {'dockerfile': 'FROM example/image:fixed\n', 'deployment': 'new',
+                      'status': 'RUNNING', 'deployment_status': 'RUNNING'}
+        self.zb.state = lambda _: dict(self.state)
+        self.healthy = {'release_probe': True, 'health': 200, 'source': SOURCE, 'flag': 'unset'}
+
+    def response(self, result):
+        return {'executeCommand': {'exitCode': 0, 'output': json.dumps(result)}}
+
+    def wait(self, ticks):
+        clock = iter(ticks)
+        release.wait_for(self.zb, 'user-service', self.state['dockerfile'], 'old', SOURCE, 'unset',
+                         sleep=lambda _: None, clock=lambda: next(clock))
+
+    def test_running_container_with_one_failed_probe_is_rechecked(self):
+        self.zb.gql = Mock(side_effect=[{'executeCommand': {'exitCode': 1, 'output': 'PRIVATE_OUTPUT'}},
+                                       self.response(self.healthy)])
+        self.wait([0, 1, 2])
+        self.assertEqual(self.zb.gql.call_count, 2)
+
+    def test_repeated_process_failures_stop_with_sanitized_context(self):
+        self.zb.gql = Mock(return_value={'executeCommand': {'exitCode': 137, 'output': 'PRIVATE_OUTPUT'}})
+        with self.assertRaisesRegex(release.ReleaseError, 'deployment_verification_timed_out') as failure:
+            self.wait([0, 1, 241])
+        self.assertEqual(failure.exception.details['last_probe']['exit_code'], 137)
+        self.assertNotIn('PRIVATE_OUTPUT', json.dumps(failure.exception.details))
+
+    def test_health_request_failure_and_missing_output_can_recover(self):
+        for response in [self.response({'release_probe': True, 'probe_error': 'health_request_failed'}),
+                         {'executeCommand': {'exitCode': 0, 'output': 'PRIVATE_OUTPUT'}}]:
+            with self.subTest(response=response):
+                self.zb.gql = Mock(side_effect=[response, self.response(self.healthy)])
+                self.wait([0, 1, 2])
+                self.assertEqual(self.zb.gql.call_count, 2)
+
+    def test_source_read_failure_or_invalid_flag_is_not_retried(self):
+        for result, reason in [({'release_probe': True, 'probe_error': 'source_read_failed'}, 'runtime_probe_source_failed'),
+                               (dict(self.healthy, flag='invalid'), 'unexpected_device_flag')]:
+            self.zb.gql = Mock(side_effect=[self.response(result), self.response(self.healthy)])
+            with self.assertRaisesRegex(release.ReleaseError, reason):
+                self.wait([0, 1, 2])
+            self.assertEqual(self.zb.gql.call_count, 1)
+
+    def test_recovery_does_not_accept_wrong_source_health_or_flag(self):
+        for bad in [dict(self.healthy, source=OLD_SOURCE), dict(self.healthy, flag='true'),
+                    dict(self.healthy, health=503)]:
+            self.zb.gql = Mock(side_effect=[{'executeCommand': {'exitCode': 1, 'output': ''}}, self.response(bad)])
+            with self.assertRaisesRegex(release.ReleaseError, 'deployment_verification_timed_out'):
+                self.wait([0, 1, 2, 241])
+
+    def test_failed_deployment_is_terminal_without_probe_retry(self):
+        self.state['deployment_status'] = 'FAILED'
+        self.zb.gql = Mock()
+        with self.assertRaisesRegex(release.ReleaseError, 'deployment_failed'):
+            self.wait([0, 1])
+        self.zb.gql.assert_not_called()
+
+    def test_producer_records_attempt_name_for_later_deploy_only_rerun(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            output = Path(tmp) / 'outputs'
+            path = Path(tmp) / 'plan.json'
+            with (patch.dict(os.environ, {'GH_TOKEN': 'not-used', 'GITHUB_OUTPUT': str(output),
+                                         'GITHUB_RUN_ATTEMPT': '1', 'GITHUB_REPOSITORY': release.REPO}),
+                  patch.object(sys, 'argv', ['release', 'plan', '--commit', COMMIT, '--plan', str(path)]),
+                  patch.object(release.subprocess, 'check_output', return_value=COMMIT + '\n'),
+                  patch.object(release.GitHub, 'gates', return_value=None), patch('builtins.print')):
+                release.main()
+            self.assertIn('plan_artifact=release-plan-1\n', output.read_text())
+            with patch.dict(os.environ, {'GITHUB_RUN_ATTEMPT': '2'}):
+                self.assertEqual(release.plan_artifact_name(), 'release-plan-2')
+                # The earlier producing job's output remains its original name.
+                self.assertIn('plan_artifact=release-plan-1\n', output.read_text())
+
 
 class RolloutTests(unittest.TestCase):
     def setUp(self):
@@ -219,6 +315,38 @@ class RolloutTests(unittest.TestCase):
         self.apply()
         self.assertEqual(self.zb.writes, [])
         self.assertTrue(all(s['status'] == 'already_verified' for s in self.report['services'].values()))
+
+    def test_readiness_retry_never_replays_mutations(self):
+        original = self.zb.probe
+        failed_once = []
+
+        def probe(name):
+            if '@sha256:' in self.zb.states[name]['dockerfile'] and not failed_once:
+                failed_once.append(name)
+                raise release.RuntimeProbeUnavailable('execution', 1)
+            return original(name)
+        self.zb.probe = probe
+        self.apply(wait=lambda *args: release.wait_for(*args, sleep=lambda _: None))
+        self.assertEqual(self.report['status'], 'verified')
+        self.assertEqual(len(self.zb.writes), 10)
+
+    def test_probe_timeout_rolls_back_and_retains_sanitized_failure_details(self):
+        original = self.zb.probe
+
+        def probe(name):
+            if '@sha256:' in self.zb.states[name]['dockerfile']:
+                raise release.RuntimeProbeUnavailable('execution', 137)
+            return original(name)
+        def wait(*args):
+            ticks = iter([0, 1, 241])
+            return release.wait_for(*args, sleep=lambda _: None, clock=lambda: next(ticks))
+        self.zb.probe = probe
+        with self.assertRaisesRegex(release.ReleaseError, 'deployment_verification_timed_out'):
+            self.apply(wait=wait)
+        self.assertEqual(self.report['failure_details']['last_probe']['exit_code'], 137)
+        first = next(iter(release.SERVICES))
+        self.assertEqual(self.report['services'][first]['status'], 'rolled_back')
+        self.assertEqual(self.zb.states[first]['dockerfile'], self.original[first]['dockerfile'])
 
     def test_no_approval_or_changed_gates_prevents_writes(self):
         self.gh.approved = False

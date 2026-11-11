@@ -33,7 +33,19 @@ DIGEST = re.compile(r'^sha256:[0-9a-f]{64}$')
 
 
 class ReleaseError(RuntimeError):
-    pass
+    def __init__(self, reason, details=None):
+        super().__init__(reason)
+        self.details = details or {}
+
+
+class RuntimeProbeUnavailable(ReleaseError):
+    def __init__(self, phase, exit_code=None, service=None):
+        details = {'phase': phase}
+        if service is not None:
+            details['service'] = service
+        if isinstance(exit_code, int):
+            details['exit_code'] = exit_code
+        super().__init__('runtime_probe_unavailable', details)
 
 
 def require(condition, reason):
@@ -43,6 +55,12 @@ def require(condition, reason):
 
 def sha(data):
     return hashlib.sha256(data).hexdigest()
+
+
+def plan_artifact_name():
+    attempt = os.environ.get('GITHUB_RUN_ATTEMPT', '1')
+    require(re.fullmatch(r'[1-9][0-9]*', attempt), 'invalid_run_attempt')
+    return 'release-plan-' + attempt
 
 
 def request(url, token=None, payload=None, headers=None):
@@ -201,21 +219,36 @@ class Zeabur:
         _, port, path = SERVICES[name]
         # Only read source files, the existing flag and the private health URL.
         script = """const fs=require('fs'),path=require('path'),c=require('crypto');
+const result={release_probe:true,flag:process.env.DEVICE_SESSION_LIMIT_ENABLED||'unset'};
+(async()=>{try{
 const h=c.createHash('sha256');function walk(p){return fs.readdirSync(p,{withFileTypes:true}).flatMap(e=>e.isDirectory()?walk(path.join(p,e.name)):[path.join(p,e.name)]);}
 for(const p of walk('src').filter(p=>/\\.(js|json)$/.test(p)).sort()){h.update(p.slice(4));h.update(Buffer.from([0]));h.update(fs.readFileSync(p));h.update(Buffer.from([0]));}
-fetch('http://127.0.0.1:'+ (process.env.PORT||__PORT__) + __HEALTH__,{signal:AbortSignal.timeout(5000)}).then(r=>console.log(JSON.stringify({release_probe:true,health:r.status,source:h.digest('hex'),flag:process.env.DEVICE_SESSION_LIMIT_ENABLED||'unset'}))).catch(()=>process.exitCode=1);""".replace('__PORT__', str(port)).replace('__HEALTH__', json.dumps(path))
+result.source=h.digest('hex');
+}catch(_){result.probe_error='source_read_failed';console.log(JSON.stringify(result));return;}
+try{const r=await fetch('http://127.0.0.1:'+ (process.env.PORT||__PORT__) + __HEALTH__,{signal:AbortSignal.timeout(5000)});result.health=r.status;}
+catch(_){result.probe_error='health_request_failed';}
+console.log(JSON.stringify(result));})();""".replace('__PORT__', str(port)).replace('__HEALTH__', json.dumps(path))
         data = self.gql('mutation($id:ObjectID!,$env:ObjectID!,$command:[String!]!){executeCommand(serviceID:$id,environmentID:$env,command:$command){exitCode output}}',
                         {'id': SERVICES[name][0], 'env': ENVIRONMENT, 'command': ['node', '-e', script]})['executeCommand']
-        require(data['exitCode'] == 0, 'runtime_probe_failed')
+        if data['exitCode'] != 0:
+            raise RuntimeProbeUnavailable('execution', data['exitCode'], service=name)
         for line in data['output'].splitlines():
             try:
                 result = json.loads(line)
                 if result.get('release_probe'):
+                    if result.get('probe_error') == 'health_request_failed':
+                        raise RuntimeProbeUnavailable('health_request', service=name)
+                    if result.get('probe_error') == 'source_read_failed':
+                        raise ReleaseError('runtime_probe_source_failed', {'service': name, 'phase': 'source_read'})
+                    require(not result.get('probe_error'), 'runtime_probe_unknown_error')
                     require(result['flag'] in ('true', 'false', 'unset'), 'unexpected_device_flag')
+                    require(type(result.get('health')) is int and 100 <= result['health'] <= 599
+                            and isinstance(result.get('source'), str)
+                            and re.fullmatch('[0-9a-f]{64}', result['source']), 'runtime_probe_invalid_result')
                     return result
             except ValueError:
                 continue
-        raise ReleaseError('runtime_probe_missing')
+        raise RuntimeProbeUnavailable('missing_output', service=name)
 
 
 def validate_plan(plan):
@@ -235,17 +268,31 @@ def ready(gh, plan):
 
 def wait_for(zb, name, dockerfile, old_deployment, expected, flag, sleep=time.sleep, clock=time.monotonic):
     deadline = clock() + 240
+    last_probe = {}
+    last_deployment = {}
     while clock() < deadline:
         state = zb.state(name)
+        last_deployment = {'id': state['deployment'], 'status': state['deployment_status'], 'service_status': state['status']}
         require(state['dockerfile'] == dockerfile, 'configuration_changed_during_rollout')
         if state['deployment'] != old_deployment:
-            require(state['deployment_status'] not in ('FAILED', 'CRASHED', 'CANCELED'), 'deployment_failed')
+            if state['deployment_status'] in ('FAILED', 'CRASHED', 'CANCELED'):
+                raise ReleaseError('deployment_failed',
+                                   {'service': name, 'last_deployment': last_deployment, 'last_probe': last_probe})
             if state['status'] == 'RUNNING' and state['deployment_status'] == 'RUNNING':
-                probe = zb.probe(name)
-                if probe['health'] == 200 and probe['source'] == expected and probe['flag'] == flag:
-                    return
+                try:
+                    probe = zb.probe(name)
+                except RuntimeProbeUnavailable as error:
+                    # This is a read-only execution/health check. Never replay
+                    # Dockerfile writes or redeploys to recover from readiness.
+                    last_probe = {'reason': str(error), **error.details}
+                else:
+                    last_probe = {'health': probe['health'], 'source_matches': probe['source'] == expected,
+                                  'flag_matches': probe['flag'] == flag}
+                    if probe['health'] == 200 and last_probe['source_matches'] and last_probe['flag_matches']:
+                        return
         sleep(5)
-    raise ReleaseError('deployment_verification_timed_out')
+    raise ReleaseError('deployment_verification_timed_out',
+                       {'service': name, 'last_deployment': last_deployment, 'last_probe': last_probe})
 
 
 def apply(gh, zb, plan, report, save, wait=wait_for):
@@ -288,6 +335,8 @@ def apply(gh, zb, plan, report, save, wait=wait_for):
     except BaseException as error:
         report['status'] = 'failed'
         report['failure_code'] = str(error) if isinstance(error, ReleaseError) else 'unexpected_failure'
+        if isinstance(error, ReleaseError) and error.details:
+            report['failure_details'] = error.details
         for name, new in reversed(touched):
             old, probe = originals[name]
             try:
@@ -300,6 +349,8 @@ def apply(gh, zb, plan, report, save, wait=wait_for):
             except Exception as rollback_error:
                 report['services'][name]['status'] = 'rollback_requires_operator'
                 report['services'][name]['failure_code'] = str(rollback_error) if isinstance(rollback_error, ReleaseError) else 'unexpected_failure'
+                if isinstance(rollback_error, ReleaseError) and rollback_error.details:
+                    report['services'][name]['failure_details'] = rollback_error.details
             save()
         raise
 
@@ -337,6 +388,7 @@ def main():
         if os.environ.get('GITHUB_OUTPUT'):
             with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
                 output.write('ready=' + str(plan['ready']).lower() + '\n')
+                output.write('plan_artifact=' + plan_artifact_name() + '\n')
         print('Release plan ready.' if gates else 'Skipped: candidate is stale, unchecked or already released.')
         return
     report = {'status': 'started', 'services': {}, 'migrations_or_flags_modified': False}
@@ -353,6 +405,8 @@ def main():
     except BaseException as error:
         report['status'] = 'failed'
         report['failure_code'] = str(error) if isinstance(error, ReleaseError) else 'unexpected_failure'
+        if isinstance(error, ReleaseError) and error.details:
+            report['failure_details'] = error.details
         raise
     finally:
         save()
@@ -361,7 +415,8 @@ def main():
 if __name__ == '__main__':
     try:
         main()
-    except (ReleaseError, KeyError, ValueError):
+    except (ReleaseError, KeyError, ValueError) as error:
         # Never echo API bodies, credentials, Dockerfile contents or command output.
-        print('Release stopped. Review the sanitized report and deployment gates.')
+        reason = str(error) if isinstance(error, ReleaseError) else 'release_input_invalid_or_missing'
+        print('Release stopped: ' + reason + '. Review the sanitized report and deployment gates.')
         raise SystemExit(1)
