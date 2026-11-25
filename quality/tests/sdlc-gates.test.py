@@ -1,9 +1,13 @@
-import importlib.util
 import ast
+import importlib.util
+import json
 import os
 import re
+import shutil
 import subprocess
+import sys
 import tempfile
+import textwrap
 import unittest
 from pathlib import Path
 
@@ -212,15 +216,155 @@ status: ready
         self.assertTrue(any("unresolved" in error for error in errors))
 
 
+class PullRequestReviewTests(unittest.TestCase):
+    def setUp(self):
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        self.repository = Path(temporary.name)
+        self.git("init", "-q", "-b", "master")
+        self.git("config", "user.name", "Governance Fixture")
+        self.git("config", "user.email", "fixture@example.com")
+        self.script = self.repository / "scripts/sdlc-review.py"
+        self.script.parent.mkdir()
+        shutil.copyfile(ROOT / "scripts/sdlc-review.py", self.script)
+        (self.repository / "REVIEW.md").write_text("# Review policy\n")
+        (self.repository / "release.md").write_text("status: ready\nHistorical release evidence\n")
+        (self.repository / "verification.md").write_text("npm test\n")
+        self.merge_base = self.commit("Common ancestor")
+
+        self.git("checkout", "-q", "-b", "feature")
+        ui = self.repository / "client/src/Example.js"
+        ui.parent.mkdir(parents=True)
+        ui.write_text("export default false;\n")
+        self.head = self.commit("Review target")
+        self.git("checkout", "-q", "master")
+        (self.repository / "base-only.txt").write_text("Separate change on master\n")
+        self.base = self.commit("Base moved")
+
+    def git(self, *args):
+        return subprocess.check_output(
+            ["git", "-c", "core.hooksPath=/dev/null", *args], cwd=self.repository, text=True,
+        ).strip()
+
+    def commit(self, title):
+        self.git("add", ".")
+        self.git("commit", "-qm", title)
+        return self.git("rev-parse", "HEAD")
+
+    def card(self):
+        template = (ROOT / ".github/pull_request_template.md").read_text()
+        return (template.replace("填目标分支的完整 SHA", self.base)
+                .replace("填 git merge-base BaseSHA HeadSHA 的完整输出", self.merge_base)
+                .replace("填 PR 分支的完整 SHA", self.head)
+                .replace("|  | 待填 |", "| `npm test` | 0 |")
+                .replace("(https://)", "(https://github.com/example/oral_app/actions/runs/123)"))
+
+    def run_review(self, body, *, ref="feature", repo_id=1, event_base=None, event_head=None):
+        pr_json = self.repository / "pr.json"
+        pr_json.write_text(json.dumps({
+            "base": {"sha": self.base, "repo": {"id": 1}},
+            "head": {"sha": self.head, "ref": ref, "repo": {"id": repo_id}},
+            "body": body,
+        }))
+        return subprocess.run(
+            [sys.executable, str(self.script), "--pull-request", str(pr_json),
+             "--base", event_base or self.base, "--head", event_head or self.head],
+            cwd=self.repository, text=True, capture_output=True, check=False,
+        )
+
+    def test_regular_pr_uses_description_and_actual_merge_diff(self):
+        result = self.run_review(self.card())
+        self.assertEqual(0, result.returncode, result.stdout + result.stderr)
+        evidence = json.loads(result.stdout)
+        self.assertEqual("PR description", evidence["evidence_source"])
+        self.assertEqual([self.base, self.merge_base, self.head],
+                         [evidence[key] for key in ("base_sha", "merge_base_sha", "head_sha")])
+        self.assertEqual(["client/src/Example.js"], evidence["changed_paths"])
+
+    def test_missing_pr_evidence_does_not_fall_back_to_historical_release(self):
+        for body in (None, "Raw review body sentinel"):
+            with self.subTest(body=body):
+                result = self.run_review(body)
+                self.assertEqual(1, result.returncode)
+                self.assertIn("must contain one sdlc-pr-evidence block", result.stdout)
+                self.assertNotIn("Raw review body sentinel", result.stdout + result.stderr)
+
+    def test_stale_or_duplicate_sha_fails_each_identity_field(self):
+        for field, sha in (("Base SHA", self.base), ("Merge base SHA", self.merge_base), ("Head SHA", self.head)):
+            with self.subTest(field=field):
+                valid = f"- {field} `{sha}`"
+                for replacement in (f"- {field} `{'0' * 40}`", f"{valid}\n{valid}"):
+                    result = self.run_review(self.card().replace(valid, replacement))
+                    self.assertEqual(1, result.returncode)
+                    self.assertIn(f"PR evidence {field} must appear once and match", result.stdout)
+
+    def test_command_exit_status_and_evidence_link_are_required(self):
+        for current, replacement in (
+            ("`npm test`", ""), ("`npm test`", "`   `"), ("| 0 |", "| 待填 |"),
+            ("| 0 |", "| 256 |"), ("https://github.com", "http://github.com"),
+        ):
+            with self.subTest(replacement=replacement):
+                result = self.run_review(self.card().replace(current, replacement))
+                self.assertEqual(1, result.returncode)
+                self.assertIn("exit code (0–255), and HTTPS evidence link", result.stdout)
+
+    def test_current_pr_cannot_pass_a_run_for_an_old_base_or_head(self):
+        for stale_event in ({"event_base": self.merge_base}, {"event_head": self.merge_base}):
+            with self.subTest(stale_event=stale_event):
+                result = self.run_review(self.card(), **stale_event)
+                self.assertEqual(1, result.returncode)
+                self.assertIn("changed since this run was triggered", result.stdout)
+
+    def test_loop_branch_keeps_release_evidence_with_evidence_only_commit(self):
+        self.git("checkout", "-q", "feature")
+        release_json = json.dumps({
+            "base_sha": self.merge_base, "head_sha": self.head, "commands": ["npm test"],
+            "risk_areas": ["ui", "governance"], "findings": [],
+        })
+        (self.repository / "release.md").write_text(f"""status: ready
+<!-- sdlc-review-json
+{release_json}
+-->
+## Review evidence
+- Scope: full merge diff
+- Diff: {self.merge_base}..{self.head}
+- Commands: npm test
+- Risk areas: ui, governance
+- Findings: none
+- Unresolved high/critical: 0
+- Recommendation: ready
+""")
+        self.head = self.commit("Append independent release review")
+        result = self.run_review(None, ref="agent/sdlc-issue-123-test")
+        self.assertEqual(0, result.returncode, result.stdout + result.stderr)
+        self.assertEqual("release.md", json.loads(result.stdout)["evidence_source"])
+
+    def test_fork_loop_branch_name_still_uses_pr_description(self):
+        result = self.run_review(self.card(), ref="agent/sdlc-issue-123-test", repo_id=2)
+        self.assertEqual(0, result.returncode, result.stdout + result.stderr)
+        self.assertEqual("PR description", json.loads(result.stdout)["evidence_source"])
+
+
 class WorkflowContractTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.loop = (ROOT / ".github/workflows/sdlc-loop.yml").read_text()
         cls.maintain = (ROOT / ".github/workflows/sdlc-maintain.yml").read_text()
+        cls.checks = (ROOT / ".github/workflows/sdlc-checks.yml").read_text()
 
     @staticmethod
     def step(workflow, name):
         return workflow.split(f"      - name: {name}\n", 1)[1].split("      - ", 1)[0]
+
+    def test_review_without_pr_event_metadata_does_not_use_manual_dispatch(self):
+        step = self.step(self.checks, "Validate evidence for the current PR diff")
+        script = textwrap.dedent(step.split("        run: |\n", 1)[1])
+        result = subprocess.run(
+            ["bash", "-ec", script], cwd=ROOT, text=True, capture_output=True, check=False,
+            env={**os.environ, "GITHUB_EVENT_NAME": "pull_request", "PR_NUMBER": "", "BASE_SHA": "", "HEAD_SHA": ""},
+        )
+        self.assertEqual(1, result.returncode)
+        self.assertIn("pull request event is missing its number, Base or Head", result.stdout)
 
     def scheduled_step_runs(self, name, schedule="", cadence="", event="schedule", enabled="true", severity="", previous_success=True):
         step = self.step(self.maintain, name)

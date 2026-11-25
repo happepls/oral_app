@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Risk classifier used by the sdlc-review GitHub check."""
+"""Validate diff-bound review evidence for GitHub pull requests."""
 
 from __future__ import annotations
 
@@ -21,6 +21,13 @@ RULES = {
     "data": ("migration", "schema", "init.sql", "backup", "database"),
     "ui": ("client/src", "figma_app_template", "i18n", "tailwind"),
 }
+SHA = re.compile(r"[0-9a-f]{40}")
+PR_EVIDENCE_START = "<!-- sdlc-pr-evidence:start -->"
+PR_EVIDENCE_END = "<!-- sdlc-pr-evidence:end -->"
+VERIFICATION_ROW = re.compile(
+    r"\|\s*`(?P<command>[^`\n]+)`\s*\|\s*(?P<exit_code>[0-9]{1,3})\s*\|"
+    r"\s*\[[^\]\n]+\]\(https://[^/\s()]+/[^\s()]+\)\s*\|"
+)
 
 
 def changed(base: str, head: str) -> list[str]:
@@ -39,6 +46,59 @@ def classify(paths: list[str]) -> dict[str, list[str]]:
         for risk, terms in RULES.items()
         if any(any(term.lower() in path.lower() for term in terms) for path in paths)
     }
+
+
+def validate_pr_evidence(body: str, base: str, merge_base: str, head: str) -> list[str]:
+    lines = body.splitlines()
+    if lines.count(PR_EVIDENCE_START) != 1 or lines.count(PR_EVIDENCE_END) != 1:
+        return ["PR description must contain one sdlc-pr-evidence block from the PR template"]
+    evidence = lines[lines.index(PR_EVIDENCE_START) + 1:lines.index(PR_EVIDENCE_END)]
+    errors = []
+    for field, expected in (("Base SHA", base), ("Merge base SHA", merge_base), ("Head SHA", head)):
+        prefix = f"- {field} "
+        values = [line.removeprefix(prefix).strip() for line in evidence if line.startswith(prefix)]
+        if values != [f"`{expected}`"]:
+            errors.append(f"PR evidence {field} must appear once and match `{expected}`")
+    results = [VERIFICATION_ROW.fullmatch(line.strip()) for line in evidence]
+    if not any(result and result["command"].strip() and int(result["exit_code"]) <= 255 for result in results):
+        errors.append("PR evidence must include a verification command, exit code (0–255), and HTTPS evidence link")
+    return errors
+
+
+def review_pull_request(path: Path, event_base: str | None, event_head: str | None) -> list[str]:
+    try:
+        pr = json.loads(path.read_text(encoding="utf-8"))
+        base = pr["base"]["sha"]
+        head = pr["head"]["sha"]
+        head_ref = pr["head"]["ref"]
+        base_repo = pr["base"]["repo"]["id"]
+        head_repo = (pr["head"]["repo"] or {}).get("id")
+        body = pr["body"]
+        if not (SHA.fullmatch(base) and SHA.fullmatch(head) and isinstance(head_ref, str)
+                and type(base_repo) is int and (body is None or isinstance(body, str))):
+            raise ValueError
+    except (OSError, KeyError, TypeError, AttributeError, ValueError):
+        return ["cannot read valid pull request metadata"]
+    if (event_base is not None and event_base != base) or (event_head is not None and event_head != head):
+        return ["pull request Base or Head changed since this run was triggered. Use a run for the current PR diff"]
+
+    common = subprocess.run(
+        ["git", "merge-base", base, head], cwd=ROOT, text=True, capture_output=True, check=False,
+    )
+    if common.returncode:
+        return ["cannot resolve the PR merge base from the checked-out Git history"]
+    merge_base = common.stdout.strip()
+    paths = changed(merge_base, head)
+    risks = classify(paths)
+    uses_release_artifact = head_repo == base_repo and head_ref.startswith("agent/sdlc-")
+    print(json.dumps({
+        "evidence_source": "release.md" if uses_release_artifact else "PR description",
+        "base_sha": base, "merge_base_sha": merge_base, "head_sha": head,
+        "changed_paths": paths, "risk_areas": risks,
+    }, indent=2, sort_keys=True))
+    if uses_release_artifact:
+        return validate_evidence(ROOT / "release.md", risks, merge_base, head, ROOT / "verification.md")
+    return validate_pr_evidence(body or "", base, merge_base, head)
 
 
 def validate_evidence(release_path: Path, risks: dict[str, list[str]], base: str | None = None, head: str | None = None, verification_path: Path | None = None) -> list[str]:
@@ -119,17 +179,24 @@ def validate_evidence(release_path: Path, risks: dict[str, list[str]], base: str
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--base", default="HEAD^")
-    parser.add_argument("--head", default="HEAD")
+    parser.add_argument("--base")
+    parser.add_argument("--head")
+    parser.add_argument("--pull-request", type=Path, help="current PR JSON from the GitHub REST API")
     parser.add_argument("--paths", nargs="*")
     args = parser.parse_args()
-    paths = args.paths if args.paths is not None else changed(args.base, args.head)
-    risks = classify(paths)
-    print(json.dumps({"changed_paths": paths, "risk_areas": risks}, indent=2, sort_keys=True))
     if not (ROOT / "REVIEW.md").exists():
         print("REVIEW.md is missing")
         return 1
-    errors = validate_evidence(ROOT / "release.md", risks, args.base, args.head, ROOT / "verification.md")
+    if args.pull_request is not None:
+        if args.paths is not None:
+            parser.error("--paths cannot override the actual pull request diff")
+        errors = review_pull_request(args.pull_request, args.base, args.head)
+    else:
+        base, head = args.base or "HEAD^", args.head or "HEAD"
+        paths = args.paths if args.paths is not None else changed(base, head)
+        risks = classify(paths)
+        print(json.dumps({"changed_paths": paths, "risk_areas": risks}, indent=2, sort_keys=True))
+        errors = validate_evidence(ROOT / "release.md", risks, base, head, ROOT / "verification.md")
     for error in errors:
         print(f"ERROR: {error}")
     return 1 if errors else 0

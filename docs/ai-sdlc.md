@@ -61,7 +61,22 @@ SDLC-Artifact: sdlc/issue-123-short-slug/plan/r1
 
 ## Checks and branch protection
 
-The `sdlc-artifacts` check validates schema, change identity, chain order, approval and execution evidence, secret patterns, and stage history. `sdlc-review` classifies changed paths and requires risk-specific review evidence in `release.md` before release readiness.
+The `sdlc-artifacts` check validates schema, change identity, chain order, approval and execution evidence, secret patterns, and stage history. `sdlc-review` reports path hints for the merge-base-to-head diff. Same-repository `agent/sdlc-*` PRs use the independent review in `release.md`, with the merge base matching the independent review's input. Ordinary PRs use the evidence block in the PR description.
+
+Use [REVIEW.md](../REVIEW.md) and the [PR risk card](../.github/pull_request_template.md) for human review and merge decisions. The two retrospective pilots record [trunk review of PR #114](plans/2026-11-25-pr-114-review-pilot.md) and [leaf review of PR #88](plans/2026-11-25-pr-88-review-pilot.md). Both `sdlc-review` jobs reported an internal failure in shadow because the historical root `release.md` referenced an unrelated Base and Head. PR #114 also shows that path hints missed its authentication boundary. PR #88 shows a public UI build that matched no risk hint.
+
+On 2026-11-25 the GitHub branch protection and effective rules for `master` required up-to-date `test` and `ui-audit` checks. The effective rules required zero approving reviews and allowed unresolved conversations. Administrator enforcement was enabled for branch protection. The active ruleset had no bypass actors, and repository auto-merge was disabled. Read the live settings before a protection change:
+
+```bash
+gh api repos/happepls/oral_app/branches/master/protection
+gh api repos/happepls/oral_app/rules/branches/master
+```
+
+For an ordinary PR, retain the evidence markers from the PR template, fill Base with the target branch tip and Head with the PR tip, and compute Merge base with `git merge-base <base> <head>`. Add each executed command, numeric exit status, and a link to its redacted log or CI artifact. The check reads the current PR through the GitHub API, compares its tips to the run event, and verifies the exact commit identities and the presence of a verification row. The human reviewer checks that the linked artifacts actually describe those commits and that the test outcomes cover the risk. Update the risk card when the comparison changes. When only the target branch advances, updating the PR branch or its description triggers a fresh governance check. Keep GitHub's up-to-date branch requirement for enforcement. [GitHub pull request events](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#pull_request)
+
+Locally, save a PR API response to a temporary file and run `python3 scripts/sdlc-review.py --pull-request <file>`. Git history must contain both commits. To simulate a stale run, supply its original `--base` and `--head`. Record only the raw gate outcome and sanitized errors in evidence.
+
+Audit the raw gate outcome during shadow. On 2026-11-25 the listed loop history contained zero successful runs and the root maintenance artifact recorded acceptance as pending. Complete the existing synthetic six-stage loop and record an accepted production observation window before making the jobs required. [Loop history](https://github.com/happepls/oral_app/actions/workflows/sdlc-loop.yml)
 
 After shadow acceptance, a repository administrator applies branch protection to `master`:
 
@@ -102,6 +117,8 @@ The current external probe is `https://guajiguaji.top/api/users/health`. Zeabur'
 service readiness check is separate: it defaults to TCP and can use a custom
 HTTP path returning 2xx. For user-service itself that path is `/api/health`,
 without the gateway's `/users` prefix. See [Zeabur health checks](https://zeabur.com/docs/zh-CN/operations/monitoring/health-checks).
+
+For a release, associate relevant business probes with the deployed SHA and observation window. For realtime work, use a synthetic account to run voice input, AI audio playback, reconnect and stale-event rejection. For scoring work, check saved progress after refresh and absence of points for an invalid or stale window. For payment work, use the approved test path to verify stable entitlements across retried or out-of-order webhook events. Store aggregate outcomes and rollback decisions with the release evidence.
 
 In shadow mode a single timeout is only an observation. Diagnosis is triggered by a critical security event, two windows at 5xx ≥1%, two windows at resource use ≥80%, backup age over 26 hours, or two consecutive critical health failures. Latency is report-only until a seven-day baseline is accepted. If a loop is active, the workflow creates or labels a queued diagnostic Issue; otherwise a new maintenance-derived loop may start after the old `maintenance.md` is complete.
 
