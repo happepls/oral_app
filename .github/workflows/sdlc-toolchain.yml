@@ -8,6 +8,8 @@ on:
       - '.github/workflows/sdlc-*.yml'
       - 'scripts/ci/install-verification-deps.sh'
       - 'scripts/quality/**'
+      - 'scripts/sdlc*.py'
+      - '.github/pull_request_template.md'
       - 'quality/tests/sdlc-gates.test.py'
       - 'quality/fixtures/sdlc/**'
       - '**/package-lock.json'
