@@ -11,8 +11,10 @@ import argparse
 import datetime as dt
 import json
 import re
+import stat
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 
@@ -34,6 +36,7 @@ STATUSES = {"pending", "ready", "approved", "blocked", "complete", "superseded"}
 STAGES = {stage for _, stage in ARTIFACTS}
 RISKS = {"low", "medium", "high", "critical"}
 COMMIT_TOKEN = re.compile(r"^sdlc/[a-z0-9][a-z0-9-]{5,63}/(plan|design|build|test|deploy|maintain)/r[1-9][0-9]*$")
+DEPLOYED_SHA = re.compile(r"[0-9a-f]{40}")
 PLACEHOLDERS = re.compile(r"\b(TODO|TBD|PLACEHOLDER)\s*[:\-]", re.I)
 SECRET_PATTERNS = [
     re.compile(r"sk-[A-Za-z0-9_-]{20,}"),
@@ -85,6 +88,19 @@ def _valid_commit_ref(value: object, allow_pending: bool) -> bool:
         (allow_pending and value in {"pending", "none"})
         or (isinstance(value, str) and COMMIT_TOKEN.fullmatch(value))
     )
+
+
+def evidence_version(body: str, heading: str) -> str | None:
+    sections = re.findall(rf"^## {re.escape(heading)}[ \t]*\n(.*?)(?=^## |\Z)", body, re.M | re.S)
+    versions = set()
+    for section in sections:
+        entries = re.findall(r"^- Version:[ \t]*([^\n]*)$", section, re.M)
+        if not entries:
+            continue
+        if len(entries) != 1 or not DEPLOYED_SHA.fullmatch(entries[0].strip()):
+            return None
+        versions.add(entries[0].strip())
+    return next(iter(versions)) if len(versions) == 1 else None
 
 
 def validate_artifacts(history: bool = False, loader=None) -> list[str]:
@@ -164,6 +180,21 @@ def validate_artifacts(history: bool = False, loader=None) -> list[str]:
     release = next(((meta, body) for path, meta, body in parsed if path.name == "release.md"), ({}, ""))
     if release[0].get("status") in {"ready", "complete"} and "## Rollback" not in release[1]:
         errors.append("release.md: missing rollback")
+    released_version = None
+    if release[0].get("status") == "complete":
+        released_version = evidence_version(release[1], "Deployment evidence")
+        if released_version is None:
+            errors.append("release.md: deployment evidence needs one consistent full Git commit SHA")
+
+    maintenance = next(((meta, body) for path, meta, body in parsed if path.name == "maintenance.md"), ({}, ""))
+    if maintenance[0].get("status") == "complete":
+        if release[0].get("status") != "complete":
+            errors.append("maintenance.md: release.md must be complete before maintenance completion")
+        observed_version = evidence_version(maintenance[1], "Completion evidence")
+        if observed_version is None:
+            errors.append("maintenance.md: completion evidence needs one consistent full Git commit SHA")
+        elif released_version is not None and observed_version != released_version:
+            errors.append("maintenance.md: observed version does not match release deployment evidence")
 
     if history:
         previous_commit = None
@@ -287,7 +318,7 @@ def init_artifacts(change_id: str, source: str, risk: str, replace_complete: boo
     return 0
 
 
-def replace_frontmatter(path: Path, updates: dict[str, object]) -> None:
+def replace_frontmatter(path: Path, updates: dict[str, object], *, body_suffix: str = "") -> None:
     text = path.read_text(encoding="utf-8")
     raw, body = text[4:].split("\n---\n", 1)
     lines = raw.splitlines()
@@ -301,7 +332,16 @@ def replace_frontmatter(path: Path, updates: dict[str, object]) -> None:
             lines[index] = f"{key}: {value}"
     for key, value in remaining.items():
         lines.append(f"{key}: {value}")
-    path.write_text("---\n" + "\n".join(lines) + "\n---\n" + body, encoding="utf-8")
+    content = "---\n" + "\n".join(lines) + "\n---\n" + body + body_suffix
+    destination = tempfile.NamedTemporaryFile(mode="w", dir=path.parent, prefix=f".{path.name}.", encoding="utf-8", delete=False)
+    temporary_path = Path(destination.name)
+    try:
+        with destination:
+            destination.write(content)
+        temporary_path.chmod(stat.S_IMODE(path.stat().st_mode))
+        temporary_path.replace(path)
+    finally:
+        temporary_path.unlink(missing_ok=True)
 
 
 def approve_plan(evidence: str) -> int:
@@ -324,7 +364,7 @@ def approve_plan(evidence: str) -> int:
     return 0
 
 
-def revise_artifact(filename: str) -> int:
+def revise_artifact(filename: str, *, updates: dict[str, object] | None = None, body_suffix: str = "") -> int:
     names = {name: stage for name, stage in ARTIFACTS}
     if filename not in names:
         raise GateError(f"unknown artifact: {filename}")
@@ -333,7 +373,9 @@ def revise_artifact(filename: str) -> int:
     revision = int(meta["revision"]) + 1
     token = f"sdlc/{meta['change_id']}/{names[filename]}/r{revision}"
     now = dt.datetime.now(dt.timezone.utc).replace(microsecond=0).isoformat()
-    replace_frontmatter(path, {"revision": revision, "updated_at": now, "artifact_commit": token})
+    replace_frontmatter(path, {
+        **(updates or {}), "revision": revision, "updated_at": now, "artifact_commit": token,
+    }, body_suffix=body_suffix)
     index = [name for name, _ in ARTIFACTS].index(filename)
     if index + 1 < len(ARTIFACTS):
         replace_frontmatter(ROOT / ARTIFACTS[index + 1][0], {"parent_artifact_commit": token})
@@ -342,35 +384,45 @@ def revise_artifact(filename: str) -> int:
 
 
 def complete_release(evidence: str, deployed_version: str) -> int:
-    if not re.fullmatch(r"[0-9a-f]{40}", deployed_version):
+    if not DEPLOYED_SHA.fullmatch(deployed_version):
         raise GateError("deployed version must be a full Git commit SHA")
     if not re.fullmatch(r"github-pr:https://[^;\s]+:reviewer=[A-Za-z0-9-]+;zeabur-deployment:https://[^\s]+", evidence):
         raise GateError("release evidence must identify PR reviewer and Zeabur deployment")
-    meta, _ = parse_frontmatter(ROOT / "release.md")
+    meta, body = parse_frontmatter(ROOT / "release.md")
     if meta.get("status") != "ready":
         raise GateError("release.md must be ready before release completion")
-    replace_frontmatter(ROOT / "release.md", {
-        "status": "complete", "approval_required": True, "approval_evidence": evidence,
-    })
-    with (ROOT / "release.md").open("a", encoding="utf-8") as handle:
-        handle.write(f"\n## Deployment evidence\n\n- Version: {deployed_version}\n- Approval/deployment: {evidence}\n")
-    return revise_artifact("release.md")
+    receipt = f"\n## Deployment evidence\n\n- Version: {deployed_version}\n- Approval/deployment: {evidence}\n"
+    if evidence_version(body + receipt, "Deployment evidence") != deployed_version:
+        raise GateError("existing release deployment evidence conflicts with the supplied version")
+    return revise_artifact(
+        "release.md",
+        updates={"status": "complete", "approval_required": True, "approval_evidence": evidence},
+        body_suffix=receipt,
+    )
 
 
 def complete_maintenance(evidence: str, deployed_version: str) -> int:
-    release, _ = parse_frontmatter(ROOT / "release.md")
+    release, release_body = parse_frontmatter(ROOT / "release.md")
     if release.get("status") != "complete":
         raise GateError("release.md must be complete before maintenance completion")
-    if not re.fullmatch(r"[0-9a-f]{40}", deployed_version):
+    if not DEPLOYED_SHA.fullmatch(deployed_version):
         raise GateError("deployed version must be a full Git commit SHA")
+    released_version = evidence_version(release_body, "Deployment evidence")
+    if released_version is None:
+        raise GateError("release.md deployment evidence needs one consistent full Git commit SHA")
+    if deployed_version != released_version:
+        raise GateError("observed version does not match release deployment evidence")
     if not re.fullmatch(r"observation:https://[^\s]+", evidence):
         raise GateError("maintenance evidence must identify an observation run")
-    replace_frontmatter(ROOT / "maintenance.md", {
-        "status": "complete", "approval_evidence": evidence,
-    })
-    with (ROOT / "maintenance.md").open("a", encoding="utf-8") as handle:
-        handle.write(f"\n## Completion evidence\n\n- Version: {deployed_version}\n- Observation: {evidence}\n")
-    return revise_artifact("maintenance.md")
+    _, maintenance_body = parse_frontmatter(ROOT / "maintenance.md")
+    receipt = f"\n## Completion evidence\n\n- Version: {deployed_version}\n- Observation: {evidence}\n"
+    if evidence_version(maintenance_body + receipt, "Completion evidence") != released_version:
+        raise GateError("existing maintenance completion evidence does not match release deployment evidence")
+    return revise_artifact(
+        "maintenance.md",
+        updates={"status": "complete", "approval_evidence": evidence},
+        body_suffix=receipt,
+    )
 
 
 def main() -> int:
