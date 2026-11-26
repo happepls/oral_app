@@ -10,6 +10,7 @@ import tempfile
 import textwrap
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -131,6 +132,115 @@ class ArtifactGateTests(unittest.TestCase):
         self.assertTrue(any("approval-gated stage lacks durable evidence" in error for error in errors))
 
 
+class DeploymentEvidenceTests(unittest.TestCase):
+    deployed_sha = "1" * 40
+    other_sha = "2" * 40
+
+    def setUp(self):
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        self.root = Path(directory.name)
+        scripts = self.root / "scripts"
+        scripts.mkdir()
+        shutil.copyfile(ROOT / "scripts/sdlc.py", scripts / "sdlc.py")
+        for name, _ in sdlc.ARTIFACTS:
+            shutil.copyfile(FIXTURES / name, self.root / name)
+        self.release = self.root / "release.md"
+        self.maintenance = self.root / "maintenance.md"
+        body = self.release.read_text()
+        self.ready_release = body.replace("status: pending", "status: ready", 1)
+        self.release.write_text(self.ready_release)
+        result = self.complete_release()
+        self.assertEqual(0, result.returncode, result.stderr)
+
+    def run_cli(self, *args):
+        return subprocess.run(
+            [sys.executable, "scripts/sdlc.py", *args], cwd=self.root, text=True, capture_output=True, check=False,
+        )
+
+    def complete_maintenance(self, version, observation=1):
+        return self.run_cli(
+            "complete-maintenance", "--deployed-version", version, "--evidence",
+            f"observation:https://fixture.invalid/observations/{observation}",
+        )
+
+    def complete_release(self):
+        return self.run_cli(
+            "complete-release", "--deployed-version", self.deployed_sha, "--evidence",
+            "github-pr:https://fixture.invalid/pull/1:reviewer=fixture;zeabur-deployment:https://fixture.invalid/deploy/1",
+        )
+
+    def test_completion_receipts_can_follow_existing_evidence_headings_with_prose(self):
+        self.release.write_text(self.ready_release + "\n## Deployment evidence\n\nAwaiting the Zeabur release.\n")
+        result = self.complete_release()
+        self.assertEqual(0, result.returncode, result.stderr)
+        self.maintenance.write_text(self.maintenance.read_text() + "\n## Completion evidence\n\nAwaiting observation.\n")
+        result = self.complete_maintenance(self.deployed_sha)
+        self.assertEqual(0, result.returncode, result.stderr)
+        result = self.run_cli("validate")
+        self.assertEqual(0, result.returncode, result.stderr)
+
+    def test_conflicting_draft_release_version_blocks_completion_before_writing(self):
+        self.release.write_text(self.ready_release + f"\n## Deployment evidence\n\n- Version: {self.other_sha}\n")
+        before = self.release.read_bytes(), self.maintenance.read_bytes()
+        result = self.complete_release()
+        self.assertEqual(1, result.returncode)
+        self.assertIn("existing release deployment evidence conflicts", result.stderr)
+        self.assertEqual(before, (self.release.read_bytes(), self.maintenance.read_bytes()))
+
+    def test_maintenance_rejects_wrong_version_before_writing(self):
+        before = self.maintenance.read_bytes()
+        result = self.complete_maintenance(self.other_sha)
+        self.assertEqual(1, result.returncode)
+        self.assertIn("observed version does not match release deployment evidence", result.stderr)
+        self.assertEqual(before, self.maintenance.read_bytes())
+
+    def test_same_version_accepts_existing_receipt_format_and_repeat_observation(self):
+        for observation in (1, 2):
+            result = self.complete_maintenance(self.deployed_sha, observation)
+            self.assertEqual(0, result.returncode, result.stderr)
+        result = self.run_cli("validate")
+        self.assertEqual(0, result.returncode, result.stderr)
+        self.assertEqual(2, self.maintenance.read_text().count(f"- Version: {self.deployed_sha}"))
+
+    def test_maintenance_write_failure_leaves_artifact_retryable(self):
+        before = self.maintenance.read_bytes()
+        with patch.object(sdlc, "ROOT", self.root), patch.object(Path, "replace", side_effect=OSError("disk write failed")):
+            with self.assertRaisesRegex(OSError, "disk write failed"):
+                sdlc.complete_maintenance("observation:https://fixture.invalid/observations/1", self.deployed_sha)
+        self.assertEqual(before, self.maintenance.read_bytes())
+        self.assertEqual([], list(self.root.glob(".maintenance.md.*")))
+        result = self.complete_maintenance(self.deployed_sha)
+        self.assertEqual(0, result.returncode, result.stderr)
+        self.assertEqual(1, self.maintenance.read_text().count(f"- Version: {self.deployed_sha}"))
+
+    def test_history_validation_rejects_directly_edited_maintenance_version(self):
+        result = self.complete_maintenance(self.deployed_sha)
+        self.assertEqual(0, result.returncode, result.stderr)
+        body = self.maintenance.read_text()
+        self.maintenance.write_text(body.replace(f"- Version: {self.deployed_sha}", f"- Version: {self.other_sha}"))
+        result = self.run_cli("validate", "--history")
+        self.assertEqual(1, result.returncode)
+        self.assertIn("maintenance.md: observed version does not match release deployment evidence", result.stderr)
+        before = self.maintenance.read_bytes()
+        retry = self.complete_maintenance(self.deployed_sha, 2)
+        self.assertEqual(1, retry.returncode)
+        self.assertIn("existing maintenance completion evidence does not match", retry.stderr)
+        self.assertEqual(before, self.maintenance.read_bytes())
+
+    def test_absent_or_conflicting_release_versions_block_completion(self):
+        original = self.release.read_text()
+        version = f"- Version: {self.deployed_sha}"
+        for replacement in ("", f"{version}\n- Version: {self.other_sha}"):
+            with self.subTest(replacement=replacement):
+                self.release.write_text(original.replace(version, replacement))
+                before = self.maintenance.read_bytes()
+                result = self.complete_maintenance(self.deployed_sha)
+                self.assertEqual(1, result.returncode)
+                self.assertIn("deployment evidence needs one consistent full Git commit SHA", result.stderr)
+                self.assertEqual(before, self.maintenance.read_bytes())
+
+
 class MonitorTests(unittest.TestCase):
     def setUp(self):
         self.bands = monitor.parse_bands(ROOT / "bands.yaml")
@@ -173,6 +283,49 @@ class MonitorTests(unittest.TestCase):
 
 
 class ReviewGateTests(unittest.TestCase):
+    def test_strict_schema_leaves_risk_area_uniqueness_to_validator(self):
+        schema = json.loads((ROOT / ".github/sdlc-review-schema.json").read_text())
+        self.assertNotIn("uniqueItems", schema["properties"]["risk_areas"])
+
+    def test_review_preflight_and_bound_artifact_validate_the_same_risk_areas(self):
+        for areas, problem in (
+            (["auth"], None),
+            ([], None),
+            (["auth", "auth"], "structured review risk_areas must be unique"),
+            ([[]], "structured review risk_areas must be a list of non-empty strings"),
+        ):
+            with self.subTest(areas=areas), tempfile.TemporaryDirectory() as directory:
+                payload = json.dumps({"risk_areas": areas, "commands": ["npm test"], "findings": []})
+                review_file = Path(directory) / "review.json"
+                review_file.write_text(payload)
+                result = subprocess.run(
+                    [sys.executable, str(ROOT / "scripts/sdlc-review.py"), "--review-json", str(review_file)],
+                    cwd=ROOT, text=True, capture_output=True, check=False,
+                )
+                release = Path(directory) / "release.md"
+                release.write_text(f"""---
+status: ready
+---
+<!-- sdlc-review-json
+{payload}
+-->
+## Review evidence
+- Scope: test
+- Diff: abc..def
+- Commands: npm test
+- Risk areas: auth
+- Findings: none
+- Unresolved high/critical: 0
+- Recommendation: ready
+""")
+                self.assertEqual(int(problem is not None), result.returncode, result.stdout + result.stderr)
+                errors = review.validate_evidence(release, {})
+                if problem is None:
+                    self.assertEqual([], errors)
+                else:
+                    self.assertIn(problem, result.stdout)
+                    self.assertIn(problem, errors)
+
     def test_review_requires_all_classified_risks(self):
         with tempfile.TemporaryDirectory() as directory:
             release = Path(directory) / "release.md"
@@ -355,6 +508,16 @@ class WorkflowContractTests(unittest.TestCase):
     @staticmethod
     def step(workflow, name):
         return workflow.split(f"      - name: {name}\n", 1)[1].split("      - ", 1)[0]
+
+    def test_independent_review_validates_risk_areas_before_writing_release(self):
+        step = self.step(self.loop, "Fresh-context review and release artifact")
+        independent_review, validate, writer = (
+            step.index("--output-schema .github/sdlc-review-schema.json"),
+            step.index("python3 scripts/sdlc-review.py --review-json /tmp/sdlc-review.json"),
+            step.index("Update release.md only"),
+        )
+        self.assertLess(independent_review, validate)
+        self.assertLess(validate, writer)
 
     def test_review_without_pr_event_metadata_does_not_use_manual_dispatch(self):
         step = self.step(self.checks, "Validate evidence for the current PR diff")

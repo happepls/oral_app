@@ -101,6 +101,22 @@ def review_pull_request(path: Path, event_base: str | None, event_head: str | No
     return validate_pr_evidence(body or "", base, merge_base, head)
 
 
+def validate_risk_areas(evidence: object) -> list[str]:
+    risk_areas = evidence.get("risk_areas") if isinstance(evidence, dict) else None
+    if not isinstance(risk_areas, list) or any(not isinstance(area, str) or not area for area in risk_areas):
+        return ["structured review risk_areas must be a list of non-empty strings"]
+    if len(set(risk_areas)) != len(risk_areas):
+        return ["structured review risk_areas must be unique"]
+    return []
+
+
+def validate_review_json(path: Path) -> list[str]:
+    try:
+        return validate_risk_areas(json.loads(path.read_text(encoding="utf-8")))
+    except (OSError, ValueError):
+        return ["cannot read structured review JSON"]
+
+
 def validate_evidence(release_path: Path, risks: dict[str, list[str]], base: str | None = None, head: str | None = None, verification_path: Path | None = None) -> list[str]:
     errors: list[str] = []
     if not release_path.exists():
@@ -124,10 +140,13 @@ def validate_evidence(release_path: Path, risks: dict[str, list[str]], base: str
         delta = changed(reviewed_head, head) if ancestry else []
         if not ancestry or set(delta) - {"release.md", "maintenance.md"}:
             errors.append("review evidence head_sha is not the reviewed ancestor of the evidence-only commit")
-    covered_json = set(evidence.get("risk_areas", []))
-    missing_json = set(risks) - covered_json
-    if missing_json:
-        errors.append(f"structured review misses risk areas: {', '.join(sorted(missing_json))}")
+    area_errors = validate_risk_areas(evidence)
+    if area_errors:
+        errors.extend(area_errors)
+    else:
+        missing_json = set(risks) - set(evidence["risk_areas"])
+        if missing_json:
+            errors.append(f"structured review misses risk areas: {', '.join(sorted(missing_json))}")
     findings = evidence.get("findings")
     if not isinstance(findings, list):
         errors.append("structured review findings must be a list")
@@ -181,13 +200,18 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--base")
     parser.add_argument("--head")
-    parser.add_argument("--pull-request", type=Path, help="current PR JSON from the GitHub REST API")
+    source = parser.add_mutually_exclusive_group()
+    source.add_argument("--pull-request", type=Path, help="current PR JSON from the GitHub REST API")
+    source.add_argument("--review-json", type=Path, help="preflight risk areas in the independent review JSON")
     parser.add_argument("--paths", nargs="*")
     args = parser.parse_args()
-    if not (ROOT / "REVIEW.md").exists():
-        print("REVIEW.md is missing")
-        return 1
-    if args.pull_request is not None:
+    if args.review_json is not None:
+        if args.base is not None or args.head is not None or args.paths is not None:
+            parser.error("--review-json takes only the review evidence file")
+        errors = validate_review_json(args.review_json)
+    elif not (ROOT / "REVIEW.md").exists():
+        errors = ["REVIEW.md is missing"]
+    elif args.pull_request is not None:
         if args.paths is not None:
             parser.error("--paths cannot override the actual pull request diff")
         errors = review_pull_request(args.pull_request, args.base, args.head)

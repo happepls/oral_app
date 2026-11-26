@@ -6,6 +6,7 @@ on:
     paths:
       - '.github/actions/setup-verification/**'
       - '.github/workflows/sdlc-*.yml'
+      - '.github/sdlc-review-schema.json'
       - 'scripts/ci/install-verification-deps.sh'
       - 'scripts/quality/**'
       - 'scripts/sdlc*.py'
